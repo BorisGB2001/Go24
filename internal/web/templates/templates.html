@@ -1,0 +1,34 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "templates.title"}}</h1><a href="/templates/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<p class="muted">{{t "templates.hint"}}</p>
+{{if $d.Templates}}
+<div class="card flush tlist-wrap">
+<table class="tlist tpl">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "props.project"}}</th><th>{{t "props.responsible"}}</th>
+    <th>{{t "templates.schedule"}}</th><th>{{t "templates.next"}}</th><th>{{t "templates.made"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Templates}}{{$r := .Repeat}}
+  <tr>
+    <td><a href="/templates/{{.ID}}"><b>{{.Title}}</b></a>{{if $r.On}} <span class="badge">{{icon "history"}} {{t "templates.regular"}}</span>{{end}}{{if .ForNewUsers}} <span class="badge" title="{{t "templates.for_new_users_hint"}}">{{icon "user-plus"}} {{t "templates.new_users_badge"}}</span>{{end}}{{if .SubCount}} <span class="badge" title="{{t "templates.subtasks"}}">{{icon "hierarchy-2"}} {{.SubCount}}</span>{{end}}{{if .Shared}}
+      <div class="muted small" title="{{t (print "templates.shared_" .Shared)}}">{{icon "share"}} {{t "templates.shared_by" .CreatorName}}</div>{{end}}</td>
+    <td><a href="/p/{{.ProjectKey}}">{{.ProjectName}}</a></td>
+    <td>{{if .ForNewUsers}}<span class="muted">{{t "templates.new_user"}}</span>{{else}}{{person .ResponsibleName}}{{end}}</td>
+    <td>{{if $r.On}}{{template "repeatText" $r}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{with .NextRun}}{{datetime .}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{.CreatedCount}}</td>
+    <td class="tpl-actions"><div class="acts">
+      <form method="post" action="/templates/{{.ID}}/run"><button class="ghost" title="{{t "templates.run_hint"}}">{{icon "plus"}} {{t "templates.run"}}</button></form>
+      {{if and $r.On .CanEdit}}<form method="post" action="/templates/{{.ID}}/pause"><input type="hidden" name="on" value="0"><button class="ghost" title="{{t "templates.pause"}}">{{icon "player-pause"}}</button></form>{{end}}
+      {{if .CanEdit}}<form method="post" action="/templates/{{.ID}}/delete" data-confirm="{{t "templates.delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}
+    </div></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "copy"}} {{t "templates.empty"}}</div>
+{{end}}
+{{end}}
+
+{{define "repeatText"}}{{if eq .Every 1}}{{t (print "repeat.text." .Period)}}{{else}}{{t (print "repeat.text_n." .Period) .Every}}{{end}}{{if eq .Period "weekly"}}: {{range $i, $d := .WeekDays}}{{if $i}}, {{end}}{{t (print "wd." $d)}}{{end}}{{end}}{{if or (eq .Period "monthly") (eq .Period "yearly")}}, {{.MonthDay}}{{if eq .Period "yearly"}} {{t (print "month." .YearMonth)}}{{end}}{{end}}{{if and (eq .Period "daily") .WorkdaysOnly}} ({{t "repeat.workdays_short"}}){{end}} {{t "repeat.at_time" .At}}{{end}}

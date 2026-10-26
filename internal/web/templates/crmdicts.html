@@ -1,0 +1,22 @@
+{{define "content"}}
+{{$d := .Data}}{{$admin := $.User.Admin}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.dicts_hint"}}</p>
+<div class="crmdicts">{{range $kind := $d.DictKinds}}
+<div class="card" id="{{$kind}}"><h2>{{t (print "crm.dict_kind." $kind)}}</h2>
+  <table class="tlist"><tbody>{{range $n, $it := index $d.Dicts $kind}}<tr>
+    <td>{{if $admin}}<form method="post" action="/crm/dicts" class="row"><input type="hidden" name="op" value="rename"><input type="hidden" name="kind" value="{{$kind}}"><input type="hidden" name="id" value="{{$it.ID}}">
+      <input type="text" name="name" required maxlength="100" value="{{template "crmdict" $it}}" style="flex:1"><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+      {{else}}{{template "crmdict" $it}}{{end}}</td>
+    <td class="small muted nowrap" title="{{t "crm.dict_used"}}">{{with $it.Used}}{{.}}{{end}}</td>
+    {{if $admin}}<td class="nowrap"><div class="row">
+      <form method="post" action="/crm/dicts"><input type="hidden" name="op" value="up"><input type="hidden" name="kind" value="{{$kind}}"><input type="hidden" name="id" value="{{$it.ID}}"><button class="ghost" title="{{t "crm.dict_up"}}" {{if not $n}}disabled{{end}}>{{icon "arrow-up"}}</button></form>
+      <form method="post" action="/crm/dicts"><input type="hidden" name="op" value="down"><input type="hidden" name="kind" value="{{$kind}}"><input type="hidden" name="id" value="{{$it.ID}}"><button class="ghost" title="{{t "crm.dict_down"}}">{{icon "arrow-down"}}</button></form>
+      <form method="post" action="/crm/dicts" data-confirm="{{if $it.Used}}{{t "crm.dict_delete_used" $it.Used}}{{else}}{{t "crm.dict_delete_confirm"}}{{end}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="{{$kind}}"><input type="hidden" name="id" value="{{$it.ID}}"><button class="ghost" title="{{t "crm.delete"}}">{{icon "trash"}}</button></form>
+    </div></td>{{end}}
+  </tr>{{end}}</tbody></table>
+  {{if $admin}}<form method="post" action="/crm/dicts" class="row"><input type="hidden" name="op" value="add"><input type="hidden" name="kind" value="{{$kind}}">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "crm.dict_new"}}" style="flex:1"><button>{{icon "plus"}} {{t "common.add"}}</button></form>{{end}}
+</div>{{end}}</div>
+{{end}}

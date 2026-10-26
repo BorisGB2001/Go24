@@ -1,0 +1,445 @@
+package web
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"go24/internal/auth"
+	"go24/internal/crm"
+	"go24/internal/db"
+	"go24/internal/i18n"
+	"go24/internal/tasks"
+	"go24/internal/telephony"
+)
+
+// TestPhone: the softphone window is for an employee with an inner number (on plain http it goes to the https
+// address), it names the browser's softphone by a cookie; «Позвонить» of a page goes to that window, the window's
+// line goes to the user's pages with who is on the other end; its SIP goes over the WebSocket to Asterisk without
+// go24's cookies; without a number — nothing of it.
+func TestPhone(t *testing.T) {
+	dbURL := os.Getenv("GO24_TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("GO24_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var anna, bob, eve string
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('anna', 'Анна', 'anna@t') RETURNING id`).Scan(&anna))
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('bob', 'Борис', 'bob@t') RETURNING id`).Scan(&bob))
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('eve', 'Ева', 'eve@t') RETURNING id`).Scan(&eve))
+	store := telephony.NewStore(pool, "secret")
+	must(store.SetNumber(ctx, anna, "101"))
+	must(store.SetNumber(ctx, bob, "102"))
+	must(store.SetEnabled(ctx, anna, true))
+
+	// Asterisk's http server: the WebSocket of SIP (it only says what it got)
+	got := make(chan *http.Request, 1)
+	ast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r
+		c, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: sip\r\n\r\n")
+		buf.Flush()
+	}))
+	defer ast.Close()
+
+	bundle, err := i18n.Load("")
+	must(err)
+	pages, err := buildPages(bundle)
+	must(err)
+	srv := &Server{DB: pool, Tasks: tasks.NewStore(pool), I18n: bundle, pages: pages, CallURL: "https://go24.test:8444",
+		Telephony: &telephony.PBX{Store: store, SIPHost: "192.168.1.15", ARI: &telephony.ARI{URL: ast.URL, User: "go24", Password: "x"}},
+		Sessions:  auth.NewSessions(strings.Repeat("s", 32), false), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	hs := httptest.NewServer(srv.Routes())
+	defer hs.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	session := func(who string) *http.Cookie {
+		rec := httptest.NewRecorder()
+		must(srv.Sessions.Set(rec, auth.Session{UserID: who, Name: who}))
+		return rec.Result().Cookies()[0]
+	}
+	do := func(who, method, path string, form url.Values, hdr map[string]string, cookies ...*http.Cookie) (*http.Response, string) {
+		t.Helper()
+		var body io.Reader
+		if form != nil {
+			body = strings.NewReader(form.Encode())
+		}
+		req, _ := http.NewRequest(method, hs.URL+path, body)
+		if form != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		req.Header.Set("Accept", "application/json")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		req.AddCookie(session(who))
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		res, err := client.Do(req)
+		must(err)
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res, string(raw)
+	}
+	https := map[string]string{"X-Forwarded-Proto": "https"}
+
+	// the window: plain http goes to https; there — the account of the softphone and the cookie naming it
+	if res, _ := do(anna, "GET", "/phone?dial=102", nil, nil); res.StatusCode != http.StatusFound || res.Header.Get("Location") != "https://go24.test:8444/phone?dial=102" {
+		t.Fatalf("http: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	res, page := do(anna, "GET", "/phone?dial=102", nil, https)
+	if res.StatusCode != http.StatusOK || !strings.Contains(page, `data-login="w101"`) || !strings.Contains(page, `data-dial="102"`) || strings.Contains(page, `class="side"`) {
+		t.Fatalf("the window: %d\n%s", res.StatusCode, page)
+	}
+	var phone *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == phoneCookie {
+			phone = c
+		}
+	}
+	if phone == nil || !validPhoneID(phone.Value) || !strings.Contains(page, `data-id="`+phone.Value+`"`) {
+		t.Fatalf("no cookie of the softphone: %v", phone)
+	}
+	if res, _ := do(anna, "GET", "/phone", nil, https, phone); !strings.Contains(res.Header.Get("Set-Cookie"), phone.Value) {
+		t.Fatal("the softphone got another name")
+	}
+	// eve has no number: no window, no commands, no socket
+	if res, _ := do(eve, "GET", "/phone", nil, https); res.StatusCode == http.StatusOK {
+		t.Fatal("eve has a softphone")
+	}
+	if res, _ := do(eve, "POST", "/telephony/cmd", url.Values{"cmd": {"dial"}, "number": {"101"}}, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve's command: %d", res.StatusCode)
+	}
+	if res, _ := do(eve, "GET", "/telephony/ws", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve's socket: %d", res.StatusCode)
+	}
+	conn, err := pool.Acquire(ctx)
+	must(err)
+	defer conn.Release()
+	_, err = conn.Exec(ctx, "LISTEN go24_notify")
+	must(err)
+	next := func() (string, map[string]any) {
+		t.Helper()
+		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		n, err := conn.Conn().WaitForNotification(wctx)
+		must(err)
+		key, value, _ := strings.Cut(n.Payload, ":")
+		var v map[string]any
+		must(json.Unmarshal([]byte(value), &v))
+		return key, v
+	}
+
+	// «Позвонить» of a page goes to the browser's softphone; a number as people write it
+	res, out := do(anna, "POST", "/telephony/cmd", url.Values{"cmd": {"dial"}, "number": {"+7 (900) 123-45-67"}}, nil, phone)
+	if res.StatusCode != http.StatusOK || !strings.Contains(out, `"sent": "`+phone.Value+`"`) {
+		t.Fatalf("dial: %d %s", res.StatusCode, out)
+	}
+	if key, v := next(); key != "p"+anna+"."+phone.Value || v["cmd"] != "dial" || v["number"] != "+79001234567" {
+		t.Fatalf("dial went: %s %v", key, v)
+	}
+	if res, _ := do(anna, "POST", "/telephony/cmd", url.Values{"cmd": {"dial"}, "number": {"101; rm"}}, nil, phone); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a bad number: %d", res.StatusCode)
+	}
+	// no softphone in this browser yet: the page is told to open it
+	if _, out := do(anna, "POST", "/telephony/cmd", url.Values{"cmd": {"dial"}, "number": {"102"}}, nil); strings.Contains(out, "sent") || !strings.Contains(out, `"open": "https://go24.test:8444/phone"`) {
+		t.Fatalf("no window: %s", out)
+	}
+
+	// the window's line: bob rings anna — her pages learn who it is
+	res, out = do(anna, "POST", "/telephony/state", url.Values{"phone": {phone.Value}, "state": {"ringing"}, "number": {"102"}, "dir": {"in"}}, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(out, `"from": "Борис"`) {
+		t.Fatalf("state: %d %s", res.StatusCode, out)
+	}
+	if key, v := next(); key != "c"+anna || v["kind"] != "phone" || v["state"] != "ringing" || v["user"] != bob || v["url"] != "/u/"+bob || v["phone"] != phone.Value {
+		t.Fatalf("the line went: %s %v", key, v)
+	}
+	if res, _ := do(anna, "POST", "/telephony/state", url.Values{"state": {"exploded"}}, nil); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a bad state: %d", res.StatusCode)
+	}
+
+	// SIP over the WebSocket: to Asterisk's /ws, the upgrade passes, go24's session does not
+	raw, err := net.Dial("tcp", strings.TrimPrefix(hs.URL, "http://"))
+	must(err)
+	defer raw.Close()
+	req, _ := http.NewRequest("GET", hs.URL+"/telephony/ws?x=1", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Protocol", "sip")
+	req.AddCookie(session(anna))
+	must(req.Write(raw))
+	wres, err := http.ReadResponse(bufio.NewReader(raw), req)
+	must(err)
+	if wres.StatusCode != http.StatusSwitchingProtocols || wres.Header.Get("Sec-WebSocket-Protocol") != "sip" {
+		t.Fatalf("the socket: %d %v", wres.StatusCode, wres.Header)
+	}
+	ar := <-got
+	if ar.URL.Path != "/ws" || ar.URL.RawQuery != "" || ar.Header.Get("Cookie") != "" || ar.Header.Get("Sec-WebSocket-Protocol") != "sip" {
+		t.Fatalf("asterisk got: %s %v", ar.URL, ar.Header)
+	}
+
+	// Asterisk tells about a call that ended: only with its key; the conversation is in the folder of recordings
+	srv.Telephony.Key, srv.Telephony.Records = "astkey", t.TempDir()
+	must(os.WriteFile(srv.Telephony.Records+"/r1.wav", []byte("RIFFwav"), 0o644))
+	must(os.WriteFile(srv.Telephony.Records+"/r2.wav", []byte("RIFFsilence"), 0o644))
+	cdr := func(form url.Values) int {
+		res, err := http.PostForm(hs.URL+"/telephony/cdr", form)
+		must(err)
+		res.Body.Close()
+		return res.StatusCode
+	}
+	call := url.Values{"key": {"astkey"}, "id": {"1729.1"}, "from": {"102"}, "to": {"101"}, "start": {"1761400000.5"}, "answer": {"1761400004.000000"},
+		"end": {"1761400064"}, "dial": {"ANSWER"}, "rec": {"r1.wav"}}
+	if st := cdr(url.Values{"key": {"wrong"}, "id": {"x"}, "start": {"1"}}); st != http.StatusForbidden {
+		t.Fatalf("a call without the key: %d", st)
+	}
+	if st := cdr(call); st != http.StatusNoContent {
+		t.Fatalf("the call: %d", st)
+	}
+	if st := cdr(url.Values{"key": {"astkey"}, "id": {"1729.2"}, "from": {"101"}, "to": {"102"}, "start": {"1761400100"}, "answer": {"0.000000"},
+		"end": {"1761400110"}, "dial": {"NOANSWER"}, "rec": {"r2.wav"}}); st != http.StatusNoContent {
+		t.Fatalf("a missed call: %d", st)
+	}
+	if _, err := os.Stat(srv.Telephony.Records + "/r2.wav"); !os.IsNotExist(err) {
+		t.Fatal("the silence of a missed call is kept")
+	}
+	// the log: anna sees her calls with the recording, eve sees none of them and cannot listen
+	res, page = do(anna, "GET", "/telephony/calls", nil, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(page, "Борис") || !strings.Contains(page, "1:00") || strings.Count(page, "/record\"") != 1 {
+		t.Fatalf("anna's log: %d\n%s", res.StatusCode, page)
+	}
+	calls, err := store.Calls(ctx, telephony.CallFilter{UserID: anna})
+	must(err)
+	if len(calls) != 2 || calls[1].Record != "r1.wav" || calls[0].Status != telephony.StatusNoAnswer {
+		t.Fatalf("the log: %+v", calls)
+	}
+	if res, body := do(anna, "GET", "/telephony/calls/"+calls[1].ID+"/record", nil, nil); res.StatusCode != http.StatusOK || body != "RIFFwav" || res.Header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("listen: %d %q", res.StatusCode, body)
+	}
+	if res, _ := do(eve, "GET", "/telephony/calls/"+calls[1].ID+"/record", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve listens: %d", res.StatusCode)
+	}
+	if _, p := do(eve, "GET", "/telephony/calls?user="+anna, nil, nil); strings.Contains(p, "Борис") {
+		t.Fatal("eve sees anna's calls")
+	}
+
+	// CRM: a client calling goes to their card; an unknown number calling makes a lead; one's own call to an unknown
+	// number makes nothing until «Создать сделку»
+	srv.CRM = crm.NewStore(pool)
+	contact, err := srv.CRM.SaveContact(ctx, anna, crm.Contact{Name: "ООО Ромашка", Phone: "+7 (900) 111-22-33", Responsible: crm.Ref{ID: anna}})
+	must(err)
+	must(os.WriteFile(srv.Telephony.Records+"/r3.wav", []byte("RIFFclient"), 0o644))
+	in := func(id, from, to, dial, rec string) {
+		t.Helper()
+		v := url.Values{"key": {"astkey"}, "id": {id}, "from": {from}, "to": {to}, "start": {"1761401000"}, "end": {"1761401090"}, "dial": {dial}, "rec": {rec}}
+		if dial == "ANSWER" {
+			v.Set("answer", "1761401010")
+		}
+		if st := cdr(v); st != http.StatusNoContent {
+			t.Fatalf("cdr %s: %d", id, st)
+		}
+	}
+	timeline := func(entity, id string) string {
+		t.Helper()
+		evs, err := srv.CRM.Timeline(ctx, entity, id)
+		must(err)
+		var b strings.Builder
+		for _, e := range evs {
+			if e.Kind == "call" {
+				b.WriteString(e.Body + "\n")
+			}
+		}
+		return b.String()
+	}
+	in("c.1", "89001112233", "101", "ANSWER", "r3.wav")
+	if tl := timeline("contact", contact); !strings.Contains(tl, `"dir":"in"`) || !strings.Contains(tl, `"sec":80`) || !strings.Contains(tl, `"rec":true`) {
+		t.Fatalf("the client's timeline: %q", tl)
+	}
+	in("c.2", "+7 495 000-00-01", "101", "NOANSWER", "")
+	leads, err := srv.CRM.Duplicates(ctx, "lead", "", "", "+74950000001", "")
+	must(err)
+	if len(leads) != 1 || leads[0].Entity != "lead" || leads[0].Title != "Звонок: +7 495 000-00-01" {
+		t.Fatalf("the lead of a new number: %+v", leads)
+	}
+	if tl := timeline("lead", leads[0].ID); !strings.Contains(tl, `"dir":"missed"`) {
+		t.Fatalf("the lead's timeline: %q", tl)
+	}
+	must(store.SetLeadAuto(ctx, anna, false))
+	in("c.3", "+7 495 000-00-02", "101", "NOANSWER", "")
+	if l, _ := srv.CRM.Duplicates(ctx, "lead", "", "", "+74950000002", ""); len(l) != 0 {
+		t.Fatal("a lead though the setting is off")
+	}
+	in("c.4", "101", "+7 812 000-00-03", "ANSWER", "")
+	all, err := store.Calls(ctx, telephony.CallFilter{UserID: anna})
+	must(err)
+	var outCall telephony.Call
+	for _, c := range all {
+		if c.To == "+7 812 000-00-03" {
+			outCall = c
+		}
+		if c.From == "89001112233" && (c.CRMEntity != "contact" || c.CRMName != "ООО Ромашка") {
+			t.Fatalf("the log has no client: %+v", c)
+		}
+	}
+	if outCall.ID == "" || outCall.CRMEntity != "" {
+		t.Fatalf("an outgoing call to a new number: %+v", outCall)
+	}
+	if res, _ := do(eve, "POST", "/telephony/calls/"+outCall.ID+"/crm", url.Values{"what": {"deal"}}, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve makes a deal of anna's call: %d", res.StatusCode)
+	}
+	res, _ = do(anna, "POST", "/telephony/calls/"+outCall.ID+"/crm", url.Values{"what": {"deal"}}, nil)
+	deal, _ := strings.CutPrefix(res.Header.Get("Location"), "/crm/deals/")
+	if res.StatusCode != http.StatusSeeOther || deal == "" || !strings.Contains(timeline("deal", deal), `"dir":"out"`) {
+		t.Fatalf("the deal of a call: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	if res, _ := do(anna, "POST", "/telephony/calls/"+outCall.ID+"/crm", url.Values{"what": {"lead"}}, nil); res.Header.Get("Location") != "/crm/deals/"+deal {
+		t.Fatalf("a second card of one call: %s", res.Header.Get("Location"))
+	}
+	// the softphone rings with a client: their name and card
+	_, out2 := do(anna, "POST", "/telephony/state", url.Values{"phone": {phone.Value}, "state": {"ringing"}, "number": {"+79001112233"}, "dir": {"in"}}, nil)
+	if !strings.Contains(out2, `"from": "ООО Ромашка"`) || !strings.Contains(out2, `"url": "/crm/contacts/`+contact+`"`) {
+		t.Fatalf("a client rings: %s", out2)
+	}
+
+	// external lines are the administrators'
+	line := url.Values{"name": {"Основной"}, "host": {"sip.example.ru"}, "username": {"go24"}, "password": {"pw"}, "number": {"+74951234567"},
+		"register": {"1"}, "ring": {anna, bob}, "ring_mode": {"queue"}, "out_all": {"1"}}
+	if res, _ := do(eve, "POST", "/telephony/trunks", line, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve connects a line: %d", res.StatusCode)
+	}
+	rec := httptest.NewRecorder()
+	must(srv.Sessions.Set(rec, auth.Session{UserID: anna, Name: "anna", Admin: true, AdminMode: true}))
+	req2, _ := http.NewRequest("POST", hs.URL+"/telephony/trunks", strings.NewReader(line.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.AddCookie(rec.Result().Cookies()[0])
+	res2, err := client.Do(req2)
+	must(err)
+	res2.Body.Close()
+	trunks, err := store.Trunks(ctx)
+	must(err)
+	if res2.StatusCode != http.StatusSeeOther || len(trunks) != 1 || trunks[0].RingMode != "queue" || len(trunks[0].Ring) != 2 || !trunks[0].Register {
+		t.Fatalf("the administrator's line: %d %+v", res2.StatusCode, trunks)
+	}
+	// its handling of calls (the form with the greeting's file): working hours, voicemail, a forward
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	for k, vs := range line {
+		for _, v := range vs {
+			mw.WriteField(k, v)
+		}
+	}
+	for k, v := range map[string]string{"work_on": "1", "work_from": "09:00", "work_to": "18:00", "noanswer": "voicemail", "offhours": "forward",
+		"offhours_to": "102"} {
+		mw.WriteField(k, v)
+	}
+	mw.WriteField("work_days", "1")
+	mw.WriteField("work_days", "3")
+	fw, _ := mw.CreateFormFile("greeting", "hello.wav")
+	fw.Write(telephony.Beep())
+	mw.Close()
+	req3, _ := http.NewRequest("POST", hs.URL+"/telephony/trunks/"+trunks[0].ID, &form)
+	req3.Header.Set("Content-Type", mw.FormDataContentType())
+	req3.AddCookie(rec.Result().Cookies()[0])
+	res3, err := client.Do(req3)
+	must(err)
+	res3.Body.Close()
+	trunks, err = store.Trunks(ctx)
+	must(err)
+	if l := trunks[0]; res3.StatusCode != http.StatusSeeOther || !l.WorkOn || len(l.WorkDays) != 2 || l.NoAnswer != telephony.ActVoicemail ||
+		l.OffHoursTo != "102" || l.GreetingSum == "" || l.Password != "pw" {
+		t.Fatalf("the line's handling: %d %+v", res3.StatusCode, l)
+	}
+	req4, _ := http.NewRequest("GET", hs.URL+"/telephony/trunks/"+trunks[0].ID+"/greeting", nil)
+	req4.AddCookie(rec.Result().Cookies()[0])
+	res4, err := client.Do(req4)
+	must(err)
+	res4.Body.Close()
+	if res4.StatusCode != http.StatusOK || res4.Header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("the greeting: %d", res4.StatusCode)
+	}
+	if res, _ := do(eve, "GET", "/telephony/trunks/"+trunks[0].ID+"/greeting", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve listens to the greeting: %d", res.StatusCode)
+	}
+	// a voicemail on the line: the message kept, the employee told; a client who hung up before the beep — a missed call
+	must(os.WriteFile(srv.Telephony.Records+"/vm1.wav", make([]byte, 20000), 0o644))
+	must(os.WriteFile(srv.Telephony.Records+"/vm2.wav", make([]byte, 100), 0o644))
+	for _, v := range []url.Values{
+		{"id": {"vm.1"}, "rec": {"vm1.wav"}, "from": {"+79007770011"}},
+		{"id": {"vm.2"}, "rec": {"vm2.wav"}, "from": {"+79007770022"}},
+	} {
+		v.Set("key", "astkey")
+		v.Set("to", "+74951234567")
+		v.Set("line", "+74951234567")
+		v.Set("by", "101")
+		v.Set("vm", "1")
+		v.Set("dial", "NOANSWER")
+		v.Set("start", "1761402000")
+		v.Set("answer", "1761402030")
+		v.Set("end", "1761402050")
+		if st := cdr(v); st != http.StatusNoContent {
+			t.Fatalf("voicemail %s: %d", v.Get("id"), st)
+		}
+	}
+	vms, err := store.Calls(ctx, telephony.CallFilter{UserID: anna, Kind: "missed", Number: "+7900777"})
+	must(err)
+	if len(vms) != 2 || vms[0].Status == vms[1].Status {
+		t.Fatalf("voicemails: %+v", vms)
+	}
+	for _, c := range vms {
+		if (c.Status == telephony.StatusVoicemail) != (c.Record == "vm1.wav") {
+			t.Fatalf("a voicemail's record: %+v", c)
+		}
+	}
+	if _, err := os.Stat(srv.Telephony.Records + "/vm1.wav"); err != nil {
+		t.Fatal("the message removed")
+	}
+	var told []string
+	rows, err := pool.Query(ctx, `SELECT body FROM notifications WHERE user_id = $1 AND kind = 'phone' ORDER BY id`, anna)
+	must(err)
+	for rows.Next() {
+		var b string
+		must(rows.Scan(&b))
+		told = append(told, b)
+	}
+	if len(told) != 2 || !strings.Contains(strings.Join(told, "\n"), "Голосовое сообщение от +79007770011 на линию +74951234567") ||
+		!strings.Contains(strings.Join(told, "\n"), "Пропущенный звонок от +79007770022") {
+		t.Fatalf("anna told: %q", told)
+	}
+}

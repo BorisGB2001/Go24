@@ -1,0 +1,33 @@
+{{define "content"}}{{$d := .Data}}{{$f := $d.F}}
+<div class="crumbs"><a href="/flows">{{t "flows.title"}}</a> {{icon "chevron-right"}} {{if $f.ID}}{{$f.Name}}{{else}}{{t "flows.new"}}{{end}}</div>
+<h1>{{if $f.ID}}{{t "flows.edit"}}{{else}}{{t "flows.new"}}{{end}}</h1>
+<form method="post" action="{{if $f.ID}}/flows/{{$f.ID}}/edit{{else}}/flows/new{{end}}" class="card flow-form">
+  <label>{{t "flows.name"}}</label><input type="text" name="name" value="{{$f.Name}}" required maxlength="200">
+  <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$f.Description}}</textarea>
+  <label>{{t "props.project"}}</label>
+  <select name="project" required>{{range $d.Projects}}<option value="{{.Key}}" {{if eq .ID $f.ProjectID}}selected{{end}}>{{.Name}} ({{.Key}})</option>{{end}}</select>
+  <label>{{t "flows.owner"}}</label>
+  {{template "upick" (upick "owner" $f.OwnerID $d.Users "required")}}
+  <label>{{t "flows.distribution"}}</label>
+  <div class="flow-dist">{{range $k := list "manually" "queue" "himself"}}
+    <label class="check"><input type="radio" name="distribution" value="{{$k}}" {{if eq $k $f.Distribution}}checked{{end}}> <b>{{t (print "flows.dist." $k)}}</b> — <span class="muted">{{t (print "flows.dist_hint." $k)}}</span></label>{{end}}</div>
+  <label>{{t "flows.moderator"}} <span class="muted small">({{t "flows.moderator_hint"}})</span></label>
+  {{template "upick" (upick "moderator" $f.ModeratorID $d.Users "ph" (t "flows.moderator_owner"))}}
+  <label>{{t "flows.team"}} <span class="muted small">({{t "flows.team_hint"}})</span></label>
+  {{template "upick" (upick "members" $f.Members $d.Users "multi")}}
+  <label>{{t "flows.planned"}}</label><input type="text" name="planned_hours" value="{{$d.PlannedHours}}" class="num" inputmode="decimal">
+  <label>{{t "flows.template"}}</label>
+  <select name="template"><option value="">—</option>{{range $d.Templates}}<option value="{{.ID}}" {{if eq .ID $f.TemplateID}}selected{{end}}>{{.Title}}</option>{{end}}</select>
+  <label>{{t "flows.creators"}}</label>
+  <label class="check"><input type="checkbox" name="creators_all" {{if $f.CreatorsAll}}checked{{end}}> {{t "flows.creators_all"}}</label>
+  {{template "upick" (upick "creators" $f.Creators $d.Users "multi")}}
+  <div class="tf-checks">
+    <label class="check"><input type="checkbox" name="match_work_time" {{if $f.MatchWorkTime}}checked{{end}}> {{t "form.match_work_time"}}</label>
+    <label class="check"><input type="checkbox" name="allow_change_deadline" {{if $f.AllowChangeDeadline}}checked{{end}}> {{t "form.allow_change_deadline"}}</label>
+    <label class="check"><input type="checkbox" name="requires_control" {{if $f.RequiresControl}}checked{{end}}> {{t "form.requires_control"}}</label>
+    <label class="check"><input type="checkbox" name="active" {{if $f.Active}}checked{{end}}> {{t "flows.active"}}</label>
+  </div>
+  <p class="row"><button class="primary">{{t "common.save"}}</button><a href="/flows" class="button">{{t "common.cancel"}}</a></p>
+</form>
+{{if $f.ID}}<form method="post" action="/flows/{{$f.ID}}/delete" data-confirm="{{t "flows.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "flows.delete"}}</button></form>{{end}}
+{{end}}

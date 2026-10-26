@@ -1,0 +1,196 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}
+{{if $p.Collab}}<div class="crumbs"><a href="/collabs">{{t "collab.title"}}</a> {{icon "chevron-right"}} <code>{{$p.Key}}</code></div>
+{{else}}<div class="crumbs"><a href="/projects">{{t "nav.projects"}}</a> {{icon "chevron-right"}} <code>{{$p.Key}}</code></div>{{end}}
+<div class="pagehead"><h1 class="row">{{photo $p.Name $p.PhotoURL true}} {{$p.Name}}{{if and $p.Kind (ne $p.Kind "group")}} <span class="pill st-in_progress">{{t (print "project.kind." $p.Kind)}}</span>{{end}}</h1>{{if $p.CanCreate}}<a href="/tasks/new?project={{$p.Key}}" class="button create">{{icon "plus"}} {{t "common.create"}}</a>{{end}}</div>
+{{if $p.Collab}}<div class="tabs collab-tabs">
+  {{if $d.ChatRoom}}<a href="/im?room={{$d.ChatRoom}}">{{icon "message-circle"}} {{t "collab.chat"}}</a>{{else if $d.Messenger}}<span class="muted small" title="{{t "collab.chat_soon"}}">{{icon "message-circle"}} {{t "collab.chat"}}</span>{{end}}
+  <a href="/p/{{$p.Key}}" class="on">{{icon "list-check"}} {{t "collab.tasks"}}</a>
+  <a href="/disk/p/{{$p.Key}}">{{icon "folder"}} {{t "collab.drive"}}</a>
+  <a href="/calendar?project={{$p.Key}}">{{icon "calendar-event"}} {{t "collab.calendar"}}</a>
+</div>{{end}}
+<div class="sub">{{if $p.Description}}{{$p.Description}}{{else}}{{t "project.open_tasks" $p.OpenTasks}}{{end}}
+  {{if or $p.DateStart $p.DateFinish}} · {{icon "calendar-event"}} {{with $p.DateStart}}{{day .}}{{end}} – {{with $p.DateFinish}}{{day .}}{{end}}{{end}}</div>
+{{if $p.Archived}}<div class="flash">{{icon "history"}} {{if $p.Collab}}{{t "collab.archived_note"}}{{else}}{{t "project.archived_note"}}{{end}}</div>{{end}}
+
+<div class="tabs">
+  <a href="/p/{{$p.Key}}" {{if not $d.ShowAll}}class="on"{{end}}>{{icon "list-check"}} {{t "tabs.open"}} <span class="cnt">{{$p.OpenTasks}}</span></a>
+  <a href="/p/{{$p.Key}}?all=1" {{if $d.ShowAll}}class="on"{{end}}>{{icon "history"}} {{t "tabs.all"}}</a>
+  {{if $p.Scrum}}<a href="/p/{{$p.Key}}/scrum">{{icon "layout-kanban"}} {{t "tabs.planning"}}</a>
+  <a href="/p/{{$p.Key}}/board">{{icon "player-play"}} {{t "tabs.active_sprint"}}</a>
+  <a href="/p/{{$p.Key}}/sprints">{{icon "history"}} {{t "tabs.sprints_done"}}</a>
+  {{else}}<a href="/p/{{$p.Key}}/board">{{icon "layout-kanban"}} {{t "tabs.kanban"}}</a>{{end}}
+  <a href="/p/{{$p.Key}}/gantt">{{icon "calendar-event"}} {{t "tabs.gantt"}}</a>
+</div>
+
+<div class="layout2">
+<div>
+  <div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+
+</div>
+
+<div>
+  {{if $p.CanManage}}<details class="card" id="about">
+    <summary><b>{{icon "edit"}} {{t "project.about"}}</b></summary>
+    {{if and $p.CanEdit (not (and $p.Collab $p.Archived))}}
+    <form method="post" action="/p/{{$p.Key}}/info">
+      <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$p.Name}}" required>
+      <label>{{t "form.description"}}</label><textarea name="description" rows="3">{{$p.Description}}</textarea>
+      {{if not $p.Collab}}<label>{{t "project.kind"}}</label>
+      <select name="kind">{{range list "group" "project" "scrum"}}<option value="{{.}}" {{if eq . $p.Kind}}selected{{end}}>{{t (print "project.kind." .)}}</option>{{end}}</select>{{end}}
+      <div class="grid">
+        <div><label>{{t "project.date_start"}}</label><input type="date" name="date_start" value="{{dinput $p.DateStart}}"></div>
+        <div><label>{{t "project.date_finish"}}</label><input type="date" name="date_finish" value="{{dinput $p.DateFinish}}"></div>
+      </div>
+      <p class="small muted">{{t "project.dates_hint"}}</p>
+      <p><button class="primary">{{t "common.save"}}</button></p>
+    </form>
+    <form method="post" action="/p/{{$p.Key}}/photo" enctype="multipart/form-data" class="row">
+      <label style="flex:1">{{t "project.photo"}} <input type="file" name="photo" accept="image/*" required></label>
+      <button>{{icon "cloud-upload"}} {{t "common.save"}}</button></form>
+    {{if $p.PhotoKey}}<form method="post" action="/p/{{$p.Key}}/photo"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "x"}} {{t "project.photo_delete"}}</button></form>{{end}}
+    {{end}}
+    <form method="post" action="/p/{{$p.Key}}/archive"{{if not $p.Archived}} data-confirm="{{if $p.Collab}}{{t "collab.archive_confirm"}}{{else}}{{t "project.archive_confirm"}}{{end}}"{{end}}>
+      <input type="hidden" name="on" value="{{if $p.Archived}}0{{else}}1{{end}}">
+      <button class="ghost">{{icon "history"}} {{if $p.Archived}}{{t "project.unarchive"}}{{else}}{{t "project.archive"}}{{end}}</button></form>
+    {{if $d.CanDelete}}<details class="danger-zone"><summary class="small">{{icon "trash"}} {{t "collab.delete"}}</summary>
+      <form method="post" action="/p/{{$p.Key}}/delete" data-confirm="{{t "collab.delete_confirm"}}">
+        <p class="small muted">{{t "collab.delete_hint" $p.Name}}</p>
+        <input type="text" name="confirm" required autocomplete="off" placeholder="{{$p.Name}}" aria-label="{{t "collab.delete_type"}}">
+        <p><button class="danger">{{icon "trash"}} {{t "collab.delete_button"}}</button></p></form></details>{{end}}
+  </details>{{end}}
+
+  {{if and $p.Collab $p.CanEdit}}{{with $d.Settings}}<details class="card" id="settings"{{if not $p.Archived}} open{{end}}>
+    <summary><b>{{icon "settings"}} {{t "collab.settings"}}</b></summary>
+    <form method="post" action="/p/{{$p.Key}}/collab-settings">
+      <fieldset{{if $p.Archived}} disabled{{end}}>
+      <label>{{t "collab.invite_perm"}}</label>
+      <select name="invite_perm">{{$v := .InvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
+      <label>{{t "collab.guest_invite_perm"}}</label>
+      <select name="guest_invite_perm">{{$v = .GuestInvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
+      <label class="check"><input type="checkbox" name="chat_history" {{if .ChatHistory}}checked{{end}}> {{t "collab.chat_history"}}</label>
+      <p class="small muted">{{t "collab.chat_history_hint"}}</p>
+      <div class="small muted" style="margin-top:8px">{{t "collab.guest_rights"}}</div>
+      <label class="check"><input type="checkbox" name="guests_tasks" {{if .GuestTasks}}checked{{end}}> {{t "collab.guests_tasks"}}</label>
+      <label class="check"><input type="checkbox" name="guests_files" {{if .GuestFiles}}checked{{end}}> {{t "collab.guests_files"}}</label>
+      <label>{{t "collab.chat_perm"}}</label>
+      <select name="chat_perm">{{$v = .ChatPerm}}{{range list "members" "employees" "managers"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.chat_perm." .)}}</option>{{end}}</select>
+      {{if or (eq $p.MyRole "owner") (eq $p.MyRole "admin")}}<label>{{t "collab.edit_perm"}}</label>
+      <select name="edit_perm">{{$v = .EditPerm}}{{range list "owner" "managers"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
+      <p class="small muted">{{t "collab.edit_perm_hint"}}</p>{{end}}
+      <p><button class="primary">{{t "common.save"}}</button></p>
+      </fieldset>
+    </form>
+  </details>{{end}}{{end}}
+
+  {{if $d.CanInviteGuests}}<div class="card" id="guests" data-blocks data-copied="{{t "task.copied"}}">
+    <h2>{{icon "users-group"}} {{t "guests.title"}}</h2>
+    <p class="small muted">{{t "guests.hint"}}</p>
+    <form method="post" action="/p/{{$p.Key}}/guests" class="row"><input type="hidden" name="kind" value="link">
+      <select name="days" style="flex:1" title="{{t "guests.ttl"}}">{{range list "1" "7" "30"}}<option value="{{.}}" {{if eq . "7"}}selected{{end}}>{{t (print "guests.ttl." .)}}</option>{{end}}</select>
+      <button>{{icon "link"}} {{t "guests.new_link"}}</button></form>
+    <details><summary>{{icon "mail"}} {{t "guests.by_email"}}</summary>
+      <form method="post" action="/p/{{$p.Key}}/guests"><input type="hidden" name="kind" value="email"><input type="hidden" name="days" value="7">
+        <input type="email" name="contact" required maxlength="254" placeholder="{{t "guests.email"}}">
+        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name"}}">
+        {{if $d.Mailbox}}<label class="small"><input type="checkbox" name="send" value="1" checked> {{t "guests.send_mail"}}</label>{{else}}<p class="small muted">{{t "guests.no_mailbox"}}</p>{{end}}
+        <p><button>{{icon "send"}} {{t "guests.invite"}}</button></p></form></details>
+    <details><summary>{{icon "message-circle"}} {{t "guests.by_phone"}}</summary>
+      <form method="post" action="/p/{{$p.Key}}/guests"><input type="hidden" name="kind" value="phone"><input type="hidden" name="days" value="7">
+        <input type="tel" name="contact" required maxlength="30" placeholder="{{t "guests.phone"}}">
+        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name"}}">
+        <p class="small muted">{{t "guests.phone_hint"}}</p>
+        <p><button>{{icon "link"}} {{t "guests.invite"}}</button></p></form></details>
+    {{range $d.GuestInvites}}{{$link := index $d.JoinLinks .ID}}
+    <div class="ginv{{if not (.Active $d.Now)}} off{{end}}">
+      <div class="small"><b>{{t (print "guests.kind." .Kind)}}</b>{{with .Name}} · {{.}}{{end}}{{with .Email}} · {{.}}{{end}}{{with .Phone}} · {{.}}{{end}}</div>
+      {{if .Active $d.Now}}
+      <div class="row"><input type="text" readonly value="{{$link}}" style="flex:1" aria-label="{{t "guests.link"}}">
+        <button type="button" class="ghost" data-copy="{{$link}}" title="{{t "invite.copy"}}">{{icon "copy"}}</button></div>
+      <div class="row small">
+        {{with .Email}}<a href="mailto:{{.}}?subject={{urlquery (t "guests.mail_subject" $p.Name)}}&amp;body={{urlquery $link}}">{{icon "mail"}} {{t "guests.open_mail"}}</a>{{end}}
+        {{with .Phone}}<a href="sms:{{.}}?body={{urlquery (t "guests.sms" $p.Name $link)}}">{{icon "message-circle"}} {{t "guests.open_sms"}}</a>{{end}}
+        <span class="muted">{{t "guests.until" (day .Expires)}} · {{t "guests.uses" .Uses}} · {{t "invites.by" .CreatedBy}}</span>
+        <form method="post" action="/p/{{$p.Key}}/guests/{{.ID}}/revoke" data-confirm="{{t "guests.revoke_confirm"}}"><button class="ghost small">{{icon "x"}} {{t "guests.revoke"}}</button></form>
+      </div>
+      {{else}}<div class="small muted">{{if .Revoked}}{{t "guests.state.revoked"}}{{else if and (ne .Kind "link") .Uses}}{{t "guests.state.used" .UsedBy}}{{else}}{{t "guests.state.expired"}}{{end}}{{if and (eq .Kind "link") .Uses}} · {{t "guests.uses" .Uses}}{{end}}</div>{{end}}
+    </div>{{end}}
+  </div>
+  <script src="{{asset "js/task.js"}}"></script>{{end}}
+
+  <div class="card" id="members">
+    <h2>{{icon "users"}} {{t "members.title"}}</h2>
+    {{$rp := "role."}}{{if $p.Collab}}{{$rp = "collab.role."}}{{end}}
+    {{range $d.Members}}
+    <div class="row" style="margin-bottom:8px">
+      {{ava .Name}}
+      <div style="flex:1">{{.Name}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}<div class="small muted">{{t (print $rp .Role)}}</div></div>
+      {{if $p.CanRemove .}}
+      <form method="post" action="/p/{{$p.Key}}/members/{{.ID}}/delete"{{if $p.Collab}} data-confirm="{{t "collab.remove_confirm" .Name}}"{{end}}><button class="ghost" title="{{t "members.remove"}}">{{icon "x"}}</button></form>{{end}}
+    </div>
+    {{end}}
+    {{if $d.Invites}}<div class="small muted" style="margin-top:8px">{{t "invites.pending"}}</div>
+    {{range $d.Invites}}<div class="row" style="margin-bottom:6px">{{ava .UserName}}
+      <div style="flex:1">{{.UserName}}<div class="small muted">{{t (print "role." .Role)}} · {{t "invites.by" .InvitedBy}}</div></div>
+      {{if $d.CanInvite}}<form method="post" action="/p/{{$p.Key}}/invites/{{.UserID}}/delete"><button class="ghost" title="{{t "invites.cancel"}}">{{icon "x"}}</button></form>{{end}}
+    </div>{{end}}{{end}}
+    {{if $p.Collab}}
+    {{if and $d.CanAddMembers (not $p.Archived)}}<form method="post" action="/p/{{$p.Key}}/members">
+      <label>{{if $p.CanManage}}{{t "members.add_or_change"}}{{else}}{{t "collab.add_member"}}{{end}}</label>
+      {{template "upick" (upick "user_id" "" $d.Users "required")}}
+      <div class="row" style="margin-top:6px">
+        <select name="role" style="flex:1"><option value="member">{{t "collab.role.member"}}</option>{{if $p.CanManage}}<option value="manager">{{t "collab.role.manager"}}</option>{{end}}</select>
+        <button>{{t "common.save"}}</button>
+      </div>
+    </form>
+    <p class="small muted">{{t "collab.members_hint"}}</p>{{end}}
+    {{if and (or (eq $p.MyRole "owner") (eq $p.MyRole "admin")) (not $p.Archived)}}<form method="post" action="/p/{{$p.Key}}/owner" data-confirm="{{t "collab.owner_confirm"}}">
+      <label>{{t "collab.owner"}}</label>
+      <div class="row"><select name="user_id" style="flex:1" required><option value=""></option>{{range $d.Members}}{{if and (not .Guest) (ne .Role "owner")}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>
+      <button>{{t "collab.owner_button"}}</button></div>
+      <p class="small muted">{{t "collab.owner_hint"}}</p>
+    </form>{{end}}
+    {{if and (ne $p.MyRole "owner") (ne $p.MyRole "admin")}}<form method="post" action="/p/{{$p.Key}}/leave" data-confirm="{{t "collab.leave_confirm"}}"><button class="ghost">{{icon "logout"}} {{t "collab.leave"}}</button></form>{{end}}
+    {{else}}
+    {{if or $d.CanInvite $p.CanManage}}
+    <form method="post" action="/p/{{$p.Key}}/members">
+      <label>{{t "members.add_or_change"}}</label>
+      {{template "upick" (upick "user_id" "" $d.Users "required")}}
+      <div class="row" style="margin-top:6px">
+        <select name="role" style="flex:1"><option value="member">{{t "role.member"}}</option>{{if $p.CanManage}}<option value="manager">{{t "role.manager"}}</option>{{end}}<option value="viewer">{{t "role.viewer"}}</option></select>
+        <button>{{t "common.save"}}</button>
+      </div>
+    </form>
+    <p class="small muted">{{t "members.hint"}}</p>{{end}}
+    {{if $p.CanManage}}
+    <form method="post" action="/p/{{$p.Key}}/invite-perm">
+      <label>{{t "invites.perm"}}</label>
+      <div class="row"><select name="perm" style="flex:1">{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $d.InvitePerm}}selected{{end}}>{{t (print "invites.perm." .)}}</option>{{end}}</select>
+      <button>{{t "common.save"}}</button></div>
+    </form>
+    <form method="post" action="/p/{{$p.Key}}/settings">
+      <label>{{t "project.visibility"}}</label>
+      <div class="row"><select name="visibility" style="flex:1">
+        <option value="members" {{if eq $p.Visibility "members"}}selected{{end}}>{{t "project.visibility.members"}}</option>
+        <option value="participants" {{if eq $p.Visibility "participants"}}selected{{end}}>{{t "project.visibility.participants"}}</option>
+      </select><button>{{t "common.save"}}</button></div>
+    </form>
+    {{else}}
+    <p class="small muted">{{t "project.visibility"}}: {{t (print "project.visibility." $p.Visibility)}}</p>
+    {{end}}
+    {{end}}
+  </div>
+
+  {{if $d.Log}}<details class="card" id="log">
+    <summary><b>{{icon "history"}} {{t "collab.log"}}</b></summary>
+    <ul class="clog">{{range $d.Log}}
+      <li><span class="small muted">{{datetime .At}}</span><br>{{with .Actor}}<b>{{.}}</b>: {{end}}{{t (print "collab.log." .Action)}}{{with .Target}} <b>{{.}}</b>{{end}}{{if .TargetGuest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}
+        {{if or (eq .Action "member_added") (eq .Action "role_changed")}} — {{t (print "collab.role." .Detail)}}
+        {{else if eq .Action "joined"}} — {{t (print "collab.log.by." .Detail)}}
+        {{else if eq .Action "settings"}}{{range $i, $c := .Changes}}{{if $i}};{{else}}:{{end}} {{t (print "collab.log.set." $c)}}{{end}}
+        {{else if .Detail}} — {{.Detail}}{{end}}</li>{{end}}
+    </ul>
+  </details>{{end}}
+</div>
+</div>
+{{end}}

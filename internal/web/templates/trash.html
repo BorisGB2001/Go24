@@ -1,0 +1,36 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "trash.title"}}</h1></div>
+<p class="muted">{{t "trash.hint"}}</p>
+{{if $d.CanSet}}
+<form method="post" action="/tasks/trash/settings" class="card row trash-set">
+  <label>{{t "trash.days"}} <input type="number" name="days" min="0" max="3650" value="{{$d.Days}}" class="num"></label>
+  <button>{{t "common.save"}}</button>
+  <span class="muted">{{t "trash.days_hint"}}</span>
+</form>
+{{end}}
+{{if $d.Items}}
+<div class="card flush tlist-wrap">
+<table class="tlist trash">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "props.project"}}</th><th>{{t "props.creator"}}</th>
+    <th>{{t "trash.deleted_by"}}</th><th>{{t "trash.deleted_at"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Items}}
+  <tr>
+    <td><span class="muted">{{.Key}}</span> <b>{{.Title}}</b>{{if .Subtasks}} <span class="badge">{{icon "hierarchy-2"}} {{t "trash.subtasks" .Subtasks}}</span>{{end}}</td>
+    <td><a href="/p/{{.ProjectKey}}">{{.ProjectName}}</a></td>
+    <td>{{person .CreatorName}}</td>
+    <td>{{if .DeletedByName}}{{person .DeletedByName}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{datetime .DeletedAt}}{{with .PurgeAt}}<div class="muted small">{{t "trash.days_left" (day .)}}</div>{{end}}</td>
+    <td class="tpl-actions"><div class="acts">
+      <form method="post" action="/tasks/trash/{{.ID}}/restore"><button class="ghost">{{icon "history"}} {{t "trash.restore"}}</button></form>
+      <form method="post" action="/tasks/trash/{{.ID}}/purge" data-confirm="{{t "trash.purge_confirm"}}"><button class="ghost danger" title="{{t "trash.purge"}}">{{icon "trash"}}</button></form>
+    </div></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "trash"}} {{t "trash.empty"}}</div>
+{{end}}
+{{end}}

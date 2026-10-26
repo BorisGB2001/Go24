@@ -1,0 +1,15 @@
+# boris.gb 2026-10-13 10:17 - LiveKit (звонки go24, GO24DEV-68/69). Ключи — из переменной LIVEKIT_KEYS (deploy/.env),
+# адрес для медиа (node_ip) — из LIVEKIT_NODE_IP; сигналинг идёт через caddy (wss :7443), медиа — напрямую по UDP.
+port: 7880
+log_level: info
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+room:
+  empty_timeout: 300
+  max_participants: 50
+# boris.gb 2026-10-25 13:23 - redis: через него LiveKit отдаёт задания записи звонков контейнеру livekit-egress (GO24DEV-454)
+redis:
+  address: redis:6379

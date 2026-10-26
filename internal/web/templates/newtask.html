@@ -1,0 +1,12 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/my">{{t "title.my_tasks"}}</a> {{icon "chevron-right"}} {{t "task.new"}}</div>
+<h1>{{t "task.new"}}</h1>
+{{if not $d.Projects}}
+<div class="card empty">{{icon "folders"}} {{t "task.need_project"}} <a href="/projects">{{t "nav.all_projects"}}</a></div>
+{{else}}
+<div class="card newtask">
+  {{template "taskform" $d.Form}}
+</div>
+{{end}}
+{{end}}

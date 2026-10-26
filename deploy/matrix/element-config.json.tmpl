@@ -1,0 +1,15 @@
+{
+  "default_server_config": {
+    "m.homeserver": { "base_url": "${MATRIX_PUBLIC_URL}", "server_name": "${MATRIX_SERVER_NAME}" },
+    "io.element.e2ee": { "default": false }
+  },
+  "disable_custom_urls": true,
+  "disable_guests": true,
+  "disable_3pid_login": true,
+  "brand": "go24",
+  "default_country_code": "RU",
+  "default_theme": "dark",
+  "room_directory": { "servers": ["${MATRIX_SERVER_NAME}"] },
+  "setting_defaults": { "language": "ru", "UIFeature.registration": false, "UIFeature.passwordReset": false, "UIFeature.deactivate": false },
+  "show_labs_settings": false
+}

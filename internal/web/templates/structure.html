@@ -1,0 +1,55 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "title.structure"}}</h1>
+<div class="tabs">
+  <a href="/company">{{icon "users"}} {{t "nav.employees"}}</a>
+  <a href="/company/structure" class="on">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a>
+  <a href="/company/changes">{{icon "history"}} {{t "staff.title"}}</a>
+  <a href="/company/thanks">{{icon "star"}} {{t "gratitude.page"}}</a>
+</div>
+<div class="row structbar"><input type="search" class="structfind" placeholder="{{t "structure.find"}}" aria-label="{{t "structure.find"}}">
+  <span class="muted small structnone" hidden>{{t "structure.not_found"}}</span>
+  {{if $d.Admin}}<span class="muted small">{{t "structure.drag_hint"}}</span>{{end}}</div>
+<div class="orgtree"{{if $d.Admin}} data-struct-edit{{end}}>{{template "dept" (deptCtx $d.Root $d)}}</div>
+<script src="{{asset "js/structure.js"}}"></script>
+{{end}}
+
+{{define "dept"}}{{$n := .Node}}{{$d := .Data}}
+<div class="dept{{if eq $n.Depth 0}} root{{end}}" data-dept="{{$n.ID}}">
+  <div class="dcard card">
+    <div class="dhead">
+      <b class="dname"><a href="/company?dept={{$n.ID}}">{{$n.Name}}</a></b>
+      <span class="muted small" title="{{t "structure.total"}}">{{icon "users"}} {{$n.Total}}</span>
+      {{if $d.Admin}}
+      <details class="tsettings dmenu"><summary title="{{t "structure.edit"}}">{{icon "edit"}}</summary>
+        <div class="pop">
+          <form method="post" action="/company/departments"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{$n.ID}}">
+            <label>{{t "structure.name"}}</label><input type="text" name="name" value="{{$n.Name}}" required>
+            {{if $n.ParentID}}<label>{{t "structure.parent"}}</label>
+            <select name="parent">{{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $n.ParentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>{{end}}
+            <label>{{t "structure.head"}}</label>
+            {{template "upick" (upick "head" $n.HeadID $d.Users)}}
+            <label>{{t "structure.deputies"}}</label>
+            {{template "upick" (upick "deputies" (persons $n.Deputies) $d.Users "multi")}}
+            <p><button class="primary">{{t "common.save"}}</button></p></form>
+          <form method="post" action="/company/departments"><input type="hidden" name="op" value="add"><input type="hidden" name="parent" value="{{$n.ID}}">
+            <label>{{t "structure.add_sub"}}</label>
+            <div class="row"><input type="text" name="name" required placeholder="{{t "structure.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>
+          {{if $n.ParentID}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{$n.ID}}">
+            <button class="ghost">{{icon "trash"}} {{t "structure.delete"}}</button></form>{{end}}
+        </div>
+      </details>
+      {{end}}
+    </div>
+    <div class="dlead">{{if $n.HeadID}}<a href="/u/{{$n.HeadID}}" class="person" data-user="{{$n.HeadID}}">{{photo $n.HeadName $n.HeadPhotoURL false}}<span>{{$n.HeadName}}<span class="muted small"> · {{t "structure.head"}}</span></span></a>
+      {{else}}<span class="muted small">{{t "structure.no_head"}}</span>{{end}}
+      {{range $n.Deputies}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}<span class="muted small"> · {{t "structure.deputy"}}</span></span></a>{{end}}</div>
+    {{if $n.Employees}}
+    <details class="dpeople"><summary class="muted small">{{t "structure.employees" (len $n.Employees)}}</summary>
+      {{range $n.Employees}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{end}}
+    </details>
+    {{end}}
+  </div>
+  {{if $n.Children}}<div class="dkids">{{range $n.Children}}{{template "dept" (deptCtx . $d)}}{{end}}</div>{{end}}
+</div>
+{{end}}

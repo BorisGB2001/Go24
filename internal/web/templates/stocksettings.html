@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.Set}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1></div>
+<div class="tabs">{{template "stocktabs" $d}}</div>
+<form method="post" action="/store/settings" class="card stack">
+  <h3>{{t "stock.set_reserve"}}</h3>
+  <label class="small"><input type="checkbox" name="auto_reserve" value="1" {{if $s.AutoReserve}}checked{{end}}> {{t "stock.set_auto_reserve"}}</label>
+  <p class="small muted">{{t "stock.set_auto_reserve_hint"}}</p>
+  <label>{{t "stock.set_reserve_days"}}</label><input type="number" name="reserve_days" min="0" max="3650" value="{{$s.ReserveDays}}">
+  <p class="small muted">{{t "stock.set_reserve_days_hint"}}</p>
+  <h3>{{t "stock.set_shipping"}}</h3>
+  <label class="small"><input type="checkbox" name="ship_on_win" value="1" {{if $s.ShipOnWin}}checked{{end}}> {{t "stock.set_ship_on_win"}}</label>
+  <p class="small muted">{{t "stock.set_ship_on_win_hint"}}</p>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>
+{{end}}

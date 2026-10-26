@@ -1,0 +1,65 @@
+{{define "content"}}
+{{$d := .Data}}{{$v := $d.Doc}}{{$k := $v.Kind}}{{$w := $d.CanWrite}}
+{{$from := or (eq $k "moving") (eq $k "deduct") (eq $k "shipment")}}{{$to := and (ne $k "deduct") (ne $k "shipment")}}{{$price := ne $k "moving"}}
+<div class="crumbs"><a href="/store/docs">{{t "stock.docs"}}</a> · <a href="/store/docs?kind={{$k}}">{{t (print "stock.kinds." $k)}}</a></div>
+<div class="pagehead"><h1>{{t (print "stock.kind." $k)}}{{if $v.Number}} № {{$v.Number}}{{end}}</h1>{{if $v.ID}}{{template "stockstatus" $v.Status}}{{end}}</div>
+{{if eq $v.Status "conducted"}}<p class="muted small">{{icon "check"}} {{t "stock.conducted_by" $v.ConductedBy.Name}}{{with $v.ConductedAt}} · {{datetime (deref .)}}{{end}}</p>{{end}}
+<form method="post" action="/store/docs/{{$d.ID}}" data-stockdoc>
+<input type="hidden" name="kind" value="{{$k}}">
+<div class="card"><div class="stockhead">
+  {{if $w}}
+  <div><label>{{t "stock.doc_date"}}</label><input type="date" name="date" value="{{dinput (ptr $v.Date)}}"></div>
+  <div><label>{{t "stock.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$v.Title}}"></div>
+  {{if eq $k "arrival"}}<div><label>{{t "stock.supplier"}}</label><select name="supplier"><option value="">—</option>{{range $d.Suppliers}}<option value="{{.ID}}" {{if eq .ID $v.Supplier.ID}}selected{{end}}>{{.Title}}</option>{{end}}</select></div>
+  <div><label>{{t "stock.incoming_number"}}</label><input type="text" name="incoming_number" maxlength="100" value="{{$v.IncomingNumber}}"></div>
+  <div><label>{{t "stock.incoming_date"}}</label><input type="date" name="incoming_date" value="{{dinput $v.IncomingDate}}"></div>{{end}}
+  {{if $v.Deal.ID}}<div><label>{{t "stock.deal"}}</label><p><a href="/crm/deals/{{$v.Deal.ID}}">{{$v.Deal.Name}}</a></p></div>{{end}}
+  {{if eq $k "deduct"}}<div><label>{{t "stock.reason"}}</label><input type="text" name="reason" maxlength="500" value="{{$v.Reason}}"></div>{{end}}
+  {{if $price}}<div><label>{{t "crm.f.currency"}}</label>{{template "crmcurrency" (dict "List" $d.Currencies "Value" $v.Currency)}}</div>{{end}}
+  <div><label>{{t "crm.f.responsible"}}</label>{{template "upick" (upick "responsible" $v.Responsible.ID $d.Users "required")}}</div>
+  {{else}}<div class="props"><span class="k">{{t "stock.doc_date"}}</span><span>{{day $v.Date}}</span>
+    {{with $v.Title}}<span class="k">{{t "stock.doc_title"}}</span><span>{{.}}</span>{{end}}
+    {{if $v.Supplier.ID}}<span class="k">{{t "stock.supplier"}}</span><span><a href="/crm/companies/{{$v.Supplier.ID}}">{{$v.Supplier.Name}}</a></span>{{end}}
+    {{with $v.IncomingNumber}}<span class="k">{{t "stock.incoming_number"}}</span><span>{{.}}{{with $v.IncomingDate}} · {{day (deref .)}}{{end}}</span>{{end}}
+    {{if $v.Deal.ID}}<span class="k">{{t "stock.deal"}}</span><span><a href="/crm/deals/{{$v.Deal.ID}}">{{$v.Deal.Name}}</a></span>{{end}}
+    {{with $v.Reason}}<span class="k">{{t "stock.reason"}}</span><span>{{.}}</span>{{end}}
+    <span class="k">{{t "crm.f.responsible"}}</span><span>{{$v.Responsible.Name}}</span></div>{{end}}
+</div>
+{{if $w}}<label>{{t "crm.f.comment"}}</label><textarea name="comment" rows="2" maxlength="10000">{{$v.Comment}}</textarea>{{else}}{{with $v.Comment}}<p>{{nl2br .}}</p>{{end}}{{end}}
+</div>
+<div class="card" id="rows"><h2>{{icon "box"}} {{t "crm.products"}}</h2>
+<div class="tablewrap"><table class="tlist stockrows">
+  <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.quantity"}}</th>{{if $price}}<th>{{if eq $k "arrival"}}{{t "crm.product_purchase"}}{{else}}{{t "crm.product_price"}}{{end}}</th>{{end}}
+    {{if $from}}<th>{{t "stock.from"}}</th>{{end}}{{if $to}}<th>{{if eq $k "moving"}}{{t "stock.to"}}{{else}}{{t "stock.warehouse"}}{{end}}</th>{{end}}{{if $price}}<th>{{t "crm.row_sum"}}</th>{{end}}{{if $w}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $v.Rows}}{{if $w}}{{template "stockrow" (dict "R" . "D" $d "From" $from "To" $to "Price" $price)}}{{else}}
+    <tr><td>{{if .ProductID}}{{.Name}}{{else}}<s>{{.Name}}</s>{{end}}</td><td class="nowrap">{{fnum .Quantity}} {{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</td>
+      {{if $price}}<td class="nowrap">{{money .Price}}</td>{{end}}{{if $from}}<td>{{.FromName}}</td>{{end}}{{if $to}}<td>{{.ToName}}</td>{{end}}{{if $price}}<td class="nowrap"><b>{{money .Sum}}</b></td>{{end}}</tr>{{end}}{{end}}
+    {{if $w}}{{template "stockrow" (dict "R" nil "D" $d "From" $from "To" $to "Price" $price)}}{{end}}</tbody>
+</table></div>
+{{if and $price $v.Rows}}<p class="right">{{t "crm.rows_total"}}: <b>{{money $v.Amount}} {{$v.Currency}}</b></p>{{end}}
+{{if $w}}<p class="row"><button type="button" class="ghost" data-addrow>{{icon "plus"}} {{t "crm.row_add"}}</button><input type="search" class="barcodescan" data-barcode placeholder="{{t "crm.barcode_scan"}}" title="{{t "crm.barcode_scan_hint"}}" data-unknown="{{t "crm.barcode_unknown"}}" autocomplete="off"><span class="spacer"></span>
+  <button {{if $d.CanConduct}}{{else}}class="primary" {{end}}name="op" value="save">{{t "common.save"}}</button>{{if $d.CanConduct}}<button class="primary" name="op" value="save_conduct">{{icon "check"}} {{t "stock.save_conduct"}}</button>{{end}}</p>{{end}}
+</div>
+</form>
+{{if and $v.ID (or $d.CanCancel $d.CanDelete (and $d.CanConduct (not $w)))}}<div class="row">
+  {{if $d.CanCancel}}<form method="post" action="/store/docs/{{$v.ID}}" data-confirm="{{t "stock.cancel_confirm"}}"><input type="hidden" name="op" value="cancel"><button>{{icon "arrow-back-up"}} {{t "stock.cancel"}}</button></form>{{end}}
+  {{if and $d.CanConduct (not $w)}}<form method="post" action="/store/docs/{{$v.ID}}"><input type="hidden" name="op" value="conduct"><button class="primary">{{icon "check"}} {{t "stock.conduct"}}</button></form>{{end}}
+  {{if $d.CanDelete}}<form method="post" action="/store/docs/{{$v.ID}}" data-confirm="{{t "stock.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form>{{end}}
+</div>{{end}}
+<script src="{{asset "js/stock.js"}}"></script>
+{{end}}
+
+{{/* a row of a document, editable; with no row — the empty one for adding */}}
+{{define "stockrow"}}{{$r := .R}}{{$d := .D}}
+<tr data-row>
+  <td><select name="product" data-pick><option value="">{{t "crm.row_pick"}}</option>{{$g := ""}}{{range $d.Catalog}}{{if ne .SectionPath $g}}{{if $g}}</optgroup>{{end}}<optgroup label="{{.SectionPath}}">{{$g = .SectionPath}}{{end}}<option value="{{.ID}}" data-price="{{fpts .PurchasePrice}}" data-unit="{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}" data-barcodes="{{join .Barcodes " "}}" {{if $r}}{{if eq .ID $r.ProductID}}selected{{end}}{{end}}>{{.Name}}{{with .SKU}} · {{.}}{{end}}</option>{{end}}{{if $g}}</optgroup>{{end}}</select></td>
+  <td class="nowrap"><input type="text" name="quantity" inputmode="decimal" size="5" value="{{with $r}}{{fnum .Quantity}}{{else}}1{{end}}"> <span class="small muted" data-unit>{{with $r}}{{if .Unit}}{{.Unit}}{{end}}{{end}}</span></td>
+  {{if .Price}}<td><input type="text" name="price" inputmode="decimal" size="8" value="{{with $r}}{{fnum .Price}}{{end}}"></td>{{end}}
+  {{if .From}}<td>{{template "stockwh" (dict "Name" "from" "List" $d.Warehouses "Value" (or (and $r $r.From) ""))}}</td>{{end}}
+  {{if .To}}<td>{{template "stockwh" (dict "Name" "to" "List" $d.Warehouses "Value" (or (and $r $r.To) ""))}}</td>{{end}}
+  {{if .Price}}<td class="nowrap" data-sum>{{with $r}}<b>{{money .Sum}}</b>{{end}}</td>{{end}}
+  <td><button type="button" class="ghost" data-delrow title="{{t "crm.delete"}}">{{icon "x"}}</button></td>
+</tr>{{end}}
+
+{{/* a warehouse to choose: the active ones, the default one when none is chosen */}}
+{{define "stockwh"}}{{$v := .Value}}<select name="{{.Name}}">{{range .List}}{{if or .Active (eq .ID $v)}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{else if and (not $v) .Default}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>{{end}}

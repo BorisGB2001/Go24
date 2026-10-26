@@ -1,0 +1,135 @@
+/* «BI-аналитика»: the dashboards' grid, the widgets' charts (SVG drawn by the server) and the widget editor */
+:root {
+  --bi-c0: #2e7cf6; --bi-c1: #22a663; --bi-c2: #f0932b; --bi-c3: #8b5cf6; --bi-c4: #e5484d;
+  --bi-c5: #14b8c4; --bi-c6: #d9a700; --bi-c7: #ec4899; --bi-c8: #64748b; --bi-c9: #84cc16;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bi-c0: #5b9bff; --bi-c1: #3cc483; --bi-c2: #f5a855; --bi-c3: #a78bfa; --bi-c4: #f87171;
+    --bi-c5: #38d0dc; --bi-c6: #f0c330; --bi-c7: #f472b6; --bi-c8: #94a3b8; --bi-c9: #a3e635; }
+}
+.bi-c0 { --c: var(--bi-c0); } .bi-c1 { --c: var(--bi-c1); } .bi-c2 { --c: var(--bi-c2); } .bi-c3 { --c: var(--bi-c3); }
+.bi-c4 { --c: var(--bi-c4); } .bi-c5 { --c: var(--bi-c5); } .bi-c6 { --c: var(--bi-c6); } .bi-c7 { --c: var(--bi-c7); }
+.bi-c8 { --c: var(--bi-c8); } .bi-c9 { --c: var(--bi-c9); }
+
+.bi-menu { position: relative; }
+.bi-menu > summary { list-style: none; cursor: pointer; }
+.bi-menu > summary::-webkit-details-marker { display: none; }
+.bi-menu .pop { top: calc(100% + 4px); }
+.bi-menu .pop .button, .bi-menu .pop button { justify-content: flex-start; width: 100%; }
+.bi-head { align-items: flex-start; justify-content: space-between; flex-wrap: nowrap; }
+.bi-head h1 { margin: 4px 0 0; }
+.bi-empty { text-align: center; color: var(--muted); padding: 32px 16px; }
+.bi-empty > .i { width: 40px; height: 40px; }
+.bi-empty .row { justify-content: center; }
+.bi-list .i { color: var(--accent); }
+.bi-sect { font-size: 1rem; margin: 20px 0 8px; }
+.bi-ready { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.bi-tile { display: flex; flex-direction: column; gap: 4px; color: inherit; text-decoration: none; }
+.bi-tile:hover { border-color: var(--accent); }
+.bi-tile > .i { width: 28px; height: 28px; color: var(--accent); margin-bottom: 4px; }
+.bi-settings { max-width: 720px; }
+.bi-period .i { color: var(--muted); }
+
+.bi-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); align-items: stretch; }
+.bi-grid .bi-w { margin: 0; }
+.bi-w3 { grid-column: span 3; } .bi-w4 { grid-column: span 4; } .bi-w6 { grid-column: span 6; }
+.bi-w8 { grid-column: span 8; } .bi-w12 { grid-column: span 12; }
+@media (max-width: 1100px) { .bi-w3 { grid-column: span 6; } .bi-w4, .bi-w8 { grid-column: span 6; } }
+@media (max-width: 760px) { .bi-grid .bi-w { grid-column: span 12; } }
+.bi-w { display: flex; flex-direction: column; min-width: 0; }
+.bi-wh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.bi-wh h3 { flex: 1; margin: 0; font-size: var(--font-size-h2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bi-tools { display: flex; align-items: center; gap: 2px; }
+.bi-tools form { margin: 0; }
+.bi-tools .button, .bi-tools button { padding: 4px 6px; }
+.bi-tools select { width: auto; padding: 2px 4px; font-size: var(--font-size-sm); }
+.bi-grid.editing .bi-w { outline: 1px dashed var(--line); outline-offset: 2px; cursor: grab; }
+.bi-grid .bi-w.dragging { opacity: .45; }
+.bi-grid .bi-w.drop { outline: 2px solid var(--accent); }
+
+.bi-err { color: var(--danger); }
+.bi-kpi { display: flex; flex-direction: column; justify-content: center; flex: 1; min-height: 90px; }
+.bi-kpi > b { font-size: 34px; line-height: 1.1; font-weight: 700; color: var(--accent); }
+.bi-kpi > span { color: var(--muted); }
+.bi-kpi2 { margin-top: 6px; }
+.bi-kpi2 b { font-size: 18px; }
+.bi-kpi2 span { color: var(--muted); font-size: var(--font-size-sm); }
+
+.bi-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.bi-svg text { font-size: 11px; fill: var(--muted); }
+.bi-svg .bi-gl { stroke: var(--line); stroke-width: 1; }
+.bi-svg .bi-axis { stroke: var(--muted); stroke-width: 1; }
+.bi-svg rect { fill: var(--c); }
+.bi-svg rect:hover, .bi-pie path:hover { opacity: .8; }
+.bi-svg polyline { fill: none; stroke: var(--c); stroke-width: 2.5; stroke-linejoin: round; }
+.bi-svg circle { fill: var(--card); stroke: var(--c); stroke-width: 2; }
+.bi-svg circle:hover { fill: var(--c); }
+.bi-legend { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); }
+.bi-legend.row { flex-direction: row; flex-wrap: wrap; gap: 4px 12px; }
+.bi-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bi-legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+.bi-legend-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bi-pie { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.bi-pie svg { width: 180px; height: 180px; flex: none; }
+.bi-pie path { fill: var(--c); stroke: var(--card); stroke-width: 1.5; }
+.bi-pie .bi-legend { flex: 1; min-width: 160px; }
+.bi-pie-total { font-size: 22px; font-weight: 700; fill: var(--text); }
+.bi-pie-cap { font-size: 11px; fill: var(--muted); }
+.bi-table { overflow: auto; max-height: 420px; }
+.bi-table table { width: 100%; }
+.bi-table th, .bi-table td { padding: 6px 8px; }
+.bi-table td:nth-child(3) { min-width: 0; width: auto; }
+.bi-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bi-table tfoot td { font-weight: 600; border-top: 1px solid var(--line); }
+
+.bi-editor { display: grid; grid-template-columns: minmax(320px, 440px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+@media (max-width: 900px) { .bi-editor { grid-template-columns: 1fr; } }
+.bi-preview { position: sticky; top: 12px; }
+.bi-form fieldset { border: 0; border-top: 1px solid var(--line); margin: 12px 0 0; padding: 10px 0 0; }
+.bi-form legend { font-weight: 600; padding: 0 6px 0 0; }
+.bi-form .row > label { margin: 10px 0 0; }
+.bi-form label > select, .bi-form label > input:not([type=checkbox]) { display: block; width: 100%; margin-top: 4px; font-size: var(--font-size); color: var(--text); }
+.bi-form .grow { flex: 1; min-width: 0; }
+.bi-form .row > select:not(.grow), .bi-form .row > input:not(.grow) { width: auto; }
+.bi-mrow, .bi-frow { margin-bottom: 6px; flex-wrap: nowrap; }
+.bi-kinds { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 10px; }
+.bi-kindopt { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  cursor: pointer; font-size: var(--font-size-sm); color: var(--muted); margin: 0; }
+.bi-kindopt input { position: absolute; opacity: 0; pointer-events: none; }
+.bi-kindopt .i { width: 22px; height: 22px; }
+.bi-kindopt.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.bi-actions { margin-top: 14px; }
+.bi-grid.editing .bi-wh { flex-wrap: wrap; }
+.bi-grid.editing .bi-wh h3 { flex-basis: 100%; }
+
+/* keys for external BI */
+.bi-token { border-color: var(--warn); }
+.bi-token code { word-break: break-all; }
+.bi-sets { flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 8px; }
+.bi-help ul { margin: 0 0 12px; padding-left: 18px; }
+.bi-help td:first-child { white-space: normal; word-break: break-word; }
+
+/* «Экспорт в CSV» of a widget shows on hover; «Печать» leaves the dashboard alone, the widgets whole on their pages */
+.bi-wh .bi-csv { padding: 4px 6px; opacity: 0; transition: opacity .15s; }
+.bi-w:hover .bi-csv, .bi-csv:focus-visible { opacity: 1; }
+@media (hover: none) { .bi-wh .bi-csv { opacity: 1; } }
+.bi-pins { margin: 0; flex-wrap: wrap; }
+@media print {
+  .side, .top, .bi-head .row, .bi-head .bi-menu, .bi-tools, .bi-csv, .bi-settings, .flash, .admin-banner, .tabs { display: none !important; }
+  .bi-head .bi-pins { display: flex !important; }
+  .bi-head .bi-pins a:not(.on) { display: none; }
+  .app { display: block; }
+  body { background: #fff; }
+  .main, .content { margin: 0 !important; padding: 0 !important; max-width: none !important; }
+  .bi-period select { border: 0; appearance: none; padding: 0; }
+  .bi-grid { gap: 10px; }
+  .bi-w { break-inside: avoid; box-shadow: none; }
+  .bi-grid .bi-w3 { grid-column: span 3; } .bi-grid .bi-w4 { grid-column: span 4; } .bi-grid .bi-w6 { grid-column: span 6; }
+  .bi-grid .bi-w8 { grid-column: span 8; } .bi-grid .bi-w12 { grid-column: span 12; }
+}
+
+/* «Свои наборы данных»: the columns and the first rows of a file */
+.bi-cols input, .bi-cols select { width: 100%; }
+.bi-unread { color: var(--warn, #b7791f); white-space: nowrap; }
+.bi-scroll { overflow-x: auto; }
+.bi-scroll td { white-space: nowrap; }

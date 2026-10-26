@@ -1,0 +1,57 @@
+{{define "taskstage"}}{{if .Title}}{{.Title}}{{else}}{{t (print "stage." .Code)}}{{end}}{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}
+<div class="crumbs"><a href="/projects">{{t "nav.projects"}}</a> {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a> {{icon "chevron-right"}} <a href="/p/{{$p.Key}}/board">{{t "tabs.kanban"}}</a></div>
+<h1>{{t "taskrobot.title"}} · {{$p.Name}}</h1>
+<div class="sub">{{t "taskrobot.subtitle"}} {{t "tasktrigger.subtitle"}}</div>
+<div class="board robotsboard">
+  {{range $st := $d.Stages}}
+  <div class="col">
+    <div class="colhead" style="border-top:3px solid #{{$st.Color}}"><b>{{template "taskstage" $st}}</b></div>
+    <div class="triggers">
+      {{range index $d.Triggers $st.ID}}<form method="post" action="/p/{{$p.Key}}/robots" class="trigger"><input type="hidden" name="op" value="trigger_delete"><input type="hidden" name="id" value="{{.ID}}">⚡ {{t (print "tasktrigger.kind." .Kind)}}{{if .Status}}: {{t (print "status." .Status)}}{{end}} <button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}
+      <details class="tsettings"><summary class="button ghost small">{{icon "plus"}} {{t "triggers.add"}}</summary>
+        <div class="pop"><form method="post" action="/p/{{$p.Key}}/robots" data-robot>
+          <input type="hidden" name="op" value="trigger"><input type="hidden" name="stage" value="{{$st.ID}}">
+          <select name="kind">{{range $d.TriggerKinds}}<option value="{{.}}">{{t (print "tasktrigger.kind." .)}}</option>{{end}}</select>
+          <div data-for="status"><label>{{t "tasktrigger.status"}}</label><select name="status">{{range $d.TriggerStatuses}}<option value="{{.}}">{{t (print "status." .)}}</option>{{end}}</select></div>
+          <p class="small muted">{{t "tasktrigger.hint"}}</p>
+          <button class="primary">{{t "common.save"}}</button></form></div></details>
+    </div>
+    {{range $rb := index $d.Robots $st.ID}}<div class="kcard{{if not .Active}} muted{{end}}">
+      <b>{{t (print "taskrobot.icon." .Kind)}} {{t (print "taskrobot.kind." .Kind)}}</b>
+      {{with .Params}}
+      {{if .Text}}<div class="small">{{.Text}}</div>{{end}}
+      <div class="small muted">
+        {{- if eq $rb.Kind "stage"}}→ {{range $d.Stages}}{{if eq .ID $rb.Params.Stage}}{{template "taskstage" .}}{{end}}{{end}}
+        {{- else if eq $rb.Kind "status"}}→ {{t (print "action." .Status)}}
+        {{- else if eq $rb.Kind "deadline"}}{{t "robots.in_days" .Days}}
+        {{- else if or (eq $rb.Kind "notify") (eq $rb.Kind "task") (eq $rb.Kind "responsible") (eq $rb.Kind "accomplice") (eq $rb.Kind "auditor")}}{{if eq $rb.Kind "notify"}}{{t "robots.to"}}{{else}}→{{end}} {{if or (eq .To "responsible") (eq .To "creator")}}{{t (print "taskrobot.to." .To)}}{{else}}{{range $d.Users}}{{if eq .ID $rb.Params.To}}{{.Name}}{{end}}{{end}}{{end}}{{if and (eq $rb.Kind "task") .Days}} · {{t "robots.in_days" .Days}}{{end}}{{if .Sub}} · {{t "taskrobot.sub"}}{{end}}
+        {{- end}}</div>
+      {{if .Delay}}<div class="small muted">⏱ {{t (print "robots.wait." .Unit) .Delay}}</div>{{end}}
+      {{end}}
+      <div class="row">
+        <form method="post" action="/p/{{$p.Key}}/robots"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="op" value="{{if .Active}}off{{else}}on{{end}}"><button class="ghost small">{{if .Active}}{{t "taskrobot.off"}}{{else}}{{t "taskrobot.on"}}{{end}}</button></form>
+        <form method="post" action="/p/{{$p.Key}}/robots" data-confirm="{{t "robots.delete_confirm"}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="op" value="delete"><button class="ghost small" title="{{t "common.remove"}}">{{icon "trash"}}</button></form>
+      </div>
+    </div>{{end}}
+    <details class="tsettings"><summary class="button ghost small">{{icon "plus"}} {{t "robots.add"}}</summary>
+      <div class="pop"><form method="post" action="/p/{{$p.Key}}/robots" data-robot>
+        <input type="hidden" name="op" value="add"><input type="hidden" name="stage" value="{{$st.ID}}">
+        <select name="kind">{{range $d.Kinds}}<option value="{{.}}">{{t (print "taskrobot.kind." .)}}</option>{{end}}</select>
+        <div data-for="notify comment checklist task"><input type="text" name="text" required maxlength="500" placeholder="{{t "taskrobot.text"}}"></div>
+        <div data-for="task"><textarea name="details" rows="3" placeholder="{{t "taskrobot.details"}}"></textarea></div>
+        <div data-for="notify task"><label>{{t "robots.to"}}</label>{{template "upick" (upick "to" "responsible" $d.Users "required" "+responsible" (t "taskrobot.to.responsible") "+creator" (t "taskrobot.to.creator"))}}</div>
+        <div data-for="responsible accomplice auditor"><label>{{t "taskrobot.person"}}</label>{{template "upick" (upick "person" "" $d.Users "required" "+creator" (t "taskrobot.to.creator"))}}</div>
+        <div data-for="status"><label>{{t "taskrobot.status"}}</label><select name="status">{{range $d.Statuses}}<option value="{{.}}">{{t (print "action." .)}}</option>{{end}}</select></div>
+        <div data-for="stage"><label>{{t "robots.to_stage"}}</label><select name="to_stage">{{range $d.Stages}}{{if ne .ID $st.ID}}<option value="{{.ID}}">{{template "taskstage" .}}</option>{{end}}{{end}}</select></div>
+        <div data-for="deadline task"><label>{{t "taskrobot.days"}}</label><input type="number" name="days" min="0" max="365" value="1"></div>
+        <div data-for="task"><label class="check"><input type="checkbox" name="sub" value="1" checked> {{t "taskrobot.sub"}}</label></div>
+        <label>{{t "robots.delay"}}</label>
+        <div class="row"><input type="number" name="delay" min="0" max="1000" value="0" style="width:6em"><select name="unit">{{range (list "min" "hour" "day")}}<option value="{{.}}">{{t (print "robots.unit." .)}}</option>{{end}}</select></div>
+        <button class="primary">{{t "common.save"}}</button></form></div></details>
+  </div>{{end}}
+</div>
+<script src="{{asset "js/robots.js"}}"></script>
+{{end}}

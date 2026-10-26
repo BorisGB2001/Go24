@@ -1,0 +1,21 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{if $d.AsName}}{{t $d.TitleKey $d.AsName}}{{else}}{{t "title.my_tasks"}}{{end}}</h1><a href="/tasks/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<div class="sub">{{t "my.subtitle"}}</div>
+{{if $d.View}}
+<div class="flash">{{icon "alert-triangle"}} {{t (print "my.view." $d.View)}}{{with $d.Project}} · <a href="/p/{{.Key}}">{{.Name}}</a>{{end}} — {{len $d.Tasks}} · <a href="/my">{{t "my.view_reset"}}</a></div>
+{{end}}
+<div class="tabs">
+  {{range $d.Tabs}}
+  <a href="/my?role={{.Role}}{{if $d.ShowAll}}&all=1{{end}}{{if $d.AsName}}&as={{$d.As}}{{end}}" {{if and (eq .Role $d.Role) (not $d.View)}}class="on"{{end}}>{{t (print "role." .Role)}} <span class="cnt">{{.Count}}</span></a>
+  {{end}}
+  <span class="spacer"></span>
+  {{if $d.ShowAll}}<a href="/my?role={{$d.Role}}{{if $d.AsName}}&as={{$d.As}}{{end}}">{{icon "circle-dashed"}} {{t "my.only_open"}}</a>{{else}}<a href="/my?role={{$d.Role}}&all=1{{if $d.AsName}}&as={{$d.As}}{{end}}">{{icon "history"}} {{t "my.with_completed"}}</a>{{end}}
+</div>
+{{if and (eq $d.Role "subordinates") (not $d.View) (not $d.AsName)}}
+<div class="sub">{{t "my.subordinates_hint"}}</div>
+<div class="subpeople">{{range $d.Subordinates}}<a class="person" href="/my?as={{.ID}}" data-user="{{.ID}}">{{icon "user"}}<span>{{.Name}}</span></a>{{end}}</div>
+{{end}}
+<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+{{if $d.Tasks}}{{template "bulkbar" $d.Bulk}}{{end}}
+{{end}}

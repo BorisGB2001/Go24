@@ -1,0 +1,50 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "title.api_keys"}}</h1>
+<div class="sub">{{t "keys.subtitle"}} <code>{{t "keys.header_value"}}</code></div>
+
+{{if $d.NewToken}}
+<div class="card" style="border-color:var(--warn)">
+  <h2>{{icon "alert-triangle"}} {{t "keys.created_title"}}</h2>
+  <p class="muted">{{t "keys.created_hint"}}</p>
+  <input type="text" readonly value="{{$d.NewToken}}" onclick="this.select()" style="font-family:var(--font-mono)">
+  <p class="small muted">{{t "keys.check"}} <code>curl -H "{{t "keys.header_value"}}" {{$d.BaseURL}}/api/v1/me</code></p>
+  {{if .User.Admin}}<p class="small muted">{{t "keys.admin_mode"}} <code>X-Go24-Admin: 1</code></p>{{end}}
+</div>
+{{end}}
+
+<div class="card flush">
+  {{if $d.Keys}}
+  <table data-cols="apikeys">
+    <thead><tr><th>{{t "col.name"}}</th><th>{{t "col.id"}}</th><th>{{t "col.scopes"}}</th><th>{{t "col.created"}}</th><th>{{t "col.used"}}</th><th>{{t "col.valid_until"}}</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Keys}}
+    <tr {{if not .Active}}class="muted"{{end}}>
+      <td>{{icon "key"}} {{.Name}}</td>
+      <td><code>{{.KeyID}}</code></td>
+      <td class="small">{{range .Scopes}}{{t (print "scope." .)}}<br>{{end}}</td>
+      <td class="small">{{datetime .CreatedAt}}</td>
+      <td class="small">{{with date .LastUsedAt}}{{.}}{{else}}—{{end}}<div class="muted">{{.LastUsedIP}}</div></td>
+      <td class="small">{{if .RevokedAt}}{{t "keys.revoked"}}{{else}}{{with date .ExpiresAt}}{{.}}{{else}}{{t "keys.forever"}}{{end}}{{end}}</td>
+      <td>{{if .Active}}<form method="post" action="/settings/keys/{{.ID}}/revoke"><button class="ghost" title="{{t "keys.revoke"}}">{{icon "trash"}}</button></form>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{t "keys.empty"}}</div>{{end}}
+</div>
+
+<div class="card">
+  <h2>{{icon "plus"}} {{t "keys.new"}}</h2>
+  <form method="post" action="/settings/keys">
+    <div class="grid">
+      <div><label>{{t "keys.name_label"}}</label><input type="text" name="name" placeholder="{{t "keys.name_placeholder"}}" required></div>
+      <div><label>{{t "keys.ttl"}}</label>
+        <select name="days"><option value="30">{{t "keys.ttl_30"}}</option><option value="90" selected>{{t "keys.ttl_90"}}</option><option value="365">{{t "keys.ttl_365"}}</option><option value="0">{{t "keys.ttl_0"}}</option></select></div>
+    </div>
+    <label>{{t "keys.scopes"}}</label>
+    <div class="row">{{range $d.Scopes}}<label class="check" style="margin-right:14px"><input type="checkbox" name="scopes" value="{{.}}" checked> {{t (print "scope." .)}}</label>{{end}}</div>
+    <p><button class="primary">{{icon "key"}} {{t "keys.create"}}</button></p>
+  </form>
+</div>
+{{end}}

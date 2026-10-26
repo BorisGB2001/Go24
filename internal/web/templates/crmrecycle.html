@@ -1,0 +1,27 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  {{if $d.Items}}<form method="post" action="/crm/recycle" data-confirm="{{t "crm.recycle_empty_confirm"}}"><input type="hidden" name="op" value="empty">
+    <button class="ghost">{{icon "trash"}} {{t "crm.recycle_empty"}}</button></form>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.recycle_about" $d.Days}}</p>
+<form method="get" action="/crm/recycle" class="row crmtools">
+  <select name="entity" onchange="this.form.submit()"><option value="">{{t "crm.recycle_all"}}</option>
+    {{range list "deal" "lead" "contact" "company"}}<option value="{{.}}" {{if eq . $d.Entity}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}</select>
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "crm.search"}}">
+</form>
+{{if $d.Items}}<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "crm.f.title"}}</th><th>{{t "crm.recycle_kind"}}</th><th>{{t "crm.recycle_by"}}</th><th>{{t "crm.recycle_at"}}</th><th>{{t "crm.recycle_purge"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Items}}<tr>
+    <td><b>{{if .Title}}{{.Title}}{{else}}<span class="muted">—</span>{{end}}</b></td>
+    <td>{{if .TypeName}}{{.TypeName}}{{else}}{{t (print "crm." .Entity)}}{{end}}</td>
+    <td>{{.DeletedBy.Name}}</td>
+    <td class="small muted nowrap">{{datetime .DeletedAt}}</td>
+    <td class="small muted nowrap">{{datetime .PurgeAt}}</td>
+    <td class="nowrap"><form method="post" action="/crm/recycle/{{.ID}}"><input type="hidden" name="op" value="restore">
+        <button class="ghost" title="{{t "crm.recycle_restore"}}">{{icon "arrow-back-up"}} {{t "crm.recycle_restore"}}</button></form>
+      <form method="post" action="/crm/recycle/{{.ID}}" data-confirm="{{t "crm.recycle_delete_confirm"}}"><input type="hidden" name="op" value="delete">
+        <button class="ghost" title="{{t "crm.recycle_delete"}}">{{icon "trash"}}</button></form></td>
+  </tr>{{end}}</tbody></table></div>
+{{else}}<div class="card empty muted">{{t "crm.recycle_none"}}</div>{{end}}
+{{end}}

@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "database"}} {{t "disk.limits"}}</h1>
+<form method="post" action="/settings/disk" class="card stack">
+  <h2>{{t "disk.space_section"}}</h2>
+  <p class="muted small">{{t "disk.limits_hint"}}</p>
+  <div class="row disklimits">
+    <label>{{t "disk.limit_user"}} <input type="text" inputmode="decimal" name="user" value="{{$d.User}}" placeholder="{{t "disk.no_limit"}}"> {{t "disk.gb"}}</label>
+    <label>{{t "disk.limit_company"}} <input type="text" inputmode="decimal" name="company" value="{{$d.Company}}" placeholder="{{t "disk.no_limit"}}"> {{t "disk.gb"}}</label>
+    <label>{{t "disk.limit_project"}} <input type="text" inputmode="decimal" name="project" value="{{$d.Project}}" placeholder="{{t "disk.no_limit"}}"> {{t "disk.gb"}}</label>
+  </div>
+  <label>{{t "disk.keep_versions"}} <input type="text" inputmode="numeric" name="versions" value="{{$d.Versions}}" placeholder="{{t "disk.keep_all"}}" size="6"></label>
+  <p class="muted small">{{t "disk.keep_versions_hint"}}</p>
+  <h2>{{t "disk.features"}}</h2>
+  <input type="hidden" name="features" value="1">
+  <label><input type="checkbox" name="links" value="1" {{if not $d.Limits.NoLinks}}checked{{end}}> {{t "disk.allow_links"}}</label>
+  <p class="muted small">{{t "disk.allow_links_hint"}}</p>
+  <label><input type="checkbox" name="locks" value="1" {{if not $d.Limits.NoLocks}}checked{{end}}> {{t "disk.allow_locks"}}</label>
+  <p class="muted small">{{t "disk.allow_locks_hint"}}</p>
+  <label><input type="checkbox" name="content" value="1" {{if not $d.Limits.NoContent}}checked{{end}}> {{t "disk.allow_content"}}</label>
+  <p class="muted small">{{t "disk.allow_content_hint"}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+<div class="card flush">
+  <table class="list">
+    <thead><tr><th>{{t "disk.drive"}}</th><th>{{t "disk.used_col"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Rows}}{{$u := .D}}<tr>
+      <td>{{if eq $u.Kind "user"}}{{icon "user"}} <a href="/disk/u/{{$u.OwnerID}}">{{t "disk.my"}} · {{$u.Name}}</a>{{else if eq $u.Kind "company"}}{{icon "home"}} {{t "disk.company"}}{{else}}{{icon "folders"}} <a href="/disk/p/{{$u.ProjectKey}}">{{$u.Name}}</a>{{end}}</td>
+      <td class="small">{{size $u.Used}}{{if .Usage.Limit}} / {{size .Usage.Limit}}{{end}}</td>
+      <td>{{if .Usage.Limit}}<span class="progress{{if ge .Usage.Percent 90}} over{{end}}" title="{{.Usage.Percent}}%"><span style="width:{{.Usage.Percent}}%"></span></span>{{end}}</td></tr>
+    {{else}}<tr><td colspan="3" class="empty">{{t "disk.empty"}}</td></tr>{{end}}</tbody>
+    <tfoot><tr><th>{{t "disk.limits_total"}}</th><th class="small">{{size $d.Total}}</th><th></th></tr></tfoot>
+  </table>
+</div>
+{{end}}

@@ -1,0 +1,72 @@
+# boris.gb 2026-10-12 07:16 - Synapse для мессенджера go24 (свой сервер Matrix; Telegram — резерв). Шаблон: make matrix-config
+# подставляет значения из deploy/.env и пишет deploy/matrix/homeserver.yaml (в git не попадает — там секреты).
+# Закрытый корпоративный сервер: федерации нет, регистрации нет, вход только через Authentik (SSO).
+# ВНИМАНИЕ: server_name задаётся один раз и потом не меняется (он входит в ID всех пользователей и комнат).
+server_name: "${MATRIX_SERVER_NAME}"
+public_baseurl: "${MATRIX_PUBLIC_URL}/"
+pid_file: /data/homeserver.pid
+report_stats: false
+
+listeners:
+  # только клиентский API; федеративного слушателя нет
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: true
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: "${SYNAPSE_DB_PASSWORD}"
+    database: synapse
+    host: postgres
+    cp_min: 2
+    cp_max: 10
+
+media_store_path: /data/media_store
+signing_key_path: /data/signing.key
+max_upload_size: 100M
+
+# закрытый сервер
+federation_domain_whitelist: []
+trusted_key_servers: []
+suppress_key_server_warning: true
+allow_public_rooms_over_federation: false
+allow_public_rooms_without_auth: false
+enable_registration: false
+registration_shared_secret: "${SYNAPSE_REGISTRATION_SECRET}"
+macaroon_secret_key: "${SYNAPSE_MACAROON_SECRET}"
+form_secret: "${SYNAPSE_FORM_SECRET}"
+# поиск людей — по всем сотрудникам (как в мессенджере корпоративного портала)
+# boris.gb 2026-10-19 21:15 - ищутся только люди из общих комнат (GO24DEV-179): сотрудники все в пространстве компании и
+# находят друг друга, а гость коллаба (в пространство не входит) — только участников своих коллабов
+user_directory:
+  enabled: true
+  search_all_users: false
+
+# вход только через Authentik; пароли Matrix не используются
+password_config:
+  enabled: false
+oidc_providers:
+  - idp_id: authentik
+    idp_name: "go24"
+    discover: true
+    issuer: "${GO24_OIDC_ISSUER_BASE}/application/o/matrix/"
+    client_id: "${MATRIX_OIDC_CLIENT_ID}"
+    client_secret: "${MATRIX_OIDC_CLIENT_SECRET}"
+    scopes: ["openid", "profile", "email"]
+    # boris.gb 2026-10-12 07:16 - dev без TLS: Authentik по http; в продакшене (https) убрать
+    skip_verification: ${MATRIX_OIDC_SKIP_VERIFICATION}
+    allow_existing_users: true
+    user_mapping_provider:
+      config:
+        localpart_template: "{{ user.preferred_username }}"
+        display_name_template: "{{ user.name }}"
+        email_template: "{{ user.email }}"
+sso:
+  client_whitelist:
+    - "${MATRIX_ELEMENT_URL}/"

@@ -1,0 +1,56 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}
+<div class="crumbs"><a href="/projects">{{t "nav.projects"}}</a> {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a></div>
+<h1>{{$p.Name}}</h1>
+<div class="tabs">{{template "pviews" (dict "P" $p "On" "sprints")}}</div>
+{{with $d.Velocity}}{{$v := .}}
+<div class="card">
+  <h2>{{icon "chart-bar"}} {{t "sprint.velocity"}}</h2>
+  <div class="muted small">{{t "sprint.velocity_avg" (fnum .Average)}}</div>
+  <div class="burn velocity"><svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-label="{{t "sprint.velocity"}}">
+    <line class="axis" x1="36" y1="10" x2="36" y2="{{add .H -24}}"/><line class="axis" x1="36" y1="{{add .H -24}}" x2="{{add .W -10}}" y2="{{add .H -24}}"/>
+    <text class="lbl" x="30" y="16" text-anchor="end">{{fnum .Max}}</text>
+    {{range .Bars}}
+    <rect class="plan" x="{{.X}}" y="{{.PlanY}}" width="{{.W}}" height="{{.PlanH}}"><title>{{.Name}}: {{t "sprint.points_done" (fnum .Done) (fnum .Planned)}}</title></rect>
+    <rect class="done" x="{{.X}}" y="{{.DoneY}}" width="{{.W}}" height="{{.DoneH}}"><title>{{.Name}}: {{t "sprint.points_done" (fnum .Done) (fnum .Planned)}}</title></rect>
+    <text class="lbl" x="{{.LabelX}}" y="{{add $v.H -8}}" text-anchor="middle">{{.Name}}</text>
+    {{end}}
+    <line class="avg" x1="36" y1="{{.AvgY}}" x2="{{add .W -10}}" y2="{{.AvgY}}"/>
+  </svg>
+  <div class="legend small"><span class="lg plan"></span> {{t "sprint.planned"}} <span class="lg done"></span> {{t "sprint.completed_pts"}} <span class="lg avg"></span> {{t "sprint.average"}}</div></div>
+</div>
+{{end}}
+{{with $d.Active}}
+<div class="card">
+  <h2>{{icon "player-play"}} {{.Name}} <span class="pill st-in_progress">{{t "sprint.active"}}</span></h2>
+  <div class="muted small">{{with .DateStart}}{{day .}}{{end}} – {{with .DateEnd}}{{day .}}{{end}}</div>
+  {{template "burn" .Chart}}
+</div>
+{{end}}
+{{range $d.Done}}
+<div class="card">
+  <h2>{{icon "circle-check"}} {{.Name}}</h2>
+  <div class="row small">
+    <span class="muted">{{with .DateStart}}{{day .}}{{end}} – {{with .DateEnd}}{{day .}}{{end}}</span>
+    <span>{{t "sprint.points_done" (fnum .Done) (fnum .Points)}}</span>
+    <span>{{t "sprint.tasks_done" .DoneCount}}</span>
+    {{with .CompletedAt}}<span class="muted">{{t "sprint.completed_at" (datetime .)}}</span>{{end}}
+  </div>
+  {{with .Goal}}<p class="small">{{icon "flag"}} {{.}}</p>{{end}}
+  {{template "burn" .Chart}}
+</div>
+{{else}}{{if not $d.Active}}<div class="empty card">{{icon "history"}} {{t "sprint.no_completed"}}</div>{{end}}{{end}}
+{{end}}
+
+{{define "burn"}}
+{{if .Empty}}<p class="muted small">{{t "sprint.no_chart"}}</p>{{else}}
+<div class="burn"><svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-label="{{t "sprint.burndown"}}">
+  <line class="axis" x1="36" y1="10" x2="36" y2="{{add .H -24}}"/><line class="axis" x1="36" y1="{{add .H -24}}" x2="{{add .W -10}}" y2="{{add .H -24}}"/>
+  <text class="lbl" x="30" y="16" text-anchor="end">{{fnum .Max}}</text>
+  {{range .Labels}}<text class="lbl" x="{{.X}}" y="{{add $.H -8}}" text-anchor="middle">{{.Text}}</text>{{end}}
+  <polyline class="ideal" points="{{.Ideal}}"/>
+  {{if .Real}}<polyline class="real" points="{{.Real}}"/>{{end}}
+</svg>
+<div class="legend small"><span class="lg ideal"></span> {{t "sprint.ideal"}} <span class="lg real"></span> {{t "sprint.remaining"}}</div></div>
+{{end}}
+{{end}}

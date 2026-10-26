@@ -1,0 +1,114 @@
+/*
+ * go24 design tokens — the only place with concrete colors, fonts and sizes.
+ * A theme overrides any of these in its theme.css (see docs/theming.md); app.css uses only variables.
+ */
+:root {
+  color-scheme: light dark; /* native date/time pickers follow the theme */
+  /* fonts */
+  --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-size: 14px;
+  --font-size-sm: 12.5px;
+  --font-size-h1: 22px;
+  --font-size-h2: 15px;
+
+  /* sidebar */
+  --side-width: 232px;
+  --side-bg: #1b2838;
+  --side-bg-hover: #243447;
+  --side-text: #b9c6d4;
+  --side-text-active: #ffffff;
+
+  /* surfaces and text */
+  --bg: #eef2f6;
+  --card: #ffffff;
+  --text: #1c2431;
+  --muted: #6b7686;
+  --line: #e2e7ee;
+  --hover: #f5f8fb;
+
+  /* accents and statuses */
+  --accent: #2e7cf6;
+  --accent-soft: #e7f0fe;
+  --on-accent: #ffffff;
+  /* kanban stage headers: the background is the stage's own color (chosen per project) */
+  --stage-fg: #ffffff;
+  --stage-radius: 8px;
+  /* employee photo: the same go24 picture for everyone (real photos are not imported); a theme may replace it */
+  --avatar-photo: url("../img/avatar.svg");
+  /* task chat */
+  --chat-bg: linear-gradient(160deg, #e3f2f1 0%, #e7eefb 100%);
+  --chat-other-bg: #ffffff;
+  --chat-mine-bg: #dcefff;
+  --chat-sys-bg: rgba(82, 92, 105, .12);
+  --chat-sys-fg: #4b5563;
+  --top-h: 61px; /* height of the top bar: the chat panel fills the rest of the screen */
+  --ok: #22a663;
+  --ok-soft: #e4f6ec;
+  --warn: #f0932b;
+  --warn-soft: #fff1e2;
+  --danger: #e5484d;
+  --danger-soft: #fdecec;
+  --violet: #8b5cf6;
+  --violet-soft: #f1ebfe;
+
+  /* task statuses: background / text */
+  --st-pending-bg: var(--hover);          --st-pending-fg: var(--muted);
+  --st-in_progress-bg: var(--accent-soft); --st-in_progress-fg: var(--accent);
+  --st-awaiting_control-bg: var(--violet-soft); --st-awaiting_control-fg: var(--violet);
+  --st-completed-bg: var(--ok-soft);      --st-completed-fg: var(--ok);
+  --st-deferred-bg: var(--warn-soft);     --st-deferred-fg: var(--warn);
+
+  /* avatars: hue comes from the name (--h on the element), these set the rest */
+  --ava-saturation: 55%;
+  --ava-lightness: 48%;
+  --ava-text: #ffffff;
+  --ava-size: 28px;
+  --ava-size-lg: 34px;
+
+  /* shape and spacing */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --gap: 16px;
+  --pad: 18px;
+  --content-pad: 24px;
+  --content-max: none; /* pages use the whole width; a theme may set e.g. 1280px */
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  --shadow-pop: 0 8px 28px rgba(16, 24, 40, .18); /* pop-ups and dropdowns */
+
+  /* icons */
+  --icon-size: 18px;
+
+  /* admin mode */
+  --admin: #d9480f;
+  --admin-soft: #fff0e6;
+
+  /* login page */
+  --login-bg: linear-gradient(135deg, #1b2838 0%, #2b4a6e 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --side-bg: #121a24;
+    --side-bg-hover: #1a2532;
+    --bg: #0f151c;
+    --card: #18212c;
+    --text: #e5eaf0;
+    --muted: #94a0b0;
+    --line: #26313e;
+    --hover: #1e2834;
+    --accent-soft: #19304f;
+    --ok-soft: #133524;
+    --warn-soft: #3a2a15;
+    --danger-soft: #3b1a1c;
+    --violet-soft: #2a2145;
+    --admin-soft: #3a2316;
+    --shadow: none;
+    --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
+    --chat-bg: linear-gradient(160deg, #13232a 0%, #141d2b 100%);
+    --chat-other-bg: #1e2834;
+    --chat-mine-bg: #1d3550;
+    --chat-sys-bg: rgba(148, 160, 176, .14);
+    --chat-sys-fg: #b4bfcc;
+  }
+}

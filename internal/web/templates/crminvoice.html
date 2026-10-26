@@ -1,0 +1,87 @@
+{{define "content"}}
+{{$d := .Data}}{{$v := $d.Item}}
+<div class="crumbs"><a href="/crm/invoices">{{t "crm.invoices"}}</a> · <a href="{{$v.CardPath}}">{{$v.CardTitle}}</a></div>
+<div class="pagehead"><h1>{{t (print "crm.doc." $v.Kind)}} № {{$v.Code}}{{if $v.Overdue}} <span class="pill inv-overdue">{{t "crm.inv.overdue"}}</span>{{end}}</h1>
+  <div class="row">{{if and $d.CanWrite (eq $v.Kind "quote")}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="to_invoice">
+    <button class="ghost">{{icon "file-plus"}} {{t "crm.inv_make_invoice"}}</button></form>{{end}}
+    <a class="button ghost" href="/crm/invoices/{{$v.ID}}/print" target="_blank" rel="noopener">{{icon "printer"}} {{t "crm.inv_print"}}</a></div></div>
+<div class="crmstages">{{range $d.Statuses}}{{if $d.CanWrite}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="status"><input type="hidden" name="status" value="{{.}}">
+  <button class="crmst{{if eq . $v.Status}} on{{end}}" style="--c:var(--accent)">{{t (print "crm.inv." .)}}</button></form>{{else}}<span class="crmst{{if eq . $v.Status}} on{{end}}" style="--c:var(--accent)">{{t (print "crm.inv." .)}}</span>{{end}}{{end}}</div>
+{{with $v.SourceID}}<p class="small muted">{{t "crm.inv_of_quote"}} <a href="/crm/invoices/{{.}}">{{t "crm.doc.quote"}} № {{$v.SourceNumber}}</a></p>{{end}}
+{{if eq $v.Kind "quote"}}{{$made := 0}}{{range $d.Made}}{{if eq .SourceID $v.ID}}{{$made = 1}}{{end}}{{end}}{{if $made}}<p class="small muted">{{t "crm.inv_made"}}
+  {{range $d.Made}}{{if eq .SourceID $v.ID}}<a href="/crm/invoices/{{.ID}}">{{t "crm.doc.invoice"}} № {{.Code}}</a> <span class="pill inv-{{.Status}}">{{t (print "crm.inv." .Status)}}</span> {{end}}{{end}}</p>{{end}}{{end}}
+<div class="layout2">
+<div>
+  <div class="card" id="products"><h2>{{icon "box"}} {{t "crm.products"}}</h2>
+    {{template "crmrows" (dict "Action" (print "/crm/invoices/" $v.ID "/products") "Rows" $d.Rows "Catalog" $d.Catalog "CanWrite" $d.CanWrite "Total" $d.RowsTotal "VAT" $d.RowsVAT "Currency" $v.Currency)}}</div>
+  {{if eq $v.Kind "invoice"}}<div class="card" id="payments"><h2>{{icon "cash"}} {{t "crm.inv_payments"}}</h2>
+    <p>{{t "crm.inv_paid_of" (money $v.Paid) (money $v.Amount) $v.Currency}}{{with $v.Due}} · <b>{{t "crm.inv_left" (money .) $v.Currency}}</b>{{end}}</p>
+    {{with $d.Payments}}<table class="tlist"><tbody>{{range .}}<tr><td class="nowrap">{{day .PaidOn}}</td><td class="nowrap"><b>{{money .Amount}} {{$v.Currency}}</b></td>
+      <td class="small">{{.Comment}}<div class="muted">{{.By.Name}} · {{datetime .CreatedAt}}</div></td>
+      <td>{{if $d.CanWrite}}<form method="post" action="/crm/invoices/{{$v.ID}}" data-confirm="{{t "crm.inv_pay_delete_confirm"}}"><input type="hidden" name="op" value="unpay"><input type="hidden" name="payment" value="{{.ID}}">
+        <button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}</tbody></table>{{else}}<p class="muted small">{{t "crm.inv_no_payments"}}</p>{{end}}
+    {{if and $d.CanWrite $v.Due}}<form method="post" action="/crm/invoices/{{$v.ID}}" class="row"><input type="hidden" name="op" value="pay">
+      <div><label>{{t "crm.inv_pay_sum"}}</label><input type="text" name="amount" inputmode="decimal" required value="{{fnum $v.Due}}" size="10"></div>
+      <div><label>{{t "crm.inv_pay_date"}}</label><input type="date" name="paid_on" value="{{dinput (ptr now)}}"></div>
+      <div style="flex:1"><label>{{t "crm.f.comment"}}</label><input type="text" name="comment" maxlength="1000"></div>
+      <div><label>&nbsp;</label><button class="primary">{{t "crm.inv_pay_add"}}</button></div></form>{{end}}</div>{{end}}
+</div>
+<div>
+  <div class="card">
+  {{if $d.CanWrite}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="save">
+    <label>{{t "crm.f.title"}}</label><input type="text" name="title" required maxlength="300" value="{{$v.Title}}">
+    <div class="row"><div><label>{{t "crm.inv_date"}}</label><input type="date" name="issue_date" value="{{dinput (ptr $v.IssueDate)}}"></div>
+      <div><label>{{if eq $v.Kind "invoice"}}{{t "crm.inv_pay_until"}}{{else}}{{t "crm.inv_valid_until"}}{{end}}</label><input type="date" name="due_date" value="{{dinput $v.DueDate}}"></div></div>
+    <label>{{t "crm.f.responsible"}}</label>{{template "upick" (upick "responsible" $v.Responsible.ID $d.Users "required")}}
+    <label>{{t "crm.f.comment"}}</label><textarea name="comment" rows="3" maxlength="10000">{{$v.Comment}}</textarea>
+    <p><button class="primary">{{t "common.save"}}</button></p></form>
+  {{else}}<div class="props"><span class="k">{{t "crm.inv_date"}}</span><span>{{day $v.IssueDate}}</span>
+    {{with $v.DueDate}}<span class="k">{{t "crm.inv_due"}}</span><span>{{day (deref .)}}</span>{{end}}
+    <span class="k">{{t "crm.f.responsible"}}</span><span>{{$v.Responsible.Name}}</span></div>{{with $v.Comment}}<p>{{nl2br .}}</p>{{end}}{{end}}
+  </div>
+  <div class="card"><h2>{{t "crm.inv_client"}}</h2>
+    {{if $v.Company.ID}}<div><a href="/crm/companies/{{$v.Company.ID}}">{{$v.Company.Name}}</a></div>{{end}}
+    {{if $v.Contact.ID}}<div><a href="/crm/contacts/{{$v.Contact.ID}}">{{$v.Contact.Name}}</a></div>{{end}}
+    {{if not (or $v.Company.ID $v.Contact.ID)}}<p class="muted small">{{t "crm.inv_no_client"}}</p>{{end}}
+    {{with $d.Buyer}}<p class="small">{{template "crmreq" .}}</p>{{else}}{{if or $v.Company.ID $v.Contact.ID}}<p class="muted small">{{t "crm.req.none_hint"}}</p>{{end}}{{end}}</div>
+  <div class="card"><h2>{{t "crm.inv_seller"}}</h2>
+    {{if $.User.Admin}}<form method="post" action="/crm/seller"><input type="hidden" name="back" value="/crm/invoices/{{$v.ID}}">
+      <textarea name="seller" rows="5" maxlength="5000" placeholder="{{t "crm.inv_seller_hint"}}">{{$d.Seller}}</textarea><p><button>{{t "common.save"}}</button></p></form>
+    {{else if $d.Seller}}<p class="small">{{nl2br $d.Seller}}</p>{{else}}<p class="muted small">{{t "crm.inv_seller_hint"}}</p>{{end}}</div>
+  {{with $d.MailForm}}<div class="card">{{template "crmmail" (dict "M" . "Path" $v.CardPath "Inv" $d.MailInv)}}
+    <script src="{{asset "js/compose.js"}}"></script><script src="{{asset "js/crmmail.js"}}"></script></div>{{end}}
+  {{if or $v.PublicToken $d.CanWrite}}<div class="card" id="link"><h2>{{icon "link"}} {{t "crm.inv_link"}}</h2>
+    {{if $v.PublicToken}}<div class="row"><input type="text" readonly value="{{$d.Base}}/q/{{$v.PublicToken}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Base}}/q/{{$v.PublicToken}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button>
+      <a class="button ghost" href="/q/{{$v.PublicToken}}" target="_blank" rel="noopener" title="{{t "docs.public_open"}}">{{icon "external-link"}}</a></div>
+      {{if $d.CanWrite}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="public"><p><button class="ghost small">{{icon "unlink"}} {{t "docs.public_off"}}</button></p></form>{{end}}
+    {{else}}<p class="small muted">{{t "crm.inv_link_hint"}}</p><form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="public"><input type="hidden" name="on" value="1">
+      <button class="primary small">{{icon "link"}} {{t "docs.public_on"}}</button></form>{{end}}</div>{{end}}
+  {{if $d.CanWrite}}<div class="card"><form method="post" action="/crm/invoices/{{$v.ID}}" data-confirm="{{t "crm.inv_delete_confirm"}}"><input type="hidden" name="op" value="delete">
+    <button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div>{{end}}
+</div>
+</div>
+{{end}}
+
+{{/* the document for the client: printed at once, or saved as PDF from the print dialog */}}
+{{define "invprint"}}{{$v := .Item}}<!doctype html><html><head><meta charset="utf-8"><title>{{t (print "crm.doc." $v.Kind)}} № {{$v.Code}}</title>
+<style>body{font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;background:#fff;margin:24px;max-width:900px}
+h1{font-size:20px;margin:16px 0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
+th{background:#eee}td.n{text-align:right;white-space:nowrap}.parties td{border:none;padding:2px 12px 2px 0}.tot{text-align:right;margin-top:8px}
+.pre{white-space:pre-wrap}.pbar{margin-bottom:12px}.sign{margin-top:40px}@media print{.pbar{display:none}body{margin:0}}</style></head><body data-crm-print>
+{{if not .Bare}}<div class="pbar"><button type="button" data-print-now>{{t "crm.inv_print"}}</button></div>{{end}}
+{{with .Seller}}<div class="pre">{{.}}</div>{{end}}
+<h1>{{t (print "crm.doc." $v.Kind)}} № {{$v.Code}} {{t "crm.inv_from"}} {{day $v.IssueDate}}</h1>
+<table class="parties">
+  {{with .Seller}}<tr><td><b>{{t "crm.inv_seller"}}:</b></td><td>{{.}}</td></tr>{{end}}
+  <tr><td><b>{{t "crm.inv_client"}}:</b></td><td>{{with .Buyer}}{{template "crmreq" .}}{{else}}{{$v.Company.Name}}{{if and $v.Company.Name $v.Contact.Name}}, {{end}}{{$v.Contact.Name}}{{end}}</td></tr>
+  {{with $v.DueDate}}<tr><td><b>{{if eq $v.Kind "invoice"}}{{t "crm.inv_pay_until"}}{{else}}{{t "crm.inv_valid_until"}}{{end}}:</b></td><td>{{day (deref .)}}</td></tr>{{end}}
+</table><br>
+<table><thead><tr><th>№</th><th>{{t "crm.f.title"}}</th><th>{{t "crm.quantity"}}</th><th>{{t "crm.product_unit"}}</th><th>{{t "crm.product_price"}}</th><th>{{t "crm.discount"}}</th><th>{{t "crm.vat"}}</th><th>{{t "crm.row_sum"}}</th></tr></thead>
+<tbody>{{range $n, $r := .Rows}}<tr><td>{{add $n 1}}</td><td>{{$r.Name}}</td><td class="n">{{fnum $r.Quantity}}</td><td>{{if $r.Unit}}{{$r.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</td>
+  <td class="n">{{money $r.Price}}</td><td class="n">{{if $r.Discount}}{{fnum $r.Discount}}%{{end}}</td><td class="n">{{with fpts $r.VATRate}}{{.}}%{{else}}{{t "crm.vat_none"}}{{end}}</td><td class="n">{{money $r.Total}}</td></tr>{{end}}</tbody></table>
+<div class="tot">{{t "crm.rows_total"}}: <b>{{money (or .RowsTotal $v.Amount)}} {{$v.Currency}}</b>{{if .RowsVAT}}<br>{{t "crm.rows_vat"}}: {{money .RowsVAT}} {{$v.Currency}}{{else}}<br>{{t "crm.vat_none"}}{{end}}
+  {{if and (eq $v.Kind "invoice") $v.Paid}}<br>{{t "crm.inv_paid_sum"}}: {{money $v.Paid}} {{$v.Currency}}{{with $v.Due}}<br><b>{{t "crm.inv_left" (money .) $v.Currency}}</b>{{end}}{{end}}</div>
+{{with $v.Comment}}<p class="pre">{{.}}</p>{{end}}
+<p class="sign">{{t "crm.f.responsible"}}: ____________________ {{$v.Responsible.Name}}</p>
+{{if not .Bare}}<script src="{{asset "js/crmrows.js"}}"></script>{{end}}
+</body></html>{{end}}

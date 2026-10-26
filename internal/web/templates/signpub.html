@@ -1,0 +1,27 @@
+{{define "content"}}{{$d := .Data}}{{$doc := $d.Doc}}{{$t := $d.Token}}
+<div class="share pubdoc">
+  <div class="row diskhead"><h2 style="flex:1">{{icon "signature"}} {{$doc.Title}}</h2>
+    {{if $doc.ResultFile}}<a class="button primary" href="/sg/{{$t}}/file/result">{{icon "download"}} {{t "sign.download_signed"}}</a>{{end}}
+    <a class="button ghost" href="/sg/{{$t}}/file/docx">{{icon "download"}} DOCX</a></div>
+  <div class="muted small">{{t "sign.pub_from" $doc.Author}} · {{$d.Party.Name}}</div>
+  {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+  {{if $d.Turn}}<div class="card sgturn">
+    {{if $d.Code}}<form method="post" action="/sg/{{$t}}/sign" class="row" data-native>
+      <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="{{t "sign.code"}}" autofocus style="width:10em">
+      <label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
+      <button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></form>
+      <form method="post" action="/sg/{{$t}}/code" data-native><button class="ghost small">{{t "sign.code_again"}}</button></form>
+    {{else}}<p>{{t "sign.pub_hint" $d.Email}}</p>
+      <form method="post" action="/sg/{{$t}}/code" data-native><button class="primary">{{icon "mail"}} {{t "sign.get_code"}}</button></form>{{end}}
+    <details><summary class="small">{{t "sign.refuse"}}</summary><form method="post" action="/sg/{{$t}}/sign" data-native>
+      <input type="hidden" name="refuse" value="1"><textarea name="reason" rows="2" maxlength="1000" placeholder="{{t "sign.reason"}}" required></textarea>
+      <p><button class="danger">{{t "sign.refuse"}}</button></p></form></details></div>
+  {{else if eq $d.Party.Status "signed"}}<div class="card">{{icon "circle-check"}} {{if eq $doc.Status "done"}}{{t "sign.pub_done"}}{{else}}{{t "sign.pub_signed"}}{{end}}</div>
+  {{else if eq $d.Party.Status "refused"}}<div class="card">{{t "sign.pst.refused"}}</div>
+  {{else if ne $doc.Status "signing"}}<div class="card">{{t (print "sign.st." $doc.Status)}}</div>
+  {{else}}<div class="card">{{t "sign.pub_wait"}}</div>{{end}}
+  {{if and $doc.ResultFile $d.PDF}}<iframe class="pubdoc-view" src="/sg/{{$t}}/file/result?inline=1" title="{{$doc.Title}}"></iframe>
+  {{else if $d.PDF}}<iframe class="pubdoc-view" src="/sg/{{$t}}/file/pdf?inline=1" title="{{$doc.Title}}"></iframe>{{end}}
+  <p class="muted small share-foot">go24 · {{t "sign.pub_foot"}}</p>
+</div>
+{{end}}

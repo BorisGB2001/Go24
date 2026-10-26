@@ -1,0 +1,25 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  {{if $.User.Admin}}<details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.type_new"}}</summary>
+    <div class="pop"><form method="post" action="/crm/types"><input type="hidden" name="op" value="add">
+      <input type="text" name="name" required maxlength="100" placeholder="{{t "crm.type_placeholder"}}">
+      <div class="swatches">{{range $i, $c := $d.Colors}}<label style="--sw:#{{$c}}"><input type="radio" name="color" value="{{$c}}" {{if eq $i 0}}checked{{end}}></label>{{end}}</div>
+      <p><button class="primary">{{t "common.create"}}</button></p></form></div></details>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.types_hint"}}</p>
+<div class="card flush">{{if $d.Types}}<table class="tlist">
+  <thead><tr><th>{{t "crm.f.title"}}</th><th>{{t "crm.type_items"}}</th>{{if $.User.Admin}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Types}}<tr>
+    <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#{{.Color}}"></span> <a href="/crm/deals?type={{.ID}}" class="ttitle">{{.Name}}</a></td>
+    <td>{{.Items}}</td>
+    {{if $.User.Admin}}<td class="nowrap"><details class="tsettings"><summary class="button ghost" title="{{t "crm.type_edit"}}">{{icon "edit"}}</summary>
+      <div class="pop"><form method="post" action="/crm/types"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{.ID}}">
+        <input type="text" name="name" required maxlength="100" value="{{.Name}}">
+        {{$cur := .Color}}<div class="swatches">{{range $d.Colors}}<label style="--sw:#{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $cur}}checked{{end}}></label>{{end}}</div>
+        <p><button class="primary">{{t "common.save"}}</button></p></form>
+        <a class="button ghost" href="/crm/robots?entity=deal&type={{.ID}}">🤖 {{t "robots.title"}}</a>
+        <form method="post" action="/crm/types" onsubmit="return confirm('{{t "crm.type_delete_confirm"}}')"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">
+          <button class="ghost">{{icon "trash"}} {{t "crm.type_delete"}}</button></form></div></details></td>{{end}}
+  </tr>{{end}}</tbody></table>{{else}}<div class="empty">{{t "crm.types_empty"}}</div>{{end}}</div>
+{{end}}

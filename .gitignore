@@ -1,0 +1,22 @@
+# boris.gb 2026-10-11 13:32 - секреты и локальные данные не попадают в git
+deploy/.env
+deploy/rclone/rclone.conf
+/bin/
+*.log
+.DS_Store
+# boris.gb 2026-10-11 15:53 - тема конкретной установки живёт на сервере, в репозитории только пример
+deploy/theme/theme.css
+deploy/theme/icons/
+# boris.gb 2026-10-11 16:11 - языки и правки переводов конкретной установки
+deploy/locales/*.json
+# boris.gb 2026-10-11 16:21 - blueprint с импортированными пользователями генерируется на сервере
+deploy/authentik/blueprints/generated/
+# boris.gb 2026-10-12 07:16 - конфиги Synapse/Element собираются на сервере из шаблонов (с секретами)
+deploy/matrix/homeserver.yaml
+deploy/matrix/element-config.json
+# boris.gb 2026-10-12 07:30 - корневой сертификат dev-центра Caddy (скачивается make dev-ca)
+deploy/go24-dev-ca.crt
+# boris.gb 2026-10-25 06:18 - кэш Python не хранится в git (мешал выкладке потоков и rebase)
+__pycache__/
+# boris.gb 2026-10-25 23:55 - резервные копии go24 (GO24DEV-569) не попадают в git
+deploy/backups/

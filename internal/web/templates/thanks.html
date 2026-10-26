@@ -1,0 +1,40 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<div class="pagehead"><h1 style="flex:1">{{t "gratitude.page"}}</h1>
+  <a class="button primary" href="/feed?thank={{$f.UserID}}">🏆 {{t "gratitude.give"}}</a></div>
+<div class="tabs">
+  <a href="/company">{{icon "users"}} {{t "nav.employees"}}</a>
+  <a href="/company/structure">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a>
+  <a href="/company/changes">{{icon "history"}} {{t "staff.title"}}</a>
+  <a href="/company/thanks" class="on">{{icon "star"}} {{t "gratitude.page"}}</a>
+</div>
+<form class="row filters" method="get" action="/company/thanks">
+  {{with $f.UserID}}<input type="hidden" name="user" value="{{.}}">{{end}}
+  <select name="period" style="width:auto" onchange="this.form.submit()" data-thanks-period><option value="">{{t "gratitude.period.all"}}</option>
+    {{range $d.Periods}}<option value="{{.}}" {{if eq . $d.Period}}selected{{end}}>{{t (print "gratitude.period." .)}}</option>{{end}}</select>
+  <select name="dept" style="width:auto" onchange="this.form.submit()"><option value="">{{t "company.all_departments"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <select name="badge" style="width:auto" onchange="this.form.submit()"><option value="">{{t "gratitude.badge.all"}}</option>
+    {{range $d.Badges}}<option value="{{.}}" {{if eq . $f.Badge}}selected{{end}}>{{index $d.BadgeEmoji .}} {{t (print "gratitude.badge." .)}}</option>{{end}}</select>
+  {{if not $d.Period}}<span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $f.From.IsZero}}{{$f.From.Format "2006-01-02"}}{{end}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{if not $f.To.IsZero}}{{$f.To.Format "2006-01-02"}}{{end}}"></span></span>
+  <button>{{icon "search"}} {{t "common.find"}}</button>{{end}}
+  {{if $d.Person}}<span class="pill">{{t "gratitude.to"}}: {{$d.Person}}</span>{{end}}
+  {{if or $f.DepartmentID $f.UserID $f.Badge $d.Period (not $f.From.IsZero) (not $f.To.IsZero)}}<a class="button ghost" href="/company/thanks">{{t "filter.reset"}}</a>{{end}}
+</form>
+{{if $d.Leaders}}<div class="card thanksboard">
+  <h2>{{icon "star"}} {{t "gratitude.board"}}</h2>
+  <div class="tleaders">{{range $i, $l := $d.Leaders}}
+    <a class="tleader{{if eq $l.ID $f.UserID}} on{{end}}" href="/company/thanks?user={{$l.ID}}{{with $d.Period}}&period={{.}}{{end}}{{with $f.DepartmentID}}&dept={{.}}{{end}}{{with $f.Badge}}&badge={{.}}{{end}}" title="{{t "gratitude.only_person"}}">
+      <span class="tplace">{{add $i 1}}</span>{{photo $l.Name $l.PhotoURL false}}
+      <span class="tname"><b>{{$l.Name}}</b>{{with $l.Position}}<span class="muted small">{{.}}</span>{{end}}</span>
+      <span class="tbadges">{{range $l.Badges}}<span title="{{t (print "gratitude.badge." .Badge)}}">{{.Emoji}}{{if gt .Count 1}}<sub>{{.Count}}</sub>{{end}}</span>{{end}}</span>
+      <span class="tcount" title="{{t "gratitude.count"}}">{{$l.Count}}</span></a>{{end}}</div>
+</div>{{end}}
+{{if $d.List}}<div class="card flush thankslist">{{range $d.List}}
+  <div class="thankrow"><span class="gbadge big" title="{{t (print "gratitude.badge." .Badge)}}">{{.Emoji}}</span>
+    <div><div>{{range $i, $u := .People}}{{if $i}}, {{end}}<a href="/u/{{$u.ID}}" data-user="{{$u.ID}}"><b>{{$u.Name}}</b></a>{{end}}</div>
+      <a href="/feed?post={{.PostID}}" class="thankstext">{{.Text}}</a></div>
+    <div class="muted small thankfrom">{{t "gratitude.from"}} <a href="/u/{{.Author.ID}}" data-user="{{.Author.ID}}">{{.Author.Name}}</a><div>{{day .At}}</div></div></div>
+{{end}}</div>
+{{else}}<p class="muted">{{t "gratitude.none"}}</p>{{end}}
+{{end}}

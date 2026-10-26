@@ -1,0 +1,7 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "apps.list"}}</h1>
+{{if $d.Admin}}<div class="sub"><a href="/settings/apps">{{icon "settings"}} {{t "apps.title"}}</a></div>{{end}}
+{{range $d.Apps}}<a class="card row" href="/apps/{{.ID}}">{{icon "layout-grid"}} <b>{{.Title}}</b></a>
+{{else}}<div class="card muted">{{t "apps.empty"}}</div>{{end}}
+{{end}}

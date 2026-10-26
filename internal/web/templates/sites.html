@@ -1,0 +1,21 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row"><h1 style="flex:1">{{t "site.title"}}</h1><button type="button" class="primary" data-toggle="sitenew">{{icon "plus"}} {{t "site.create"}}</button></div>
+<div class="sub">{{t "site.subtitle"}}</div>
+<form method="post" action="/sites" class="card" id="sitenew" style="max-width:720px" {{if $d.Sites}}hidden{{end}}>
+  <h2>{{t "site.new"}}</h2>
+  <label>{{t "form.name"}}</label><input type="text" name="name" maxlength="200" required>
+  <label>{{t "site.address"}}</label><div class="row"><span class="muted">{{$d.Base}}/site/</span><input type="text" name="slug" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" placeholder="{{t "site.address_auto"}}" style="flex:1"></div>
+  <p><button class="primary">{{t "common.create"}}</button></p>
+</form>
+<div class="sitegrid">
+  {{range $d.Sites}}<div class="card sitecard">
+    <a class="sitethumb" href="/sites/{{.ID}}">{{icon "world"}}</a>
+    <a href="/sites/{{.ID}}"><b>{{.Name}}</b></a>
+    <span class="small muted">{{$d.Base}}/site/{{.Slug}}</span>
+    <span class="small">{{if .Published}}<span class="sitepub on">{{t "site.published"}}</span> <a href="/site/{{.Slug}}" target="_blank" rel="noopener">{{icon "external-link"}} {{t "site.open"}}</a>{{else}}<span class="sitepub">{{t "site.draft"}}</span>{{end}}
+      · {{t "site.pages_n" .Pages}}</span>
+    <span class="small muted">{{t "site.changed" (datetime .Updated)}}</span>
+  </div>{{else}}<div class="empty card">{{t "site.none"}}</div>{{end}}
+</div>
+{{end}}

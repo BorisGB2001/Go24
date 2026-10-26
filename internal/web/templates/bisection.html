@@ -1,0 +1,20 @@
+{{define "content"}}
+{{$d := .Data}}
+{{if eq $d.In "crm"}}<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+{{else}}<div class="pagehead"><h1>{{t "bi.title"}}</h1></div>{{end}}
+{{if $d.Pinned}}{{$db := $d.D}}
+<div class="row bi-head">
+  <div class="tabs bi-pins">{{range $d.Pinned}}<a href="/{{$d.In}}/bi?d={{.ID}}" {{if eq .ID $db.ID}}class="on"{{end}}>{{.Title}}{{if eq .Status "draft"}} <span class="pill">{{t "bi.status_draft"}}</span>{{end}}</a>{{end}}</div>
+  <div class="row">
+    <button type="button" class="ghost" data-bi-print title="{{t "bi.print"}}">{{icon "printer"}}</button>
+    <button type="button" class="ghost" data-copy="{{$d.Link}}" title="{{t "bi.link_hint"}}">{{icon "link"}}</button>
+    <a class="button ghost" href="{{$d.Self}}">{{icon "chart-bar"}} {{t "bi.open_in_bi"}}</a>
+  </div>
+</div>
+{{with $db.Description}}<p class="sub">{{.}}</p>{{end}}
+{{template "bi-board" $d}}
+<script src="{{asset "js/bi.js"}}"></script>
+{{else}}<div class="card bi-empty">{{icon "layout-dashboard"}}<p>{{t "bi.pin_none"}}</p>
+  <div class="row"><a class="button" href="/bi">{{icon "chart-bar"}} {{t "bi.title"}}</a></div></div>{{end}}
+{{end}}

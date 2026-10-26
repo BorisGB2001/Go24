@@ -1,0 +1,144 @@
+{{/* the tabs of the CRM; .Kind is the open one, .ActCount the person's deeds due today */}}
+{{/* the currency of a card or a product: one of the CRM's list (.Value empty: the base one, which comes first) */}}
+{{define "crmcurrency"}}{{$v := .Value}}<select name="currency" style="width:auto">{{range .List}}<option value="{{.Code}}" {{if eq .Code $v}}selected{{end}}>{{.Code}}</option>{{end}}</select>{{end}}
+
+{{/* an item of a CRM dictionary: its name, or the locale's for a built-in one */}}
+{{define "crmdict"}}{{if .Name}}{{.Name}}{{else if .Code}}{{t (print "crm.dict." .Code)}}{{end}}{{end}}
+
+{{/* the choice of a card's item of a dictionary (Kind) as a field Name; Value — the item's id */}}
+{{define "crmdictsel"}}{{$v := .Value}}<label>{{t (print "crm.f." .Name)}}</label><select name="{{.Name}}"><option value=""></option>
+  {{range index .Dicts .Kind}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{template "crmdict" .}}</option>{{end}}</select>{{end}}
+
+{{define "crmtabs"}}{{$k := .Kind}}{{$type := .Type}}
+  {{range list "deals" "leads" "contacts" "companies"}}<a href="/crm/{{.}}" {{if and (eq . $k) (not $type)}}class="on"{{end}}>{{t (print "crm." .)}}</a>{{end}}
+  {{range .Types}}<a href="/crm/deals?type={{.ID}}" {{if and $type (eq .ID $type.ID)}}class="on"{{end}}><span style="color:#{{.Color}}">●</span> {{.Name}}</a>{{end}}
+  <a href="/crm/products" {{if eq $k "products"}}class="on"{{end}}>{{t "crm.products"}}</a>
+  <a href="/crm/invoices" {{if eq $k "invoices"}}class="on"{{end}}>{{t "crm.invoices"}}</a>
+  <a href="/crm/analytics" {{if eq $k "analytics"}}class="on"{{end}}>{{t "crm.analytics"}}</a>
+  <a href="/crm/bi" {{if eq $k "bi"}}class="on"{{end}}>{{t "bi.title"}}</a>
+  <a href="/crm/activities" {{if eq $k "activities"}}class="on"{{end}}>{{t "crm.activities"}}{{with .ActCount}} <span class="badge">{{.}}</span>{{end}}</a>
+  <a href="/crm/types" {{if eq $k "types"}}class="on"{{end}} title="{{t "crm.types_hint"}}">{{t "crm.types"}}</a>
+  <a href="/crm/currencies" {{if eq $k "currencies"}}class="on"{{end}}>{{t "crm.currencies"}}</a>
+  <a href="/crm/dicts" {{if eq $k "dicts"}}class="on"{{end}} title="{{t "crm.dicts_hint"}}">{{t "crm.dicts"}}</a>
+  <a href="/crm/forms" {{if eq $k "forms"}}class="on"{{end}} title="{{t "crm.forms_hint"}}">{{t "crm.forms"}}</a>
+  <a href="/crm/recycle" {{if eq $k "recycle"}}class="on"{{end}} title="{{t "crm.recycle_hint"}}">{{icon "trash"}} {{t "crm.recycle"}}</a>
+{{end}}
+
+{{/* a deed: its kind, subject, deadline (red when overdue), responsible; "done" and "delete" for who may */}}
+{{define "crmact"}}{{$a := .A}}
+<div class="crmact{{if $a.Overdue}} overdue{{end}}">
+  {{if .CanAct}}<form method="post" action="/crm/activities/{{$a.ID}}"><input type="hidden" name="op" value="done">{{with .Back}}<input type="hidden" name="back" value="{{.}}">{{end}}
+    <button class="ghost check" title="{{t "crm.activity_done"}}">{{icon "circle-check"}}</button></form>{{end}}
+  <div style="flex:1"><span>{{icon (index (dict "call" "phone" "meeting" "users" "todo" "checkbox") $a.Kind)}}</span> <b>{{$a.Subject}}</b>
+    {{if .ShowCard}} · <a href="{{$a.Path}}">{{$a.CardTitle}}</a> <span class="muted small">{{t (print "crm." $a.Entity)}}</span>{{end}}
+    <div class="small"><span class="{{if $a.Overdue}}overdue{{else}}muted{{end}}">{{icon "clock"}} {{datetime $a.Deadline}}</span> · <span class="muted">{{$a.Responsible.Name}}</span></div>
+    {{with $a.Description}}<div class="small">{{nl2br .}}</div>{{end}}</div>
+  {{if .CanAct}}<form method="post" action="/crm/activities/{{$a.ID}}" data-confirm="{{t "crm.activity_delete_confirm"}}"><input type="hidden" name="op" value="delete">{{with .Back}}<input type="hidden" name="back" value="{{.}}">{{end}}
+    <button class="ghost" title="{{t "crm.delete"}}">{{icon "trash"}}</button></form>{{end}}
+</div>{{end}}
+
+{{/* a VAT rate as a select: none, the usual Russian rates, or the row's own */}}
+{{define "crmvat"}}{{$v := fpts .}}<select name="vat"><option value="" {{if eq $v ""}}selected{{end}}>{{t "crm.vat_none"}}</option>
+  {{range list "0" "5" "7" "10" "20"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{.}}%</option>{{end}}
+  {{if and $v (not (or (eq $v "0") (eq $v "5") (eq $v "7") (eq $v "10") (eq $v "20")))}}<option value="{{$v}}" selected>{{$v}}%</option>{{end}}</select>{{end}}
+
+{{/* the products of a deal, a lead, a quote or an invoice: an editable table (crmrows.js) or a read-only one */}}
+{{define "crmrows"}}
+    <form method="post" action="{{.Action}}" class="crmrows" data-crmrows>
+    <div class="tablewrap"><table class="tlist">
+      <thead><tr><th>{{t "crm.f.title"}}</th><th>{{t "crm.product_price"}}</th><th>{{t "crm.quantity"}}</th><th>{{t "crm.product_unit"}}</th><th>{{t "crm.discount"}}</th><th>{{t "crm.vat"}}</th><th>{{t "crm.row_sum"}}</th>{{if $.Stock}}<th>{{t "stock.warehouse"}}</th><th title="{{t "stock.reserve_hint"}}">{{t "stock.reserve"}}</th><th>{{t "stock.reserve_until"}}</th><th>{{t "stock.free"}}</th>{{end}}{{if $.CanWrite}}<th></th>{{end}}</tr></thead>
+      <tbody>{{range $.Rows}}{{if $.CanWrite}}{{template "crmrow" (dict "R" . "Catalog" $.Catalog "Stock" $.Stock)}}{{else}}
+        <tr><td>{{.Name}}</td><td>{{money .Price}}</td><td>{{fnum .Quantity}}</td><td>{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</td><td>{{if .Discount}}{{fnum .Discount}}%{{end}}</td>
+          <td>{{with fpts .VATRate}}{{.}}%{{end}}</td><td><b>{{money .Total}}</b></td>
+          {{if $.Stock}}<td class="small">{{.WarehouseName}}</td><td class="nowrap">{{if .Reserve}}{{fnum .Reserve}}{{end}}</td><td class="small nowrap">{{with .ReserveUntil}}{{day (deref .)}}{{end}}</td><td>{{template "crmfree" .}}</td>{{end}}</tr>{{end}}{{end}}
+        {{if $.CanWrite}}{{template "crmrow" (dict "R" nil "Catalog" $.Catalog "Stock" $.Stock)}}{{end}}</tbody>
+    </table></div>
+    {{with $.Rows}}<p class="right">{{t "crm.rows_total"}}: <b>{{money $.Total}} {{$.Currency}}</b>{{if $.VAT}} <span class="muted small">· {{t "crm.rows_vat"}} {{money $.VAT}}</span>{{end}}</p>{{end}}
+    {{if $.CanWrite}}<p class="row"><button type="button" class="ghost" data-addrow>{{icon "plus"}} {{t "crm.row_add"}}</button><input type="search" class="barcodescan" data-barcode placeholder="{{t "crm.barcode_scan"}}" title="{{t "crm.barcode_scan_hint"}}" data-unknown="{{t "crm.barcode_unknown"}}" autocomplete="off"><span class="spacer"></span><button class="primary">{{t "common.save"}}</button></p>{{end}}
+    </form>{{if $.CanWrite}}<script src="{{asset "js/crmrows.js"}}"></script>{{end}}
+{{end}}
+
+{{/* a product row of the card, editable; with no row it is the empty one for adding (a catalog product or a free line) */}}
+{{define "crmrow"}}{{$r := .R}}
+<tr data-row{{if and $r $r.Service}} data-service{{end}}>
+  <td><input type="hidden" name="product" value="{{with $r}}{{.ProductID}}{{end}}">
+    {{if not $r}}<select data-pick><option value="">{{t "crm.row_pick"}}</option>{{$g := ""}}{{range .Catalog}}{{if ne .SectionPath $g}}{{if $g}}</optgroup>{{end}}<optgroup label="{{.SectionPath}}">{{$g = .SectionPath}}{{end}}<option value="{{.ID}}" data-name="{{.Name}}" data-price="{{fnum .Price}}" data-unit="{{.Unit}}" data-vat="{{fpts .VATRate}}" data-inc="{{if .VATIncluded}}1{{else}}0{{end}}" data-barcodes="{{join .Barcodes " "}}"{{if .Service}} data-service="1"{{end}}>{{.Name}} · {{money .Price}} {{.Currency}}</option>{{end}}{{if $g}}</optgroup>{{end}}</select>{{end}}
+    <input type="text" name="name" maxlength="300" value="{{with $r}}{{.Name}}{{end}}" placeholder="{{t "crm.row_name"}}"></td>
+  <td><input type="text" name="price" inputmode="decimal" size="8" value="{{with $r}}{{fnum .Price}}{{end}}"></td>
+  <td><input type="text" name="quantity" inputmode="decimal" size="4" value="{{with $r}}{{fnum .Quantity}}{{else}}1{{end}}"></td>
+  <td><input type="text" name="unit" maxlength="20" size="4" value="{{with $r}}{{.Unit}}{{end}}" placeholder="{{t "crm.unit_default"}}"></td>
+  <td><input type="text" name="discount" inputmode="decimal" size="3" value="{{with $r}}{{if .Discount}}{{fnum .Discount}}{{end}}{{end}}" placeholder="%"></td>
+  <td>{{template "crmvat" (and $r $r.VATRate)}}<select name="vat_included"><option value="1">{{t "crm.vat_in"}}</option><option value="0" {{if $r}}{{if not $r.VATIncluded}}selected{{end}}{{end}}>{{t "crm.vat_top"}}</option></select></td>
+  <td class="nowrap">{{with $r}}<b>{{money .Total}}</b>{{end}}</td>
+  {{with .Stock}}{{$wv := ""}}{{if $r}}{{$wv = $r.WarehouseID}}{{end}}<td data-stockcell title="{{t "crm.service_no_stock"}}"><select name="warehouse" data-default="{{range .Warehouses}}{{if .Default}}{{.ID}}{{end}}{{end}}">
+      {{range .Warehouses}}{{if or .Active (eq .ID $wv)}}<option value="{{.ID}}" {{if eq .ID $wv}}selected{{else if and (not $wv) .Default}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select></td>
+    <td data-stockcell><input type="text" name="reserve" inputmode="decimal" size="4" value="{{with $r}}{{if .WarehouseID}}{{fnum .Reserve}}{{end}}{{end}}" placeholder="{{t "stock.reserve"}}" title="{{t "stock.reserve_hint"}}"></td>
+    <td data-stockcell><input type="date" name="reserve_until" value="{{with $r}}{{dinput .ReserveUntil}}{{end}}"></td>
+    <td class="small" data-free>{{with $r}}{{template "crmfree" .}}{{end}}</td>{{end}}
+  <td><button type="button" class="ghost" data-delrow title="{{t "crm.delete"}}">{{icon "x"}}</button></td>
+</tr>{{end}}
+
+{{/* what of a deal row's catalog product is available on the row's warehouse (less all the reserves) */}}
+{{define "crmfree"}}{{with .Free}}<span class="nowrap {{if $.Short}}stockshort{{else}}muted{{end}}">{{t "stock.free_on" (fnum .)}}</span>{{end}}{{end}}
+
+{{/* a quote or an invoice in a list: number, title, status, amount, dates */}}
+{{define "crminv"}}<tr><td><a href="/crm/invoices/{{.ID}}" class="ttitle">{{t (print "crm.doc." .Kind)}} № {{.Code}}</a><div class="small muted">{{.Title}}</div></td>
+  <td><span class="pill inv-{{.Status}}">{{t (print "crm.inv." .Status)}}</span>{{if .Overdue}} <span class="pill inv-overdue">{{t "crm.inv.overdue"}}</span>{{else if .Due}}{{if .Paid}}<div class="small muted">{{t "crm.inv_left" (money .Due) .Currency}}</div>{{end}}{{end}}</td><td class="nowrap"><b>{{money .Amount}} {{.Currency}}</b></td>
+  <td class="small nowrap">{{day .IssueDate}}{{with .DueDate}}<br><span class="muted">{{t "crm.inv_due"}} {{day (deref .)}}</span>{{end}}</td></tr>{{end}}
+
+{{/* a client's requisite as printed: the name and codes, the legal address, the bank, the director */}}
+{{define "crmreq"}}<b>{{.Name}}</b>{{with .INN}}, {{t "crm.req.inn"}} {{.}}{{end}}{{with .KPP}}, {{t "crm.req.kpp"}} {{.}}{{end}}{{with .OGRN}}, {{t (print "crm.req.ogrn." $.Preset)}} {{.}}{{end}}
+  {{with .Address}}<br>{{.}}{{end}}
+  {{if .HasBank}}<br>{{with .Account}}{{t "crm.req.account"}} {{.}} {{end}}{{with .Bank}}{{.}}{{end}}{{with .BIK}}, {{t "crm.req.bik"}} {{.}}{{end}}{{with .CorrAccount}}, {{t "crm.req.corr_account"}} {{.}}{{end}}{{end}}
+  {{with .Director}}<br>{{t (print "crm.req.director." $.Preset)}}: {{.}}{{end}}{{end}}
+
+{{/* the form of a requisite (.R; a new one has no ID) posted to .Action */}}
+{{define "crmreqform"}}{{$q := .R}}<form method="post" action="{{.Action}}" class="crmreqform"><input type="hidden" name="op" value="save"><input type="hidden" name="req" value="{{$q.ID}}">
+  <label>{{t "crm.req.preset"}}</label><select name="preset">{{range .Presets}}<option value="{{.}}" {{if eq . $q.Preset}}selected{{end}}>{{t (print "crm.req.preset." .)}}</option>{{end}}</select>
+  <label>{{t "crm.req.name"}}</label><input type="text" name="name" value="{{$q.Name}}" required maxlength="300">
+  <div class="row"><div><label>{{t "crm.req.inn"}}</label><input type="text" name="inn" value="{{$q.INN}}" inputmode="numeric" maxlength="14"></div>
+    <div><label>{{t "crm.req.kpp"}}</label><input type="text" name="kpp" value="{{$q.KPP}}" inputmode="numeric" maxlength="11"></div>
+    <div><label>{{t "crm.req.ogrn.any"}}</label><input type="text" name="ogrn" value="{{$q.OGRN}}" inputmode="numeric" maxlength="17"></div></div>
+  <label>{{t "crm.req.director.org"}}</label><input type="text" name="director" value="{{$q.Director}}" maxlength="300">
+  <label>{{t "crm.req.address"}}</label><input type="text" name="address" value="{{$q.Address}}" maxlength="300">
+  <label>{{t "crm.req.bank"}}</label><input type="text" name="bank" value="{{$q.Bank}}" maxlength="300">
+  <div class="row"><div><label>{{t "crm.req.bik"}}</label><input type="text" name="bik" value="{{$q.BIK}}" inputmode="numeric" maxlength="11"></div>
+    <div><label>{{t "crm.req.account"}}</label><input type="text" name="account" value="{{$q.Account}}" inputmode="numeric" maxlength="24"></div>
+    <div><label>{{t "crm.req.corr_account"}}</label><input type="text" name="corr_account" value="{{$q.CorrAccount}}" inputmode="numeric" maxlength="24"></div></div>
+  {{if not $q.Default}}<label class="check"><input type="checkbox" name="default" value="1"> {{t "crm.req.make_default"}}</label>{{end}}
+  <p><button class="primary">{{t "common.save"}}</button></p></form>{{end}}
+
+{{/* the text editor of a CRM letter or its template (compose.js [data-snippet-editor]): its toolbar and HTML */}}
+{{define "crmeditor"}}<template data-compose-labels><span data-l="link">{{t "mail.ed.link_url"}}</span></template>
+<div class="row mc-tools" data-tools role="toolbar" aria-label="{{t "mail.ed.tools"}}">
+  <button type="button" class="ghost small" data-cmd="bold" title="{{t "mail.ed.bold"}} (Ctrl+B)">{{icon "bold"}}</button>
+  <button type="button" class="ghost small" data-cmd="italic" title="{{t "mail.ed.italic"}} (Ctrl+I)">{{icon "italic"}}</button>
+  <button type="button" class="ghost small" data-cmd="underline" title="{{t "mail.ed.underline"}} (Ctrl+U)">{{icon "underline"}}</button>
+  <label class="button ghost small mc-color" title="{{t "mail.ed.color"}}">{{icon "text-color"}}<input type="color" data-cmd="foreColor" value="#d13438"></label>
+  <span class="mc-sep"></span>
+  <button type="button" class="ghost small" data-cmd="insertUnorderedList" title="{{t "mail.ed.bullets"}}">{{icon "list"}}</button>
+  <button type="button" class="ghost small" data-cmd="insertOrderedList" title="{{t "mail.ed.numbers"}}">{{icon "list-numbers"}}</button>
+  <button type="button" class="ghost small" data-cmd="createLink" title="{{t "mail.ed.link"}} (Ctrl+K)">{{icon "link"}}</button>
+  <button type="button" class="ghost small" data-cmd="removeFormat" title="{{t "mail.ed.clear"}}">{{icon "clear-formatting"}}</button>
+</div>
+<div class="mc-editor" contenteditable="true" data-editor role="textbox" aria-multiline="true" aria-label="{{t "crm.mailsend.text"}}"></div>
+<textarea name="html" hidden data-html>{{.}}</textarea>{{end}}
+
+{{/* «Письмо» of a card's timeline (web.crmMailSend): from, to the client, copy, a template, subject, text, files */}}
+{{define "crmmail"}}{{$m := .M}}{{$inv := .Inv}}<details class="crmmailform" data-crmmail="{{.Path}}"{{if $inv}} id="send"{{end}}><summary class="button ghost">{{icon "mail"}} {{if $inv}}{{t "crm.inv_send"}}{{else}}{{t "crm.mailsend.title"}}{{end}}</summary>
+  <form method="post" action="{{.Path}}/mail" enctype="multipart/form-data" data-snippet-editor data-native>{{with $inv}}<input type="hidden" name="inv" value="{{.ID}}">{{end}}
+    <div class="grid">
+      <div><label>{{t "crm.mailsend.from"}}</label><select name="box">{{range $m.Boxes}}<option value="{{.ID}}">{{.Email}}</option>{{end}}</select></div>
+      <div><label>{{t "crm.mailsend.to"}}</label><input type="text" name="to" required maxlength="2000" list="crmmail-to" value="{{with $m.To}}{{(index . 0).Email}}{{end}}" autocomplete="off">
+        <datalist id="crmmail-to">{{range $m.To}}<option value="{{.Email}}">{{.Name}}</option>{{end}}</datalist></div>
+    </div>
+    <label>{{t "crm.mailsend.cc"}}</label><input type="text" name="cc" maxlength="2000">
+    {{with $m.Templates}}<label>{{t "crm.mailsend.template"}}</label><select data-crmmail-tpl><option value="">—</option>{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>{{end}}
+    <label>{{t "crm.mailsend.subject"}}</label><input type="text" name="subject" maxlength="1000" data-crmmail-subject{{with $inv}} value="{{.Subject}}"{{end}}>
+    {{template "crmeditor" (or (and $inv $inv.Body) "")}}
+    {{with $inv}}<div class="row"><label class="chip"><input type="checkbox" name="inv_file" value="1" checked> 📎 {{.File}}</label>
+      <label class="chip"><input type="checkbox" name="inv_link" value="1" checked> {{icon "link"}} {{t "crm.inv_send_link"}}</label></div>{{end}}
+    <div class="row" data-crmmail-docs hidden></div>
+    <label>{{t "crm.mailsend.files"}}</label><input type="file" name="files" multiple>
+    <p class="row"><button class="primary">{{icon "send"}} {{t "crm.mailsend.send"}}</button><a class="button ghost small" href="/crm/mail-templates">{{t "crm.mailtpl.title"}}</a></p>
+  </form></details>{{end}}

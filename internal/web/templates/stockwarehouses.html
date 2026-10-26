@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1>
+  {{if $.User.Admin}}<details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "stock.warehouse_new"}}</summary>
+    <div class="pop">{{template "stockwhform" (dict "W" nil "ID" "new" "Users" $d.Users)}}</div></details>{{end}}</div>
+<div class="tabs">{{template "stocktabs" $d}}</div>
+<div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th>{{t "stock.warehouse"}}</th><th>{{t "stock.address"}}</th><th>{{t "stock.storekeeper"}}</th><th>{{t "stock.products_on"}}</th>{{if $.User.Admin}}<th>{{t "stock.value"}}</th><th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Items}}<tr {{if not .Active}}class="muted"{{end}}><td><b>{{icon "building-warehouse"}} {{.Name}}</b>
+      {{if .Default}} <span class="pill">{{t "stock.default"}}</span>{{end}}{{if not .Active}} <span class="pill">{{t "stock.inactive"}}</span>{{end}}</td>
+    <td class="small">{{.Address}}</td><td class="small">{{.Responsible.Name}}</td><td>{{.Products}}</td>
+    {{if $.User.Admin}}<td class="nowrap">{{money .Value}}</td>
+    <td><details class="tsettings"><summary class="button ghost small">{{icon "edit"}}</summary><div class="pop">{{template "stockwhform" (dict "W" . "ID" .ID "Users" $d.Users)}}
+      <form method="post" action="/store/warehouses/{{.ID}}" data-confirm="{{t "stock.warehouse_delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details></td>{{end}}</tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "stock.no_warehouses"}}</div>{{end}}</div>
+{{end}}
+
+{{define "stockwhform"}}{{$w := .W}}
+<form method="post" action="/store/warehouses/{{.ID}}">
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" required maxlength="200" value="{{with $w}}{{.Name}}{{end}}">
+  <label>{{t "stock.address"}}</label><input type="text" name="address" maxlength="500" value="{{with $w}}{{.Address}}{{end}}">
+  <label>{{t "stock.storekeeper"}}</label>{{template "upick" (upick "responsible" (or (and $w $w.Responsible.ID) "") .Users)}}
+  <p class="small muted">{{t "stock.storekeeper_hint"}}</p>
+  <label>{{t "crm.section_sort"}}</label><input type="number" name="sort" value="{{with $w}}{{.Sort}}{{else}}0{{end}}">
+  <label class="small"><input type="checkbox" name="default" value="1" {{with $w}}{{if .Default}}checked{{end}}{{end}}> {{t "stock.default"}}</label>
+  {{with $w}}<label class="small"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}> {{t "stock.active"}}</label>{{end}}
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

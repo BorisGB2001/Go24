@@ -1,0 +1,92 @@
+# boris.gb 2026-10-13 10:02 - регистрация по приглашению go24 (GO24DEV-83): администратор go24 создаёт одноразовое приглашение,
+# человек по ссылке задаёт логин и пароль; имя и e-mail берутся из приглашения. Отдельный файл, чтобы ошибка здесь
+# не мешала применению go24.yaml.
+version: 1
+metadata:
+  name: go24 - enrollment by invitation
+  labels:
+    blueprints.goauthentik.io/description: "Поток регистрации сотрудников go24 по приглашению"
+entries:
+  - model: authentik_flows.flow
+    id: flow
+    identifiers:
+      slug: go24-enrollment
+    attrs:
+      name: go24 — регистрация по приглашению
+      title: Регистрация в go24
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - model: authentik_stages_invitation.invitationstage
+    id: invitation
+    identifiers:
+      name: go24-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_prompt.prompt
+    id: prompt-username
+    identifiers:
+      name: go24-enrollment-username
+    attrs:
+      field_key: username
+      label: Логин
+      type: username
+      required: true
+      placeholder: Логин для входа
+      order: 0
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password
+    identifiers:
+      name: go24-enrollment-password
+    attrs:
+      field_key: password
+      label: Пароль
+      type: password
+      required: true
+      placeholder: Пароль
+      order: 10
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password-repeat
+    identifiers:
+      name: go24-enrollment-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Пароль ещё раз
+      type: password
+      required: true
+      placeholder: Пароль ещё раз
+      order: 11
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt
+    identifiers:
+      name: go24-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf prompt-username
+        - !KeyOf prompt-password
+        - !KeyOf prompt-password-repeat
+
+  - model: authentik_stages_user_write.userwritestage
+    id: write
+    identifiers:
+      name: go24-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: false
+      user_path_template: go24/invited
+
+  - model: authentik_stages_user_login.userloginstage
+    id: login
+    identifiers:
+      name: go24-enrollment-login
+
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf invitation, order: 0}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf prompt, order: 10}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf write, order: 20}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf login, order: 30}

@@ -1,0 +1,62 @@
+{{define "aiconn"}}{{$c := .C}}{{$edit := .Edit}}
+<div class="card stack" id="ai-{{$c.ID}}">
+  {{if $edit}}<form method="post" action="/settings/ai" class="stack">
+    <input type="hidden" name="id" value="{{$c.ID}}"><input type="hidden" name="scope" value="{{.Scope}}">
+    {{template "aifields" dict "C" $c "Providers" .Providers}}
+    <div class="row"><button class="primary">{{t "common.save"}}</button>
+      <button class="ghost" formaction="/settings/ai/{{$c.ID}}/check">{{icon "check"}} {{t "ai.check"}}</button></div>
+  </form>
+  <form method="post" action="/settings/ai/{{$c.ID}}/delete" data-confirm="{{t "ai.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>
+  {{else}}<h3>{{$c.Name}}{{if $c.Default}} <span class="badge">{{t "ai.default"}}</span>{{end}}</h3>
+  <p class="small">{{t (printf "ai.provider.%s" $c.Provider)}}{{if $c.Model}} · {{$c.Model}}{{end}}</p>{{end}}
+  <p class="small">{{if $c.CheckError}}<span class="danger">✗ {{$c.CheckError}}</span>{{else if $c.CheckedAt}}✓ {{t "ai.checked"}} {{date $c.CheckedAt}}{{end}}</p>
+</div>{{end}}
+
+{{define "aifields"}}{{$c := .C}}
+<label class="small">{{t "ai.name"}} <input type="text" name="name" value="{{$c.Name}}" required></label>
+<label class="small">{{t "ai.provider"}} <select name="provider">{{range .Providers}}<option value="{{.}}" {{if eq . $c.Provider}}selected{{end}}>{{t (printf "ai.provider.%s" .)}}</option>{{end}}</select></label>
+<label class="small">{{t "ai.base_url"}} <input type="url" name="base_url" value="{{$c.BaseURL}}" placeholder="{{t "ai.base_url_ph"}}" autocomplete="off"></label>
+<label class="small">{{t "ai.model"}} <input type="text" name="model" value="{{$c.Model}}" placeholder="{{t "ai.model_ph"}}" autocomplete="off"></label>
+<label class="small">{{t "ai.key"}} <input type="password" name="key" autocomplete="new-password" placeholder="{{if $c.KeyTail}}…{{$c.KeyTail}}{{end}}"></label>
+<label class="small"><input type="checkbox" name="default" value="1" {{if $c.Default}}checked{{end}}> {{t "ai.make_default"}}</label>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "sparkles"}} {{t "ai.title"}}</h1>
+<p class="muted small">{{t "ai.hint"}}</p>
+
+<form method="post" action="/settings/ai/choice" class="card stack">
+  <h2>{{t "ai.choice"}}</h2>
+  <select name="connection">
+    <option value="">{{t "ai.choice_auto"}}</option>
+    {{range $d.Company}}<option value="{{.ID}}" {{if eq .ID $d.Chosen}}selected{{end}}>{{t "ai.company"}}: {{.Name}}</option>{{end}}
+    {{range $d.Mine}}<option value="{{.ID}}" {{if eq .ID $d.Chosen}}selected{{end}}>{{t "ai.mine"}}: {{.Name}}</option>{{end}}
+  </select>
+  <p class="small">{{if $d.Using}}{{range $d.Company}}{{if eq .ID $d.Using}}{{t "ai.using"}}: {{t "ai.company"}} — {{.Name}}{{end}}{{end}}{{range $d.Mine}}{{if eq .ID $d.Using}}{{t "ai.using"}}: {{t "ai.mine"}} — {{.Name}}{{end}}{{end}}{{else}}{{t "ai.none"}}{{end}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+
+<h2>{{t "ai.company_title"}}</h2>
+<p class="muted small">{{if $.User.Admin}}{{t "ai.company_hint_admin"}}{{else}}{{t "ai.company_hint"}}{{end}}</p>
+<div class="settings-grid">
+{{range $d.Company}}{{template "aiconn" dict "C" . "Edit" $.User.Admin "Scope" "company" "Providers" $d.Providers}}{{end}}
+{{if $.User.Admin}}<form method="post" action="/settings/ai" class="card stack">
+  <h3>{{t "ai.add"}}</h3><input type="hidden" name="scope" value="company">
+  {{template "aifields" dict "C" $d.New "Providers" $d.Providers}}
+  <div><button class="primary">{{t "common.add"}}</button></div>
+</form>{{end}}
+</div>
+
+<h2>{{t "ai.mine_title"}}</h2>
+<p class="muted small">{{t "ai.mine_hint"}}</p>
+<div class="settings-grid">
+{{range $d.Mine}}{{template "aiconn" dict "C" . "Edit" true "Scope" "mine" "Providers" $d.Providers}}{{end}}
+<form method="post" action="/settings/ai" class="card stack">
+  <h3>{{t "ai.add"}}</h3><input type="hidden" name="scope" value="mine">
+  {{template "aifields" dict "C" $d.New "Providers" $d.Providers}}
+  <div><button class="primary">{{t "common.add"}}</button></div>
+</form>
+</div>
+<p class="muted small">{{t "ai.providers_hint"}}</p>
+{{end}}

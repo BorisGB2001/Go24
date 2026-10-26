@@ -1,0 +1,30 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "lock"}} {{t "ipaccess.title"}}</h1>
+<div class="sub">{{t "ipaccess.subtitle"}}</div>
+<p class="muted small">{{t "ipaccess.your_ip" $d.IP}}</p>
+{{range $i, $r := $d.Rules}}
+<div class="card stack">
+  <form method="post" action="/settings/ip" class="stack" id="iprule-{{$r.ID}}">
+    <input type="hidden" name="id" value="{{$r.ID}}">
+    <label>{{t "ipaccess.rule_title"}} <input name="title" value="{{$r.Title}}" placeholder="{{t "ipaccess.rule_n" (add $i 1)}}"></label>
+    <div><div class="small muted">{{t "ipaccess.whom"}}</div>{{template "upick" (upick "who" $r.Sel $d.Users "multi" "depts" "+all" (t "ipaccess.all") "ph" (t "ipaccess.whom_ph"))}}</div>
+    <label>{{t "ipaccess.nets"}} <textarea name="nets" rows="4" placeholder="{{t "ipaccess.nets_ph"}}">{{join $r.Nets "\n"}}</textarea></label>
+  </form>
+  <div class="row">
+    <button class="primary" form="iprule-{{$r.ID}}">{{t "common.save"}}</button>
+    <form method="post" action="/settings/ip/{{$r.ID}}/delete" data-confirm="{{t "ipaccess.delete_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "common.delete"}}</button></form>
+  </div>
+</div>
+{{else}}<div class="card"><div class="empty">{{t "ipaccess.empty"}}</div></div>{{end}}
+<div class="card">
+  <h2>{{icon "plus"}} {{t "ipaccess.add"}}</h2>
+  <form method="post" action="/settings/ip" class="stack">
+    <label>{{t "ipaccess.rule_title"}} <input name="title"></label>
+    <div><div class="small muted">{{t "ipaccess.whom"}}</div>{{template "upick" (upick "who" "" $d.Users "multi" "depts" "+all" (t "ipaccess.all") "ph" (t "ipaccess.whom_ph"))}}</div>
+    <label>{{t "ipaccess.nets"}} <textarea name="nets" rows="4" placeholder="{{t "ipaccess.nets_ph"}}"></textarea></label>
+    <div><button class="primary">{{icon "plus"}} {{t "ipaccess.add"}}</button></div>
+  </form>
+</div>
+<p class="muted small">{{t "ipaccess.hint"}}</p>
+{{end}}

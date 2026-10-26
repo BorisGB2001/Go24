@@ -1,0 +1,30 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "bp.title"}}</h1>{{if .User.Admin}}<a class="button ghost" href="/bp/templates">{{icon "adjustments"}} {{t "bp.templates"}}</a>{{end}}</div>
+<div class="tabs">
+  <a href="/bp" {{if not $d.Tab}}class="on"{{end}}>{{t "bp.tab.start"}}</a>
+  <a href="/bp?tab=approvals" {{if eq $d.Tab "approvals"}}class="on"{{end}}>{{t "bp.tab.approvals"}} {{with $d.Approvals}}<span class="cnt green">{{len .}}</span>{{end}}</a>
+  <a href="/bp?tab=mine" {{if eq $d.Tab "mine"}}class="on"{{end}}>{{t "bp.tab.mine"}}</a>
+  {{if .User.Admin}}<a href="/bp?tab=all" {{if eq $d.Tab "all"}}class="on"{{end}}>{{t "bp.tab.all"}}</a>{{end}}
+</div>
+{{if not $d.Tab}}<div class="kbspaces">{{range $d.Templates}}<a class="card kbcard" href="/bp/start/{{.ID}}"><b>⚙ {{.Name}}</b>{{with .Description}}<span class="small muted">{{.}}</span>{{end}}</a>{{else}}<div class="empty card">{{t "bp.no_templates"}}</div>{{end}}</div>
+{{else if eq $d.Tab "approvals"}}<div class="card flush">{{range $d.Approvals}}<div class="bpapproval">
+  <div><a href="/bp/i/{{.InstanceID}}"><b>{{.Name}}</b></a> <span class="muted small">· {{.StartedBy}} · {{datetime .CreatedAt}}</span><div>{{.Text}}</div></div>
+  {{template "bpanswer" (dict "A" . "Back" "/bp?tab=approvals")}}
+</div>{{else}}<div class="empty">{{t "bp.no_approvals"}}</div>{{end}}</div>
+{{else if eq $d.Tab "all"}}<form method="get" action="/bp" class="row filters"><input type="hidden" name="tab" value="all">
+  <select name="status" onchange="this.form.submit()"><option value="">{{t "bp.any_status"}}</option>{{range $d.Statuses}}<option value="{{.}}" {{if eq . $d.Status}}selected{{end}}>{{t (print "bp.status." .)}}</option>{{end}}</select>
+  <select name="template" onchange="this.form.submit()"><option value="">{{t "bp.any_template"}}</option>{{range $d.AllTemplates}}<option value="{{.ID}}" {{if eq .ID $d.Template}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
+<div class="card flush">{{if $d.Instances}}<table class="tlist"><thead><tr><th>{{t "bp.process"}}</th><th>{{t "bp.started_by"}}</th><th>{{t "bp.state"}}</th><th>{{t "bp.started_at"}}</th><th></th></tr></thead><tbody>
+  {{$back := print "/bp?tab=all&status=" $d.Status "&template=" $d.Template "&page=" $d.Page}}
+  {{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a>{{if ne .Entity "none"}} <span class="muted small">· {{t (print "crm." .Entity)}}</span>{{end}}</td>
+  <td class="small">{{.StartedBy.Name}}</td><td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span></td><td class="small">{{datetime .CreatedAt}}</td>
+  <td class="row">{{if eq .Status "running"}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}
+    <form method="post" action="/bp/i/{{.ID}}/delete" data-confirm="{{t "bp.delete_instance_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>
+  {{else}}<div class="empty">{{t "bp.no_all"}}</div>{{end}}</div>
+{{if or $d.Page $d.Next}}<div class="row">{{if $d.Page}}<a class="button ghost" href="/bp?tab=all&status={{$d.Status}}&template={{$d.Template}}&page={{add $d.Page -1}}">{{icon "chevron-left"}}</a>{{end}}
+  {{with $d.Next}}<a class="button ghost" href="/bp?tab=all&status={{$d.Status}}&template={{$d.Template}}&page={{.}}">{{icon "chevron-right"}}</a>{{end}}</div>{{end}}
+{{else}}<div class="card flush">{{if $d.Instances}}<table class="tlist"><tbody>{{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a></td>
+  <td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span></td><td class="small">{{datetime .CreatedAt}}</td></tr>{{end}}</tbody></table>
+  {{else}}<div class="empty">{{t "bp.no_instances"}}</div>{{end}}</div>{{end}}
+{{end}}

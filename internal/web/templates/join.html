@@ -1,0 +1,24 @@
+{{define "content"}}{{$d := .Data}}{{$i := $d.Invite}}
+<div class="login">
+  <div class="card join">
+    <div class="logo"><b>24</b> go24</div>
+    {{if $d.Gone}}
+    <h2>{{icon "users-group"}} {{t "join.gone"}}</h2>
+    <p class="muted">{{t "join.gone_hint"}}</p>
+    {{else}}
+    <h2>{{icon "users-group"}} {{t "join.title" $i.Project}}</h2>
+    <p class="muted">{{t "join.by" $i.CreatedBy}}</p>
+    <p class="small muted">{{t "join.what"}}</p>
+    {{if $d.SignedIn}}
+    <form method="post" action="/join/{{$i.Token}}"><button class="primary">{{icon "plus"}} {{t "join.accept"}}</button></form>
+    {{else}}
+    {{if $d.Signup}}<p><a class="btn primary" href="/join/{{$i.Token}}/signup">{{icon "user"}} {{t "join.signup"}}</a></p>{{end}}
+    <p><a class="btn{{if not $d.Signup}} primary{{end}}" href="/join/{{$i.Token}}/signup?login=1">{{icon "lock"}} {{t "join.login"}}</a></p>
+    {{if not $d.Signup}}<p class="small muted">{{t "join.no_signup"}}</p>{{end}}
+    {{end}}
+    <p class="small muted">{{t "join.expires" (day $i.Expires)}}</p>
+    {{end}}
+    {{template "langs" .}}
+  </div>
+</div>
+{{end}}

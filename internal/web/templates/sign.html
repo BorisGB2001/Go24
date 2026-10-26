@@ -1,0 +1,12 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "sign.title"}}</h1><span style="flex:1"></span>
+  <a href="/sign/new" class="button create">{{icon "plus"}} {{t "sign.new"}}</a></div>
+<div class="tabs">{{range $d.Filters}}<a href="/sign{{with .}}?f={{.}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}</div>
+<div class="card flush">{{if $d.Docs}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.status"}}</th><th>{{t "sign.parties"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
+  <tbody>{{range $d.Docs}}{{$c := .Current}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "signature"}} {{.Title}}</a></td>
+    <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span>{{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
+    <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{t (print "sign.pst." $p.Status)}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</td>
+    <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{icon "signature"}} {{t "sign.empty"}}</div>{{end}}</div>
+{{end}}

@@ -1,0 +1,27 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row"><h1 style="flex:1">{{t "worksheet.title"}}</h1><a href="/worktime" class="button ghost">{{icon "clock"}} {{t "workday.page"}}</a></div>
+<div class="sub">{{t "worksheet.subtitle"}}</div>
+<div class="card flush">
+  <form method="get" action="/worktime/table" class="row" style="padding:12px 16px 0">
+    <h2 style="flex:1;margin:0">{{t (print "month_full." ($d.Month.Format "1"))}} {{$d.Month.Year}}</h2>
+    <input type="hidden" name="month" value="{{$d.Month.Format "2006-01"}}">
+    <select name="dept" onchange="this.form.submit()"><option value="">{{t "worksheet.all_depts"}}</option>
+      {{range $d.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+    <a href="/worktime/table?month={{$d.Prev}}&dept={{$d.Dept}}" class="button ghost" title="{{t "worksheet.prev"}}">{{icon "chevron-left"}}</a>
+    <a href="/worktime/table?month={{$d.Next}}&dept={{$d.Dept}}" class="button ghost" title="{{t "worksheet.next"}}">{{icon "chevron-right"}}</a>
+  </form>
+  <div class="wslegend"><span class="ws-work">{{t "worksheet.legend.work"}}</span><span class="ws-bad">{{t "worksheet.legend.bad"}}</span>
+    <span class="ws-run">{{t "worksheet.legend.run"}}</span><span class="ws-absence">{{t "worksheet.legend.absence"}}</span><span class="ws-off">{{t "worksheet.legend.off"}}</span>
+    <span class="muted">{{icon "hourglass-high"}} {{t "worksheet.legend.pending"}}</span></div>
+  {{if $d.Rows}}<div class="wsheet-wrap"><table class="wsheet"><thead><tr><th class="who">{{t "workday.col.who"}}</th>
+    {{range $d.Dates}}{{$k := .Format "2006-01-02"}}<th class="{{if index $d.Off $k}}off{{end}}{{if eq $k $d.Today}} today{{end}}">{{.Day}}<br><span class="muted">{{t (print "wd." (wdnum .))}}</span></th>{{end}}
+    <th>{{t "worksheet.days"}}</th><th>{{t "worksheet.hours"}}</th><th>{{t "worksheet.violations"}}</th></tr></thead>
+  <tbody>{{range $row := $d.Rows}}<tr><td class="who"><a href="/u/{{$row.ID}}">{{$row.Name}}</a>{{with $row.Position}}<div class="muted small">{{.}}</div>{{end}}</td>
+    {{range $row.Cells}}{{$k := .Day.Format "2006-01-02"}}<td class="ws-{{if eq .Kind "work"}}{{if .Flags}}bad{{else if .Open}}run{{else}}work{{end}}{{else}}{{.Kind}}{{end}}"
+      title="{{if eq .Kind "absence"}}{{t (print "absence.kind." .Absence)}}{{end}}{{range .Flags}} {{t (print "workday.flag." .)}}{{end}}{{if .Pending}} {{t "workday.pending"}}{{end}}">
+      {{if ne .Kind "future"}}<a href="/worktime/d/{{$row.ID}}/{{$k}}">{{if eq .Kind "work"}}{{if .Worked}}{{hms .Worked}}{{else}}?{{end}}{{else if eq .Kind "absence"}}{{t (print "worksheet.abs." .Absence)}}{{else}}&nbsp;{{end}}{{if .Pending}}<span class="ws-pend">●</span>{{end}}</a>{{end}}</td>{{end}}
+    <td class="sum">{{$row.Days}}</td><td class="sum">{{hms $row.Worked}}</td><td class="sum">{{if $row.Violations}}<span class="dl over">{{$row.Violations}}</span>{{else}}0{{end}}</td></tr>{{end}}</tbody></table></div>
+  {{else}}<div class="empty">{{t "worksheet.empty"}}</div>{{end}}
+</div>
+{{end}}

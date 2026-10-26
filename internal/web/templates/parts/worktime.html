@@ -1,0 +1,9 @@
+{{/* a change of a working day: who, what was changed (old → new) and why */}}
+{{define "wdchange"}}<b>{{.AuthorName}}</b>:
+  {{with .Started}}{{t "workday.col.start"}} {{with $.OldStarted}}{{clock .}} → {{end}}{{clock .}}; {{end}}
+  {{with .Ended}}{{t "workday.col.end"}} {{with $.OldEnded}}{{clock .}} → {{end}}{{clock .}}; {{end}}
+  {{with .PauseSecs}}{{t "workday.col.pause"}} {{with $.OldPause}}{{dur .}} → {{end}}{{dur .}}; {{end}}
+  <span class="muted">«{{.Reason}}»</span>{{end}}
+
+{{/* the mark of a work report: good | bad | none | "" (not checked yet) */}}
+{{define "wrmark"}}{{if eq . "good"}}<span class="pill wr-good">👍 {{t "wreport.mark.good"}}</span>{{else if eq . "bad"}}<span class="pill wr-bad">👎 {{t "wreport.mark.bad"}}</span>{{else if eq . "none"}}<span class="pill">{{t "wreport.mark.none"}}</span>{{else}}<span class="pill wr-wait">{{t "wreport.mark.wait"}}</span>{{end}}{{end}}

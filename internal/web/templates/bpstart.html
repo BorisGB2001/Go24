@@ -1,0 +1,12 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a></div>
+<h1>⚙ {{$d.T.Name}}</h1>
+{{with $d.T.Description}}<div class="sub">{{.}}</div>{{end}}
+<div class="card" style="max-width:640px">
+  <form method="post" action="/bp/start/{{$d.T.ID}}"><input type="hidden" name="entity_id" value="{{$d.EntityID}}">
+    {{range $d.T.Fields}}{{template "bpfield" .}}{{end}}
+    <p><button class="primary">{{icon "player-play"}} {{t "bp.start"}}</button></p>
+  </form>
+</div>
+{{end}}

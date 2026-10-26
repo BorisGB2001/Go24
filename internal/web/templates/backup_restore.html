@@ -1,0 +1,19 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "database"}} {{t "backup.restore.title"}}</h1>
+<div class="sub"><a href="/settings/backup">{{t "backup.title"}}</a> · <code>{{$d.Copy.Name}}</code> · {{datetime $d.Copy.CreatedAt}}</div>
+<form method="post" action="/settings/backup/{{$d.Copy.ID}}/restore" class="card stack" autocomplete="off">
+  <p style="color: var(--danger)"><b>{{t "backup.restore.warning"}}</b></p>
+  <fieldset class="stack">
+    <legend>{{t "backup.restore.what"}}</legend>
+    {{range $d.Parts}}<label><input type="checkbox" name="parts" value="{{.}}" checked> {{t (print "backup.restore.part." .)}}</label>{{end}}
+  </fieldset>
+  {{if $d.Media}}<p class="muted small">{{t "backup.restore.media" (print $d.Host "/" $d.Copy.Name "/media/")}}</p>{{end}}
+  {{if $d.Secrets}}<label>{{t "backup.restore.password"}} <input type="password" name="password" autocomplete="off"></label>
+  <p class="muted small">{{t "backup.restore.password_hint"}}</p>{{end}}
+  <label><input type="checkbox" name="safety" value="1" checked> {{t "backup.restore.safety"}}</label>
+  <label>{{t "backup.restore.confirm" $d.Base}} <input name="confirm" required placeholder="{{$d.Base}}" spellcheck="false"></label>
+  <p class="muted small">{{t "backup.restore.hint"}}</p>
+  <div class="row"><button class="danger">{{t "backup.restore.run"}}</button> <a class="button ghost" href="/settings/backup">{{t "common.cancel"}}</a></div>
+</form>
+{{end}}

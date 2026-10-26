@@ -1,0 +1,29 @@
+{{define "content"}}
+{{$d := .Data}}{{$n := $d.Next}}
+<div class="pagehead"><h1 style="flex:1">{{t "wreport.title"}}</h1>
+  {{if not $n.Empty}}<a class="button primary" href="/worktime/reports/new">{{icon "send"}} {{t "wreport.write"}}</a>{{end}}</div>
+<div class="sub">{{with $n.Rule}}{{if eq .Period "day"}}{{t "wreport.rule.day"}}{{else if eq .Period "week"}}{{t "wreport.rule.week" (t (print "wreport.wd." .Weekday))}}{{else if eq .Period "month"}}{{t "wreport.rule.month" .Monthday}}{{else}}{{t "wreport.rule.none"}}{{end}}{{end}}</div>
+{{if and $n.Due (not $n.Empty)}}<div class="flash">{{icon "alert-triangle"}} {{t "wreport.due" (day $n.From) (day $n.To)}} <a href="/worktime/reports/new">{{t "wreport.write"}} →</a></div>{{end}}
+<div class="tabs">
+  <a href="/worktime">{{icon "clock"}} {{t "workday.page"}}</a>
+  <a href="/worktime/table">{{icon "table"}} {{t "worksheet.title"}}</a>
+  {{if $d.Team}}<a href="/worktime/reports?tab=team" {{if eq $d.Tab "team"}}class="on"{{end}}>{{icon "users"}} {{t "wreport.tab.team"}}</a>{{end}}
+  <a href="/worktime/reports?tab=mine" {{if eq $d.Tab "mine"}}class="on"{{end}}>{{icon "file-text"}} {{t "wreport.tab.mine"}}</a>
+</div>
+<form class="row filters" method="get" action="/worktime/reports"><input type="hidden" name="tab" value="{{$d.Tab}}">
+  {{if not $d.Unchecked}}<a href="/worktime/reports?tab={{$d.Tab}}&month={{$d.PrevMonth}}{{with $d.User}}&user={{.}}{{end}}" class="button ghost">{{icon "chevron-left"}}</a>
+  <b>{{t (print "month_full." ($d.Month.Format "1"))}} {{$d.Month.Year}}</b><input type="hidden" name="month" value="{{$d.Month.Format "2006-01"}}">
+  <a href="/worktime/reports?tab={{$d.Tab}}&month={{$d.NextMonth}}{{with $d.User}}&user={{.}}{{end}}" class="button ghost">{{icon "chevron-right"}}</a>{{end}}
+  {{if eq $d.Tab "team"}}<select name="user" style="width:auto" onchange="this.form.submit()"><option value="">{{t "wreport.all_people"}}</option>
+    {{range $d.People}}<option value="{{.ID}}" {{if eq .ID $d.User}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <label class="check"><input type="checkbox" name="unchecked" value="1" {{if $d.Unchecked}}checked{{end}} onchange="this.form.submit()"> {{t "wreport.unchecked"}}</label>{{end}}
+</form>
+{{if $d.List}}<div class="card flush"><table class="tlist wreports"><thead><tr>{{if eq $d.Tab "team"}}<th>{{t "wreport.col.who"}}</th>{{end}}<th>{{t "wreport.col.period"}}</th>
+  <th>{{t "wreport.col.worked"}}</th><th>{{t "wreport.col.sent"}}</th><th>{{t "wreport.col.mark"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.List}}<tr>{{if eq $d.Tab "team"}}<td><a href="/u/{{.UserID}}" data-user="{{.UserID}}">{{.UserName}}</a></td>{{end}}
+    <td><a href="/worktime/reports/{{.ID}}">{{day .From}}{{if ne .From .To}} — {{day .To}}{{end}}</a></td><td>{{dur .Worked}}</td>
+    <td class="small muted">{{datetime .Sent}}</td><td>{{template "wrmark" .Mark}}</td>
+    <td class="small muted">{{with .CommentCount}}{{icon "messages"}} {{.}}{{end}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty">{{t "wreport.none"}}</div>{{end}}
+{{end}}
+

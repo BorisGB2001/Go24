@@ -1,0 +1,30 @@
+{{/* The blocks of a site's page («Сайты»): the same markup in the editor, the preview and the published page. */}}
+{{define "siteblock"}}{{$b := .}}{{$c := $b.Get "color"}}
+{{if eq .Type "menu"}}<header class="lp-menu"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
+  <b class="lp-logo">{{.Get "logo"}}</b><nav>{{range .Pairs "links"}}<a href="{{.Link}}">{{.A}}</a>{{end}}</nav></div></header>
+{{else if eq .Type "cover"}}<section class="lp-cover{{if .Get "image"}} lp-pic{{end}}" style="{{with $c}}background-color:{{.}};{{end}}{{with .Get "image"}}background-image:url('{{.}}'){{end}}"><div class="lp-wrap">
+  <h1>{{.Get "title"}}</h1>{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
+  {{with .Get "button"}}<a class="lp-btn" href="{{or ($b.Get "link") "#"}}">{{.}}</a>{{end}}</div></section>
+{{else if eq .Type "title"}}<section class="lp-title"><div class="lp-wrap"><h2>{{.Get "title"}}</h2>{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></section>
+{{else if eq .Type "text"}}<section class="lp-text"><div class="lp-wrap">{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></section>
+{{else if eq .Type "image"}}<section class="lp-image"><div class="lp-wrap">{{with .Get "image"}}<img src="{{.}}" alt="{{$b.Get "caption"}}">{{else}}<div class="lp-noimg"></div>{{end}}{{with .Get "caption"}}<p>{{.}}</p>{{end}}</div></section>
+{{else if eq .Type "textimage"}}<section class="lp-textimage"><div class="lp-wrap"><div><h2>{{.Get "title"}}</h2>{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div>
+  {{with .Get "image"}}<img src="{{.}}" alt="">{{else}}<div class="lp-noimg"></div>{{end}}</div></section>
+{{else if eq .Type "features"}}<section class="lp-features"><div class="lp-wrap">{{with .Get "title"}}<h2>{{.}}</h2>{{end}}
+  <div class="lp-cols">{{range .Pairs "items"}}<div><h3>{{.A}}</h3><p>{{.B}}</p></div>{{end}}</div></div></section>
+{{else if eq .Type "button"}}<section class="lp-button"><div class="lp-wrap"><a class="lp-btn" href="{{or ($b.Get "link") "#"}}">{{.Get "button"}}</a></div></section>
+{{else if eq .Type "contacts"}}<section class="lp-contacts"><div class="lp-wrap">{{with .Get "title"}}<h2>{{.}}</h2>{{end}}
+  {{with .Get "phone"}}<p><a href="tel:{{.}}">{{.}}</a></p>{{end}}{{with .Get "email"}}<p><a href="mailto:{{.}}">{{.}}</a></p>{{end}}
+  {{range .Paragraphs "address"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></section>
+{{else if eq .Type "form"}}<section class="lp-form" id="b-{{.ID}}"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
+  {{with .Get "title"}}<h2>{{.}}</h2>{{end}}{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
+  {{if eq .State "sent"}}<div class="lp-thanks">{{range .Paragraphs "thanks"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{else}}<p>{{t "site.def.form.thanks"}}</p>{{end}}</div>
+  {{else}}<form method="post" class="lp-fields"><input type="hidden" name="block" value="{{.ID}}"><input type="hidden" name="t" value="{{.Stamp}}">
+    <input type="text" name="website" class="lp-trap" tabindex="-1" autocomplete="off" aria-hidden="true">
+    {{with .Err}}<p class="lp-err">{{t .}}</p>{{end}}
+    {{range $f := sitefields}}{{$ask := $b.Asks $f}}{{if $ask}}<label><span>{{t (print "site.form." $f)}}{{if eq $ask "req"}} <b class="lp-req">*</b>{{end}}</span>
+      {{if eq $f "comment"}}<textarea name="comment" rows="4" maxlength="5000"{{if eq $ask "req"}} required{{end}}></textarea>
+      {{else}}<input type="{{if eq $f "email"}}email{{else if eq $f "phone"}}tel{{else}}text{{end}}" name="{{$f}}" maxlength="300"{{if eq $ask "req"}} required{{end}} autocomplete="{{if eq $f "name"}}name{{else if eq $f "phone"}}tel{{else}}email{{end}}">{{end}}</label>{{end}}{{end}}
+    <button class="lp-btn"{{if eq .State "preview"}} disabled title="{{t "site.form_preview"}}"{{end}}>{{or (.Get "button") (t "site.def.form.button")}}</button></form>{{end}}</div></section>
+{{else if eq .Type "footer"}}<footer class="lp-footer"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></footer>
+{{end}}{{end}}

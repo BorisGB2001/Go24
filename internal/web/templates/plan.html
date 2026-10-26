@@ -1,0 +1,40 @@
+{{define "content"}}
+<h1>{{t "title.plan"}}</h1>
+<div class="sub">{{t "plan.subtitle"}}</div>
+<div class="board plan" data-board="plan" data-cols-board="plan" data-failed="{{t "board.move_failed"}}">
+  {{range .Data}}{{$col := .}}
+  <div class="col" data-stage="{{.ID}}">
+    <div class="colhead">
+      <b>{{if .Code}}{{t (print "plan.stage." .Code)}}{{else if .Title}}{{.Title}}{{else}}{{t "plan.unplanned"}}{{end}}</b>
+      <span class="muted small colcount">{{len .Tasks}}</span>
+      {{if .ID}}
+      <details class="stage-menu"><summary title="{{t "plan.edit_stage"}}">{{icon "edit"}}</summary>
+        <form method="post" action="/plan/stages" class="row"><input type="hidden" name="op" value="rename"><input type="hidden" name="id" value="{{.ID}}">
+          <input type="text" name="title" required placeholder="{{t "form.name"}}" style="flex:1"><button>{{t "common.save"}}</button></form>
+        <form method="post" action="/plan/stages"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">
+          <button class="ghost">{{icon "trash"}} {{t "plan.delete_stage"}}</button></form>
+      </details>
+      {{end}}
+    </div>
+    {{range .Tasks}}{{$t := .}}
+    <div class="kcard" draggable="true" data-key="{{.Key}}">
+      <a href="/t/{{.Key}}" class="ttitle">{{.Title}}</a>
+      <div class="foot">
+        <span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span>
+        <span class="tkey">{{.Key}}</span><span style="flex:1"></span>
+        {{if eq .Priority 2}}<span class="prio">{{icon "flag"}}</span>{{end}}
+        {{with date .Deadline}}<span class="dl{{if $t.Overdue}} over{{end}}">{{.}}</span>{{end}}
+      </div>
+    </div>
+    {{end}}
+    <div class="empty small" {{if .Tasks}}hidden{{end}}>{{t "plan.empty"}}</div>
+  </div>
+  {{end}}
+  <div class="col add-col">
+    <form method="post" action="/plan/stages"><input type="hidden" name="op" value="add">
+      <label>{{t "plan.add_stage"}}</label><input type="text" name="title" required placeholder="{{t "plan.stage_placeholder"}}">
+      <p><button>{{icon "plus"}} {{t "common.add"}}</button></p></form>
+  </div>
+</div>
+<script src="{{asset "js/boards.js"}}"></script>
+{{end}}

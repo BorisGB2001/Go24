@@ -1,0 +1,68 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/openlines">{{t "ol.title"}}</a></div>
+<h1>{{t "ol.widgets"}}</h1>
+<div class="sub">{{t "ol.widgets_sub"}}</div>
+{{range $w := $d.Widgets}}<div class="card">
+  <h2>💬 {{$w.Name}}{{if not $w.Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</h2>
+  <p><a class="button ghost" href="/openlines/widgets/{{$w.ID}}/preview" target="_blank">{{icon "eye"}} {{t "ol.preview"}}</a></p>
+  <label>{{t "ol.code"}}</label><pre class="olcode">&lt;script src="{{$d.Base}}/w/{{$w.ID}}/widget.js" async&gt;&lt;/script&gt;</pre>
+  <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
+    <form method="post" action="/openlines/widgets/{{$w.ID}}">
+      <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$w.Name}}" required maxlength="100">
+      <label>{{t "ol.greeting"}}</label><input type="text" name="greeting" value="{{$w.Greeting}}" maxlength="1000">
+      <div class="grid"><div><label>{{t "ol.color"}}</label><input type="color" name="color" value="#{{$w.Color}}"></div>
+        <div><label class="check" style="margin-top:28px"><input type="checkbox" name="active" {{if $w.Active}}checked{{end}}> {{t "ol.active"}}</label></div></div>
+      <label>{{t "ol.origins"}}</label><textarea name="origins" rows="2" placeholder="https://example.com">{{range $w.Origins}}{{.}}
+{{end}}</textarea>
+      <label>{{t "ol.operators"}}</label>{{template "upick" (upick "operators" $w.Operators $d.Users "multi")}}
+      {{template "olline" (dict "W" $w "Days" $d.Days)}}
+      <p class="row"><button class="primary">{{t "common.save"}}</button></p></form>
+    <form method="post" action="/openlines/widgets/{{$w.ID}}/delete" data-confirm="{{t "ol.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "crm.delete"}}</button></form></details>
+</div>{{end}}
+<details class="card"{{if not $d.Widgets}} open{{end}}><summary><b>{{icon "plus"}} {{t "ol.new_widget"}}</b></summary>
+  <form method="post" action="/openlines/widgets/new">
+    <label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="100" placeholder="{{t "ol.name_hint"}}">
+    <label>{{t "ol.greeting"}}</label><input type="text" name="greeting" maxlength="1000" placeholder="{{t "ol.greeting_hint"}}">
+    <div class="grid"><div><label>{{t "ol.color"}}</label><input type="color" name="color" value="#2FC6F6"></div>
+      <div><label class="check" style="margin-top:28px"><input type="checkbox" name="active" checked> {{t "ol.active"}}</label></div></div>
+    <label>{{t "ol.origins"}}</label><textarea name="origins" rows="2" placeholder="https://example.com"></textarea>
+    <label>{{t "ol.operators"}}</label>{{template "upick" (upick "operators" "" $d.Users "multi")}}
+    {{template "olline" (dict "W" $d.New "Days" $d.Days)}}
+    <p><button class="primary">{{t "common.create"}}</button></p></form></details>
+{{end}}
+
+{{define "olline"}}{{$w := .W}}
+<details class="olline"><summary>{{t "ol.queue"}}</summary>
+  <label>{{t "ol.queue_mode"}}</label><select name="queue_mode">
+    <option value="all" {{if eq $w.QueueMode "all"}}selected{{end}}>{{t "ol.mode_all"}}</option>
+    <option value="evenly" {{if eq $w.QueueMode "evenly"}}selected{{end}}>{{t "ol.mode_evenly"}}</option>
+    <option value="strict" {{if eq $w.QueueMode "strict"}}selected{{end}}>{{t "ol.mode_strict"}}</option></select>
+  <p class="small muted">{{t "ol.hint"}}</p>
+  <label>{{t "ol.answer_wait"}}</label><input type="number" name="answer_wait" min="1" max="1440" value="{{$w.AnswerWait}}">
+</details>
+<details class="olline"><summary>{{t "ol.hours"}}</summary>
+  <label class="check"><input type="checkbox" name="hours_on" {{if $w.HoursOn}}checked{{end}}> {{t "ol.hours_on"}}</label>
+  <div class="row">{{range $.Days}}<label class="check"><input type="checkbox" name="hours_days" value="{{.}}" {{if $w.Day .}}checked{{end}}> {{t (printf "weekday.%d" .)}}</label>{{end}}</div>
+  <div class="grid"><div><label>{{t "ol.hours_from"}}</label><input type="time" name="hours_from" value="{{$w.HoursFrom}}"></div>
+    <div><label>{{t "ol.hours_to"}}</label><input type="time" name="hours_to" value="{{$w.HoursTo}}"></div></div>
+  <label>{{t "ol.offline_text"}}</label><textarea name="offline_text" rows="2" maxlength="1000" placeholder="{{t "ol.offline_hint"}}">{{$w.OfflineText}}</textarea>
+</details>
+<details class="olline"><summary>{{t "ol.auto"}}</summary>
+  <label>{{t "ol.welcome_text"}}</label><textarea name="welcome_text" rows="2" maxlength="1000" placeholder="{{t "ol.welcome_hint"}}">{{$w.WelcomeText}}</textarea>
+  <label>{{t "ol.noanswer_text"}}</label><textarea name="noanswer_text" rows="2" maxlength="1000" placeholder="{{t "ol.noanswer_hint"}}">{{$w.NoanswerText}}</textarea>
+  <label>{{t "ol.noanswer_after"}}</label><input type="number" name="noanswer_after" min="1" max="1440" value="{{$w.NoanswerAfter}}">
+  <label>{{t "ol.close_text"}}</label><textarea name="close_text" rows="2" maxlength="1000" placeholder="{{t "ol.close_hint"}}">{{$w.CloseText}}</textarea>
+  <label>{{t "ol.autoclose"}}</label><input type="number" name="autoclose" min="0" max="720" value="{{$w.Autoclose}}">
+</details>
+<details class="olline"><summary>{{t "ol.quality"}}</summary>
+  <label class="check"><input type="checkbox" name="vote_on" {{if $w.VoteOn}}checked{{end}}> {{t "ol.vote_on"}}</label>
+  <label>{{t "ol.vote_text"}}</label><input name="vote_text" maxlength="1000" value="{{$w.VoteText}}" placeholder="{{t "widget.vote"}}">
+  <label class="check"><input type="checkbox" name="history_on" {{if $w.HistoryOn}}checked{{end}}> {{t "ol.history_on"}}</label>
+  <p class="small muted">{{t "ol.history_hint"}}</p>
+</details>
+<details class="olline"><summary>{{t "ol.crm"}}</summary>
+  <label class="check"><input type="checkbox" name="crm_auto" {{if $w.CRMAuto}}checked{{end}}> {{t "ol.crm_auto"}}</label>
+  <p class="small muted">{{t "ol.crm_hint"}}</p>
+</details>
+{{end}}

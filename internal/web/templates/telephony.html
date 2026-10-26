@@ -1,0 +1,95 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row"><h1 style="flex:1">{{icon "phone"}} {{t "tel.title"}}</h1>
+  {{if $d.Enabled}}<a class="button ghost" href="/telephony/calls">{{icon "list"}} {{t "tel.calls"}}</a>{{end}}</div>
+<form method="post" action="/settings/telephony" class="card stack">
+  <label><input type="checkbox" name="enabled" value="1" {{if $d.Enabled}}checked{{end}}> {{t "tel.enable"}}</label>
+  <p class="muted small">{{t "tel.enable_hint"}}</p>
+  <label><input type="checkbox" name="record" value="1" {{if $d.Record}}checked{{end}}> {{t "tel.record"}}</label>
+  <p class="muted small">{{t "tel.record_hint"}}</p>
+  {{if $d.CRM}}<label><input type="checkbox" name="lead" value="1" {{if $d.Lead}}checked{{end}}> {{t "tel.lead_auto"}}</label>
+  <p class="muted small">{{t "tel.lead_auto_hint"}}</p>{{else}}{{if $d.Lead}}<input type="hidden" name="lead" value="1">{{end}}{{end}}
+  {{if $d.Down}}<p class="flash">{{t "tel.down"}}</p>{{else}}<p class="muted small">{{t "tel.server" $d.Version}}{{with $d.SIPHost}} · {{t "tel.sip_server"}}: <b>{{.}}</b> (UDP/TCP 5060){{end}}</p>{{end}}
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{if $d.Enabled}}
+<div class="card flush">
+  <table class="list">
+    <thead><tr><th>{{t "tel.col.number"}}</th><th>{{t "tel.col.employee"}}</th><th>{{t "tel.col.phone"}}</th><th>{{t "tel.col.softphone"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Lines}}<tr>
+      <td><form method="post" action="/settings/telephony/number" class="row nowrap"><input type="hidden" name="user" value="{{.UserID}}">
+        <input type="text" name="number" value="{{.Number}}" inputmode="numeric" pattern="[0-9]{1,8}" maxlength="8" size="6" title="{{t "err.inner_phone"}}">
+        <button class="ghost small" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
+      <td><a href="/u/{{.UserID}}">{{.Name}}</a>{{if .Dup}} <span class="pill st-deferred" title="{{t "tel.dup_hint"}}">{{t "tel.dup"}}</span>{{end}}</td>
+      <td class="small">{{if .Dup}}—{{else if index $d.Online .Login}}<span class="pill st-completed">{{t "tel.online"}}</span>{{else}}<span class="muted">{{t "tel.offline"}}</span>{{end}}</td>
+      <td class="small">{{if .Dup}}—{{else if index $d.Online .WebLogin}}<span class="pill st-completed">{{t "tel.online"}}</span>{{else}}<span class="muted">{{t "tel.offline"}}</span>{{end}}</td>
+      <td><form method="post" action="/u/{{.UserID}}/telephony/password" data-confirm="{{t "tel.password_confirm" .Name}}"><input type="hidden" name="back" value="settings">
+        <button class="link small">{{icon "key"}} {{t "tel.new_password"}}</button></form></td></tr>
+    {{else}}<tr><td colspan="5" class="empty">{{t "tel.no_lines"}}</td></tr>{{end}}</tbody>
+  </table>
+</div>
+<form method="post" action="/settings/telephony/number" class="card stack">
+  <h2>{{icon "plus"}} {{t "tel.add"}}</h2>
+  <div class="row">
+    <div style="flex:1;min-width:220px">{{template "upick" (upick "user" "" $d.Users "required")}}</div>
+    <input type="text" name="number" inputmode="numeric" pattern="[0-9]{1,8}" maxlength="8" size="8" required placeholder="{{t "tel.col.number"}}" title="{{t "err.inner_phone"}}">
+    <button class="primary">{{t "tel.assign"}}</button>
+  </div>
+  <p class="muted small">{{t "tel.add_hint"}}</p>
+</form>
+<div class="card stack" id="trunks">
+  <h2>{{icon "world"}} {{t "tel.trunks"}}</h2>
+  <p class="muted small">{{t "tel.trunks_hint"}}</p>
+  {{range $d.Trunks}}<details class="trunk">
+    <summary><b>{{.Name}}</b> · {{.Number}} · <span class="muted">{{.Host}}</span>
+      {{if index $d.Online .Key}}<span class="pill st-completed">{{t "tel.online"}}</span>{{else}}<span class="muted small">{{t "tel.offline"}}</span>{{end}}</summary>
+    {{template "trunk-form" (dict "T" . "Users" $d.Users)}}
+    <form method="post" action="/telephony/trunks/{{.ID}}/delete" data-confirm="{{t "tel.trunk.delete_confirm" .Name}}">
+      <button class="ghost small danger">{{icon "trash"}} {{t "tel.trunk.delete"}}</button></form>
+  </details>{{else}}<p class="muted">{{t "tel.no_trunks"}}</p>{{end}}
+  <details {{if not $d.Trunks}}open{{end}}><summary class="button ghost">{{icon "plus"}} {{t "tel.trunk.add"}}</summary>
+    {{template "trunk-form" (dict "T" $d.NewTrunk "Users" $d.Users)}}</details>
+</div>
+{{end}}
+{{end}}
+
+{{define "trunk-form"}}<form method="post" action="/telephony/trunks{{with .T.ID}}/{{.}}{{end}}" enctype="multipart/form-data" class="stack trunkform">
+  <div class="row wrap">
+    <label class="grow">{{t "tel.trunk.name"}} <input name="name" value="{{.T.Name}}" required maxlength="100" placeholder="{{t "tel.trunk.name_ph"}}"></label>
+    <label class="grow">{{t "tel.trunk.number"}} <input name="number" value="{{.T.Number}}" required inputmode="tel" maxlength="30" placeholder="+7 495 123-45-67"></label>
+  </div>
+  <div class="row wrap">
+    <label class="grow">{{t "tel.trunk.host"}} <input name="host" value="{{.T.Host}}" required maxlength="200" placeholder="sip.provider.ru:5060"></label>
+    <label class="grow">{{t "tel.trunk.username"}} <input name="username" value="{{.T.Username}}" required maxlength="64" autocomplete="off"></label>
+    <label class="grow">{{t "tel.trunk.password"}} <input type="password" name="password" maxlength="128" autocomplete="new-password"{{if .T.ID}} placeholder="{{t "tel.trunk.password_keep"}}"{{else}} required{{end}}></label>
+  </div>
+  <details><summary class="small link">{{t "tel.trunk.more"}}</summary>
+    <div class="stack" style="margin-top:8px">
+      <label>{{t "tel.trunk.auth_user"}} <input name="auth_user" value="{{.T.AuthUser}}" maxlength="64" autocomplete="off"></label>
+      <label><input type="checkbox" name="register" value="1" {{if .T.Register}}checked{{end}}> {{t "tel.trunk.register"}}</label>
+    </div></details>
+  <label>{{t "tel.trunk.ring"}}</label>
+  {{template "upick" (upick "ring" .T.Ring .Users "multi")}}
+  <select name="ring_mode" style="width:auto" aria-label="{{t "tel.trunk.ring"}}"><option value="all">{{t "tel.trunk.ring_all"}}</option>
+    <option value="queue" {{if eq .T.RingMode "queue"}}selected{{end}}>{{t "tel.trunk.ring_queue"}}</option></select>
+  <label><input type="checkbox" name="out_all" value="1" {{if .T.OutAll}}checked{{end}}> {{t "tel.trunk.out_all"}}</label>
+  <label class="small muted">{{t "tel.trunk.out"}}</label>
+  {{template "upick" (upick "out" .T.Out .Users "multi")}}
+  <fieldset class="stack"><legend>{{t "tel.trunk.handling"}}</legend>
+    <div class="row wrap">{{t "tel.trunk.noanswer"}} {{template "trunk-act" (dict "Name" "noanswer" "Act" .T.NoAnswer "To" .T.NoAnswerTo)}}</div>
+    <label><input type="checkbox" name="work_on" value="1" {{if .T.WorkOn}}checked{{end}}> {{t "tel.trunk.work_on"}}</label>
+    <div class="row wrap">{{$t := .T}}{{range list "1" "2" "3" "4" "5" "6" "7"}}<label class="check"><input type="checkbox" name="work_days" value="{{.}}" {{if hasInt $t.WorkDays .}}checked{{end}}> {{if eq . "7"}}{{t "weekday.0"}}{{else}}{{t (print "weekday." .)}}{{end}}</label>{{end}}
+      <label>{{t "tel.trunk.work_from"}} <input type="time" name="work_from" value="{{or .T.WorkFrom "09:00"}}" style="width:auto"></label>
+      <label>{{t "tel.trunk.work_to"}} <input type="time" name="work_to" value="{{or .T.WorkTo "18:00"}}" style="width:auto"></label></div>
+    <div class="row wrap">{{t "tel.trunk.offhours"}} {{template "trunk-act" (dict "Name" "offhours" "Act" .T.OffHours "To" .T.OffHoursTo)}}</div>
+    <label>{{t "tel.trunk.greeting"}} <input type="file" name="greeting" accept=".wav,audio/wav,audio/x-wav"></label>
+    {{if .T.GreetingSum}}<div class="row wrap"><audio controls preload="none" src="/telephony/trunks/{{.T.ID}}/greeting"></audio>
+      <label class="check"><input type="checkbox" name="greeting_drop" value="1"> {{t "tel.trunk.greeting_drop"}}</label></div>{{end}}
+    <p class="muted small">{{t "tel.trunk.greeting_hint"}}</p>
+  </fieldset>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
+
+{{define "trunk-act"}}<select name="{{.Name}}" style="width:auto" aria-label="{{t (print "tel.trunk." .Name)}}">
+  {{$a := .Act}}{{range list "hangup" "voicemail" "forward"}}<option value="{{.}}" {{if eq . $a}}selected{{end}}>{{t (print "tel.trunk.act." .)}}</option>{{end}}</select>
+  <input name="{{.Name}}_to" value="{{.To}}" inputmode="tel" maxlength="30" size="16" placeholder="{{t "tel.trunk.forward_ph"}}" aria-label="{{t "tel.trunk.forward_ph"}}">{{end}}

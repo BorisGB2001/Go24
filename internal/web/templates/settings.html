@@ -1,0 +1,14 @@
+{{define "content"}}
+<h1>{{icon "settings"}} {{t "settings.title"}}</h1>
+<div class="sub">{{t "settings.subtitle"}}</div>
+<div class="settings-grid">
+  {{range .Data.Sections}}
+  <section class="card">
+    <h2>{{t .TitleKey}}</h2>
+    <ul class="settings-links">
+      {{range .Links}}<li><a href="{{.Href}}">{{icon .Icon}} {{t .TitleKey}}</a></li>{{end}}
+    </ul>
+  </section>
+  {{end}}
+</div>
+{{end}}

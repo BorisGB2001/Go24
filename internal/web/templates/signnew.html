@@ -1,0 +1,18 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "sign.new"}}</h1></div>
+<form method="post" action="/sign" enctype="multipart/form-data" class="card form-narrow" data-native>
+  {{if $d.Doc}}<input type="hidden" name="kind" value="{{$d.Kind}}"><input type="hidden" name="id" value="{{$d.ID}}"><input type="hidden" name="doc" value="{{$d.Doc.ID}}">
+  <p>{{icon "file-text"}} <a href="/crm/{{$d.Kind}}/{{$d.ID}}/documents/{{$d.Doc.ID}}">{{$d.Doc.FileName}}</a></p>
+  {{else}}<label>{{t "sign.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>{{end}}
+  <label>{{t "sign.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$d.Title}}" {{if $d.Doc}}required{{end}} placeholder="{{t "sign.title_hint"}}">
+  <h3>{{icon "users"}} {{t "sign.side.company"}}</h3>
+  <label>{{t "sign.company_signer"}}</label>{{template "upick" (upick "signer" $d.Me $d.Users "required")}}
+  <p class="small muted">{{t "sign.company_hint"}}</p>
+  <h3>{{icon "user"}} {{t "sign.side.client"}}</h3>
+  <label>{{t "sign.client_name"}}</label><input type="text" name="client_name" maxlength="200" value="{{$d.ClientName}}">
+  <label>{{t "sign.client_email"}}</label><input type="email" name="client_email" value="{{$d.ClientEmail}}">
+  <p class="small muted">{{t "sign.client_hint"}}</p>
+  <p><button class="primary">{{icon "send"}} {{t "sign.send"}}</button>
+    <a class="button ghost" href="{{if $d.Doc}}/crm/{{$d.Kind}}/{{$d.ID}}#documents{{else}}/sign{{end}}">{{t "common.cancel"}}</a></p>
+</form>
+{{end}}

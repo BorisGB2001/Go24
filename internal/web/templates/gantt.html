@@ -1,0 +1,53 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}{{$v := $d.View}}
+<div class="crumbs">{{if $p.Collab}}<a href="/collabs">{{t "collab.title"}}</a>{{else}}<a href="/projects">{{t "nav.projects"}}</a>{{end}} {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a></div>
+<h1>{{$p.Name}}</h1>
+<div class="sub">{{t "gantt.subtitle"}}</div>
+<div class="tabs">
+  {{template "pviews" (dict "P" $p "On" "gantt")}}
+  <span class="spacer"></span>
+  {{range list "day" "week" "month"}}<a href="/p/{{$p.Key}}/gantt?scale={{.}}{{if $d.All}}&all=1{{end}}" {{if eq . $v.Scale}}class="on"{{end}}>{{t (print "gantt.scale." .)}}</a>{{end}}
+  {{if $d.All}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}">{{t "my.only_open"}}</a>{{else}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}&all=1">{{t "my.with_completed"}}</a>{{end}}
+</div>
+
+{{if $v.Empty}}
+<div class="card"><div class="empty">{{t "tasks.empty"}}</div></div>
+{{else}}
+<div class="card flush gantt">
+  <div class="g-names" style="padding-top:{{$v.HeadH}}px" data-pane="gantt-names">
+    {{range $v.Bars}}<div class="g-name" style="height:{{$v.RowH}}px"><a href="/t/{{.Key}}" title="{{.Title}}"><span class="tkey">{{.Key}}</span>{{.Title}}</a></div>{{end}}
+  </div>
+  <div class="g-chart">
+    <svg width="{{$v.Width}}" height="{{$v.Height}}" viewBox="0 0 {{$v.Width}} {{$v.Height}}" role="img" aria-label="{{t "tabs.gantt"}}">
+      <defs>
+        <marker id="g-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" class="g-arrowhead"/></marker>
+        <marker id="g-arrow-bad" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" class="g-arrowhead bad"/></marker>
+      </defs>
+      {{range $v.Ticks}}{{if .Weekend}}<rect class="g-weekend" x="{{.X}}" y="{{$v.HeadH}}" width="{{$v.DayW}}" height="{{$v.Height}}"/>{{end}}{{end}}
+      {{range $v.Months}}
+        <rect class="g-month" x="{{.X}}" y="0" width="{{.W}}" height="22"/>
+        <text class="g-month-label" x="{{.X}}" dx="6" y="15">{{t (print "month." .Month)}} {{.Year}}</text>
+        <line class="g-grid strong" x1="{{.X}}" y1="0" x2="{{.X}}" y2="{{$v.Height}}"/>
+      {{end}}
+      {{range $v.Ticks}}
+        <text class="g-tick" x="{{.X}}" dx="3" y="38">{{.Label}}</text>
+        <line class="g-grid" x1="{{.X}}" y1="24" x2="{{.X}}" y2="{{$v.Height}}"/>
+      {{end}}
+      {{range $i, $b := $v.Bars}}<line class="g-row" x1="0" y1="{{add $v.HeadH (mul (add $i 1) $v.RowH)}}" x2="{{$v.Width}}" y2="{{add $v.HeadH (mul (add $i 1) $v.RowH)}}"/>{{end}}
+      {{if $v.ShowToday}}<line class="g-today" x1="{{$v.TodayX}}" y1="24" x2="{{$v.TodayX}}" y2="{{$v.Height}}"/>{{end}}
+      {{range $v.Links}}<path class="g-link{{if .Bad}} bad{{end}}" d="{{.D}}" marker-end="url(#{{if .Bad}}g-arrow-bad{{else}}g-arrow{{end}})"><title>{{.FromKey}} → {{.ToKey}}{{if .Bad}} — {{t "gantt.link_conflict"}}{{end}}</title></path>{{end}}
+      {{range $v.Bars}}
+      <a href="/t/{{.Key}}">
+        {{if .Milestone}}
+        <path class="g-bar st-{{.Status}}" d="M{{add .X (half $v.DayW)}} {{.Y}} l9 9 l-9 9 l-9 -9 z"><title>{{.Key}} {{.Title}}</title></path>
+        {{else}}
+        <rect class="g-bar st-{{.Status}}{{if not .Planned}} derived{{end}}{{if .Overdue}} over{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="18" rx="4"><title>{{.Key}} {{.Title}} · {{day .Start}} – {{day .End}}</title></rect>
+        {{end}}
+      </a>
+      {{end}}
+    </svg>
+  </div>
+</div>
+<p class="small muted">{{t "gantt.legend"}}</p>
+{{end}}
+{{end}}

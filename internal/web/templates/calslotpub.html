@@ -1,0 +1,42 @@
+{{define "content"}}{{$d := .Data}}
+<div class="share bkpub">
+{{with $d.Meeting}}
+  {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+  <div class="card bk-done">
+    <h2>{{if .Cancelled}}{{icon "x"}} {{t "calslots.pub_cancelled"}}{{else}}{{icon "circle-check"}} {{t "calslots.pub_done"}}{{end}}</h2>
+    <dl class="bk-sum"><dt>{{t "calslots.pub_with"}}</dt><dd>{{range $i, $p := .People}}{{if $i}}, {{end}}{{$p}}{{end}}</dd>
+      <dt>{{t "booking.pub_when"}}</dt><dd>{{t (print "wd." (printf "%d" (wdnum .Start.Local)))}}, {{day .Start.Local}}, {{clock .Start}}–{{clock .End}}</dd>
+      <dt>{{t "calslots.pub_name"}}</dt><dd>{{.GuestName}} · {{.GuestContact}}</dd>
+      {{with .Note}}<dt>{{t "calslots.pub_note"}}</dt><dd>{{.}}</dd>{{end}}
+      {{if and .Video (not .Cancelled)}}<dt>{{t "calendar.video"}}</dt><dd>{{if $d.Join}}{{t "calslots.pub_video_now"}}{{else}}{{t "calslots.pub_video_later"}}{{end}}</dd>{{end}}</dl>
+    {{if not .Cancelled}}<div class="row">
+      {{if $d.Join}}<form method="post" action="/cs/m/{{.Token}}/call"><button class="primary">{{icon "video"}} {{t "calendar.video_join"}}</button></form>{{end}}
+      <a class="button ghost" href="/cs/m/{{.Token}}/ics">{{icon "download"}} {{t "calslots.pub_ics"}}</a>
+      {{if $d.Open}}<form method="post" action="/cs/m/{{.Token}}/cancel" data-confirm="{{t "calslots.pub_cancel_confirm"}}"><button class="ghost danger">{{icon "x"}} {{t "calslots.pub_cancel"}}</button></form>{{end}}</div>{{end}}
+    <p class="small muted">{{t "calslots.pub_keep"}}</p>
+  </div>
+{{else}}{{$l := $d.Link}}{{$t := $d.Token}}
+  <div><h2>{{icon "calendar-event"}} {{t "calslots.pub_head" $l.OwnerName}}</h2>
+    <p class="bk-text">{{if $l.Joint}}{{t "calslots.pub_joint"}} {{range $i, $p := $l.MemberNames}}{{if $i}}, {{end}}{{$p}}{{end}} · {{end}}{{t "calslots.length_n" (printf "%d" $l.Length)}}</p></div>
+  {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+  <div class="card"><h3>{{t "booking.pub_step_time"}}</h3>
+    <div class="row bk-days">{{with $d.PrevWeek}}<a class="button ghost" href="/cs/{{$t}}?date={{.}}" title="{{t "booking.pub_prev_week"}}">{{icon "chevron-left"}}</a>{{end}}
+      {{range $d.Days}}{{if .Works}}<a class="bk-day{{if eq .Value $d.DayValue}} on{{end}}" href="/cs/{{$t}}?date={{.Value}}">{{else}}<span class="bk-day off">{{end}}<span class="small">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</span><b>{{.Date.Day}}</b><span class="small">{{t (print "month." (printf "%d" .Date.Month))}}</span>{{if .Works}}</a>{{else}}</span>{{end}}{{end}}
+      {{with $d.NextWeek}}<a class="button ghost" href="/cs/{{$t}}?date={{.}}" title="{{t "booking.pub_next_week"}}">{{icon "chevron-right"}}</a>{{end}}</div>
+    {{if $d.Free}}<div class="bk-slots">{{range $d.Free}}{{$c := clock .}}<a class="bk-slot{{if eq $c $d.Slot}} on{{end}}" href="/cs/{{$t}}?date={{$d.DayValue}}&t={{$c}}{{with $d.Keep}}&{{.}}{{end}}#form">{{$c}}</a>{{end}}</div>
+    {{else}}<p class="muted">{{t "booking.pub_no_slots"}}</p>{{end}}
+  </div>
+  {{if $d.Slot}}<div class="card" id="form"><h3>{{t "calslots.pub_step_guest"}}</h3>
+    <p>{{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}, {{$d.Slot}} · {{t "calslots.length_n" (printf "%d" $l.Length)}}</p>
+    <form method="post" action="/cs/{{$t}}" data-native class="bk-form">
+      <input type="hidden" name="date" value="{{$d.DayValue}}"><input type="hidden" name="t" value="{{$d.Slot}}">
+      <label>{{t "calslots.pub_name"}}</label><input type="text" name="name" value="{{$d.Name}}" maxlength="200" required autocomplete="name">
+      <label>{{t "calslots.pub_contact"}}</label><input type="text" name="contact" value="{{$d.Contact}}" maxlength="200" required autocomplete="email">
+      <label>{{t "calslots.pub_note"}}</label><textarea name="note" rows="2" maxlength="1000">{{$d.Note}}</textarea>
+      <div class="bk-hp" aria-hidden="true"><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
+      <p><button class="primary">{{icon "calendar-event"}} {{t "calslots.pub_book"}}</button></p>
+    </form></div>{{end}}
+{{end}}
+  <p class="muted small share-foot">go24 · {{t "calendar.title"}}</p>
+</div>
+{{end}}

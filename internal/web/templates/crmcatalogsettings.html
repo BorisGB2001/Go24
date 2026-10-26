@@ -1,0 +1,51 @@
+{{define "content"}}
+{{$d := .Data}}{{$adm := $.User.Admin}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<div class="crumbs"><a href="/crm/products">{{t "crm.products"}}</a> {{icon "chevron-right"}} {{t "crm.catalog_settings"}}</div>
+
+<div class="card flush"><div class="row" style="padding:12px 16px"><h2 style="flex:1">{{icon "list-numbers"}} {{t "crm.units"}}</h2>
+  {{if $adm}}<details class="tsettings"><summary class="button small">{{icon "plus"}} {{t "crm.unit_new"}}</summary>
+    <div class="pop">{{template "crmunitform" (dict "U" nil "ID" "new")}}</div></details>{{end}}</div>
+<table class="tlist">
+  <thead><tr><th>{{t "crm.unit_name"}}</th><th>{{t "crm.unit_symbol"}}</th><th>{{t "crm.unit_code"}}</th>{{if $adm}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Units}}<tr><td><b>{{.ShownName}}</b>{{if .Default}} <span class="pill">{{t "crm.unit_is_default"}}</span>{{end}}</td><td>{{.ShownSymbol}}</td><td class="small muted">{{.Code}}</td>
+    {{if $adm}}<td><details class="tsettings"><summary class="button ghost small">{{icon "edit"}}</summary><div class="pop">{{template "crmunitform" (dict "U" . "ID" .ID)}}
+      {{if not .Default}}<form method="post" action="/crm/product-units/{{.ID}}" data-confirm="{{t "crm.unit_delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form>{{end}}</div></details></td>{{end}}</tr>{{end}}</tbody>
+</table></div>
+
+<div class="card flush"><div class="row" style="padding:12px 16px"><h2 style="flex:1">{{icon "tag"}} {{t "crm.props"}}</h2>
+  {{if $adm}}<details class="tsettings"><summary class="button small">{{icon "plus"}} {{t "crm.prop_new"}}</summary>
+    <div class="pop">{{template "crmpropform" (dict "P" nil "ID" "new")}}</div></details>{{end}}</div>
+{{if $d.Props}}<table class="tlist">
+  <thead><tr><th>{{t "crm.f.title"}}</th><th>{{t "crm.prop_kind"}}</th><th>{{t "crm.prop_options"}}</th><th>{{t "crm.prop_in_list"}}</th><th>{{t "crm.prop_variant"}}</th>{{if $adm}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Props}}<tr><td><b>{{.Name}}</b></td><td class="small">{{t (print "crm.prop_kind." .Kind)}}</td><td class="small">{{range $i, $o := .Options}}{{if $i}}, {{end}}{{$o}}{{end}}</td>
+    <td>{{if .InList}}{{icon "check"}}{{end}}</td><td>{{if .Variant}}{{icon "check"}}{{end}}</td>
+    {{if $adm}}<td><details class="tsettings"><summary class="button ghost small">{{icon "edit"}}</summary><div class="pop">{{template "crmpropform" (dict "P" . "ID" .ID)}}
+      <form method="post" action="/crm/product-props/{{.ID}}" data-confirm="{{t "crm.prop_delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details></td>{{end}}</tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "crm.no_props"}}</div>{{end}}</div>
+{{end}}
+
+{{define "crmunitform"}}{{$u := .U}}
+<form method="post" action="/crm/product-units/{{.ID}}">
+  <label>{{t "crm.unit_name"}}</label><input type="text" name="name" maxlength="100" value="{{with $u}}{{.Name}}{{end}}" placeholder="{{with $u}}{{.ShownName}}{{end}}">
+  <label>{{t "crm.unit_symbol"}}</label><input type="text" name="symbol" maxlength="20" value="{{with $u}}{{.Symbol}}{{end}}" placeholder="{{with $u}}{{.ShownSymbol}}{{end}}">
+  <label>{{t "crm.unit_code"}}</label><input type="text" name="code" maxlength="10" value="{{with $u}}{{.Code}}{{end}}">
+  <p class="small muted">{{t "crm.unit_hint"}}</p>
+  <label>{{t "crm.section_sort"}}</label><input type="number" name="sort" value="{{with $u}}{{.Sort}}{{end}}">
+  <label class="small"><input type="checkbox" name="default" value="1" {{with $u}}{{if .Default}}checked{{end}}{{end}}> {{t "crm.unit_is_default"}}</label>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}
+
+{{define "crmpropform"}}{{$p := .P}}
+<form method="post" action="/crm/product-props/{{.ID}}">
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" required maxlength="200" value="{{with $p}}{{.Name}}{{end}}">
+  <label>{{t "crm.prop_kind"}}</label>{{if $p}}<p>{{t (print "crm.prop_kind." $p.Kind)}}</p><input type="hidden" name="kind" value="{{$p.Kind}}">{{else}}<select name="kind">
+    {{range list "string" "number" "list" "bool"}}<option value="{{.}}">{{t (print "crm.prop_kind." .)}}</option>{{end}}</select>{{end}}
+  <label>{{t "crm.prop_options"}}</label><textarea name="options" rows="3" placeholder="{{t "crm.prop_options_hint"}}">{{with $p}}{{range $i, $o := .Options}}{{if $i}}
+{{end}}{{$o}}{{end}}{{end}}</textarea>
+  <label>{{t "crm.section_sort"}}</label><input type="number" name="sort" value="{{with $p}}{{.Sort}}{{else}}0{{end}}">
+  <label class="small"><input type="checkbox" name="in_list" value="1" {{with $p}}{{if .InList}}checked{{end}}{{end}}> {{t "crm.prop_in_list_hint"}}</label>
+  <label class="small"><input type="checkbox" name="variant" value="1" {{with $p}}{{if .Variant}}checked{{end}}{{end}}> {{t "crm.prop_variant_hint"}}</label>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

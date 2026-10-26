@@ -1,0 +1,31 @@
+{{define "content"}}{{$d := .Data}}{{$doc := $d.Doc}}
+<div class="pagehead"><h1>{{icon "signature"}} {{$doc.Title}}</h1> <span class="pill sg-{{$doc.Status}}">{{t (print "sign.st." $doc.Status)}}</span><span style="flex:1"></span>
+  {{if $doc.ResultFile}}<a class="button primary" href="/sign/{{$doc.ID}}/file/result">{{icon "download"}} {{t "sign.download_signed"}}</a>{{end}}
+  <a class="button ghost" href="/sign/{{$doc.ID}}/file/docx">{{icon "download"}} {{t "sign.download_src"}}</a>
+  <a class="button ghost" href="/sign">{{t "sign.title"}}</a></div>
+<div class="sgwrap">
+  <div class="sgview">{{if and $doc.ResultFile $d.PDF}}<iframe class="pubdoc-view" src="/sign/{{$doc.ID}}/file/result?inline=1" title="{{$doc.Title}}"></iframe>
+    {{else if $d.PDF}}<iframe class="pubdoc-view" src="/sign/{{$doc.ID}}/file/pdf?inline=1" title="{{$doc.Title}}"></iframe>
+    {{else}}<div class="card empty">{{icon "file-text"}} {{t "sign.no_viewer"}}</div>{{end}}</div>
+  <div class="sgside">
+    {{if $d.Mine}}<div class="card sgturn"><h2>{{t "sign.your_turn"}}</h2>
+      <form method="post" action="/sign/{{$doc.ID}}/sign" data-native><label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
+        <p><button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></p></form>
+      <details><summary class="small">{{t "sign.refuse"}}</summary><form method="post" action="/sign/{{$doc.ID}}/sign" data-native>
+        <input type="hidden" name="refuse" value="1"><textarea name="reason" rows="2" maxlength="1000" placeholder="{{t "sign.reason"}}" required></textarea>
+        <p><button class="danger">{{t "sign.refuse"}}</button></p></form></details></div>{{end}}
+    <div class="card"><h2>{{t "sign.parties"}}</h2>
+      {{range $doc.Parties}}<div class="sgparty sgp-{{.Status}}"><div class="row"><b style="flex:1">{{.Ord}}. {{.Name}}</b><span class="pill sg-p{{.Status}}">{{t (print "sign.pst." .Status)}}</span></div>
+        <div class="small muted">{{if .Employee}}{{t "sign.side.company"}}{{else}}{{t "sign.side.client"}} · {{.Email}}{{end}}</div>
+        {{with .SignedAt}}<div class="small muted">{{.Format "02.01.2006 15:04"}}</div>{{end}}
+        {{with .Reason}}<div class="small">{{t "sign.reason"}}: {{.}}</div>{{end}}
+        {{if and $d.Author (not .Employee) (eq .Status "ready") (eq $doc.Status "signing")}}<div class="row"><input type="text" readonly value="{{$d.Link}}{{.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}{{.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
+          <form method="post" action="/sign/{{$doc.ID}}/resend"><button class="ghost small">{{icon "send"}} {{t "sign.resend"}}</button></form>{{end}}
+      </div>{{end}}</div>
+    <div class="card small"><div>{{t "sign.sender"}}: <b>{{$doc.Author}}</b>, {{$doc.CreatedAt.Format "02.01.2006 15:04"}}</div>
+      {{with $d.Card}}<div><a href="{{.}}">{{icon "link"}} {{t "sign.card"}}</a></div>{{end}}
+      <div class="muted" style="word-break:break-all">SHA-256: {{$doc.Hash}}</div>
+      {{if and $d.Author (eq $doc.Status "signing")}}<form method="post" action="/sign/{{$doc.ID}}/cancel" data-confirm="{{t "sign.cancel_confirm"}}"><p><button class="ghost small">{{icon "x"}} {{t "sign.cancel"}}</button></p></form>{{end}}</div>
+  </div>
+</div>
+{{end}}

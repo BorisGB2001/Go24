@@ -1,0 +1,26 @@
+{
+  "name": "go24: шаг процесса «Вызвать n8n» → номер счёта",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "go24-invoice", "responseMode": "responseNode", "options": {}},
+      "name": "go24: шаг процесса",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "go24-invoice"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ invoice: 'INV-' + $now.toFormat('yyMMdd') + '-' + ($json.body.values.sum || '0') }) }}",
+        "options": {}
+      },
+      "name": "Ответ в процесс",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [260, 0]
+    }
+  ],
+  "connections": {"go24: шаг процесса": {"main": [[{"node": "Ответ в процесс", "type": "main", "index": 0}]]}},
+  "settings": {"executionOrder": "v1"}
+}

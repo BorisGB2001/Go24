@@ -1,0 +1,37 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<h1>{{icon "phone"}} {{t "tel.calls"}}</h1>
+<form method="get" action="/telephony/calls" class="card row phonefilter">
+  {{if $d.Admin}}<select name="user" style="width:auto" aria-label="{{t "tel.col.employee"}}"><option value="">{{t "tel.filter.everyone"}}</option>
+    {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.UserID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
+  <select name="kind" style="width:auto" aria-label="{{t "tel.col.kind"}}"><option value="">{{t "tel.filter.all_kinds"}}</option>
+    {{range list "in" "out" "missed"}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "tel.kind." .)}}</option>{{end}}</select>
+  <label class="small">{{t "tel.filter.from"}} <input type="date" name="from" value="{{$d.From}}" style="width:auto"></label>
+  <label class="small">{{t "tel.filter.to"}} <input type="date" name="to" value="{{$d.To}}" style="width:auto"></label>
+  <input type="search" name="q" value="{{$f.Number}}" placeholder="{{t "tel.filter.number"}}" inputmode="tel" style="width:12em">
+  <button class="primary">{{icon "search"}} {{t "tel.filter.show"}}</button>
+</form>
+<div class="card flush">
+  <div class="tlist-wrap"><table class="list phonecalls">
+    <thead><tr><th>{{t "tel.col.date"}}</th><th>{{t "tel.col.kind"}}</th><th>{{t "tel.col.from"}}</th><th>{{t "tel.col.to"}}</th>
+      <th>{{t "tel.col.duration"}}</th><th>{{t "tel.col.status"}}</th><th>{{t "tel.col.record"}}</th></tr></thead>
+    <tbody>{{range $d.Calls}}<tr>
+      <td class="nowrap">{{datetime .Started}}</td>
+      <td><span class="pill tel-{{.Kind}}">{{t (print "tel.kind." .Kind)}}</span></td>
+      <td>{{template "phone-end" (dict "W" .FromUser "N" .From "P" .FromPhoto "C" (and (not .FromUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
+      <td>{{template "phone-end" (dict "W" .ToUser "N" .To "P" .ToPhoto "C" (and (not .ToUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
+      <td class="nowrap">{{if .Seconds}}{{.Duration}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small">{{t (print "tel.status." .Status)}}{{if and (not .CRMPath) $d.CRM .Mine .Outside}}
+        <form method="post" action="/telephony/calls/{{.ID}}/crm" class="row nowrap" style="gap:4px;margin-top:4px"><button class="ghost small" name="what" value="lead" title="{{t "tel.make_lead"}}">{{icon "plus"}} {{t "crm.lead"}}</button><button class="ghost small" name="what" value="deal" title="{{t "tel.make_deal"}}">{{icon "plus"}} {{t "crm.deal"}}</button></form>{{end}}</td>
+      <td>{{if .CanListen}}<div class="row nowrap"><audio controls preload="none" src="/telephony/calls/{{.ID}}/record"></audio>
+        <a class="button ghost small" href="/telephony/calls/{{.ID}}/record?download=1" title="{{t "tel.download"}}" aria-label="{{t "tel.download"}}">{{icon "download"}}</a></div>
+        {{else if .HasRecord}}<span class="muted small">{{t "tel.recorded"}}</span>{{else}}<span class="muted">—</span>{{end}}</td></tr>
+    {{else}}<tr><td colspan="7" class="empty">{{t "tel.calls_empty"}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{with $d.More}}<p style="padding:12px 16px"><a class="button ghost" href="{{.}}">{{t "tel.more"}}</a></p>{{end}}
+</div>
+{{end}}
+
+{{define "phone-end"}}{{if .W.UserID}}<span class="row nowrap" style="gap:6px"><a href="/u/{{.W.UserID}}" class="person">{{photo .W.Name .P false}}<span>{{.W.Name}}</span></a>
+  <a href="tel:{{.N}}" class="muted small">{{.N}}</a></span>{{else if .C}}<span class="row nowrap" style="gap:6px"><a href="{{.C}}">{{icon "users"}} {{.CN}}</a>
+  <a href="tel:{{.N}}" class="muted small">{{.N}}</a></span>{{else}}<a href="tel:{{.N}}">{{.N}}</a>{{end}}{{end}}

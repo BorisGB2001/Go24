@@ -1,0 +1,14 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>🎂 {{t "birthdays.title"}}</h1></div>
+<div class="card flush">
+{{if $d.List}}
+<table class="tlist">
+  <tbody>{{range $d.List}}
+  <tr{{if .Today}} class="bday-today"{{end}}><td style="width:140px"><b>{{bday .Date false}}</b>{{if .Today}} 🎉 {{t "birthdays.today"}}{{end}}</td>
+    <td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name (photoURL .ID .PhotoKey) false}} {{.Name}}</a></td>
+    <td class="muted">{{.Position}}</td></tr>
+  {{end}}</tbody>
+</table>
+{{else}}<p class="muted" style="padding:16px">{{t "birthdays.empty"}}</p>{{end}}
+</div>
+{{end}}

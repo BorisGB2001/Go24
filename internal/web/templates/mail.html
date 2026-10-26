@@ -1,0 +1,783 @@
+{{define "content"}}
+{{$d := .Data}}
+{{if $d.Settings}}{{template "msettings" $d.Settings}}{{else if $d.Sweep}}{{template "msweep" $d.Sweep}}{{else}}
+<div class="pagehead mailhead">{{if not $d.Boxes}}<h1>{{t "mail.title"}}</h1>{{end}}
+  {{with $d.Box}}<a class="button create" href="/mail?box={{.ID}}&new=1{{with $d.FolderID}}&folder={{.}}{{end}}" title="{{t "mail.compose"}} (N)">{{icon "plus"}} {{t "mail.compose"}}</a>{{end}}
+  {{if $d.Boxes}}{{template "mribbon"}}{{end}}
+  {{if $d.Boxes}}<div class="row mailpanes" role="group" aria-label="{{t "mail.pane"}}">{{range $d.Panes}}
+    <button type="button" class="ghost{{if eq . $d.Pane}} on{{end}}" data-pane="{{.}}" title="{{t (print "mail.pane." .)}}">{{icon (print "layout-" (index (dict "right" "sidebar-right" "bottom" "bottombar" "off" "list") .))}}</button>{{end}}</div>
+    <a class="button ghost" href="/mail/settings" title="{{t "mail.settings"}}">{{icon "settings"}}</a>{{end}}
+</div>
+{{with $d.OOO}}<form method="post" action="/mail/ooo/off" class="row mc-banner mooo"><input type="hidden" name="back" value="{{$d.Back}}">{{icon "plane-departure"}} <span>{{template "mooostate" .}}</span>
+  <button class="small">{{t "mail.ooo.turn_off"}}</button><a class="button ghost small" href="/mail/settings?tab=ooo">{{t "mail.ooo.settings"}}</a></form>{{end}}
+<div class="mail3 mtext-{{$d.Layout.TextSize}} pane-{{$d.Pane}}{{if or $d.Letter $d.New}} reading{{end}}" data-mail data-text-size="{{$d.Layout.TextSize}}" data-after-move="{{$d.AfterMove}}" data-folder="{{$d.FolderID}}" data-role="{{with $d.Folder}}{{.Role}}{{end}}"{{with $d.Cols}} style="--mail-nav: {{.Nav}}px; --mail-list: {{.List}}px; --mail-listh: {{.ListH}}px"{{end}}>
+  <div class="msplit" data-split="nav" role="separator" aria-orientation="vertical" title="{{t "mail.split"}}"></div>
+  <div class="msplit" data-split="list" role="separator" aria-orientation="vertical" title="{{t "mail.split"}}"></div>
+  <nav class="card mailnav" aria-label="{{t "mail.folders"}}">
+    {{if $d.Boxes}}<details class="mbox mfavs" data-favs open><summary class="mbox-head"><b>{{icon "chevron-down"}} {{t "mail.favorites"}}</b></summary>
+      {{range $i, $v := $d.Favs}}<div class="mfolder-row" draggable="true" data-fav="{{.Ref}}">
+        {{if .Folder}}{{with .Folder}}<a class="mfolder{{if eq .ID $d.FolderID}} on{{end}}" href="/mail?folder={{.ID}}" data-folder-id="{{.ID}}" data-box="{{.MailboxID}}"{{if not .Local}} data-import{{end}}{{with $v.Box}} title="{{.}}"{{end}}>{{template "mficon" .Role}}<span class="mf-name">{{template "mfname" .}}</span>{{if eq .Role "drafts"}}{{if .Total}}<span class="cnt cnt-total" title="{{t "mail.drafts_n" .Total}}">{{.Total}}</span>{{end}}{{else if .Unseen}}<span class="cnt" data-unseen>{{.Unseen}}</span>{{end}}</a>{{end}}
+        {{else if .Cat}}<a class="mfolder{{if eq $d.FolderID .Ref}} on{{end}}" href="/mail?folder={{.Ref}}"><span class="mcat-dot c-{{.Cat.Color}}"></span><span class="mf-name">{{.Cat.Name}}</span></a>
+        {{else if .Search}}<a class="mfolder{{if eq $d.FolderID .Ref}} on{{end}}" href="/mail?folder={{.Ref}}" title="{{.Search.Q}}">{{icon "search"}}<span class="mf-name">{{.Search.Name}}</span></a>
+        {{else}}<a class="mfolder{{if eq $d.FolderID .Ref}} on{{end}}" href="/mail?folder={{.Ref}}">{{template "mvicon" .Ref}}<span class="mf-name">{{t (print "mail.fav." .Ref)}}</span>{{if and (eq .Ref "all") $d.Unseen}}<span class="cnt" data-unseen>{{$d.Unseen}}</span>{{end}}</a>{{end}}
+        <details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
+          {{if $i}}<form method="post" action="/mail/favorites/move"><input type="hidden" name="ref" value="{{.Ref}}"><input type="hidden" name="dir" value="up"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small">{{icon "arrow-up"}} {{t "mail.fav_up"}}</button></form>{{end}}
+          {{if lt (add $i 1) (len $d.Favs)}}<form method="post" action="/mail/favorites/move"><input type="hidden" name="ref" value="{{.Ref}}"><input type="hidden" name="dir" value="down"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small">{{icon "arrow-down"}} {{t "mail.fav_down"}}</button></form>{{end}}
+          {{template "mfav" (dict "Ref" .Ref "On" true "Back" $d.Back)}}
+        </div></details></div>{{else}}<div class="small muted mfav-empty">{{t "mail.fav_empty"}}</div>{{end}}
+    </details>{{end}}
+    {{if gt (len $d.Boxes) 1}}<div class="mfolder-row"><a class="mfolder{{if eq $d.FolderID "all"}} on{{end}}" href="/mail?folder=all">{{icon "inbox"}}<span class="mf-name">{{t "mail.all_inboxes"}}</span>{{if $d.Unseen}}<span class="cnt" data-unseen>{{$d.Unseen}}</span>{{end}}</a>
+      {{template "mfavmenu" (dict "Ref" "all" "On" (index $d.FavSet "all") "Back" $d.Back)}}</div>{{end}}
+    {{if $d.Boxes}}<div class="mfolder-row"><a class="mfolder{{if eq $d.FolderID "flagged"}} on{{end}}" href="/mail?folder=flagged">{{icon "flag"}}<span class="mf-name">{{t "mail.flagged"}}</span></a>
+      {{template "mfavmenu" (dict "Ref" "flagged" "On" (index $d.FavSet "flagged") "Back" $d.Back)}}</div>
+    <div class="mfolder-row"><a class="mfolder{{if eq $d.FolderID "snoozed"}} on{{end}}" href="/mail?folder=snoozed">{{icon "clock"}}<span class="mf-name">{{t "mail.snoozed"}}</span></a>
+      {{template "mfavmenu" (dict "Ref" "snoozed" "On" (index $d.FavSet "snoozed") "Back" $d.Back)}}</div>{{end}}
+    {{range $b := $d.Boxes}}<div class="mbox" data-box="{{$b.ID}}">
+      <div class="mbox-head"><b title="{{$b.Email}}">{{$b.Email}}</b>
+        <form method="post" action="/mail/{{$b.ID}}/sync" data-native><button class="ghost small" title="{{t "mail.refresh"}}">{{icon "refresh"}}</button></form>
+        <details class="mbox-menu"><summary class="button ghost small" title="{{t "common.more"}}">{{icon "dots"}}</summary>
+          <div class="card mbox-pop">
+            <form method="post" action="/mail/{{$b.ID}}/folders" class="mfolder-form">
+              <input type="hidden" name="back_folder" value="{{$d.FolderID}}">
+              <label>{{t "mail.folder_new"}}</label><input type="text" name="name" required maxlength="100" placeholder="{{t "mail.folder_name"}}">
+              <select name="parent"><option value="">{{t "mail.folder_top"}}</option>{{range $b.Folders}}{{if and .Selectable (not .Local)}}<option value="{{.ID}}">{{indent .Depth}}{{template "mfname" .}}</option>{{end}}{{end}}</select>
+              <button class="primary small">{{t "common.create"}}</button></form>
+            <a class="button ghost small" href="/mail/export?box={{$b.ID}}">{{icon "download"}} {{t "mail.export.menu"}}</a>
+            <form method="post" action="/mail/{{$b.ID}}/delete" data-confirm="{{t "mail.remove_confirm"}}" data-native><button class="ghost small">{{icon "x"}} {{t "mail.disconnect"}}</button></form>
+          </div></details></div>
+      <div class="small muted mbox-state">{{with $b.SyncedAt}}{{t "mail.synced" (datetime (deref .))}}{{end}}{{with $b.Error}} · <span class="dl over" title="{{if hasPrefix . "err."}}{{t .}}{{else}}{{.}}{{end}}">{{t "mail.sync_error"}}</span>{{end}}</div>
+      {{range $f := $b.Folders}}{{if $f.Selectable}}<div class="mfolder-row">
+        <a class="mfolder{{if eq $f.ID $d.FolderID}} on{{end}}" href="/mail?folder={{$f.ID}}" data-folder-id="{{$f.ID}}" data-box="{{$b.ID}}"{{if not $f.Local}} data-import{{end}} style="--depth:{{$f.Depth}}">{{template "mficon" $f.Role}}<span class="mf-name">{{template "mfname" $f}}</span>{{if eq $f.Role "drafts"}}{{if $f.Total}}<span class="cnt cnt-total" title="{{t "mail.drafts_n" $f.Total}}">{{$f.Total}}</span>{{end}}{{else if $f.Unseen}}<span class="cnt" data-unseen>{{$f.Unseen}}</span>{{end}}</a>
+        <details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
+          <form method="post" action="/mail/folders/{{$f.ID}}/read"><button class="ghost small">{{icon "mail-opened"}} {{t "mail.read_all"}}</button></form>
+          {{template "mfav" (dict "Ref" $f.ID "On" (index $d.FavSet $f.ID) "Back" $d.Back)}}
+          {{if not $f.Local}}<label class="button ghost small" title="{{t "mail.import_hint"}}">{{icon "cloud-upload"}} {{t "mail.import"}}<input type="file" multiple hidden accept=".eml,.msg,message/rfc822,application/vnd.ms-outlook" data-mail-import="{{$f.ID}}"></label>{{end}}
+          {{if not $f.Local}}<a class="button ghost small" href="/mail/export?box={{$b.ID}}&amp;folder={{$f.ID}}">{{icon "download"}} {{t "mail.export.menu"}}</a>{{end}}
+          {{if or (eq $f.Role "trash") (eq $f.Role "junk")}}<form method="post" action="/mail/folders/{{$f.ID}}/empty" data-confirm="{{t "mail.empty_confirm" (print (t (print "mail.folder." $f.Role)))}}"><button class="ghost small">{{icon "trash"}} {{t "mail.empty_folder"}}</button></form>{{end}}
+          {{if $f.Own}}<form method="post" action="/mail/folders/{{$f.ID}}/rename" class="mfolder-form"><input type="text" name="name" required maxlength="100" value="{{$f.Title}}"><button class="small">{{t "mail.folder_rename"}}</button></form>
+          <form method="post" action="/mail/folders/{{$f.ID}}/delete" data-confirm="{{t "mail.folder_delete_confirm" $f.Title}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+        </div></details>
+      </div>{{else}}<div class="mfolder muted" style="--depth:{{$f.Depth}}">{{icon "folder"}}<span class="mf-name">{{$f.Title}}</span></div>{{end}}{{end}}
+    </div>{{end}}
+    {{if $d.Boxes}}<div class="mbox mcats">
+      <div class="mbox-head"><b>{{t "mail.categories"}}</b>
+        <details class="mbox-menu"><summary class="button ghost small" title="{{t "mail.category_new"}}">{{icon "plus"}}</summary>
+          <div class="card mbox-pop"><form method="post" action="/mail/categories" class="mfolder-form"><input type="hidden" name="back" value="{{$d.Back}}">
+            <label>{{t "mail.category_new"}}</label><input type="text" name="name" required maxlength="60">
+            {{template "mcolors" (dict "Colors" $d.Colors "On" "blue")}}<button class="primary small">{{t "common.create"}}</button></form></div></details></div>
+      {{range $d.Categories}}<div class="mfolder-row">
+        <a class="mfolder{{if eq $d.FolderID (print "cat:" .ID)}} on{{end}}" href="/mail?folder=cat:{{.ID}}"><span class="mcat-dot c-{{.Color}}"></span><span class="mf-name">{{.Name}}</span></a>
+        <details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
+          <form method="post" action="/mail/categories/{{.ID}}/save" class="mfolder-form"><input type="hidden" name="back" value="{{$d.Back}}"><input type="text" name="name" required maxlength="60" value="{{.Name}}">
+            {{template "mcolors" (dict "Colors" $d.Colors "On" .Color)}}<button class="small">{{t "common.save"}}</button></form>
+          {{template "mfav" (dict "Ref" (print "cat:" .ID) "On" (index $d.FavSet (print "cat:" .ID)) "Back" $d.Back)}}
+          <form method="post" action="/mail/categories/{{.ID}}/delete" data-confirm="{{t "mail.category_delete_confirm" .Name}}"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>
+        </div></details></div>{{end}}
+    </div>{{end}}
+    {{with $d.Searches}}<div class="mbox msearches">
+      <div class="mbox-head"><b>{{t "mail.searches"}}</b></div>
+      {{range .}}<div class="mfolder-row">
+        <a class="mfolder{{if eq $d.FolderID (print "search:" .ID)}} on{{end}}" href="/mail?folder=search:{{.ID}}" title="{{.Q}}">{{icon "search"}}<span class="mf-name">{{.Name}}</span></a>
+        <details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
+          <form method="post" action="/mail/searches/{{.ID}}/save" class="mfolder-form"><input type="hidden" name="back" value="{{$d.Back}}">
+            <label>{{t "mail.search_name"}}</label><input type="text" name="name" required maxlength="100" value="{{.Name}}">
+            <label>{{t "mail.search_q"}}</label><input type="text" name="q" required maxlength="500" value="{{.Q}}"><button class="small">{{t "common.save"}}</button></form>
+          {{template "mfav" (dict "Ref" (print "search:" .ID) "On" (index $d.FavSet (print "search:" .ID)) "Back" $d.Back)}}
+          <form method="post" action="/mail/searches/{{.ID}}/delete" data-confirm="{{t "mail.search_delete_confirm" .Name}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>
+        </div></details></div>{{end}}
+    </div>{{end}}
+    {{template "msharednav" $d.Shares}}
+    <details class="mconnect"{{if not $d.Boxes}} open{{end}}><summary class="button ghost">{{icon "plus"}} {{t "mail.connect"}}</summary>
+      <form method="post" action="/mail" class="mailconnect">
+        <input type="email" name="email" required placeholder="{{t "mail.f.email"}}">
+        <input type="password" name="password" required placeholder="{{t "mail.f.password"}}" autocomplete="new-password">
+        <input type="text" name="login" placeholder="{{t "mail.f.login"}}">
+        <div class="row"><input type="text" name="imap_host" placeholder="imap.example.com" style="flex:1"><input type="number" name="imap_port" value="993" style="width:80px"></div>
+        <div class="row"><input type="text" name="smtp_host" placeholder="smtp.example.com" style="flex:1"><input type="number" name="smtp_port" value="465" style="width:80px"></div>
+        <label class="check"><input type="checkbox" name="tls" value="off"> {{t "mail.f.no_tls"}}</label>
+        <p class="small muted">{{t "mail.connect_hint"}}</p>
+        <button class="primary">{{t "mail.connect"}}</button>
+      </form></details>
+  </nav>
+
+  <section class="card flush maillist mdense-{{$d.Layout.Density}}" aria-label="{{t "mail.letters"}}"{{with $d.Terms}} data-hl="{{json .}}"{{end}}>
+    {{if $d.Boxes}}<div class="maillist-head">
+      <form method="get" action="/mail" class="row msearch" data-msearch><input type="hidden" name="folder" value="{{if $d.Search}}all{{else}}{{$d.FolderID}}{{end}}">
+        <b class="mlist-title">{{with $d.Folder}}{{template "mfname" .}}{{else}}{{with $d.Category}}<span class="mcat-dot c-{{.Color}}"></span> {{.Name}}{{else}}{{with $d.Search}}{{icon "search"}} {{.Name}}{{else}}{{t (print "mail.v." (or (index (dict "flagged" "flagged" "snoozed" "snoozed") $d.FolderID) "all"))}}{{end}}{{end}}{{end}}</b>
+        <span class="msearch-box"><input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "mail.search"}}" autocomplete="off" data-msearch-q aria-autocomplete="list" aria-controls="msuggest" title="{{t "mail.search_hint"}}">
+          <div class="card msuggest" id="msuggest" data-msuggest hidden role="listbox"></div></span>
+        <select name="scope" class="mscope" aria-label="{{t "mail.scope"}}" title="{{t "mail.scope"}}"><option value="">{{t "mail.scope.folder"}}</option><option value="all"{{if or $d.List.All $d.Search}} selected{{end}}>{{t "mail.scope.all"}}</option></select>
+        <template data-suggest-labels><span data-l="recent">{{t "mail.sg.recent"}}</span><span data-l="people">{{t "mail.sg.people"}}</span><span data-l="ops">{{t "mail.sg.ops"}}</span><span data-l="clear">{{t "mail.sg.clear"}}</span>
+          <span data-op="from:">{{t "mail.op.from"}}</span><span data-op="to:">{{t "mail.op.to"}}</span><span data-op="subject:">{{t "mail.op.subject"}}</span><span data-op="has:attachment">{{t "mail.op.attach"}}</span><span data-op="is:unread">{{t "mail.op.unread"}}</span><span data-op="is:flagged">{{t "mail.op.flagged"}}</span><span data-op="is:important">{{t "mail.op.important"}}</span><span data-op="after:">{{t "mail.op.after"}}</span><span data-op="before:">{{t "mail.op.before"}}</span></template>
+        <details class="mbox-menu madv"><summary class="button ghost small" title="{{t "mail.adv"}}">{{icon "adjustments"}}</summary>
+          <div class="card mbox-pop madv-pop">{{with $d.Adv}}
+            <label>{{t "mail.adv.from"}}<input type="text" name="s_from" value="{{.From}}" form="madv"></label>
+            <label>{{t "mail.adv.to"}}<input type="text" name="s_to" value="{{.To}}" form="madv"></label>
+            <label>{{t "mail.adv.subject"}}<input type="text" name="s_subject" value="{{.Subject}}" form="madv"></label>
+            <label>{{t "mail.adv.words"}}<input type="text" name="s_words" value="{{.Words}}" form="madv"></label>
+            <div class="row"><label>{{t "mail.adv.after"}}<input type="date" name="s_after" value="{{.After}}" form="madv"></label><label>{{t "mail.adv.before"}}<input type="date" name="s_before" value="{{.Before}}" form="madv"></label></div>
+            <label class="check"><input type="checkbox" name="s_attach" value="1"{{if .Attach}} checked{{end}} form="madv"> {{t "mail.adv.attach"}}</label>
+            <label class="check"><input type="checkbox" name="s_unread" value="1"{{if .Unread}} checked{{end}} form="madv"> {{t "mail.adv.unread"}}</label>
+            <label class="check"><input type="checkbox" name="s_flagged" value="1"{{if .Flagged}} checked{{end}} form="madv"> {{t "mail.adv.flagged"}}</label>{{end}}
+            <label>{{t "mail.scope"}}<select name="scope" form="madv"><option value="">{{t "mail.scope.folder"}}</option><option value="all"{{if or $d.List.All $d.Search}} selected{{end}}>{{t "mail.scope.all"}}</option></select></label>
+            <div class="row"><button class="primary small" form="madv">{{icon "search"}} {{t "mail.adv.go"}}</button><a class="button ghost small" href="{{$d.List.URL "q"}}">{{t "mail.adv.reset"}}</a></div>
+          </div></details>
+        <template data-clip-labels><span data-l="open">{{t "mail.file_open"}}</span><span data-l="download">{{t "mail.file_download"}}</span><span data-l="none">{{t "mail.files_none"}}</span><span data-l="reply">{{t "mail.reply"}}</span><span data-l="all">{{t "mail.reply_all"}}</span><span data-l="fwd">{{t "mail.forward"}}</span><span data-l="fwdatt">{{t "mail.forward_attach"}}</span><span data-l="window">{{t "mail.open_window"}}</span><span data-l="del1">{{t "mail.delete_one"}}</span><span data-l="deln">{{t "mail.delete_n" "{n}"}}</span><span data-l="gone1">{{t "mail.delete_one_forever"}}</span><span data-l="gonen">{{t "mail.delete_n_forever" "{n}"}}</span></template>
+        <button type="button" class="ghost small{{if $d.ConvOn}} on{{end}}" data-conv="{{if $d.ConvOn}}off{{else}}on{{end}}" title="{{t "mail.conv_toggle"}}">{{icon "messages"}}</button>
+        {{with $d.Folder}}{{if or (eq .Role "trash") (eq .Role "junk")}}{{if .Total}}<button type="submit" form="mailempty" class="ghost small" title="{{t "mail.empty_folder"}}">{{icon "trash"}}</button>{{end}}{{end}}{{end}}
+        <details class="mkeys"><summary class="button ghost small" title="{{t "mail.keys"}}">?</summary><div class="card mbox-pop small">{{t "mail.keys_help"}}</div></details></form>
+      {{with $d.Folder}}<form method="post" action="/mail/folders/{{.ID}}/empty" id="mailempty" hidden data-confirm="{{t "mail.empty_confirm" (t (print "mail.folder." .Role))}}"></form>{{end}}
+      <form method="get" action="/mail" id="madv" hidden><input type="hidden" name="folder" value="{{if $d.Search}}all{{else}}{{$d.FolderID}}{{end}}"><input type="hidden" name="adv" value="1"></form>
+      {{$l := $d.List}}<div class="row mlist-bar">
+        {{if $l.Focus}}<nav class="row mtabs" aria-label="{{t "mail.focus"}}"><a class="mtab{{if eq $l.View "focused"}} on{{end}}" href="{{$l.With "view" ""}}">{{t "mail.view.focused"}}</a><a class="mtab{{if eq $l.View "other"}} on{{end}}" href="{{$l.With "view" "other"}}">{{t "mail.view.other"}}</a></nav>{{end}}
+        <span class="mlist-sp"></span>
+        <details class="mbox-menu mfilter"><summary class="button ghost small{{if $l.Filter}} on{{end}}" title="{{t "mail.filter_sort"}}">{{icon "filter"}} <span>{{if $l.Filter}}{{t (print "mail.filter." $l.Filter)}}{{else}}{{t "mail.filter"}}{{end}}</span></summary>
+          <div class="card mbox-pop mfilter-pop" role="menu">
+            <b class="small muted">{{t "mail.filter"}}</b>
+            <a role="menuitemradio" class="mf-item{{if not $l.Filter}} on{{end}}" href="{{$l.With "filter" ""}}">{{t "mail.filter.all"}}</a>
+            {{range $d.Filters}}<a role="menuitemradio" class="mf-item{{if eq . $l.Filter}} on{{end}}" href="{{$l.With "filter" .}}">{{t (print "mail.filter." .)}}</a>{{end}}
+            <hr><b class="small muted">{{t "mail.sort"}}</b>
+            {{range $d.Sorts}}<a role="menuitemradio" class="mf-item{{if eq . $l.Sort}} on{{end}}" href="{{$l.URL}}&sort={{.}}">{{t (print "mail.sort." .)}}</a>{{end}}
+            <hr>
+            <a role="menuitemradio" class="mf-item{{if not $l.Turn}} on{{end}}" href="{{$l.URL}}&sort={{$l.Sort}}">{{t (print "mail.sortdir." $l.Sort ".0")}}</a>
+            <a role="menuitemradio" class="mf-item{{if $l.Turn}} on{{end}}" href="{{$l.URL}}&sort={{$l.Sort}}&turn=1">{{t (print "mail.sortdir." $l.Sort ".1")}}</a>
+          </div></details>
+        <a class="button ghost small" href="{{$l.URL}}&sort={{$l.Sort}}{{if not $l.Turn}}&turn=1{{end}}" title="{{t "mail.sort_turn"}} ({{t (print "mail.sort." $l.Sort)}}: {{if $l.Turn}}{{t (print "mail.sortdir." $l.Sort ".1")}}{{else}}{{t (print "mail.sortdir." $l.Sort ".0")}}{{end}})" data-sort-turn>{{icon "arrows-sort"}}</a>
+      </div>
+      <form method="post" action="/mail/act" id="mailact" class="row mtoolbar" data-mail-toolbar><input type="hidden" name="back" value="{{$d.Back}}">
+        <input type="checkbox" class="msel-all" aria-label="{{t "mail.select_all"}}" title="{{t "mail.select_all"}}">
+        <span class="msel-n small muted" data-sel-count></span>
+        {{template "mactions" (dict "D" $d "Many" true)}}
+        <details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t "mail.move_to"}}">{{icon "folder"}}<span class="mlabel"> {{t "mail.move"}}</span></summary><div class="card mbox-pop">
+          {{range $b := $d.Boxes}}{{if gt (len $d.Boxes) 1}}<b class="small muted">{{$b.Email}}</b>{{end}}{{range $b.Folders}}{{if and .Selectable (ne .ID $d.FolderID)}}<button class="ghost small" name="do" value="move:{{.ID}}" style="padding-left:calc(8px + 12px * {{.Depth}})">{{template "mfname" .}}</button>{{end}}{{end}}{{end}}
+        </div></details>
+        {{if $l.Focus}}{{template "mfocus" (eq $l.View "other")}}{{end}}
+      </form></div>
+    {{if and $l.Focus (eq $l.View "focused") $d.OtherN}}<a class="row small mother-hint" href="{{$l.With "view" "other"}}">{{icon "inbox"}} <span><b>{{t "mail.other_new" $d.OtherN}}</b>{{with $d.OtherFrom}} · {{join . ", "}}{{end}}</span></a>{{end}}
+    {{if or $d.Q $d.Search}}<div class="row small msearch-res">{{icon "search"}} <span>{{t "mail.found" (len $d.Messages)}}{{if $l.Everywhere}} · {{t "mail.scope.all"}}{{end}}{{with $d.Search}} · <code>{{.Q}}</code>{{end}}</span>
+      {{if $d.Q}}<details class="mbox-menu"><summary class="button ghost small">{{icon "bookmark"}} {{t "mail.search_save"}}</summary><div class="card mbox-pop">
+        <form method="post" action="/mail/searches" class="mfolder-form"><input type="hidden" name="back" value="{{$d.Back}}"><input type="hidden" name="q" value="{{$d.Q}}">
+          <label>{{t "mail.search_name"}}</label><input type="text" name="name" required maxlength="100" value="{{$d.Q}}"><p class="small muted">{{t "mail.search_save_hint"}}</p><button class="primary small">{{t "common.save"}}</button></form></div></details>
+      <a class="button ghost small" href="{{$l.URL "q"}}">{{icon "x"}} {{t "mail.search_clear"}}</a>{{end}}</div>{{end}}
+    {{$g := ""}}{{range $d.Messages}}{{if eq $l.Sort "date"}}{{$k := mailGroup .SentAt .Pinned}}{{if ne $k $g}}<div class="mgroup small muted">{{t (print "mail.g." $k)}}</div>{{$g = $k}}{{end}}{{end}}<div class="mailrow{{if not .Seen}} unread{{end}}{{if and $d.Letter (eq .ID $d.Letter.ID)}} on{{end}}{{if .Pinned}} pinned{{end}}" data-letter="{{.ID}}" data-ids="{{join .IDs ","}}" data-unread="{{.Unread}}" data-box="{{.MailboxID}}" draggable="true">
+      <input type="checkbox" class="msel" name="letter" value="{{join .IDs ","}}" form="mailact" aria-label="{{t "mail.select"}}">
+      {{if $d.Layout.ShowPics}}{{ava (or (and .Outgoing .To) .From)}}{{end}}
+      <a class="mrow-link" href="{{$l.URL}}&letter={{.ID}}">
+      <span class="mfrom">{{if .Outgoing}}{{.To}}{{else}}{{.From}}{{end}}{{if gt .Count 1}} <span class="mcount" title="{{t "mail.in_conv"}}">{{.Count}}</span>{{end}}</span>
+      <span class="small muted mdate">{{if .Snoozed}}{{icon "clock"}} {{datetime (deref .SnoozeUntil)}}{{else if .SendAt}}<span class="msched" title="{{t "mail.scheduled_for" (datetime (deref .SendAt))}}">{{icon "clock"}} {{datetime (deref .SendAt)}}</span>{{else}}{{datetime .SentAt}}{{end}}</span>
+      <span class="msubj">{{if .Draft}}<span class="mdraft">[{{t "mail.draft"}}]</span> {{end}}{{if .SendError}}<span class="mdraft" title="{{if hasPrefix .SendError "err."}}{{t .SendError}}{{else}}{{.SendError}}{{end}}">{{icon "alert-triangle"}}</span> {{end}}{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</span>
+      <span class="small muted mprev">{{if or (eq $d.FolderID "all") (and $l.Everywhere (gt (len $d.Boxes) 1))}}<span class="tag">{{.MailboxEmail}}</span> {{end}}{{if $l.Everywhere}}<span class="tag">{{if .FolderRole}}{{t (print "mail.folder." .FolderRole)}}{{else}}{{.FolderName}}{{end}}</span> {{end}}{{range .Categories}}{{with index $d.CatByID .}}<span class="mcat c-{{.Color}}">{{.Name}}</span> {{end}}{{end}}{{if $d.Layout.ShowText}}{{preview .Body}}{{end}}</span></a>
+      {{with and $d.RowFiles (index $d.RowFiles .ID)}}<span class="mrow-files" data-mfiles>{{range $i, $f := .}}{{if lt $i 3}}<a href="/files/{{$f.ID}}" data-preview="{{$f.ID}}" data-kind="{{$f.Preview}}" data-name="{{$f.Name}}" title="{{$f.Name}} · {{size $f.Size}}">{{icon "paperclip"}} <span>{{$f.Name}}</span></a>{{end}}{{end}}{{if gt (len .) 3}}<span class="small muted">{{t "mail.ly.files_more" (add (len .) -3)}}</span>{{end}}</span>{{end}}
+      <span class="mquick">
+        <button type="button" data-do="delete" title="{{t "mail.a.delete"}}">{{icon "trash"}}</button>
+        {{if .Seen}}<button type="button" data-do="unread" title="{{t "mail.a.unread"}}">{{icon "mail"}}</button>{{else}}<button type="button" data-do="read" title="{{t "mail.a.read"}}">{{icon "mail-opened"}}</button>{{end}}
+        {{if .Flagged}}<button type="button" data-do="done" class="on" title="{{t "mail.a.done"}}">{{icon "flag"}}</button>{{else}}<button type="button" data-do="flag:none" title="{{t "mail.flag"}}">{{icon "flag"}}</button>{{end}}
+        {{if .Pinned}}<button type="button" data-do="unpin" class="on" title="{{t "mail.a.unpin"}}">{{icon "pin"}}</button>{{else}}<button type="button" data-do="pin" title="{{t "mail.a.pin"}}">{{icon "pin"}}</button>{{end}}
+      </span>
+      <span class="mmarks">{{if eq .Importance 1}}<span class="mimp" title="{{t "mail.imp.high"}}">{{icon "exclamation-mark"}}</span>{{else if eq .Importance -1}}<span class="muted" title="{{t "mail.imp.low"}}">{{icon "arrow-down"}}</span>{{end}}{{if .Attached}}<button type="button" class="mclip" data-clip="{{join .IDs ","}}" title="{{t "mail.files_n" .Attached}}" aria-haspopup="true">{{icon "paperclip"}}</button>{{end}}{{if .Pinned}}<span title="{{t "mail.pinned"}}">{{icon "pin"}}</span>{{end}}{{with .Answered}}<span class="muted" title="{{t (print "mail.answered." .)}}">{{icon (index (dict "reply" "arrow-back-up" "fwd" "arrow-forward-up") .)}}</span>{{end}}{{with .FlagRemind}}<span class="muted" title="{{t "mail.remind_at" (datetime .)}}">{{icon "bell"}}</span>{{end}}{{if .Flagged}}<span class="mflag" title="{{t "mail.flag"}}{{with .FlagDue}} · {{date .}}{{end}}">{{icon "flag"}}</span>{{else if .FlagDone}}<span class="mdone" title="{{t "mail.flag_done"}}">{{icon "check"}}</span>{{end}}</span>
+    </div>{{else}}<div class="empty">{{if or $d.Q $d.Search}}{{t "mail.found_none"}}{{else if $l.Filter}}{{t "mail.filter_none"}}{{else}}{{t "mail.empty"}}{{end}}</div>{{end}}
+    {{else}}<div class="empty">{{t "mail.no_boxes"}}</div>{{end}}
+  </section>
+
+  <section class="card mailread" data-mail-read aria-live="polite">
+    {{if $d.New}}{{with $d.Compose}}{{template "mcompose" .}}{{end}}
+    {{else if $d.Letter}}{{template "mailread" $d}}
+    {{else}}<div class="empty mailread-empty">{{icon "mail"}}<p>{{t "mail.pick_letter"}}</p></div>{{end}}
+  </section>
+</div>
+{{template "mundo"}}
+{{template "mxlabels"}}
+<script src="{{asset "js/compose.js"}}"></script>
+<script src="{{asset "js/mail.js"}}"></script>
+<script src="{{asset "js/mailx.js"}}"></script>
+<script src="{{asset "js/mailcrm.js"}}"></script>
+{{end}}{{end}}
+
+{{/* «Отменить» after «Отправить» (static/js/compose.js keeps it across pages for its seconds) */}}
+{{define "mundo"}}<div class="card row mc-toast" data-undo-toast hidden role="status"><span data-undo-text></span>
+  <button type="button" class="small" data-undo-cancel>{{t "mail.undo"}}</button>
+  <template data-undo-labels><span data-l="sending">{{t "mail.sending"}}</span><span data-l="sent">{{t "mail.sent_ok"}}</span><span data-l="back">{{t "mail.undone"}}</span></template></div>{{end}}
+
+{{/* «Переместить в Отсортированные / Другие» and «Всегда перемещать» (the toolbar, the reading pane, the row's menu);
+   . — the letters are under «Другие» now */}}
+{{define "mfocus"}}{{$to := "other"}}{{if .}}{{$to = "focus"}}{{end}}<details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t (print "mail.to." $to)}}">{{icon "arrows-exchange"}}<span class="mlabel"> {{t (print "mail.to." $to)}}</span></summary><div class="card mbox-pop">
+  <button class="ghost small" name="do" value="{{$to}}">{{t (print "mail.to." $to)}}</button>
+  <button class="ghost small" name="do" value="{{$to}}:always" title="{{t (print "mail.always_hint." $to)}}">{{t (print "mail.always." $to)}}</button></div></details>{{end}}
+
+{{/* «Добавить в избранное» / «Удалить из избранного» of a place of the folder pane (Ref, On, Back) */}}
+{{define "mfav"}}<form method="post" action="/mail/favorites"><input type="hidden" name="ref" value="{{.Ref}}"><input type="hidden" name="back" value="{{.Back}}">{{if not .On}}<input type="hidden" name="on" value="1">{{end}}<button class="ghost small">{{icon "star"}} {{if .On}}{{t "mail.fav_off"}}{{else}}{{t "mail.fav_on"}}{{end}}</button></form>{{end}}
+{{define "mfavmenu"}}<details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">{{template "mfav" .}}</div></details>{{end}}
+{{/* the icon of a folder by its role, of a virtual folder by its id */}}
+{{define "mficon"}}{{icon (index (dict "inbox" "inbox" "drafts" "file-pencil" "sent" "send" "trash" "trash" "junk" "alert-octagon" "archive" "archive" "" "folder") .)}}{{end}}
+{{define "mvicon"}}{{icon (index (dict "all" "inbox" "flagged" "flag" "snoozed" "clock") .)}}{{end}}
+{{/* the ribbon over the mail, as Outlook's «Главная»: the actions on the open letter or the ticked ones (static/js/mail.js
+   finds each one's button of the reading pane or of the list's toolbar; one it cannot find is grey) */}}
+{{define "mribbon"}}<div class="row mribbon" role="toolbar" aria-label="{{t "mail.ribbon"}}" data-mribbon>
+  {{template "mrb" (dict "Do" "reply" "Icon" "arrow-back-up" "Name" "mail.reply" "Key" "R")}}{{template "mrb" (dict "Do" "all" "Icon" "arrow-back-up-double" "Name" "mail.reply_all" "Key" "Ctrl+Shift+R")}}{{template "mrb" (dict "Do" "fwd" "Icon" "arrow-forward-up" "Name" "mail.forward" "Key" "F")}}{{template "mrb" (dict "Do" "fwdatt" "Icon" "paperclip" "Name" "mail.forward_attach" "Key" "")}}<span class="mribbon-sep" aria-hidden="true"></span>
+  {{template "mrb" (dict "Do" "delete" "Icon" "trash" "Name" "mail.a.delete" "Key" "Delete")}}{{template "mrb" (dict "Do" "archive" "Icon" "archive" "Name" "mail.a.archive" "Key" "E")}}{{template "mrb" (dict "Do" "junk" "Icon" "alert-octagon" "Name" "mail.a.junk" "Key" "")}}{{template "mrb" (dict "Do" "move" "Icon" "folder" "Name" "mail.move" "Key" "")}}<span class="mribbon-sep" aria-hidden="true"></span>
+  {{template "mrb" (dict "Do" "read" "Icon" "mail-opened" "Name" "mail.rb.read" "Key" "Q / U")}}{{template "mrb" (dict "Do" "flag" "Icon" "flag" "Name" "mail.flag" "Key" "Insert")}}{{template "mrb" (dict "Do" "pin" "Icon" "pin" "Name" "mail.a.pin" "Key" "")}}<span class="mribbon-sep" aria-hidden="true"></span>
+  {{template "mrb" (dict "Do" "task" "Icon" "list-check" "Name" "mail.to_task" "Key" "")}}{{template "mrb" (dict "Do" "print" "Icon" "printer" "Name" "mail.print" "Key" "Ctrl+P")}}
+  <details class="mbox-menu mribbon-more" hidden><summary class="button ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop" data-mribbon-more></div></details>
+</div>{{end}}
+{{define "mrb"}}<button type="button" class="ghost" data-rb="{{.Do}}" title="{{t .Name}}{{with .Key}} ({{.}}){{end}}" aria-label="{{t .Name}}" disabled>{{icon .Icon}}<span class="mlabel"> {{t .Name}}</span></button>{{end}}
+
+{{/* a folder's name: the role ones in the user's language */}}
+{{define "mfname"}}{{if .Role}}{{t (print "mail.folder." .Role)}}{{else}}{{.Title}}{{end}}{{end}}
+
+{{/* the reading pane: also sent alone to the script (web.mailLetter) */}}
+{{define "mailread"}}{{$d := .}}{{with .Letter}}<article class="mailletter" data-letter="{{.ID}}"{{if $d.Unread}} data-read-after="{{$d.ReadAfter}}" data-unread="{{join $d.Unread ","}}"{{end}}>
+  <a class="button ghost small mread-back" href="/mail?folder={{$d.FolderID}}">{{icon "chevron-left"}} {{t "common.back"}}</a>
+  <h2>{{if .Subject}}{{.Subject}}{{else}}<span class="muted">{{t "mail.no_subject"}}</span>{{end}}{{if gt (len $d.Thread) 1}} <span class="mcount" title="{{t "mail.in_conv"}}">{{len $d.Thread}}</span>{{end}}</h2>
+  <div class="row mread-actions">
+    <a class="button ghost" data-key="r" data-reply="reply" href="/mail?box={{.MailboxID}}&new=1&letter={{.ID}}&folder={{$d.FolderID}}&mode=reply" title="R">{{icon "arrow-back-up"}} {{t "mail.reply"}}</a>
+    <a class="button ghost" data-key="all" data-reply="all" href="/mail?box={{.MailboxID}}&new=1&letter={{.ID}}&folder={{$d.FolderID}}&mode=all" title="Ctrl+Shift+R">{{icon "arrow-back-up-double"}} {{t "mail.reply_all"}}</a>
+    <a class="button ghost" data-key="fwd" data-reply="fwd" href="/mail?box={{.MailboxID}}&new=1&letter={{.ID}}&folder={{$d.FolderID}}&mode=fwd" title="F">{{icon "arrow-forward-up"}} {{t "mail.forward"}}</a>
+    <form method="post" action="/mail/act" class="row mread-act" data-mail-act><input type="hidden" name="letter" value="{{join $d.ActIDs ","}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}&letter={{.ID}}">
+      {{template "mactions" (dict "D" $d "L" .)}}{{if $d.Focus}}{{template "mfocus" .Other}}{{end}}</form>
+    {{with $d.MoveTo}}<form method="post" action="/mail/move" class="row mread-move"><input type="hidden" name="letter" value="{{join $d.ActIDs ","}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}">
+      <select name="folder" aria-label="{{t "mail.move_to"}}">{{range .}}<option value="{{.ID}}">{{indent .Depth}}{{template "mfname" .}}</option>{{end}}</select><button class="ghost">{{icon "folder"}} {{t "mail.move"}}</button></form>{{end}}
+    {{template "mmore" $d}}
+  </div>
+  {{template "mlinks" $d}}{{template "minvite" $d}}
+  {{with .Answered}}<div class="row small muted manswered">{{icon (index (dict "reply" "arrow-back-up" "fwd" "arrow-forward-up") .)}} <span>{{if $d.Letter.AnsweredAt}}{{t (print "mail.answered_at." .) (datetime (deref $d.Letter.AnsweredAt))}}{{else}}{{t (print "mail.answered." .)}}{{end}}</span></div>{{end}}
+  {{if and .ReceiptTo (not .ReceiptDone)}}<form method="post" action="/mail/letters/{{.ID}}/receipt" class="row mc-banner">{{icon "eye"}} <span>{{t "mail.receipt_ask" .ReceiptTo}}</span>
+    <button class="small" name="do" value="send">{{t "mail.receipt_send"}}</button><button class="ghost small" name="do" value="decline">{{t "mail.receipt_decline"}}</button></form>{{end}}
+  {{if .Options}}{{$v := $d.Votes}}{{if .Outgoing}}<details class="mc-banner mvote-track"{{if $v.Answers}} open{{end}}><summary class="row">{{icon "chart-bar"}} <span>{{t "mail.vote.track" (len $v.Answers) $v.Asked}}</span>{{range .Options}} <span class="mvote-n">{{.}}: <b>{{index $v.Count .}}</b></span>{{end}}</summary>
+    {{if $v.Answers}}<table class="mvote-list small"><tr><th>{{t "mail.vote.who"}}</th><th>{{t "mail.vote.answer"}}</th><th>{{t "mail.vote.when"}}</th></tr>{{range $v.Answers}}<tr><td>{{.Who}}</td><td><b>{{.Choice}}</b></td><td class="muted">{{datetime .At}}</td></tr>{{end}}</table>{{else}}<p class="small muted">{{t "mail.vote.none"}}</p>{{end}}</details>
+  {{else}}<div class="row mc-banner mvote" data-vote>{{icon "list-check"}} <span>{{if $v.Mine}}{{t "mail.vote.mine" $v.Mine}}{{else}}{{t "mail.vote.ask"}}{{end}}</span>
+    {{range .Options}}<details class="mbox-menu"><summary class="button small{{if eq . $v.Mine}} primary{{end}}">{{.}}</summary><div class="card mbox-pop">
+      <form method="post" action="/mail/letters/{{$d.Letter.ID}}/vote"><input type="hidden" name="choice" value="{{.}}"><button class="ghost small">{{icon "send"}} {{t "mail.vote.send_now"}}</button></form>
+      <a class="button ghost small" data-reply="reply" href="/mail?box={{$d.Letter.MailboxID}}&new=1&letter={{$d.Letter.ID}}&folder={{$d.FolderID}}&mode=reply&vote={{.}}">{{icon "edit"}} {{t "mail.vote.edit"}}</a></div></details>{{end}}</div>{{end}}{{end}}
+  {{if eq .FolderRole "sent"}}{{template "mrecall" $d}}{{end}}
+  {{with .Unsubscribed}}<div class="row small muted munsub-done">{{icon "mail-off"}} <span>{{t "mail.unsub_was" (datetime .)}}</span></div>{{end}}
+  {{if $d.Unsub}}<details class="mc-banner munsub" data-unsub-box><summary class="row">{{icon "mail-off"}} <span>{{t "mail.unsub_list" .From}}</span> <span class="button small">{{t "mail.unsub"}}</span></summary>
+    <form method="post" action="/mail/letters/{{.ID}}/unsubscribe" class="munsub-form" data-unsub{{with $d.UnsubPage}} data-page="{{.}}"{{end}}><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}&letter={{.ID}}">
+      <p class="small">{{t (print "mail.unsub_how." $d.Unsub) .From}}</p>
+      {{if .FromAddr}}<label class="check small"><input type="checkbox" name="block" value="1"> {{t "mail.unsub_block" .FromAddr}}</label>{{end}}
+      <button class="small">{{t "mail.unsub"}}</button></form></details>{{end}}
+  {{if $d.Outside}}<div class="row mc-banner" data-pics>{{icon "photo"}} <span>{{t "mail.pics_blocked"}}</span> <button type="button" class="small" data-show-pics>{{t "mail.pics_show"}}</button>
+    {{if .FromAddr}}<form method="post" action="/mail/senders/safe" data-trust><input type="hidden" name="letter" value="{{.ID}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}&letter={{.ID}}"><button class="ghost small">{{icon "shield-check"}} {{t "mail.pics_always" .FromAddr}}</button></form>{{end}}</div>{{end}}
+  {{if or .Categories .Flagged .FlagDone .Snoozed (ne .Importance 0)}}<div class="row mread-tags">{{if eq .Importance 1}}<span class="mimp">{{icon "exclamation-mark"}} {{t "mail.imp.high"}}</span>{{else if eq .Importance -1}}<span class="muted">{{icon "arrow-down"}} {{t "mail.imp.low"}}</span>{{end}}{{range .Categories}}{{with index $d.CatByID .}}<span class="mcat c-{{.Color}}">{{.Name}}</span>{{end}}{{end}}
+    {{if .Flagged}}<span class="mflag">{{icon "flag"}} {{t "mail.flag"}}{{with .FlagDue}} · {{t "mail.flag_due" (date .)}}{{end}}</span>{{else if .FlagDone}}<span class="mdone">{{icon "check"}} {{t "mail.flag_done"}}</span>{{end}}
+    {{with .FlagRemind}}<span class="mremind">{{icon "bell"}} {{t "mail.remind_at" (datetime .)}}</span>{{end}}
+    {{if .Snoozed}}<span>{{icon "clock"}} {{t "mail.snoozed_till" (datetime (deref .SnoozeUntil))}}</span>{{end}}</div>{{end}}
+  {{$last := len $d.Thread}}{{range $i, $m := $d.Thread}}<details class="mmsg"{{if or (eq $m.ID $d.Letter.ID) (eq (add $i 1) $last)}} open{{end}} data-msg="{{$m.ID}}">
+    <summary class="row mread-head">{{ava $m.From}}<div class="mmsg-who"><b>{{$m.From}}</b> <span class="muted small">&lt;{{$m.FromAddr}}&gt;</span> <span class="small muted">{{datetime $m.SentAt}}{{if ne $m.FolderID $d.Letter.FolderID}} · {{template "mfname" (dict "Role" $m.FolderRole "Title" $m.FolderName)}}{{end}}</span>{{with $m.Vote}} <span class="small mvote-tag">{{t "mail.vote.reply" .}}</span>{{end}}
+      <div class="small muted mmsg-prev">{{preview $m.Body}}</div></div></summary>
+    <div class="small muted mmsg-to">{{t "mail.to"}}: {{$m.To}}{{with $m.CC}} · {{t "mail.cc"}}: {{.}}{{end}}{{with $m.BCC}} · {{t "mail.bcc"}}: {{.}}{{end}} · {{$m.MailboxEmail}}</div>
+    {{with index $d.Files $m.ID}}{{template "mfiles" (dict "L" $m "F" .)}}{{end}}
+    {{with index $d.Docs $m.ID}}<iframe class="mailhtml" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="{{.}}" title="{{$m.Subject}}"></iframe>
+    {{else}}<div class="mailbody">{{nl2br $m.Body}}</div>{{end}}
+  </details>{{end}}
+  {{template "msender" $d}}
+  <div class="mreply-box" data-reply-box></div>
+</article>{{end}}{{end}}
+
+{{/* the colours of a category: radio buttons */}}
+{{define "mcolors"}}<div class="row mcolors">{{range .Colors}}<label class="mcolor" title="{{t (print "mail.color." .)}}"><input type="radio" name="color" value="{{.}}"{{if eq . $.On}} checked{{end}}><span class="mcat-dot c-{{.}}"></span></label>{{end}}</div>{{end}}
+
+{{/* the actions on letters: the toolbar of the list (Many: the selected ones) and of the reading pane (L: the letter) */}}
+{{define "mactions"}}{{$d := .D}}{{$l := .L}}
+  <button class="ghost small" name="do" value="delete" data-key="delete" title="{{t "mail.a.delete"}} (Delete)">{{icon "trash"}}<span class="mlabel"> {{t "mail.a.delete"}}</span></button>
+  <button class="ghost small" name="do" value="archive" data-key="archive" title="{{t "mail.a.archive"}} (E)">{{icon "archive"}}<span class="mlabel"> {{t "mail.a.archive"}}</span></button>
+  {{if or (and $l (eq $l.FolderRole "junk")) (and (not $l) $d.Folder (eq $d.Folder.Role "junk"))}}<button class="ghost small" name="do" value="notjunk" title="{{t "mail.a.notjunk"}}">{{icon "inbox"}}<span class="mlabel"> {{t "mail.a.notjunk"}}</span></button>
+  {{else}}<button class="ghost small" name="do" value="junk" title="{{t "mail.a.junk"}}">{{icon "alert-octagon"}}<span class="mlabel"> {{t "mail.a.junk"}}</span></button>{{end}}
+  {{if and $l $l.Seen}}<button class="ghost small" name="do" value="unread" data-key="unread" title="{{t "mail.a.unread"}} (U)">{{icon "mail"}}</button>
+  {{else if $l}}<button class="ghost small" name="do" value="read" data-key="read" title="{{t "mail.a.read"}} (Q)">{{icon "mail-opened"}}</button>
+  {{else}}<button class="ghost small" name="do" value="read" data-key="read" title="{{t "mail.a.read"}} (Q)">{{icon "mail-opened"}}</button><button class="ghost small" name="do" value="unread" data-key="unread" title="{{t "mail.a.unread"}} (U)">{{icon "mail"}}</button>{{end}}
+  {{if and $l $l.Pinned}}<button class="ghost small on" name="do" value="unpin" title="{{t "mail.a.unpin"}}">{{icon "pin"}}</button>{{else}}<button class="ghost small" name="do" value="pin" title="{{t "mail.a.pin"}}">{{icon "pin"}}</button>{{end}}
+  <details class="mbox-menu mact-menu"><summary class="button ghost small{{if and $l $l.Flagged}} on{{end}}" title="{{t "mail.flag"}} (Insert)">{{icon "flag"}}</summary><div class="card mbox-pop">
+    {{range $d.FlagPresets}}<button class="ghost small" name="do" value="flag:{{.}}"{{if eq . "none"}} data-key="flag"{{end}}>{{t (print "mail.flag." .)}}</button>{{end}}
+    <div class="row"><input type="date" name="arg_flag" aria-label="{{t "mail.flag_date"}}"><button class="ghost small" name="do" value="flag">{{t "common.save"}}</button></div>
+    <button class="ghost small" name="do" value="done">{{icon "check"}} {{t "mail.a.done"}}</button><button class="ghost small" name="do" value="unflag">{{icon "x"}} {{t "mail.a.unflag"}}</button>
+    <b class="small">{{icon "bell"}} {{t "mail.a.remind"}}</b>
+    {{range $d.RemindPresets}}<button class="ghost small" name="do" value="remind:{{.}}">{{t (print "mail.snooze." .)}}</button>{{end}}
+    <div class="row"><input type="datetime-local" name="arg_remind" aria-label="{{t "mail.snooze_at"}}"><button class="ghost small" name="do" value="remind">{{t "common.save"}}</button></div>
+    {{if or (not $l) $l.FlagRemind}}<button class="ghost small" name="do" value="unremind">{{icon "bell-off"}} {{t "mail.a.unremind"}}</button>{{end}}
+  </div></details>
+  {{with $d.Categories}}<details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t "mail.category"}}">{{icon "tag"}}</summary><div class="card mbox-pop">
+    {{range .}}<button class="ghost small" name="do" value="category:{{.ID}}"><span class="mcat-dot c-{{.Color}}"></span> {{.Name}}{{if and $l ($l.HasCategory .ID)}} ✓{{end}}</button>{{end}}
+    <button class="ghost small" name="do" value="uncategorize">{{icon "x"}} {{t "mail.a.uncategorize"}}</button>
+  </div></details>{{end}}
+  <details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t "mail.a.snooze"}}">{{icon "clock"}}</summary><div class="card mbox-pop">
+    {{range $d.SnoozePresets}}<button class="ghost small" name="do" value="snooze:{{.}}">{{t (print "mail.snooze." .)}}</button>{{end}}
+    <div class="row"><input type="datetime-local" name="arg_snooze" aria-label="{{t "mail.snooze_at"}}"><button class="ghost small" name="do" value="snooze">{{t "common.save"}}</button></div>
+    {{if or (not $l) $l.Snoozed}}<button class="ghost small" name="do" value="unsnooze">{{icon "x"}} {{t "mail.a.unsnooze"}}</button>{{end}}
+  </div></details>
+  <button class="ghost small" name="do" value="sweep" title="{{t "mail.sweep"}}">{{icon "brush"}}<span class="mlabel"> {{t "mail.sweep"}}</span></button>
+  {{if and $l $d.Ignored}}<button class="ghost small on" name="do" value="unignore" title="{{t "mail.a.unignore"}}">{{icon "message-circle-off"}}</button>
+  {{else}}<button class="ghost small" name="do" value="ignore" title="{{t "mail.a.ignore"}}" data-confirm="{{t "mail.ignore_confirm"}}">{{icon "message-circle-off"}}</button>
+    {{if and (not $l) $d.Folder (eq $d.Folder.Role "trash")}}<button class="ghost small" name="do" value="unignore" title="{{t "mail.a.unignore"}}">{{icon "message-circle"}}</button>{{end}}{{end}}
+  <details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t "mail.qs"}}">{{icon "bolt"}}<span class="mlabel"> {{t "mail.qs"}}</span></summary><div class="card mbox-pop">
+    {{range $d.QuickSteps}}<button class="ghost small" name="do" value="quick:{{.ID}}">{{icon "bolt"}} {{.Name}}</button>{{else}}<span class="small muted">{{t "mail.qs_none"}}</span>{{end}}
+    <a class="button ghost small" href="/mail/settings?tab=quick">{{icon "settings"}} {{t "mail.qs_manage"}}</a>
+  </div></details>
+  <button class="ghost small" name="do" value="rule" title="{{t "mail.rule_create"}}">{{icon "filter-cog"}}</button>
+{{end}}
+
+{{/* the editor of a letter (web.mailCompose), as Outlook's; also sent alone to the script (a reply under the letter,
+   a draft from the list). static/js/compose.js: the text editor, the addresses as chips with suggestions, the draft
+   kept by itself, the files taken at once, «Отменить» after «Отправить» */}}
+{{define "mcompose"}}{{$c := .}}{{$d := .Draft}}
+<form class="mcompose{{if .Inline}} inline{{end}}" method="post" action="/mail/drafts/send" data-compose data-sigs="{{json .SigOf}}"
+  data-back="/mail{{with .FolderID}}?folder={{.}}{{end}}" data-font="{{.Prefs.Font}}" data-size="{{.Prefs.FontSize}}">
+  <input type="hidden" name="draft" value="{{$d.ID}}"><input type="hidden" name="mode" value="{{$d.Mode}}">
+  <input type="hidden" name="reply_to" value="{{$d.ReplyTo}}"><input type="hidden" name="importance" value="{{$d.Importance}}"><input type="hidden" name="vote" value="{{$d.Vote}}">
+  {{if not .Inline}}<h2>{{if eq $d.Mode "fwd"}}{{t "mail.forward"}}{{else if eq $d.Mode "fwdatt"}}{{t "mail.forward_attach"}}{{else if $d.Mode}}{{t "mail.reply"}}{{else}}{{t "mail.compose"}}{{end}}</h2>{{end}}
+  {{if and $d.SendAt $d.Scheduled}}<div class="row mc-banner">{{icon "clock"}} <span>{{t "mail.scheduled_for" (datetime (deref $d.SendAt))}}</span>
+    <button type="button" class="small" data-unschedule>{{t "mail.unschedule"}}</button></div>{{end}}
+  {{with $d.Error}}<div class="form-error">{{t "mail.send_failed"}}: {{if hasPrefix . "err."}}{{t .}}{{else}}{{.}}{{end}}</div>{{end}}
+  <div class="row mc-bar">
+    <span class="row mc-send"><button class="primary" title="{{t "mail.send"}} (Ctrl+Enter)">{{icon "send"}} {{t "mail.send"}}</button>
+      <details class="mbox-menu mc-later"><summary class="button primary" title="{{t "mail.send_later"}}" aria-label="{{t "mail.send_later"}}">{{icon "chevron-down"}}</summary>
+        <div class="card mbox-pop"><b class="small">{{t "mail.send_later"}}</b>
+          {{range .Schedule}}<button class="ghost small" name="send_at" value="{{.Key}}">{{t (print "mail.sched." .Key)}} <span class="muted">{{datetime .At}}</span></button>{{end}}
+          <div class="row"><input type="datetime-local" data-send-at aria-label="{{t "mail.send_at"}}"><button type="button" class="ghost small" data-send-custom>{{t "mail.send_later_go"}}</button></div>
+        </div></details></span>
+    <button type="button" class="ghost" data-discard title="{{t "mail.discard"}}">{{icon "trash"}}<span class="mlabel"> {{t "mail.discard"}}</span></button>
+    <label class="button ghost" title="{{t "mail.attach"}}">{{icon "paperclip"}}<span class="mlabel"> {{t "mail.attach_short"}}</span><input type="file" multiple hidden data-attach></label>
+    <button type="button" class="ghost" data-drive-pick title="{{t "mail.attach_drive"}}">{{icon "cloud-upload"}}<span class="mlabel"> {{t "mail.attach_drive"}}</span></button>
+    <label class="button ghost" title="{{t "mail.ed.picture"}}">{{icon "photo"}}<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden data-picture></label>
+    <details class="mbox-menu mc-menu"><summary class="button ghost" title="{{t "mail.signature"}}">{{icon "signature"}}</summary><div class="card mbox-pop">
+      {{range .Signatures}}<button type="button" class="ghost small" data-sig="{{.ID}}" data-html="{{.HTML}}">{{.Name}}</button>{{end}}
+      <button type="button" class="ghost small" data-sig="">{{icon "x"}} {{t "mail.sig_none"}}</button>
+      <a class="button ghost small" href="/mail/settings?tab=signatures" target="_blank">{{icon "settings"}} {{t "mail.sig_manage"}}</a></div></details>
+    <details class="mbox-menu mc-menu"><summary class="button ghost" title="{{t "mail.templates"}}">{{icon "template"}}</summary><div class="card mbox-pop" data-tpls>
+      <b class="small">{{t "mail.templates"}}</b>
+      {{range .Templates}}<button type="button" class="ghost small" data-tpl data-html="{{.HTML}}">{{.Name}}</button>{{else}}<span class="small muted" data-tpl-none>{{t "mail.tpl_none"}}</span>{{end}}
+      <button type="button" class="ghost small" data-tpl-save>{{icon "plus"}} {{t "mail.tpl_save"}}</button>
+      <a class="button ghost small" href="/mail/settings?tab=templates" target="_blank">{{icon "settings"}} {{t "mail.tpl_manage"}}</a></div></details>
+    <button type="button" class="ghost{{if eq $d.Importance 1}} on{{end}}" data-imp="1" title="{{t "mail.imp.high"}}" aria-pressed="{{eq $d.Importance 1}}">{{icon "exclamation-mark"}}</button>
+    <button type="button" class="ghost{{if eq $d.Importance -1}} on{{end}}" data-imp="-1" title="{{t "mail.imp.low"}}" aria-pressed="{{eq $d.Importance -1}}">{{icon "arrow-down"}}</button>
+    <details class="mbox-menu mc-menu"><summary class="button ghost" title="{{t "mail.options"}}">{{icon "adjustments"}}</summary><div class="card mbox-pop">
+      <label class="check"><input type="checkbox" name="receipt" value="1"{{if $d.Receipt}} checked{{end}}> {{t "mail.ask_receipt"}}</label>
+      <label class="check"><input type="checkbox" name="delivery" value="1"{{if $d.Delivery}} checked{{end}}> {{t "mail.ask_delivery"}}</label>
+      <label class="mc-voting">{{icon "list-check"}} {{t "mail.vote.buttons"}}<input type="text" name="voting" value="{{$d.Voting}}" list="mc-votes-{{$d.ID}}" maxlength="1000" placeholder="{{t "mail.vote.preset.approve"}}" title="{{t "mail.vote.hint"}}"></label>
+      <datalist id="mc-votes-{{$d.ID}}">{{range .Voting}}<option value="{{t (print "mail.vote.preset." .)}}">{{end}}</datalist></div></details>
+    <a class="button ghost" data-popout href="/mail?new=1&pane=off" target="_blank" title="{{t "mail.popout"}}">{{icon "external-link"}}</a>
+    <span class="small muted mc-status" data-status aria-live="polite"></span>
+  </div>
+  <div class="mc-fields">
+    <input type="hidden" name="from" value="{{$d.From}}" data-from>
+    {{if gt (len .Froms) 1}}<label class="mc-field"><span class="mc-label">{{t "mail.from"}}</span><select name="box" data-box>{{range .Froms}}<option value="{{.MailboxID}}" data-from="{{.Email}}"{{if and (eq .MailboxID $d.MailboxID) (eq .Email $d.From)}} selected{{end}}>{{if .Name}}{{.Name}} &lt;{{.Email}}&gt;{{else}}{{.Email}}{{end}}</option>{{end}}</select></label>
+    {{else}}<input type="hidden" name="box" value="{{$d.MailboxID}}" data-box>{{end}}
+    <div class="mc-field"><button type="button" class="ghost mc-label" data-book="to" title="{{t "mail.book_hint"}}">{{t "mail.to"}}</button>
+      <div class="mc-rcpt" data-rcpt><input type="text" id="mc-to-{{$d.ID}}" name="to" value="{{$d.To}}" autocomplete="off" placeholder="name@example.com" aria-label="{{t "mail.to"}}"{{if or (not $d.To) (eq $d.Mode "fwd") (eq $d.Mode "fwdatt")}} data-focus{{end}}></div>
+      <span class="mc-ccb"><button type="button" class="ghost small" data-show="cc"{{if .ShowCC}} hidden{{end}}>{{t "mail.cc"}}</button><button type="button" class="ghost small" data-show="bcc"{{if .ShowBCC}} hidden{{end}}>{{t "mail.bcc"}}</button><button type="button" class="ghost small" data-list-save title="{{t "mail.cl_save"}}" aria-label="{{t "mail.cl_save"}}">{{icon "users"}}</button></span></div>
+    <div class="mc-field" data-field="cc"{{if not .ShowCC}} hidden{{end}}><button type="button" class="ghost mc-label" data-book="cc" title="{{t "mail.book_hint"}}">{{t "mail.cc"}}</button>
+      <div class="mc-rcpt" data-rcpt><input type="text" id="mc-cc-{{$d.ID}}" name="cc" value="{{$d.CC}}" autocomplete="off" aria-label="{{t "mail.cc"}}"></div></div>
+    <div class="mc-field" data-field="bcc"{{if not .ShowBCC}} hidden{{end}}><button type="button" class="ghost mc-label" data-book="bcc" title="{{t "mail.book_hint"}}">{{t "mail.bcc"}}</button>
+      <div class="mc-rcpt" data-rcpt><input type="text" id="mc-bcc-{{$d.ID}}" name="bcc" value="{{$d.BCC}}" autocomplete="off" aria-label="{{t "mail.bcc"}}"></div></div>
+    <div class="mc-field"><label class="mc-label" for="mc-subj-{{$d.ID}}">{{t "mail.subject"}}</label>
+      <input type="text" id="mc-subj-{{$d.ID}}" name="subject" maxlength="500" value="{{$d.Subject}}" placeholder="{{t "mail.subject_ph"}}" class="mc-subject"></div>
+  </div>
+  <div class="mc-files" data-files>{{range .Files}}<span class="mc-file" data-file="{{.ID}}">{{icon "paperclip"}} <a href="/files/{{.ID}}" target="_blank">{{.Name}}</a> <span class="muted small">{{size .Size}}</span><button type="button" class="ghost small" data-unattach title="{{t "common.delete"}}">{{icon "x"}}</button></span>{{end}}</div>
+  {{template "mtools" $c}}
+  <div class="mc-editor" contenteditable="true" data-editor role="textbox" aria-multiline="true" aria-label="{{t "mail.body"}}"
+    style="{{with .Prefs.Font}}font-family: {{.}};{{end}}{{with .Prefs.FontSize}} font-size: {{.}};{{end}}"{{if and $d.To (ne $d.Mode "fwd") (ne $d.Mode "fwdatt")}} data-focus{{end}}></div>
+  <textarea name="html" hidden data-html>{{.HTML}}</textarea>
+  <template data-compose-labels><span data-l="saved">{{t "mail.draft_saved" "{t}"}}</span><span data-l="saving">{{t "mail.draft_saving"}}</span><span data-l="no_rcpt">{{t "err.mail_to"}}</span><span data-l="no_subject">{{t "mail.no_subject_ask"}}</span><span data-l="forgot">{{t "mail.forgot_attach"}}</span><span data-l="words">{{t "mail.attach_words"}}</span><span data-l="discard">{{t "mail.discard_ask"}}</span><span data-l="link">{{t "mail.ed.link_url"}}</span><span data-l="tpl_name">{{t "mail.tpl_name"}}</span><span data-l="uploading">{{t "mail.uploading"}}</span><span data-l="scheduled">{{t "mail.scheduled"}}</span><span data-l="rows">{{t "mail.ed.rows"}}</span><span data-l="cols">{{t "mail.ed.cols"}}</span><span data-l="delete">{{t "common.delete"}}</span><span data-l="employee">{{t "mail.k.employee"}}</span><span data-l="crm">{{t "mail.k.crm"}}</span><span data-l="history">{{t "mail.k.history"}}</span><span data-l="failed">{{t "mail.save_failed"}}</span><span data-l="list">{{t "mail.k.list"}}</span><span data-l="dept">{{t "mail.k.dept"}}</span><span data-l="list_name">{{t "mail.cl_name"}}</span><span data-l="list_saved">{{t "mail.cl_saved" "%s"}}</span><span data-l="mention">{{t "mail.mention_added" "%s"}}</span><span data-l="contact">{{t "mail.k.contact"}}</span><span data-l="crm_contact">{{t "mail.k.crm_contact"}}</span><span data-l="crm_company">{{t "mail.k.crm_company"}}</span><span data-l="crm_lead">{{t "mail.k.crm_lead"}}</span>{{range list "title" "all" "employee" "contact" "crm" "history" "list" "search" "empty" "new" "name" "email" "company" "phone" "edit" "delete_ask" "keep" "kept" "done" "add_hint"}}<span data-l="book_{{.}}">{{t (print "mail.book." .)}}</span>{{end}}<span data-l="to">{{t "mail.to"}}</span><span data-l="cc">{{t "mail.cc"}}</span><span data-l="bcc">{{t "mail.bcc"}}</span><span data-l="save">{{t "common.save"}}</span><span data-l="cancel">{{t "common.cancel"}}</span>
+    <span data-i="employee">{{icon "user"}}</span><span data-i="contact">{{icon "notebook"}}</span><span data-i="crm_contact">{{icon "star"}}</span><span data-i="crm_company">{{icon "building-warehouse"}}</span><span data-i="crm_lead">{{icon "flag"}}</span><span data-i="history">{{icon "history"}}</span><span data-i="list">{{icon "users"}}</span><span data-i="dept">{{icon "users-group"}}</span><span data-i="plus">{{icon "plus"}}</span><span data-i="edit">{{icon "edit"}}</span><span data-i="trash">{{icon "trash"}}</span><span data-i="x">{{icon "x"}}</span><span data-i="search">{{icon "search"}}</span></template>
+</form>{{end}}
+
+{{/* the text editor's toolbar (letters, signatures, templates): static/js/compose.js does what each button says */}}
+{{define "mtools"}}<div class="row mc-tools" data-tools role="toolbar" aria-label="{{t "mail.ed.tools"}}">
+  <select data-cmd="fontName" aria-label="{{t "mail.ed.font"}}" title="{{t "mail.ed.font"}}"><option value="">{{t "mail.ed.font"}}</option>{{range .Fonts}}<option value="{{.}}" style="font-family: {{.}}">{{.}}</option>{{end}}</select>
+  <select data-cmd="fontSize" aria-label="{{t "mail.ed.size"}}" title="{{t "mail.ed.size"}}"><option value="">{{t "mail.ed.size"}}</option>{{range .FontSizes}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+  <select data-cmd="formatBlock" aria-label="{{t "mail.ed.style"}}" title="{{t "mail.ed.style"}}"><option value="">{{t "mail.ed.style"}}</option>{{range list "p" "h1" "h2" "h3" "blockquote" "pre"}}<option value="{{.}}">{{t (print "mail.ed.block." .)}}</option>{{end}}</select>
+  <span class="mc-sep"></span>
+  <button type="button" class="ghost small" data-cmd="bold" title="{{t "mail.ed.bold"}} (Ctrl+B)">{{icon "bold"}}</button>
+  <button type="button" class="ghost small" data-cmd="italic" title="{{t "mail.ed.italic"}} (Ctrl+I)">{{icon "italic"}}</button>
+  <button type="button" class="ghost small" data-cmd="underline" title="{{t "mail.ed.underline"}} (Ctrl+U)">{{icon "underline"}}</button>
+  <button type="button" class="ghost small" data-cmd="strikeThrough" title="{{t "mail.ed.strike"}}">{{icon "strikethrough"}}</button>
+  <label class="button ghost small mc-color" title="{{t "mail.ed.color"}}">{{icon "text-color"}}<input type="color" data-cmd="foreColor" value="#d13438"></label>
+  <label class="button ghost small mc-color" title="{{t "mail.ed.highlight"}}">{{icon "highlight"}}<input type="color" data-cmd="hiliteColor" value="#fff100"></label>
+  <span class="mc-sep"></span>
+  <button type="button" class="ghost small" data-cmd="insertUnorderedList" title="{{t "mail.ed.bullets"}}">{{icon "list"}}</button>
+  <button type="button" class="ghost small" data-cmd="insertOrderedList" title="{{t "mail.ed.numbers"}}">{{icon "list-numbers"}}</button>
+  <button type="button" class="ghost small" data-cmd="outdent" title="{{t "mail.ed.outdent"}}">{{icon "indent-decrease"}}</button>
+  <button type="button" class="ghost small" data-cmd="indent" title="{{t "mail.ed.indent"}}">{{icon "indent-increase"}}</button>
+  <button type="button" class="ghost small" data-cmd="justifyLeft" title="{{t "mail.ed.left"}}">{{icon "align-left"}}</button>
+  <button type="button" class="ghost small" data-cmd="justifyCenter" title="{{t "mail.ed.center"}}">{{icon "align-center"}}</button>
+  <button type="button" class="ghost small" data-cmd="justifyRight" title="{{t "mail.ed.right"}}">{{icon "align-right"}}</button>
+  <span class="mc-sep"></span>
+  <button type="button" class="ghost small" data-cmd="createLink" title="{{t "mail.ed.link"}} (Ctrl+K)">{{icon "link"}}</button>
+  <button type="button" class="ghost small" data-cmd="unlink" title="{{t "mail.ed.unlink"}}">{{icon "unlink"}}</button>
+  <details class="mbox-menu mc-menu"><summary class="button ghost small" title="{{t "mail.ed.table"}}">{{icon "table"}}</summary><div class="card mbox-pop mc-grid" data-table-grid></div></details>
+  <button type="button" class="ghost small" data-cmd="removeFormat" title="{{t "mail.ed.clear"}}">{{icon "clear-formatting"}}</button>
+  <button type="button" class="ghost small" data-cmd="undo" title="{{t "mail.ed.undo"}} (Ctrl+Z)">{{icon "arrow-back-up"}}</button>
+  <button type="button" class="ghost small" data-cmd="redo" title="{{t "mail.ed.redo"}} (Ctrl+Y)">{{icon "arrow-forward-up"}}</button>
+</div>{{end}}
+
+{{/* the mail settings (web.mailSettingsPage), as Outlook's «Создание и ответ» */}}
+{{define "msettings"}}{{$s := .}}
+<div class="pagehead"><h1>{{t "mail.settings"}}</h1><a class="button ghost" href="/mail">{{icon "chevron-left"}} {{t "mail.title"}}</a></div>
+<div class="tabs">{{range .Tabs}}<a{{if eq . $s.Tab}} class="on"{{end}} href="/mail/settings?tab={{.}}">{{t (print "mail.st." .)}}</a>{{end}}</div>
+<div class="card msettings">
+{{if eq .Tab "compose"}}
+  <form method="post" action="/mail/settings" class="msettings-form">
+    <label>{{t "mail.undo_seconds"}}</label>
+    <select name="undo_seconds">{{range .Undo}}<option value="{{.}}"{{if eq . $s.Prefs.UndoSeconds}} selected{{end}}>{{if eq . 0}}{{t "mail.undo_off"}}{{else}}{{t "mail.undo_n" .}}{{end}}</option>{{end}}</select>
+    <p class="small muted">{{t "mail.undo_hint"}}</p>
+    <label>{{t "mail.default_font"}}</label>
+    <div class="row"><select name="font"><option value="">{{t "mail.font_default"}}</option>{{range .Fonts}}<option value="{{.}}"{{if eq . $s.Prefs.Font}} selected{{end}} style="font-family: {{.}}">{{.}}</option>{{end}}</select>
+      <select name="font_size"><option value="">{{t "mail.font_default"}}</option>{{range .FontSizes}}<option value="{{.}}"{{if eq . $s.Prefs.FontSize}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+{{else if eq .Tab "handling"}}
+  <form method="post" action="/mail/settings/handling" class="msettings-form">
+    <p class="small muted">{{t "mail.st.handling_hint"}}</p>
+    <label>{{t "mail.hd.read"}}</label>
+    <select name="read_after">{{range .ReadAfters}}<option value="{{.}}"{{if eq . $s.Handling.ReadAfter}} selected{{end}}>{{if eq . 0}}{{t "mail.hd.read_open"}}{{else if lt . 0}}{{t "mail.hd.read_never"}}{{else}}{{t "mail.hd.read_n" .}}{{end}}</option>{{end}}</select>
+    <label>{{t "mail.hd.receipts"}}</label>
+    {{range .ReceiptModes}}<label class="check"><input type="radio" name="receipts" value="{{.}}"{{if eq . $s.Handling.Receipts}} checked{{end}}> {{t (print "mail.hd.receipts." .)}}</label>{{end}}
+    <label>{{t "mail.hd.after"}}</label>
+    {{range .AfterMoveModes}}<label class="check"><input type="radio" name="after_move" value="{{.}}"{{if eq . $s.Handling.AfterMove}} checked{{end}}> {{t (print "mail.hd.after." .)}}</label>{{end}}
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+{{else if eq .Tab "layout"}}
+  <form method="post" action="/mail/settings/layout" class="msettings-form">
+    <p class="small muted">{{t "mail.st.layout_hint"}}</p>
+    <label>{{t "mail.ly.density"}}</label>
+    {{range .Densities}}<label class="check"><input type="radio" name="density" value="{{.}}"{{if eq . $s.Layout.Density}} checked{{end}}> {{t (print "mail.ly.density." .)}}</label>{{end}}
+    <label>{{t "mail.ly.text_size"}}</label>
+    {{range .TextSizes}}<label class="check"><input type="radio" name="text_size" value="{{.}}"{{if eq . $s.Layout.TextSize}} checked{{end}}> {{t (print "mail.ly.text_size." .)}}</label>{{end}}
+    <label>{{t "mail.ly.list"}}</label>
+    <label class="check"><input type="checkbox" name="show_text" value="1"{{if .Layout.ShowText}} checked{{end}}> {{t "mail.ly.show_text"}}</label>
+    <label class="check"><input type="checkbox" name="show_pics" value="1"{{if .Layout.ShowPics}} checked{{end}}> {{t "mail.ly.show_pics"}}</label>
+    <label class="check"><input type="checkbox" name="show_files" value="1"{{if .Layout.ShowFiles}} checked{{end}}> {{t "mail.ly.show_files"}}</label>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+{{else if eq .Tab "focused"}}
+  <form method="post" action="/mail/settings/focused" class="msettings-form">
+    <label class="check"><input type="checkbox" name="focused" value="1"{{if .Prefs.Focused}} checked{{end}}> {{t "mail.focus_on"}}</label>
+    <p class="small muted">{{t "mail.st.focused_hint"}}</p>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+  <h3>{{t "mail.focus_rules"}}</h3>
+  <div class="msnippets">{{range .Rules}}<form method="post" action="/mail/settings/focused/rule" class="row msnippet"><input type="hidden" name="sender" value="{{.Sender}}">
+    <b>{{.Sender}}</b><span class="muted">→ {{t (print "mail.view." .View)}}</span><button class="ghost small" name="do" value="delete">{{icon "x"}} {{t "common.delete"}}</button></form>
+  {{else}}<p class="muted">{{t "mail.focus_rules_none"}}</p>{{end}}</div>
+  <form method="post" action="/mail/settings/focused/rule" class="row msig-box">
+    <input type="email" name="sender" required placeholder="{{t "mail.f.email"}}" aria-label="{{t "mail.focus_sender"}}">
+    <select name="view"><option value="focused">{{t "mail.view.focused"}}</option><option value="other">{{t "mail.view.other"}}</option></select>
+    <button class="small">{{icon "plus"}} {{t "mail.focus_rule_add"}}</button></form>
+{{else if eq .Tab "notify"}}{{template "mnotifyset" .}}
+{{else if eq .Tab "junk"}}{{template "mjunkset" .}}
+{{else if eq .Tab "crm"}}{{template "mcrmset" .}}
+{{else if eq .Tab "forwarding"}}{{template "mfwdset" .}}
+{{else if eq .Tab "senders"}}{{template "mfromset" .}}
+{{else if eq .Tab "rules"}}{{template "mrules" .}}
+{{else if eq .Tab "quick"}}{{template "mquick" .}}
+{{else if eq .Tab "lists"}}{{template "mlists" .}}
+{{else if eq .Tab "sweep"}}
+  <p class="small muted">{{t "mail.st.sweep_hint"}}</p>
+  <div class="msnippets">{{range .Sweeps}}<form method="post" action="/mail/sweeps/{{.ID}}/delete" class="row msnippet"><b>{{.Sender}}</b>
+    <span class="muted">{{if eq .Mode "older"}}{{t "mail.sweep_rule.older" .Days}}{{else}}{{t (print "mail.sweep_rule." .Mode)}}{{end}} · {{template "mfname" (dict "Role" .FolderRole "Title" .FolderName)}} → {{template "msweepto" (dict "T" .Target "F" $s.FolderByID)}}</span>
+    <button class="ghost small">{{icon "x"}} {{t "common.delete"}}</button></form>{{else}}<p class="muted">{{t "mail.sweeps_none"}}</p>{{end}}</div>
+{{else if eq .Tab "ooo"}}{{$o := .OOO}}
+  {{if .OOOState.On}}<div class="row mc-banner">{{icon "plane-departure"}} <span>{{template "mooostate" .OOOState}}</span></div>{{end}}
+  <form method="post" action="/mail/settings/ooo" class="msettings-form mooo-form">
+    <p class="small muted">{{t "mail.st.ooo_hint"}}</p>
+    {{range list "off" "on" "period"}}<label class="check"><input type="radio" name="mode" value="{{.}}"{{if eq . $o.Mode}} checked{{end}}> {{t (print "mail.ooo.mode." .)}}</label>{{end}}
+    <div class="row mooo-period"><span class="period"><span>{{t "period.from"}} <input type="datetime-local" name="from" value="{{dtinput $o.From}}"></span> <span>{{t "period.to"}} <input type="datetime-local" name="to" value="{{dtinput $o.To}}"></span></span></div>
+    <label class="check"><input type="checkbox" name="absence" value="1"{{if $o.Absence}} checked{{end}}> {{t "mail.ooo.absence"}}</label>
+    <p class="small muted">{{t "mail.ooo.absence_hint"}} <a href="/company/absences">{{t "absence.title"}}</a></p>
+    <label>{{t "mail.ooo.internal"}}</label><textarea name="internal" rows="5" maxlength="10000" placeholder="{{t "mail.ooo.default"}}">{{$o.Internal}}</textarea>
+    <label>{{t "mail.ooo.outside"}}</label>
+    {{range .Outside}}<label class="check"><input type="radio" name="outside" value="{{.}}"{{if eq . $o.Outside}} checked{{end}}> {{t (print "mail.ooo.outside." .)}}</label>{{end}}
+    <label>{{t "mail.ooo.external"}}</label><textarea name="external" rows="5" maxlength="10000" placeholder="{{t "mail.ooo.external_same"}}">{{$o.External}}</textarea>
+    <p class="small muted">{{t "mail.ooo.once_hint"}}</p>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+{{else}}{{$kind := "signature"}}{{$list := .Signatures}}{{if eq .Tab "templates"}}{{$kind = "template"}}{{$list = .Templates}}{{end}}
+  <p class="small muted">{{t (print "mail.st." .Tab "_hint")}}</p>
+  <div class="msnippets">{{range $list}}<div class="row msnippet">
+    <b>{{.Name}}</b><a class="button ghost small" href="/mail/settings?tab={{$s.Tab}}&edit={{.ID}}">{{icon "edit"}} {{t "mail.edit"}}</a>
+    <form method="post" action="/mail/snippets/{{$kind}}/{{.ID}}/delete" data-confirm="{{t "mail.snippet_delete_confirm" .Name}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>
+  </div>{{else}}<p class="muted">{{t (print "mail.st." $s.Tab "_none")}}</p>{{end}}</div>
+  {{$edit := ""}}{{$name := ""}}{{$html := ""}}{{range $list}}{{if eq .ID $s.Edit}}{{$edit = .ID}}{{$name = .Name}}{{$html = .HTML}}{{end}}{{end}}
+  {{if or $edit (eq .Edit "new")}}<form method="post" action="/mail/snippets/{{$kind}}{{with $edit}}/{{.}}/save{{else}}/new{{end}}" class="msettings-form" data-snippet-editor>
+    <label>{{t "mail.snippet_name"}}</label><input type="text" name="name" required maxlength="100" value="{{$name}}">
+    {{template "mtools" $s}}
+    <div class="mc-editor" contenteditable="true" data-editor role="textbox" aria-multiline="true" aria-label="{{t (print "mail.st." $s.Tab)}}"></div>
+    <textarea name="html" hidden data-html>{{$html}}</textarea>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/mail/settings?tab={{$s.Tab}}">{{t "common.cancel"}}</a></p>
+  </form>{{else}}<p><a class="button" href="/mail/settings?tab={{.Tab}}&edit=new">{{icon "plus"}} {{t (print "mail.st." .Tab "_new")}}</a></p>{{end}}
+  {{if eq .Tab "signatures"}}{{if .Boxes}}<h3>{{t "mail.sig_defaults"}}</h3>
+    {{range $b := .Boxes}}{{$sg := index $s.SigOf $b.ID}}<form method="post" action="/mail/settings/boxes/{{$b.ID}}" class="row msig-box">
+      <b>{{$b.Email}}</b>
+      <label>{{t "mail.sig_new"}} <select name="sig_new"><option value="">{{t "mail.sig_none"}}</option>{{range $s.Signatures}}<option value="{{.ID}}"{{if eq .ID $sg.New}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>{{t "mail.sig_reply"}} <select name="sig_reply"><option value="">{{t "mail.sig_none"}}</option>{{range $s.Signatures}}<option value="{{.ID}}"{{if eq .ID $sg.Reply}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <button class="small">{{t "common.save"}}</button></form>{{end}}{{end}}{{end}}
+{{end}}
+</div>
+<script src="{{asset "js/compose.js"}}"></script>
+{{end}}
+
+{{/* the automatic replies going now: till when, the absence that turned them on */}}
+{{define "mooostate"}}{{if .Until}}{{if .Absence}}{{t "mail.ooo.on_until" (date .Until)}}{{else}}{{t "mail.ooo.on_until" (datetime (deref .Until))}}{{end}}{{else}}{{t "mail.ooo.on"}}{{end}}{{with .Absence}} · {{t "mail.ooo.by_absence" (t (print "absence.kind." .))}}{{end}}{{end}}
+
+{{/* where «Очистка» moves letters */}}
+{{/* «Быстрые действия»: the list in its order, the one being edited (web/mailquick.go) */}}
+{{define "mquick"}}{{$s := .}}
+  <p class="small muted">{{t "mail.st.quick_hint"}}</p>
+  <div class="msnippets">{{range $i, $q := .QuickSteps}}<div class="row msnippet">
+    <b>{{icon "bolt"}} {{$q.Name}}</b><span class="muted small">{{range $j, $st := $q.Steps}}{{if $j}} → {{end}}{{t (print "mail.qs.do." $st.Do)}}{{if eq $st.Do "move"}}{{with index $s.FolderByID $st.Arg}} «{{template "mfname" .}}»{{end}}{{else if eq $st.Do "category"}}{{with index $s.CatByID $st.Arg}} «{{.Name}}»{{end}}{{else if eq $st.Do "forward"}} {{$st.Arg}}{{end}}{{end}}</span>
+    <a class="button ghost small" href="/mail/settings?tab=quick&edit={{$q.ID}}">{{icon "edit"}} {{t "mail.edit"}}</a>
+    <form method="post" action="/mail/quicksteps/{{$q.ID}}/do" class="row">{{if $i}}<button class="ghost small" name="do" value="up" title="{{t "mail.rule_up"}}">{{icon "arrow-up"}}</button>{{end}}
+      {{if lt (add $i 1) (len $s.QuickSteps)}}<button class="ghost small" name="do" value="down" title="{{t "mail.rule_down"}}">{{icon "arrow-down"}}</button>{{end}}
+      <button class="ghost small" name="do" value="delete" data-confirm="{{t "mail.qs_delete_confirm" $q.Name}}">{{icon "trash"}} {{t "common.delete"}}</button></form>
+  </div>{{else}}<p class="muted">{{t "mail.qs_none"}}</p>{{end}}</div>
+  {{with .QuickStep}}{{$q := .}}<form method="post" action="/mail/quicksteps{{with $q.ID}}/{{.}}/save{{end}}" class="msettings-form mquick-form" data-quick-form>
+    <label>{{t "mail.qs_name"}}</label><input type="text" name="name" required maxlength="60" value="{{$q.Name}}">
+    <label>{{t "mail.qs_steps"}}</label>
+    {{range $i := $s.MaxSteps}}{{$st := dict "Do" "" "Arg" ""}}{{if lt $i (len $q.Steps)}}{{$x := index $q.Steps $i}}{{$st = dict "Do" $x.Do "Arg" $x.Arg}}{{end}}
+    <div class="row mquick-step" data-step>
+      <select name="do_{{$i}}" aria-label="{{t "mail.qs_step" (add $i 1)}}"><option value="">—</option>{{range $s.StepActions}}<option value="{{.}}"{{if eq . $st.Do}} selected{{end}}>{{t (print "mail.qs.do." .)}}</option>{{end}}</select>
+      <select name="folder_{{$i}}" data-for="move" aria-label="{{t "mail.qs.do.move"}}">{{range $b := $s.Folders}}<optgroup label="{{$b.Email}}">{{range $b.Folders}}{{if .Selectable}}<option value="{{.ID}}"{{if eq .ID $st.Arg}} selected{{end}}>{{indent .Depth}}{{template "mfname" .}}</option>{{end}}{{end}}</optgroup>{{end}}</select>
+      <select name="cat_{{$i}}" data-for="category" aria-label="{{t "mail.category"}}">{{range $s.Categories}}<option value="{{.ID}}"{{if eq .ID $st.Arg}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <input type="text" name="to_{{$i}}" data-for="forward" value="{{if eq $st.Do "forward"}}{{$st.Arg}}{{end}}" placeholder="name@example.com" aria-label="{{t "mail.to"}}">
+      <select name="tpl_{{$i}}" data-for="reply replyall" aria-label="{{t "mail.templates"}}"><option value="">{{t "mail.qs_no_tpl"}}</option>{{range $s.Templates}}<option value="{{.ID}}"{{if eq .ID $st.Arg}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+    </div>{{end}}
+    <p class="small muted">{{t "mail.qs_order_hint"}}</p>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/mail/settings?tab=quick">{{t "common.cancel"}}</a></p>
+  </form>
+  <script src="{{asset "js/mailquick.js"}}"></script>{{else}}<p><a class="button" href="/mail/settings?tab=quick&edit=new">{{icon "plus"}} {{t "mail.qs_new"}}</a></p>{{end}}
+{{end}}
+
+{{/* «Списки контактов»: the lists, the one being edited (web/maillists.go) */}}
+{{define "mlists"}}{{$s := .}}
+  <p class="small muted">{{t "mail.st.lists_hint"}}</p>
+  <div class="msnippets">{{range .Lists}}<div class="row msnippet">
+    <b>{{icon "users"}} {{.Name}}</b><span class="muted small">{{t "mail.cl_count" (len .Members)}}</span>
+    <a class="button ghost small" href="/mail/settings?tab=lists&edit={{.ID}}">{{icon "edit"}} {{t "mail.edit"}}</a>
+    <form method="post" action="/mail/lists/{{.ID}}/delete" data-confirm="{{t "mail.cl_delete_confirm" .Name}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>
+  </div>{{else}}<p class="muted">{{t "mail.cl_none"}}</p>{{end}}</div>
+  {{with .List}}<form method="post" action="/mail/lists{{with .ID}}/{{.}}/save{{end}}" class="msettings-form">
+    <label>{{t "mail.cl_name"}}</label><input type="text" name="name" required maxlength="100" value="{{.Name}}">
+    <label>{{t "mail.cl_members"}}</label><textarea name="members" rows="10" required placeholder="Анна Иванова &lt;anna@example.com&gt;&#10;boris@example.com">{{.String}}</textarea>
+    <p class="small muted">{{t "mail.cl_members_hint"}}</p>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/mail/settings?tab=lists">{{t "common.cancel"}}</a></p>
+  </form>{{else}}<p><a class="button" href="/mail/settings?tab=lists&edit=new">{{icon "plus"}} {{t "mail.cl_new"}}</a></p>{{end}}
+{{end}}
+
+{{define "msweepto"}}{{if eq .T "delete"}}{{t "mail.folder.trash"}}{{else if eq .T "archive"}}{{t "mail.folder.archive"}}{{else}}{{with index .F .T}}{{template "mfname" .}}{{end}}{{end}}{{end}}
+
+{{/* «Очистка» of letters (web.mailSweepPage), as Outlook's dialog */}}
+{{define "msweep"}}{{$w := .}}{{$f := index .From 0}}{{$fn := $f.FolderName}}{{if $f.FolderRole}}{{$fn = t (print "mail.folder." $f.FolderRole)}}{{end}}
+<div class="pagehead"><h1>{{t "mail.sweep"}}</h1><a class="button ghost" href="{{.Back}}">{{icon "chevron-left"}} {{t "mail.title"}}</a></div>
+<div class="card msettings"><form method="post" action="/mail/sweep" class="msettings-form msweep">
+  <input type="hidden" name="letter" value="{{.Letters}}"><input type="hidden" name="back" value="{{.Back}}">
+  <div class="msnippets">{{range .From}}<div class="row msnippet">{{ava (or .Name .Sender)}} <b>{{if .Name}}{{.Name}} <span class="muted small">&lt;{{.Sender}}&gt;</span>{{else}}{{.Sender}}{{end}}</b>
+    <span class="muted small">{{t "mail.sweep_count" .Count}}</span></div>{{end}}</div>
+  <label class="check"><input type="radio" name="mode" value="all" checked> {{t "mail.sweep.all" $fn}}</label>
+  <label class="check"><input type="radio" name="mode" value="future"> {{t "mail.sweep.future" $fn}}</label>
+  <label class="check"><input type="radio" name="mode" value="latest"> {{t "mail.sweep.latest"}}</label>
+  <label class="check"><input type="radio" name="mode" value="older"> {{t "mail.sweep.older"}} <input type="number" name="days" value="10" min="1" max="3650" class="msweep-days" aria-label="{{t "mail.sweep.days"}}"> {{t "mail.sweep.days"}}</label>
+  <label>{{t "mail.sweep.to"}}</label>
+  <select name="target"><option value="delete">{{t "mail.folder.trash"}}</option><option value="archive">{{t "mail.folder.archive"}}</option>{{range .Folders}}<option value="{{.ID}}">{{indent .Depth}}{{template "mfname" .}}</option>{{end}}</select>
+  <p class="small muted">{{t "mail.sweep_hint"}}</p>
+  <p class="row"><button class="primary">{{icon "brush"}} {{t "mail.sweep_go"}}</button><a class="button ghost" href="{{.Back}}">{{t "common.cancel"}}</a></p>
+</form></div>{{end}}
+
+{{/* the rules (the settings' tab): the list in its order, «Запустить сейчас», or the rule being edited */}}
+{{define "mrules"}}{{$s := .}}
+{{with .Rule}}{{template "mrule" (dict "S" $s "R" .)}}{{else}}
+  <p class="small muted">{{t "mail.st.rules_hint"}}</p>
+  <div class="msnippets">{{range $i, $r := .MailRules}}<div class="row msnippet mrule{{if not .Enabled}} off{{end}}">
+    <form method="post" action="/mail/rules/{{.ID}}/do" class="row mrule-acts">
+      <button class="ghost small" name="do" value="{{if .Enabled}}off{{else}}on{{end}}" role="switch" aria-checked="{{if .Enabled}}true{{else}}false{{end}}" title="{{if .Enabled}}{{t "mail.rule_off"}}{{else}}{{t "mail.rule_on"}}{{end}}">{{if .Enabled}}{{icon "circle-check"}}{{else}}{{icon "circle-dashed"}}{{end}}</button>
+      <b>{{.Name}}</b>
+      <button class="ghost small" name="do" value="up" title="{{t "mail.rule_up"}}"{{if eq $i 0}} disabled{{end}}>{{icon "arrow-up"}}</button>
+      <button class="ghost small" name="do" value="down" title="{{t "mail.rule_down"}}"{{if eq (add $i 1) (len $s.MailRules)}} disabled{{end}}>{{icon "arrow-down"}}</button></form>
+    <span class="small muted mrule-sum">{{template "mrulesum" (dict "R" . "S" $s)}}</span>
+    <a class="button ghost small" href="/mail/settings?tab=rules&edit={{.ID}}">{{icon "edit"}} {{t "mail.edit"}}</a>
+    <form method="post" action="/mail/rules/{{.ID}}/do" data-confirm="{{t "mail.rule_delete_confirm" .Name}}"><button class="ghost small" name="do" value="delete" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+  </div>{{else}}<p class="muted">{{t "mail.rules_none"}}</p>{{end}}</div>
+  <p><a class="button" href="/mail/settings?tab=rules&edit=new">{{icon "plus"}} {{t "mail.rule_new"}}</a></p>
+  {{if .MailRules}}<h3>{{t "mail.rules_run"}}</h3>
+  <form method="post" action="/mail/rules/run" class="msettings-form">
+    <p class="small muted">{{t "mail.rules_run_hint"}}</p>
+    {{range .MailRules}}<label class="check"><input type="checkbox" name="rule" value="{{.ID}}"> {{.Name}}{{if not .Enabled}} <span class="muted small">({{t "mail.rule_is_off"}})</span>{{end}}</label>{{end}}
+    <label>{{t "mail.rules_run_in"}}</label>
+    <select name="folder">{{range $b := .Folders}}<optgroup label="{{$b.Email}}">{{range $b.Folders}}{{if .Selectable}}<option value="{{.ID}}"{{if eq .Role "inbox"}} selected{{end}}>{{indent .Depth}}{{template "mfname" .}}</option>{{end}}{{end}}</optgroup>{{end}}</select>
+    <p><button class="primary">{{icon "player-play"}} {{t "mail.rules_run_go"}}</button></p>
+  </form>{{end}}
+{{end}}{{end}}
+
+{{/* a rule in a line: its conditions → its actions */}}
+{{define "mrulesum"}}{{$r := .R}}{{$s := .S}}{{template "mcondsum" $r.If}}{{if $r.If.Empty}}{{t "mail.rc.all"}}{{end}}{{if not $r.Except.Empty}} · {{t "mail.rule_except"}}: {{template "mcondsum" $r.Except}}{{end}} →
+  {{- with $r.Do.Move}} {{t "mail.ra.move"}} «{{with index $s.FolderByID .}}{{template "mfname" .}}{{end}}»;{{end}}
+  {{- with $r.Do.Category}}{{with index $s.CatByID .}} {{t "mail.ra.category"}} «{{.Name}}»;{{end}}{{end}}
+  {{- with $r.Do.Importance}} {{t (print "mail.imp." .)}};{{end}}
+  {{- if $r.Do.Flag}} {{t "mail.ra.flag"}};{{end}}{{if $r.Do.Pin}} {{t "mail.ra.pin"}};{{end}}{{if $r.Do.Read}} {{t "mail.ra.read"}};{{end}}{{if $r.Do.Notify}} {{t "mail.ra.notify"}};{{end}}
+  {{- if $r.Do.Junk}} {{t "mail.ra.junk"}};{{end}}{{if $r.Do.Delete}} {{t "mail.ra.delete"}};{{end}}
+  {{- with $r.Do.Forward}} {{t "mail.ra.forward"}} {{.}};{{end}}{{with $r.Do.ForwardAttach}} {{t "mail.ra.forward_attach"}} {{.}};{{end}}{{with $r.Do.Redirect}} {{t "mail.ra.redirect"}} {{.}};{{end}}
+  {{- if $r.Stop}} {{t "mail.rule_stop"}}{{end}}{{end}}
+
+{{define "mcondsum"}}{{with .From}}{{t "mail.rc.from"}} «{{.}}»; {{end}}{{with .To}}{{t "mail.rc.to"}} «{{.}}»; {{end}}{{with .Subject}}{{t "mail.rc.subject"}} «{{.}}»; {{end}}{{with .Body}}{{t "mail.rc.body"}} «{{.}}»; {{end}}
+  {{- if .Attach}}{{t "mail.rc.attach"}}; {{end}}{{with .Importance}}{{t (print "mail.imp." .)}}; {{end}}{{if .ToMe}}{{t "mail.rc.to_me"}}; {{end}}{{if .CcMe}}{{t "mail.rc.cc_me"}}; {{end}}{{if .OnlyMe}}{{t "mail.rc.only_me"}}; {{end}}{{end}}
+
+{{/* a rule's form, as Outlook's: conditions, actions, exceptions, «Прекратить обработку других правил» */}}
+{{define "mrule"}}{{$s := .S}}{{$r := .R}}
+<form method="post" action="/mail/rules{{with $r.ID}}/{{.}}/save{{end}}" class="msettings-form mrule-form">
+  <h3>{{if $r.ID}}{{t "mail.rule_edit"}}{{else}}{{t "mail.rule_new"}}{{end}}</h3>
+  <label>{{t "mail.rule_name"}}</label><input type="text" name="name" required maxlength="200" value="{{$r.Name}}">
+  <fieldset><legend>{{t "mail.rule_if"}}</legend><p class="small muted">{{t "mail.rule_if_hint"}}</p>
+    {{template "mcond" (dict "P" "if_" "C" $r.If "S" $s "Subject" $r.Subject)}}</fieldset>
+  <fieldset><legend>{{t "mail.rule_do"}}</legend>
+    <label>{{t "mail.ra.move"}}</label>
+    <select name="do_move"><option value="">—</option>{{range $b := $s.Folders}}<optgroup label="{{$b.Email}}">{{range $b.Folders}}{{if .Selectable}}<option value="{{.ID}}"{{if eq .ID $r.Do.Move}} selected{{end}}>{{indent .Depth}}{{template "mfname" .}}</option>{{end}}{{end}}</optgroup>{{end}}</select>
+    <label>{{t "mail.ra.category"}}</label>
+    <select name="do_category"><option value="">—</option>{{range $s.Categories}}<option value="{{.ID}}"{{if eq .ID $r.Do.Category}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <label>{{t "mail.ra.importance"}}</label>
+    <select name="do_importance"><option value="">—</option>{{range $s.Importances}}<option value="{{.}}"{{if eq . $r.Do.Importance}} selected{{end}}>{{t (print "mail.imp." .)}}</option>{{end}}</select>
+    <div class="row mrule-checks">
+      <label class="check"><input type="checkbox" name="do_read" value="1"{{if $r.Do.Read}} checked{{end}}> {{t "mail.ra.read"}}</label>
+      <label class="check"><input type="checkbox" name="do_flag" value="1"{{if $r.Do.Flag}} checked{{end}}> {{t "mail.ra.flag"}}</label>
+      <label class="check"><input type="checkbox" name="do_pin" value="1"{{if $r.Do.Pin}} checked{{end}}> {{t "mail.ra.pin"}}</label>
+      <label class="check"><input type="checkbox" name="do_junk" value="1"{{if $r.Do.Junk}} checked{{end}}> {{t "mail.ra.junk"}}</label>
+      <label class="check"><input type="checkbox" name="do_delete" value="1"{{if $r.Do.Delete}} checked{{end}}> {{t "mail.ra.delete"}}</label>
+      <label class="check" title="{{t "mail.ra.notify_hint"}}"><input type="checkbox" name="do_notify" value="1"{{if $r.Do.Notify}} checked{{end}}> {{t "mail.ra.notify"}}</label></div>
+    <label>{{t "mail.ra.forward"}}</label><input type="text" name="do_forward" value="{{$r.Do.Forward}}" placeholder="name@example.com">
+    <label>{{t "mail.ra.forward_attach"}}</label><input type="text" name="do_forward_attach" value="{{$r.Do.ForwardAttach}}" placeholder="name@example.com">
+    <label>{{t "mail.ra.redirect"}}</label><input type="text" name="do_redirect" value="{{$r.Do.Redirect}}" placeholder="name@example.com">
+    <p class="small muted">{{t "mail.ra.send_hint"}}</p>
+  </fieldset>
+  <details class="mrule-except"{{if not $r.Except.Empty}} open{{end}}><summary>{{t "mail.rule_except_add"}}</summary>
+    <p class="small muted">{{t "mail.rule_except_hint"}}</p>{{template "mcond" (dict "P" "ex_" "C" $r.Except "S" $s)}}</details>
+  <label class="check"><input type="checkbox" name="stop" value="1"{{if $r.Stop}} checked{{end}}> {{t "mail.rule_stop"}}</label>
+  <label class="check"><input type="checkbox" name="enabled" value="1"{{if $r.Enabled}} checked{{end}}> {{t "mail.rule_enabled"}}</label>
+  <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/mail/settings?tab=rules">{{t "common.cancel"}}</a></p>
+</form>{{end}}
+
+{{/* the conditions of a rule's form (P: if_ or ex_) */}}
+{{define "mcond"}}{{$p := .P}}{{$c := .C}}{{$s := .S}}
+  <label>{{t "mail.rc.from"}}</label><input type="text" name="{{$p}}from" value="{{$c.From}}" placeholder="{{t "mail.rc.words"}}">
+  <label>{{t "mail.rc.to"}}</label><input type="text" name="{{$p}}to" value="{{$c.To}}" placeholder="{{t "mail.rc.words"}}">
+  <label>{{t "mail.rc.subject"}}</label><input type="text" name="{{$p}}subject" value="{{$c.Subject}}" placeholder="{{t "mail.rc.words"}}">
+  {{with .Subject}}<label class="check"><input type="checkbox" name="{{$p}}subject_letter" value="{{.}}"> {{t "mail.rc.subject_letter" .}}</label>{{end}}
+  <label>{{t "mail.rc.body"}}</label><input type="text" name="{{$p}}body" value="{{$c.Body}}" placeholder="{{t "mail.rc.words"}}">
+  <label>{{t "mail.rc.importance"}}</label>
+  <select name="{{$p}}importance"><option value="">{{t "mail.rc.any"}}</option>{{range $s.Importances}}<option value="{{.}}"{{if eq . $c.Importance}} selected{{end}}>{{t (print "mail.imp." .)}}</option>{{end}}</select>
+  <div class="row mrule-checks">
+    <label class="check"><input type="checkbox" name="{{$p}}attach" value="1"{{if $c.Attach}} checked{{end}}> {{t "mail.rc.attach"}}</label>
+    <label class="check"><input type="checkbox" name="{{$p}}to_me" value="1"{{if $c.ToMe}} checked{{end}}> {{t "mail.rc.to_me"}}</label>
+    <label class="check"><input type="checkbox" name="{{$p}}cc_me" value="1"{{if $c.CcMe}} checked{{end}}> {{t "mail.rc.cc_me"}}</label>
+    <label class="check"><input type="checkbox" name="{{$p}}only_me" value="1"{{if $c.OnlyMe}} checked{{end}}> {{t "mail.rc.only_me"}}</label></div>
+{{end}}
+
+{{/* a letter's files in the reading pane (L: the letter, F: its files): a click opens the viewer (static/js/mailx.js),
+   «Скачать», «Сохранить на Диск»; with several — «Скачать все» (ZIP) and «Сохранить все на Диск» */}}
+{{define "mfiles"}}{{$l := .L}}<div class="ffiles mfiles" data-mfiles="{{$l.ID}}">{{range .F}}<span class="ffile mfile">
+  <a href="/files/{{.ID}}" data-preview="{{.ID}}" data-kind="{{.Preview}}" data-name="{{.Name}}" title="{{t "mail.fv.open"}}">{{icon "paperclip"}} {{.Name}} <span class="muted small">{{size .Size}}</span></a>
+  <a class="button ghost small" href="/files/{{.ID}}" download="{{.Name}}" title="{{t "mail.fv.download"}}">{{icon "download"}}</a>
+  <form method="post" action="/mail/files/drive" data-to-drive><input type="hidden" name="file" value="{{.ID}}"><input type="hidden" name="back" value="/mail?letter={{$l.ID}}"><button class="ghost small" title="{{t "mail.fv.drive"}}">{{icon "cloud-upload"}}</button></form></span>{{end}}
+  {{if gt (len .F) 1}}<span class="row mfiles-all"><a class="button ghost small" href="/mail/letters/{{$l.ID}}/files.zip">{{icon "file-zip"}} {{t "mail.fv.zip"}}</a>
+  <form method="post" action="/mail/files/drive" data-to-drive><input type="hidden" name="letter" value="{{$l.ID}}"><input type="hidden" name="back" value="/mail?letter={{$l.ID}}"><button class="ghost small">{{icon "cloud-upload"}} {{t "mail.fv.drive_all"}}</button></form></span>{{end}}
+</div>{{end}}
+
+{{/* «Ещё» of the reading pane: printing, the source, blocking and trusting the sender */}}
+{{define "mmore"}}{{$d := .}}{{with .Letter}}<details class="mbox-menu mact-menu mmore"><summary class="button ghost small" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
+  <a class="button ghost small" href="/mail/letters/{{.ID}}/print" target="_blank" rel="noopener" data-print title="Ctrl+P">{{icon "printer"}} {{t "mail.print"}}</a>
+  {{if gt (len $d.Thread) 1}}<a class="button ghost small" href="/mail/letters/{{.ID}}/print?conv=1" target="_blank" rel="noopener">{{icon "printer"}} {{t "mail.print_conv"}}</a>{{end}}
+  {{if not .Draft}}<a class="button ghost small" data-reply="fwdatt" href="/mail?box={{.MailboxID}}&new=1&letter={{.ID}}&folder={{$d.FolderID}}&mode=fwdatt">{{icon "paperclip"}} {{t "mail.forward_attach"}}</a>{{end}}
+  {{if eq .FolderRole "sent"}}<hr><a class="button ghost small" href="/mail?box={{.MailboxID}}&new=1&letter={{.ID}}&folder={{$d.FolderID}}&mode=resend">{{icon "send"}} {{t "mail.resend"}}</a>
+  {{if .MessageID}}<details class="mrecall-menu"><summary class="button ghost small">{{icon "mail-x"}} {{t "mail.recall.title"}}</summary>
+    <form method="post" action="/mail/letters/{{.ID}}/recall" class="mrecall-form"><p class="small muted">{{t "mail.recall.hint"}}</p>
+      <button class="ghost small" name="do" value="delete">{{t "mail.recall.delete"}}</button>
+      <button class="ghost small" name="do" value="replace">{{t "mail.recall.replace"}}</button></form></details>{{end}}<hr>{{end}}
+  {{if not .Draft}}<a class="button ghost small" href="/mail/letters/{{.ID}}/source" target="_blank" rel="noopener">{{icon "code"}} {{t "mail.view_source"}}</a>
+  <a class="button ghost small" href="/mail/letters/{{.ID}}/source?download=1">{{icon "download"}} {{t "mail.save_eml"}}</a>{{end}}
+  {{if and (not .Outgoing) .FromAddr}}<hr>
+  <form method="post" action="/mail/senders/block" data-confirm="{{t "mail.block_confirm" .FromAddr}}"><input type="hidden" name="letter" value="{{.ID}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}"><button class="ghost small">{{icon "ban"}} {{t "mail.block"}}</button></form>
+  <form method="post" action="/mail/senders/block" data-confirm="{{t "mail.block_domain_confirm" .FromAddr}}"><input type="hidden" name="letter" value="{{.ID}}"><input type="hidden" name="domain" value="1"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}"><button class="ghost small">{{icon "ban"}} {{t "mail.block_domain"}}</button></form>
+  <form method="post" action="/mail/senders/safe"><input type="hidden" name="letter" value="{{.ID}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}&letter={{.ID}}"><button class="ghost small">{{icon "shield-check"}} {{t "mail.trust"}}</button></form>{{end}}
+</div></details>{{end}}{{end}}
+
+{{/* what came of «Отозвать сообщение» of a sent letter for each person */}}
+{{define "mrecall"}}{{$d := .}}{{with $d.Recalls}}<details class="mc-banner mrecall" open><summary class="row">{{icon "mail-x"}} <span>{{t "mail.recall.report"}}</span></summary>
+    <table class="mvote-list small"><tr><th>{{t "mail.recall.who"}}</th><th>{{t "mail.recall.result"}}</th><th>{{t "mail.vote.when"}}</th></tr>{{range .}}<tr><td>{{.Addr}}</td><td class="mrecall-{{.Status}}">{{t (print "mail.recall.st." .Status)}}</td><td class="muted">{{datetime .At}}</td></tr>{{end}}</table></details>{{end}}{{end}}
+
+{{/* the texts of the file viewer, the drive picker and the live list (static/js/mailx.js) */}}
+{{define "mxlabels"}}<template data-mx-labels><span data-l="prev">{{t "mail.fv.prev"}}</span><span data-l="next">{{t "mail.fv.next"}}</span><span data-l="download">{{t "mail.fv.download"}}</span><span data-l="drive">{{t "mail.fv.drive"}}</span><span data-l="close">{{t "mail.n.close"}}</span><span data-l="none">{{t "mail.fv.none"}}</span><span data-l="loading">{{t "mail.fv.loading"}}</span><span data-l="pick">{{t "mail.dp.title"}}</span><span data-l="save_here">{{t "mail.dp.save_here"}}</span><span data-l="copy">{{t "mail.dp.copy"}}</span><span data-l="link">{{t "mail.dp.link"}}</span><span data-l="empty">{{t "mail.dp.empty"}}</span><span data-l="top">{{t "mail.dp.top"}}</span><span data-l="cancel">{{t "common.cancel"}}</span></template>{{end}}
+
+{{/* «Уведомления» of the mail settings */}}
+{{define "mnotifyset"}}<form method="post" action="/mail/settings/notify" class="msettings-form">
+  <p class="small muted">{{t "mail.st.notify_hint"}}</p>
+  {{range .NotifyModes}}<label class="check"><input type="radio" name="notify" value="{{.}}"{{if eq . $.Notify.Mode}} checked{{end}}> {{t (print "mail.notify." .)}}</label>{{end}}
+  <label class="check"><input type="checkbox" name="desktop" value="1"{{if .Notify.Desktop}} checked{{end}}> {{t "mail.notify_desktop"}}</label>
+  <p class="small muted" data-desktop-state hidden>{{t "mail.notify_blocked"}}</p>
+  <label class="check"><input type="checkbox" name="sound" value="1"{{if .Notify.Sound}} checked{{end}}> {{t "mail.notify_sound"}}</label>
+  <p class="small muted">{{t "mail.notify_more"}} <a href="/settings/notifications">{{t "notify.settings"}}</a> · {{t "mail.notify_rules"}} <a href="/mail/settings?tab=rules">{{t "mail.st.rules"}}</a></p>
+  <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-notify-test>{{icon "bell"}} {{t "mail.notify_test"}}</button></p>
+</form>
+<script src="{{asset "js/mailx.js"}}"></script>{{end}}
+
+{{/* «CRM» of the mail settings: each mailbox's binding of letters to the cards */}}
+{{define "mcrmset"}}{{$s := .}}<p class="small muted">{{t "mail.st.crm_hint"}}</p>
+  {{range $b := .Boxes}}{{$c := index $s.CRMOf $b.ID}}<form method="post" action="/mail/settings/boxes/{{$b.ID}}/crm" class="msettings-form">
+    <h3>{{$b.Email}}</h3>
+    <label class="check"><input type="checkbox" name="crm_bind" value="1"{{if $c.Bind}} checked{{end}}> {{t "mail.crm_bind"}}</label>
+    <label class="check"><input type="checkbox" name="crm_leads" value="1"{{if $c.Leads}} checked{{end}}> {{t "mail.crm_leads"}}</label>
+    <p><button class="primary small">{{t "common.save"}}</button></p>
+  </form>{{else}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}{{end}}
+
+{{/* «Пересылка» of the mail settings: each mailbox's forwarding (mail.BoxForward) */}}
+{{define "mfwdset"}}{{$s := .}}<p class="small muted">{{t "mail.st.forwarding_hint"}}</p>
+  {{range $b := .Boxes}}{{$f := index $s.FwdOf $b.ID}}<form method="post" action="/mail/settings/boxes/{{$b.ID}}/forward" class="msettings-form">
+    <h3>{{$b.Email}}</h3>
+    <label class="check"><input type="checkbox" name="forward_on" value="1"{{if $f.On}} checked{{end}}> {{t "mail.fw.on"}}</label>
+    <label for="fw-{{$b.ID}}">{{t "mail.fw.to"}}</label>
+    <input type="text" id="fw-{{$b.ID}}" name="forward_to" value="{{$f.To}}" maxlength="2000" placeholder="{{t "mail.fw.to_ph"}}">
+    <label class="check"><input type="checkbox" name="forward_keep" value="1"{{if $f.Keep}} checked{{end}}> {{t "mail.fw.keep"}}</label>
+    <p class="small muted">{{t "mail.fw.keep_hint"}}</p>
+    <p><button class="primary small">{{t "common.save"}}</button></p>
+  </form>{{else}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}{{end}}
+
+{{/* «Адреса отправителя» of the mail settings: each mailbox's sender name and aliases (mail.BoxSenders) */}}
+{{define "mfromset"}}{{$s := .}}<p class="small muted">{{t "mail.st.senders_hint"}}</p>
+  {{range $b := .Boxes}}{{$f := index $s.FromOf $b.ID}}<form method="post" action="/mail/settings/boxes/{{$b.ID}}/senders" class="msettings-form">
+    <h3>{{$b.Email}}</h3>
+    <label for="sn-{{$b.ID}}">{{t "mail.sa.name"}}</label>
+    <input type="text" id="sn-{{$b.ID}}" name="sender_name" value="{{$f.Name}}" maxlength="100" placeholder="{{$s.UserName}}">
+    <label for="sa-{{$b.ID}}">{{t "mail.sa.send_as"}}</label>
+    <input type="text" id="sa-{{$b.ID}}" name="send_as" value="{{$f.SendAs}}" maxlength="2000" placeholder="{{t "mail.sa.send_as_ph"}}">
+    <p class="small muted">{{t "mail.sa.send_as_hint"}}</p>
+    <label for="sd-{{$b.ID}}">{{t "mail.sa.default"}}</label>
+    <select id="sd-{{$b.ID}}" name="send_default">{{range $s.Froms}}{{if eq .MailboxID $b.ID}}<option value="{{.Email}}"{{if .Default}} selected{{end}}>{{.Email}}</option>{{end}}{{end}}</select>
+    <p><button class="primary small">{{t "common.save"}}</button></p>
+  </form>{{else}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}{{end}}
+
+{{/* «Нежелательная почта» of the mail settings: blocked and safe senders */}}
+{{define "mjunkset"}}{{$s := .}}<p class="small muted">{{t "mail.st.junk_hint"}}</p>
+  {{range list "blocked" "safe"}}<h3>{{t (print "mail.senders." .)}}</h3>
+  <div class="msnippets">{{range (index (dict "blocked" $s.Blocked "safe" $s.Safe) .)}}<form method="post" action="/mail/senders/delete" class="row msnippet"><input type="hidden" name="sender" value="{{.Sender}}">
+    <b>{{.Sender}}</b>{{if .Domain}}<span class="muted small">{{t "mail.senders.domain"}}</span>{{end}}<button class="ghost small">{{icon "x"}} {{t "common.delete"}}</button></form>
+  {{else}}<p class="muted">{{t (print "mail.senders." . "_none")}}</p>{{end}}</div>
+  <form method="post" action="/mail/senders" class="row msig-box"><input type="hidden" name="kind" value="{{.}}">
+    <input type="text" name="sender" required maxlength="300" placeholder="{{t "mail.senders.ph"}}" aria-label="{{t (print "mail.senders." .)}}">
+    <button class="small">{{icon "plus"}} {{t "mail.senders.add"}}</button></form>{{end}}{{end}}
+
+{{/* «Печать»: a letter or a conversation on a page of its own (web.mailPrint), printed at once */}}
+{{define "mprint"}}<!doctype html><html><head><meta charset="utf-8"><title>{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</title>
+<style>body{font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;background:#fff;margin:24px;max-width:900px}h1{font-size:18px;margin:0 0 12px}
+.pl{border-top:2px solid #333;padding:10px 0 16px}.pl+.pl{margin-top:16px}table.ph{border-collapse:collapse;margin-bottom:10px}
+.ph td{padding:1px 8px 1px 0;vertical-align:top}.ph td:first-child{font-weight:600;white-space:nowrap}.pb{overflow-wrap:anywhere}.pb img{max-width:100%;height:auto}
+.pt{white-space:pre-wrap;font:inherit;margin:0}blockquote{margin:0 0 0 .8em;padding-left:.8em;border-left:2px solid #999}.pbar{margin-bottom:12px}
+@media print{.pbar{display:none}body{margin:0}}</style></head><body data-mail-print>
+<div class="pbar"><button type="button" data-print-now>{{t "mail.print"}}</button></div>
+<h1>{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</h1>
+{{range .Letters}}<div class="pl"><table class="ph">
+  <tr><td>{{t "mail.p.from"}}:</td><td>{{if .FromName}}{{.FromName}} &lt;{{.FromAddr}}&gt;{{else}}{{.FromAddr}}{{end}}</td></tr>
+  <tr><td>{{t "mail.p.sent"}}:</td><td>{{datetime .SentAt}}</td></tr>
+  <tr><td>{{t "mail.to"}}:</td><td>{{.To}}</td></tr>
+  {{with .CC}}<tr><td>{{t "mail.cc"}}:</td><td>{{.}}</td></tr>{{end}}{{with .BCC}}<tr><td>{{t "mail.bcc"}}:</td><td>{{.}}</td></tr>{{end}}
+  <tr><td>{{t "mail.p.subject"}}:</td><td>{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</td></tr>
+  {{if eq .Importance 1}}<tr><td>{{t "mail.p.importance"}}:</td><td>{{t "mail.imp.high"}}</td></tr>{{end}}
+  {{with index $.Files .ID}}<tr><td>{{t "mail.p.files"}}:</td><td>{{range $i, $f := .}}{{if $i}}; {{end}}{{$f.Name}} ({{size $f.Size}}){{end}}</td></tr>{{end}}
+</table>
+<div class="pb">{{with index $.HTML .ID}}{{.}}{{else}}<pre class="pt">{{.Body}}</pre>{{end}}</div></div>{{end}}
+<script src="{{asset "js/mailx.js"}}"></script>
+</body></html>{{end}}

@@ -1,0 +1,44 @@
+{{define "appform"}}{{$a := .A}}
+      <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$a.Name}}" required maxlength="100" placeholder="{{t "apps.name_hint"}}">
+      <label>{{t "apps.handler"}}</label><input type="url" name="handler_url" value="{{$a.HandlerURL}}" placeholder="https://app.example.com/go24/">
+      <div class="small muted">{{t "apps.handler_hint"}}</div>
+      <label>{{t "apps.install"}}</label><input type="url" name="install_url" value="{{$a.InstallURL}}" placeholder="https://app.example.com/go24/install">
+      <div class="small muted">{{t "apps.install_hint"}}</div>
+      <label>{{t "apps.menu_title"}}</label><input type="text" name="menu_title" value="{{$a.MenuTitle}}" maxlength="100">
+      <label class="check"><input type="checkbox" name="api_only" {{if $a.APIOnly}}checked{{end}}> {{t "apps.api_only"}}</label>
+      <label>{{t "apps.scopes"}}</label><div class="row" style="flex-wrap:wrap">{{range $sc := .Scopes}}<label class="check"><input type="checkbox" name="scopes" value="{{$sc}}" {{range $a.Scopes}}{{if eq . $sc}}checked{{end}}{{end}}> {{t (print "scope." $sc)}}</label>{{end}}</div>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "apps.title"}}</h1>
+<div class="sub">{{t "apps.subtitle"}} · <a href="/apps">{{t "apps.list"}}</a></div>
+{{range $a := $d.Apps}}<div class="card" id="app-{{$a.ID}}">
+  <div class="row"><h2 style="flex:1">{{icon "layout-grid"}} {{$a.Name}}
+      {{if $a.Installed}}<span class="badge">{{t "apps.installed"}}</span>{{else}}<span class="muted small">({{t "apps.not_installed"}})</span>{{end}}</h2>
+    {{if $a.Installed}}{{if not $a.APIOnly}}<a class="button ghost" href="/apps/{{$a.ID}}">{{icon "external-link"}} {{t "apps.open"}}</a>{{end}}
+      <form method="post" action="/settings/apps/{{$a.ID}}" data-confirm="{{t "apps.uninstall_confirm"}}"><input type="hidden" name="op" value="uninstall"><button class="ghost">{{t "apps.uninstall"}}</button></form>
+    {{else}}<form method="post" action="/settings/apps/{{$a.ID}}"><input type="hidden" name="op" value="install"><button class="primary">{{icon "download"}} {{t "apps.install_btn"}}</button></form>{{end}}
+    <form method="post" action="/settings/apps/{{$a.ID}}" data-confirm="{{t "apps.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></div>
+  {{with $a.HandlerURL}}<div class="small">{{t "apps.handler"}}: <code>{{.}}</code></div>{{end}}
+  {{with $a.InstallURL}}<div class="small">{{t "apps.install"}}: <code>{{.}}</code></div>{{end}}
+  <div class="small muted">{{range $i, $sc := $a.Scopes}}{{if $i}} · {{end}}{{t (print "scope." $sc)}}{{end}}</div>
+  <div class="small">{{t "apps.client_id"}}: <code class="olcode">{{$a.ClientID}}</code></div>
+  <div class="small">{{t "apps.client_secret"}}: <code class="olcode">{{$a.ClientSecret}}</code></div>
+  <form method="post" action="/settings/apps/{{$a.ID}}" class="row"><input type="hidden" name="op" value="access">
+    <span class="small" title="{{t "apps.access_hint"}}">{{t "apps.access"}}:</span><div style="flex:1">{{template "upick" (upick "to" (index $d.Access $a.ID) nil "multi" "depts" "ph" (t "apps.access_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+  <div class="small muted">{{with $a.InstalledAt}}{{t "apps.installed_at" (datetime (deref .))}} · {{end}}{{t "apps.users" $a.Users}}{{with $a.InstallStatus}} · HTTP {{.}}{{end}}{{with $a.InstallError}} · <span class="dl over">{{.}}</span>{{end}}</div>
+  {{with index $d.Places $a.ID}}<div class="small"><b>{{t "apps.places"}}:</b>{{range .}}<div>{{t (print "apps.place." .Kind)}} <code>{{.Placement}}</code> — {{.Tab}} · <code>{{.Handler}}</code></div>{{end}}</div>{{end}}
+  <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
+    <form method="post" action="/settings/apps/{{$a.ID}}"><input type="hidden" name="op" value="save">
+      {{template "appform" (dict "A" $a "Scopes" $d.Scopes)}}
+      <p><button class="primary">{{t "common.save"}}</button></p></form>
+    <form method="post" action="/settings/apps/{{$a.ID}}" data-confirm="{{t "apps.secret_confirm"}}"><input type="hidden" name="op" value="secret"><button class="ghost">{{icon "key"}} {{t "apps.secret_btn"}}</button></form>
+  </details>
+</div>{{end}}
+<details class="card"{{if not $d.Apps}} open{{end}}><summary><b>{{icon "plus"}} {{t "apps.new"}}</b></summary>
+  <form method="post" action="/settings/apps/new"><input type="hidden" name="op" value="save">
+    {{template "appform" (dict "A" $d.Empty "Scopes" $d.Scopes)}}
+    <p><button class="primary">{{t "common.create"}}</button></p></form></details>
+<div class="card small">{{t "apps.howto" $d.Base}}<p>{{t "apps.howto_places" $d.Base}}</p></div>
+{{end}}

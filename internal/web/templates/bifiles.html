@@ -1,0 +1,61 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row bi-head">
+  <div><a class="small muted" href="{{if $d.F}}/bi/files{{else}}/bi{{end}}">{{icon "chevron-left"}} {{if $d.F}}{{t "bi.files.title"}}{{else}}{{t "bi.title"}}{{end}}</a>
+    <h1>{{with $d.F}}{{.Name}}{{else}}{{t "bi.files.title"}}{{end}}</h1></div>
+  {{if not $d.F}}<details class="bi-menu"><summary class="button primary">{{icon "cloud-upload"}} {{t "bi.files.upload"}}</summary>
+    <form class="card pop" method="post" action="/bi/files" enctype="multipart/form-data">
+      <label>{{t "bi.d.title"}}<input type="text" name="name" maxlength="200" placeholder="{{t "bi.files.name_hint"}}"></label>
+      <label>{{t "bi.files.file"}}<input type="file" name="file" accept=".csv,.txt,text/csv" required></label>
+      <p class="small muted">{{t "bi.files.file_hint" $d.MaxMB}}</p>
+      <button class="primary">{{t "bi.files.upload"}}</button>
+    </form></details>{{end}}
+</div>
+{{with $d.F}}{{$f := .}}
+<p class="small muted">{{t "bi.files.rows"}}: {{.Rows}} · {{t "bi.files.file"}}: {{.FileName}} · {{t "bi.d.author"}}: {{.AuthorName}} · {{t "bi.files.updated"}}: {{datetime .UpdatedAt}} · <code>{{.Code}}</code></p>
+<form class="card bi-settings" method="post" action="/bi/files/{{.ID}}/save">
+  <label>{{t "bi.d.title"}}<input type="text" name="title" value="{{.Name}}" required maxlength="200" {{if not $d.Editable}}disabled{{end}}></label>
+  <label>{{t "bi.d.description"}}<textarea name="description" rows="2" {{if not $d.Editable}}disabled{{end}}>{{.Description}}</textarea></label>
+  <h3>{{t "bi.files.columns"}}</h3>
+  <p class="small muted">{{t "bi.files.columns_hint"}}</p>
+  <table class="tlist bi-cols">
+    <thead><tr><th>{{t "bi.files.header"}}</th><th>{{t "bi.files.col_name"}}</th><th>{{t "bi.files.type"}}</th><th></th></tr></thead>
+    {{range .Columns}}<tr>
+      <td class="small">{{.Header}}</td>
+      <td><input type="text" name="name_{{.Code}}" value="{{.Name}}" maxlength="200" {{if not $d.Editable}}disabled{{end}}></td>
+      <td><select name="type_{{.Code}}" {{if not $d.Editable}}disabled{{end}}>{{$c := .}}{{range $d.Types}}<option value="{{.}}" {{if eq . $c.Type}}selected{{end}}>{{t (print "bi.files.t." .)}}</option>{{end}}</select></td>
+      <td class="small">{{with index $d.Unread .Code}}<span class="bi-unread">{{icon "alert-triangle"}} {{t "bi.files.unread" .}}</span>{{end}}</td></tr>{{end}}
+  </table>
+  {{if $d.Editable}}<div class="row"><button class="primary">{{t "common.save"}}</button></div>{{end}}
+</form>
+<div class="card">
+  <h3>{{t "bi.files.preview"}}</h3>
+  {{if $d.Preview}}<div class="bi-scroll"><table class="tlist">
+    <thead><tr>{{range .Columns}}<th>{{.Name}}</th>{{end}}</tr></thead>
+    {{range $d.Preview}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}
+  </table></div>{{else}}<p class="muted">{{t "bi.files.no_rows"}}</p>{{end}}
+</div>
+{{if $d.Editable}}
+<form class="card" method="post" action="/bi/files/{{.ID}}/load" enctype="multipart/form-data">
+  <h3>{{icon "cloud-upload"}} {{t "bi.files.reload"}}</h3>
+  <p class="small muted">{{t "bi.files.reload_hint"}}</p>
+  <label>{{t "bi.files.file"}}<input type="file" name="file" accept=".csv,.txt,text/csv" required></label>
+  <label class="check"><input type="radio" name="mode" value="replace" checked> {{t "bi.files.replace"}}</label>
+  <label class="check"><input type="radio" name="mode" value="add"> {{t "bi.files.add"}}</label>
+  <div class="row"><button class="primary">{{t "bi.files.load"}}</button></div>
+</form>
+<form method="post" action="/bi/files/{{.ID}}/delete" onsubmit="return confirm(this.dataset.q)" data-q="{{t "bi.files.delete_q"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>
+{{end}}
+{{else}}
+<div class="sub">{{t "bi.files.hint"}}</div>
+{{if $d.Files}}<div class="card flush"><table class="tlist bi-list">
+  <thead><tr><th>{{t "bi.d.title"}}</th><th>{{t "bi.files.columns"}}</th><th>{{t "bi.files.rows"}}</th><th>{{t "bi.d.author"}}</th><th>{{t "bi.files.updated"}}</th></tr></thead>
+  {{range $d.Files}}<tr>
+    <td><a href="/bi/files?id={{.ID}}">{{icon "table"}} {{.Name}}</a>{{with .Description}}<div class="small muted">{{.}}</div>{{end}}</td>
+    <td>{{len .Columns}}</td><td>{{.Rows}}</td>
+    <td><a href="/u/{{.CreatedBy}}" data-user="{{.CreatedBy}}">{{.AuthorName}}</a></td>
+    <td class="small nowrap">{{datetime .UpdatedAt}}</td></tr>{{end}}
+</table></div>
+{{else}}<div class="card bi-empty">{{icon "table"}}<p>{{t "bi.files.empty"}}</p></div>{{end}}
+{{end}}
+{{end}}

@@ -1,0 +1,457 @@
+# boris.gb 2026-10-11 13:32 - стек go24: postgres + authentik (SSO) + rclone (файлы через S3 API) + go24
+# boris.gb 2026-10-11 13:42 - NetBird исключён из стека по решению заказчика
+# boris.gb 2026-10-11 13:41 - продукт self-hosted: все компоненты свои, внешних облачных сервисов в стеке нет
+#
+# Все порты публикуются только на ${BIND_IP} (по умолчанию 127.0.0.1).
+# Доступ при разработке — через SSH-туннель (make tunnel). Публичный доступ позже откроем через Traefik с TLS,
+# сейчас порты наружу не публикуются и не мешают nginx корпоративного портала на 80/443.
+
+name: go24
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?set PG_SUPERUSER_PASSWORD in .env}
+      GO24_DB_PASSWORD: ${GO24_DB_PASSWORD:?set GO24_DB_PASSWORD in .env}
+      AUTHENTIK_DB_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
+      # boris.gb 2026-10-12 07:16 - пароль базы synapse (для init-databases.sh на пустом томе)
+      SYNAPSE_DB_PASSWORD: ${SYNAPSE_DB_PASSWORD:-}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      # boris.gb 2026-10-11 13:32 - при первом старте создаёт базы и пользователей go24 и authentik
+      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
+    # boris.gb 2026-10-25 15:54 - 20 потоков гоняют тесты на этой базе одновременно: при 64 блокировках на
+    # транзакцию тесты падали с «out of shared memory» — поднято до 256 (решение Бориса)
+    command: ["postgres", "-c", "max_locks_per_transaction=256"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.3}
+    restart: unless-stopped
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in .env}
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # boris.gb 2026-10-11 14:37 - для blueprint go24.yaml: клиент OIDC и адрес go24
+      GO24_BASE_URL: ${GO24_BASE_URL:-http://127.0.0.1:8080}
+      GO24_OIDC_CLIENT_ID: ${GO24_OIDC_CLIENT_ID:?set GO24_OIDC_CLIENT_ID in .env}
+      GO24_OIDC_CLIENT_SECRET: ${GO24_OIDC_CLIENT_SECRET:?set GO24_OIDC_CLIENT_SECRET in .env}
+      # boris.gb 2026-10-12 06:57 - токен служебной учётки go24-sync (создаётся blueprint'ом go24.yaml)
+      GO24_AUTHENTIK_TOKEN: ${GO24_AUTHENTIK_TOKEN:-}
+      # boris.gb 2026-10-12 07:16 - OIDC-приложение matrix для Synapse (blueprint go24.yaml)
+      MATRIX_OIDC_CLIENT_ID: ${MATRIX_OIDC_CLIENT_ID:-}
+      MATRIX_OIDC_CLIENT_SECRET: ${MATRIX_OIDC_CLIENT_SECRET:-}
+      MATRIX_PUBLIC_URL: ${MATRIX_PUBLIC_URL:-http://127.0.0.1:8008}
+    volumes:
+      - authentik-data:/data
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9000:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.3}
+    restart: unless-stopped
+    command: worker
+    environment: *authentik-env
+    # boris.gb 2026-10-11 13:32 - docker.sock не пробрасываем: аутпосты Authentik пока не нужны, а сокет даёт root на хосте
+    volumes:
+      - authentik-data:/data
+      # boris.gb 2026-10-11 14:37 - blueprint приложения go24 применяется автоматически
+      - ./authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  rclone:
+    image: rclone/rclone:${RCLONE_TAG:-latest}
+    restart: unless-stopped
+    # boris.gb 2026-10-11 13:32 - rclone отдаёт S3 API поверх любого хранилища из rclone.conf; бакет = папка в корне ${RCLONE_REMOTE}
+    # boris.gb 2026-10-11 13:41 - self-hosted: по умолчанию локальный диск; вместо него можно свой файловый сервер (sftp), Garage/SeaweedFS (s3), Nextcloud (webdav)
+    command:
+      - serve
+      - s3
+      - ${RCLONE_REMOTE:-local:/data}
+      - --addr=:8333
+      - --auth-key=${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env},${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      - --vfs-cache-mode=writes
+    volumes:
+      - ./rclone/rclone.conf:/config/rclone/rclone.conf:ro
+      - rclone-cache:/root/.cache/rclone
+      - files-local:/data   # используется только при RCLONE_REMOTE=local:/data (разработка)
+
+  rclone-rcd:
+    image: rclone/rclone:${RCLONE_TAG:-latest}
+    restart: unless-stopped
+    # boris.gb 2026-10-11 16:30 - API управления rclone для раздела «Хранилища»: пользователи сами подключают Nextcloud/SFTP/S3/FTP.
+    # Доступ к этому API равен доступу к shell, поэтому: пароль, порт наружу не публикуется, отдельная сеть только с go24
+    # (контейнер не видит postgres/authentik), файловая система только для чтения, кроме тома с конфигом хранилищ.
+    command:
+      - rcd
+      - --rc-addr=:5572
+      - --rc-user=go24
+      - --rc-pass=${RCLONE_RC_PASS:?set RCLONE_RC_PASS in .env}
+      - --rc-serve
+      - --config=/config/rclone/storages.conf
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /root/.cache
+    volumes:
+      - rclone-storages:/config/rclone
+      # boris.gb 2026-10-26 00:23 - резервные копии (GO24DEV-573): rclone-rcd выгружает их во внешнее место (S3, SFTP, SMB, WebDAV) —
+      # папка копий под тем же путём, что у go24-worker, только для чтения
+      - ${GO24_BACKUP_DIR:-./backups}:/backups:ro
+    networks: [storages]
+
+  go24:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: go24:dev
+    restart: unless-stopped
+    # boris.gb 2026-10-13 05:05 - ядро go24 разделено на два контейнера из одного образа: go24 (страницы, API, живые обновления)
+    # и go24-worker (мост в мессенджер, рассылки, лог задач в треды, регулярные задачи, напоминания); общаются через PostgreSQL
+    environment: &go24-env
+      GO24_ROLE: web
+      # boris.gb 2026-10-13 01:30 - часовой пояс go24 (сроки, рабочее время, расписания) — как у сервера, меняется в .env
+      TZ: ${GO24_TZ:-Europe/Amsterdam}
+      GO24_ADDR: ":8080"
+      GO24_BASE_URL: ${GO24_BASE_URL:-http://127.0.0.1:8080}
+      GO24_DATABASE_URL: postgres://go24:${GO24_DB_PASSWORD}@postgres:5432/go24?sslmode=disable
+      GO24_SESSION_SECRET: ${GO24_SESSION_SECRET:?set GO24_SESSION_SECRET in .env}
+      GO24_OIDC_ISSUER: ${GO24_OIDC_ISSUER:-}
+      GO24_OIDC_CLIENT_ID: ${GO24_OIDC_CLIENT_ID:-}
+      GO24_OIDC_CLIENT_SECRET: ${GO24_OIDC_CLIENT_SECRET:-}
+      GO24_S3_ENDPOINT: rclone:8333
+      GO24_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      GO24_S3_SECRET_KEY: ${S3_SECRET_KEY}
+      GO24_S3_BUCKET: ${S3_BUCKET:-go24}
+      # boris.gb 2026-10-11 15:52 - своя тема оформления: deploy/theme/theme.css (+ иконки, шрифты) поверх стандартной, без пересборки
+      GO24_THEME_DIR: /theme
+      # boris.gb 2026-10-11 16:11 - свои языки и правки переводов: deploy/locales/<код>.json (например de-DE.json), подхватываются при перезапуске go24
+      GO24_LOCALES_DIR: /locales
+      # boris.gb 2026-10-11 16:30 - раздел «Хранилища» через rclone rcd
+      GO24_RCLONE_RC_URL: http://rclone-rcd:5572
+      GO24_RCLONE_RC_USER: go24
+      GO24_RCLONE_RC_PASS: ${RCLONE_RC_PASS}
+      # boris.gb 2026-10-12 06:57 - API Authentik изнутри сети compose: дописывать в Authentik данные из карточки сотрудника
+      GO24_AUTHENTIK_URL: http://authentik-server:9000
+      GO24_AUTHENTIK_TOKEN: ${GO24_AUTHENTIK_TOKEN:-}
+      # boris.gb 2026-10-12 07:35 - мессенджер: go24 ведёт учётки, комнаты и треды на своём Matrix (бот go24, make matrix-bot)
+      GO24_MATRIX_URL: http://synapse:8008
+      GO24_MATRIX_SERVER_NAME: ${MATRIX_SERVER_NAME:-}
+      GO24_MATRIX_TOKEN: ${GO24_MATRIX_TOKEN:-}
+      GO24_MATRIX_ELEMENT_URL: ${MATRIX_ELEMENT_URL:-}
+      # boris.gb 2026-10-13 10:17 - звонки: адрес LiveKit для браузера (wss через caddy) и ключ для токенов
+      GO24_LIVEKIT_URL: wss://${BIND_IP:-127.0.0.1}:7443
+      GO24_LIVEKIT_KEY: ${LIVEKIT_API_KEY:-}
+      GO24_LIVEKIT_SECRET: ${LIVEKIT_API_SECRET:-}
+      # boris.gb 2026-10-21 03:07 - звонки в ленте чата (GO24DEV-255): go24-worker спрашивает LiveKit по внутреннему адресу, кто ещё
+      # в звонке (RoomService), и по пустой комнате пишет в чат «Звонок завершён · N мин»
+      GO24_LIVEKIT_API_URL: http://livekit:7880
+      # boris.gb 2026-10-25 13:23 - запись звонков (GO24DEV-454): LiveKit Egress пишет файл в общий том call-recordings,
+      # go24-worker забирает его оттуда на Диск того, кто начал запись (путь в обоих контейнерах один)
+      GO24_RECORD_DIR: /recordings
+      GO24_CALL_URL: https://${BIND_IP:-127.0.0.1}:8444
+      # boris.gb 2026-10-20 21:10 - голосовые сообщения мессенджера: расшифровка своим Whisper (GO24DEV-70)
+      GO24_WHISPER_URL: http://whisper:9000
+      # boris.gb 2026-10-21 23:23 - «Документы онлайн» (GO24DEV-231): сервер документов ONLYOFFICE для go24 (прокси /office/,
+      # подпись JWT тем же секретом) и адрес go24 для сервера документов (откуда брать файл, куда сообщать о сохранении)
+      GO24_OFFICE_URL: http://onlyoffice
+      GO24_OFFICE_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      GO24_OFFICE_SELF_URL: http://go24:8080
+      # boris.gb 2026-10-25 14:10 - телефония (GO24DEV-501): свой Asterisk. go24 пишет учётки сотрудников в общий том telephony-conf и
+      # перечитывает их через ARI (Asterisk — в сети сервера, ARI на BIND_IP:8088); SIP-телефоны регистрируются на BIND_IP:5060
+      GO24_ASTERISK_URL: http://${BIND_IP:-127.0.0.1}:8088
+      GO24_ASTERISK_SECRET: ${ASTERISK_SECRET:-}
+      GO24_TELEPHONY_DIR: /telephony
+      GO24_SIP_HOST: ${BIND_IP:-127.0.0.1}
+      # boris.gb 2026-10-25 17:03 - записи разговоров (GO24DEV-503): Asterisk пишет их в том telephony-records, go24 отдаёт
+      GO24_PHONE_RECORDS: /phone-records
+      # boris.gb 2026-10-25 23:55 - «Резервное копирование» (GO24DEV-569): копии делает go24-worker в /backups — папку сервера
+      # GO24_BACKUP_DIR (по умолчанию deploy/backups); конфигурация — снимок deploy/ из тома backup-config (делает backup-init)
+      GO24_BACKUP_DIR: /backups
+      GO24_BACKUP_CONFIG_DIR: /backup-config
+      GO24_BACKUP_HOST_DIR: ${GO24_BACKUP_DIR:-deploy/backups}
+      # boris.gb 2026-10-26 00:12 - медиа Matrix для резервного копирования (GO24DEV-572): том synapse у go24-worker только для чтения
+      GO24_BACKUP_MATRIX_DIR: /synapse
+    volumes:
+      - ./theme:/theme:ro
+      - ./locales:/locales:ro
+      - telephony-conf:/telephony
+      - telephony-records:/phone-records
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rclone:
+        condition: service_started
+      rclone-rcd:
+        condition: service_started
+    networks: [default, storages]
+
+  # boris.gb 2026-10-13 05:05 - фоновые работы go24 (тот же образ, GO24_ROLE=worker): портов не публикует, страниц не отдаёт
+  go24-worker:
+    image: go24:dev
+    restart: unless-stopped
+    environment:
+      <<: *go24-env
+      GO24_ROLE: worker
+    volumes:
+      - ./locales:/locales:ro
+      # boris.gb 2026-10-25 13:23 - готовые записи звонков от LiveKit Egress (GO24DEV-454)
+      - call-recordings:/recordings
+      # boris.gb 2026-10-25 23:55 - резервные копии (GO24DEV-569): папка копий и снимок конфигурации (только чтение)
+      - ${GO24_BACKUP_DIR:-./backups}:/backups
+      - backup-config:/backup-config:ro
+      # boris.gb 2026-10-26 00:12 - медиа мессенджера (media_store Synapse) для копии (GO24DEV-572)
+      - synapse:/synapse:ro
+    depends_on:
+      go24:
+        condition: service_started
+      backup-init:
+        condition: service_completed_successfully
+    networks: [default, storages]
+
+
+# boris.gb 2026-10-11 16:30 - отдельная сеть для rclone-rcd: в ней только go24
+  # boris.gb 2026-10-12 07:16 - мессенджер go24 на своём Matrix: Synapse (сервер) + Element Web (клиент), вход через Authentik
+  synapse:
+    image: matrixdotorg/synapse:v1.161.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+      UID: "991"
+      GID: "991"
+    volumes:
+      - synapse:/data
+      - ./matrix/homeserver.yaml:/config/homeserver.yaml:ro
+    # boris.gb 2026-10-12 07:30 - наружу только через caddy (https :8448); go24 ходит внутри сети compose
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8008/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  element:
+    image: vectorim/element-web:v1.12.28
+    restart: unless-stopped
+    volumes:
+      - ./matrix/element-config.json:/app/config.json:ro
+
+  # boris.gb 2026-10-13 01:36 - распознавание речи (Whisper, свой сервер): расшифровка голосовых сообщений. Образ закреплён по digest,
+  # модель small (русский), движок faster-whisper на CPU; модели кэшируются в томе whisper-models
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice@sha256:0616c3d5fc6924e9d59aa8a7a3a944fbe8f3a5d701e5fc1fa2ce5b933dfecb73
+    restart: unless-stopped
+    environment:
+      ASR_ENGINE: faster_whisper
+      ASR_MODEL: ${WHISPER_MODEL:-small}
+      ASR_MODEL_PATH: /data/models
+    volumes:
+      - whisper-models:/data/models
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9100:9000"
+
+  # boris.gb 2026-10-12 07:30 - https-прокси для Synapse (:8448) и Element (:8443) со своим dev-центром сертификации
+  # boris.gb 2026-10-13 10:17 - звонки go24 (GO24DEV-68/69): свой сервер LiveKit (WebRTC SFU). Сигналинг — через caddy
+  # (wss :7443), медиа — UDP 50000-50100 и TCP 7881 напрямую на BIND_IP
+  livekit:
+    image: livekit/livekit-server:v1.8.4
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml --node-ip ${BIND_IP:-127.0.0.1}
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    # boris.gb 2026-10-25 13:23 - redis нужен LiveKit для заданий записи (Egress, GO24DEV-454)
+    depends_on: [redis]
+    ports:
+      - "${BIND_IP:-127.0.0.1}:7881:7881"
+      - "${BIND_IP:-127.0.0.1}:50000-50100:50000-50100/udp"
+
+  # boris.gb 2026-10-25 13:23 - запись звонков (GO24DEV-454): LiveKit Egress записывает комнату (сетка видео или только звук)
+  # в файл тома call-recordings; задания от LiveKit приходят через redis. Chrome внутри — до 2 ГБ памяти на запись
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+  # boris.gb 2026-10-25 13:23 - том записей пишет egress (uid 1001), читает и удаляет go24-worker (uid 10001): папка открыта обоим
+  # boris.gb 2026-10-25 23:55 - резервное копирование (GO24DEV-569): при каждом запуске снимок deploy/ (без папки копий) в том
+  # backup-config — .env и другие файлы владельца go24-worker сам не прочитал бы; права на папку копий — только go24-worker
+  backup-init:
+    image: redis:7.4-alpine
+    # boris.gb 2026-10-26 00:12 - и ключ подписи Matrix (signing.key Synapse) — в снимок как секрет: без него сервер Matrix не восстановить (GO24DEV-572)
+    entrypoint: ["sh", "-c", "find /snap -mindepth 1 -delete && tar -C /deploy --exclude=./backups -cf - . | tar -C /snap -xpf - && if [ -f /synapse/signing.key ]; then mkdir -p /snap/synapse && cp /synapse/signing.key /snap/synapse/ && chmod 0600 /snap/synapse/signing.key; fi && chown -R 10001 /snap /backups && chmod 0700 /snap /backups"]
+    restart: "no"
+    volumes:
+      - .:/deploy:ro
+      - backup-config:/snap
+      - synapse:/synapse:ro
+      - ${GO24_BACKUP_DIR:-./backups}:/backups
+  call-recordings-init:
+    image: redis:7.4-alpine
+    entrypoint: ["chmod", "0777", "/recordings"]
+    restart: "no"
+    volumes:
+      - call-recordings:/recordings
+  livekit-egress:
+    image: livekit/egress:v1.9.0
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:-}
+        api_secret: ${LIVEKIT_API_SECRET:-}
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+        log_level: info
+    volumes:
+      - call-recordings:/recordings
+    depends_on:
+      redis:
+        condition: service_started
+      call-recordings-init:
+        condition: service_completed_successfully
+
+  # boris.gb 2026-10-25 14:10 - телефония go24 (GO24DEV-501): Asterisk (PJSIP, ARI). Сеть — сервера (network_mode: host): SIP 5060 UDP/TCP
+  # и голос RTP 10000-10200/UDP без NAT докера; HTTP (ARI и WebSocket софтфона) — только на BIND_IP:8088. Запуск —
+  # deploy/asterisk/start.sh (своя конфигурация поверх стандартной); учётки сотрудников — из тома telephony-conf (пишет go24)
+  # boris.gb 2026-10-25 17:03 - записи разговоров (GO24DEV-503): том telephony-records — пишет Asterisk, читает и чистит go24
+  telephony-conf-init:
+    image: redis:7.4-alpine
+    entrypoint: ["sh", "-c", "touch /conf/pjsip.conf && chmod 0777 /conf /records && chmod 0666 /conf/pjsip.conf"]
+    restart: "no"
+    volumes:
+      - telephony-conf:/conf
+      - telephony-records:/records
+  asterisk:
+    image: andrius/asterisk:22.10.1_debian-trixie-11408fe
+    restart: unless-stopped
+    network_mode: host
+    command: ["/bin/sh", "/etc/asterisk-go24/start.sh"]
+    environment:
+      ASTERISK_SECRET: ${ASTERISK_SECRET:-}
+      BIND_IP: ${BIND_IP:-127.0.0.1}
+      TZ: ${GO24_TZ:-Europe/Amsterdam}
+    volumes:
+      - ./asterisk:/etc/asterisk-go24:ro
+      - telephony-conf:/etc/asterisk/go24:ro
+      - telephony-records:/var/spool/asterisk/monitor/go24
+    depends_on:
+      telephony-conf-init:
+        condition: service_completed_successfully
+
+  # boris.gb 2026-10-18 16:21 - тестовый почтовый сервер для живой проверки почты (GO24DEV-133): GreenMail, IMAP mailtest:3143 и
+  # SMTP mailtest:3025 без TLS, любой адрес @go24.test заводится сам при входе, письма только в памяти (пропадают при
+  # перезапуске); доступен только внутри сети compose, наружу не открыт
+  mailtest:
+    image: greenmail/standalone:2.0.1
+    restart: unless-stopped
+    environment:
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled"
+      JAVA_OPTS: "-Xmx256m"
+
+  # boris.gb 2026-10-15 07:52 - n8n (автоматизации, GO24DEV-121): на том же сервере, данные в томе n8n-data (SQLite).
+  # go24 зовёт его внутри сети compose (http://n8n:5678/webhook/…), люди открывают http://BIND_IP:5678
+  n8n:
+    image: n8nio/n8n:1.123.4
+    restart: unless-stopped
+    environment:
+      N8N_HOST: ${BIND_IP:-127.0.0.1}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://${BIND_IP:-127.0.0.1}:5678/
+      # boris.gb 2026-10-15 07:52 - по http в локальной сети браузер не хранит secure-cookie; включить, когда будет https
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      GENERIC_TIMEZONE: Europe/Amsterdam
+      TZ: Europe/Amsterdam
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    ports:
+      - "${BIND_IP:-127.0.0.1}:5678:5678"
+
+  # boris.gb 2026-10-21 23:23 - «Документы онлайн» (GO24DEV-231): ONLYOFFICE Document Server — создание и совместное
+  # редактирование DOCX/XLSX/PPTX в браузере. Порт наружу не открыт: браузер ходит к нему через go24 (/office/ — и по
+  # http :8080, и по https :8444), go24 — по http://onlyoffice; все запросы подписаны JWT (ONLYOFFICE_JWT_SECRET в .env).
+  # Правки сохраняются новой версией файла диска, когда все закрыли документ. Нужно ~2–3 ГБ памяти
+  onlyoffice:
+    image: onlyoffice/documentserver:8.3.3
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_HEADER: Authorization
+      # go24 в сети compose — частный адрес: без этого сервер документов отказывается брать у него файлы
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      WOPI_ENABLED: "false"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-cache:/var/lib/onlyoffice
+      - onlyoffice-db:/var/lib/postgresql
+
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    environment:
+      BIND_IP: ${BIND_IP:-127.0.0.1}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8448:8448"
+      - "${BIND_IP:-127.0.0.1}:8443:8443"
+      # boris.gb 2026-10-13 10:17 - звонки: go24 по https (камера и микрофон работают только в защищённом контексте) и LiveKit (wss)
+      - "${BIND_IP:-127.0.0.1}:8444:8444"
+      - "${BIND_IP:-127.0.0.1}:7443:7443"
+    depends_on:
+      - synapse
+      - element
+      - livekit
+
+
+networks:
+  storages:
+
+volumes:
+  # boris.gb 2026-10-25 13:23 - записи звонков между LiveKit Egress и go24-worker (файл удаляется, когда он на Диске)
+  # boris.gb 2026-10-25 23:55 - снимок конфигурации для резервного копирования (GO24DEV-569)
+  backup-config:
+  call-recordings:
+  telephony-conf:
+  telephony-records:
+  # boris.gb 2026-10-21 23:23 - сервер документов ONLYOFFICE: настройки, кэш открытых документов, его встроенная база
+  onlyoffice-data:
+  onlyoffice-cache:
+  onlyoffice-db:
+  # boris.gb 2026-10-15 07:52 - данные n8n (воркфлоу, учётные данные, история запусков)
+  n8n-data:
+  # boris.gb 2026-10-13 01:36 - модели Whisper
+  whisper-models:
+  synapse:
+  caddy-data:
+  rclone-storages:
+  postgres:
+  authentik-data:
+  rclone-cache:
+  files-local:

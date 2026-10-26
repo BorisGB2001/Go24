@@ -1,0 +1,13 @@
+{{/* the tabs of «Складской учёт» */}}
+{{define "stocktabs"}}{{$t := .Tab}}
+  <a href="/store/docs" {{if eq $t "docs"}}class="on"{{end}}>{{t "stock.docs"}}</a>
+  <a href="/store/stock" {{if eq $t "stock"}}class="on"{{end}}>{{t "stock.stock"}}</a>
+  <a href="/store/reports/stock" {{if eq $t "reports"}}class="on"{{end}}>{{t "stock.reports"}}</a>
+  <a href="/store/warehouses" {{if eq $t "warehouses"}}class="on"{{end}}>{{t "stock.warehouses"}}</a>
+  <a href="/crm/products">{{t "stock.catalog"}}</a>
+  {{if .Rights.Settings}}<a href="/store/settings" {{if eq $t "settings"}}class="on"{{end}}>{{t "stock.settings"}}</a>{{end}}
+  {{if .Admin}}<a href="/store/rights" {{if eq $t "rights"}}class="on"{{end}}>{{t "stockroles.title"}}</a>{{end}}
+{{end}}
+
+{{/* a document's status as a pill */}}
+{{define "stockstatus"}}<span class="pill stock-{{.}}">{{t (print "stock.status." .)}}</span>{{end}}

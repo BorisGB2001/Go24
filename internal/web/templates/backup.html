@@ -1,0 +1,96 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "database"}} {{t "backup.title"}}</h1>
+<div class="sub">{{t "backup.subtitle"}}</div>
+<form method="post" action="/settings/backup" class="card stack">
+  <fieldset class="stack">
+    <legend>{{t "backup.what"}}</legend>
+    {{range $d.Parts}}<label><input type="checkbox" name="parts" value="{{.}}" {{if $d.Set.Has .}}checked{{end}}> {{t (print "backup.part." .)}}</label>{{end}}
+  </fieldset>
+  <label>{{t "backup.dir"}} <input name="dir" value="{{$d.Set.Dir}}" placeholder="{{t "backup.dir_ph"}}"></label>
+  <p class="muted small">{{if $d.Host}}{{t "backup.dir_hint" $d.Host}}{{else}}{{t "backup.dir_hint_none"}}{{end}}</p>
+  {{$tg := $d.Set.Target}}
+  <fieldset class="stack" data-target>
+    <legend>{{t "backup.target"}}</legend>
+    <select name="t_type" data-target-type>
+      <option value="">{{t "backup.target.none"}}</option>
+      {{range $d.Types}}<option value="{{.}}" {{if eq . $tg.Type}}selected{{end}}>{{t (print "backup.target." .)}}</option>{{end}}
+    </select>
+    {{if not $d.RC}}<p class="muted small">{{t "backup.target_no_rc"}}</p>{{end}}
+    <label data-for="s3">{{t "backup.t.endpoint"}} <input name="t_endpoint" value="{{$tg.Endpoint}}" placeholder="https://s3.example.com"></label>
+    <label data-for="s3">{{t "backup.t.region"}} <input name="t_region" value="{{$tg.Region}}" placeholder="us-east-1"></label>
+    <label data-for="webdav">{{t "backup.t.url"}} <input name="t_url" value="{{$tg.URL}}" placeholder="https://cloud.example.com/remote.php/dav/files/backup"></label>
+    <label data-for="sftp smb">{{t "backup.t.host"}} <input name="t_host" value="{{$tg.Host}}" placeholder="nas.local"></label>
+    <label data-for="sftp">{{t "backup.t.port"}} <input name="t_port" value="{{$tg.Port}}" placeholder="22" style="width: 90px"></label>
+    <label data-for="smb">{{t "backup.t.domain"}} <input name="t_domain" value="{{$tg.Domain}}" placeholder="WORKGROUP"></label>
+    <label data-for="s3 sftp smb webdav">{{t "backup.t.user"}} <input name="t_user" value="{{$tg.User}}" autocomplete="off"></label>
+    <label data-for="s3 sftp smb webdav">{{t "backup.t.password"}} <input type="password" name="t_password" autocomplete="new-password" placeholder="{{if $tg.HasPassword}}{{t "backup.password_change"}}{{end}}"></label>
+    <label data-for="s3 sftp smb webdav">{{t "backup.t.path"}} <input name="t_path" value="{{$tg.Path}}" placeholder="{{t "backup.t.path_ph"}}"></label>
+    <p class="muted small">{{t "backup.target_hint"}}</p>
+  </fieldset>
+  <script>
+  (() => {
+    const box = document.querySelector('[data-target]'), type = box.querySelector('[data-target-type]');
+    const show = () => box.querySelectorAll('[data-for]').forEach(el => { el.hidden = !el.dataset.for.split(' ').includes(type.value); });
+    type.addEventListener('change', show);
+    show();
+  })();
+  </script>
+  <fieldset class="stack">
+    <legend>{{t "backup.schedule"}}</legend>
+    <div class="row">
+      <select name="schedule">
+        <option value="" {{if not $d.Set.Schedule}}selected{{end}}>{{t "backup.schedule.off"}}</option>
+        <option value="daily" {{if eq $d.Set.Schedule "daily"}}selected{{end}}>{{t "backup.schedule.daily"}}</option>
+        <option value="weekly" {{if eq $d.Set.Schedule "weekly"}}selected{{end}}>{{t "backup.schedule.weekly"}}</option>
+      </select>
+      <select name="weekday" title="{{t "backup.weekday"}}">{{range $d.Weekdays}}<option value="{{.}}" {{if eq . $d.Set.Weekday}}selected{{end}}>{{t (print "wd." .)}}</option>{{end}}</select>
+      <label>{{t "backup.at"}} <input type="time" name="at" value="{{$d.Set.At}}"></label>
+    </div>
+    <p class="muted small">{{if $d.Next}}{{t "backup.next" (datetime $d.Next)}}{{else}}{{t "backup.schedule_hint"}}{{end}}</p>
+    <label>{{t "backup.keep"}} <input type="number" name="keep" min="0" max="1000" value="{{$d.Set.Keep}}" style="width: 90px"></label>
+    <p class="muted small">{{t "backup.keep_hint"}}</p>
+  </fieldset>
+  <fieldset class="stack">
+    <legend>{{t "backup.password"}}</legend>
+    <p class="muted small">{{if $d.Set.HasPassword}}{{t "backup.password_set"}}{{else}}{{t "backup.password_none"}}{{end}}</p>
+    <input type="password" name="password" autocomplete="new-password" placeholder="{{if $d.Set.HasPassword}}{{t "backup.password_change"}}{{else}}{{t "backup.password_ph"}}{{end}}">
+    {{if $d.Set.HasPassword}}<label><input type="checkbox" name="nopassword" value="1"> {{t "backup.password_clear"}}</label>{{end}}
+  </fieldset>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+<div class="card">
+  <div class="row">
+    <h2>{{t "backup.journal"}}</h2>
+    {{if $tg.Type}}<form method="post" action="/settings/backup/check" style="margin-left:auto"><button class="ghost">{{t "backup.check"}}</button></form>{{end}}
+    <form method="post" action="/settings/backup/run"{{if not $tg.Type}} style="margin-left:auto"{{end}}><button class="primary" {{if $d.Busy}}disabled{{end}}>{{icon "database"}} {{t "backup.run"}}</button></form>
+  </div>
+  {{if $d.Runs}}
+  <table data-backup-runs{{if $d.Busy}} data-busy{{end}}>
+    <thead><tr><th>{{t "backup.col.at"}}</th><th>{{t "backup.col.status"}}</th><th>{{t "backup.col.name"}}</th><th>{{t "backup.col.parts"}}</th><th>{{t "col.size"}}</th></tr></thead>
+    <tbody>
+    {{range $d.Runs}}
+    <tr>
+      <td>{{datetime .CreatedAt}}<div class="muted small">{{if .Auto}}{{t "backup.by_schedule"}}{{else}}{{.By}}{{end}}</div></td>
+      <td>{{if eq .Kind "restore"}}<div class="small">{{t "backup.restore.kind"}}</div>{{end}}<span class="badge{{if eq .Status "failed"}} red{{end}}">{{t (print "backup.status." .Status)}}</span>
+        {{with .Error}}<div class="small" style="color: var(--danger)">{{t .}}</div>{{end}}</td>
+      {{if eq .Kind "restore"}}
+      <td>{{t "backup.restore.from"}} <code>{{.Name}}</code>{{with .FinishedAt}}<div class="muted small">{{datetime .}}</div>{{end}}
+        {{with .Target}}<div class="small">{{t "backup.restore.unpacked" (print $d.Host "/" .)}}</div>{{end}}
+        {{if and (eq .Status "done") (or (has .Parts "authentik") (has .Parts "synapse") (has .Parts "go24"))}}<div class="small">{{t "backup.restore.restart"}}</div>{{end}}</td>
+      {{else}}
+      <td>{{if .Removed}}<s class="muted"><code>{{.Name}}</code></s><div class="muted small">{{t "backup.removed" (datetime .Removed)}}</div>{{else}}<code>{{.Name}}</code>{{with .FinishedAt}}<div class="muted small">{{datetime .}}</div>{{end}}{{end}}
+        {{with .Target}}<div class="small">→ {{.}}</div>{{end}}{{with .UploadError}}<div class="small" style="color: var(--danger)">{{t "backup.upload_failed" .}}</div>{{end}}
+        {{if and (eq .Status "done") (not .Removed) .Name (not $d.Busy)}}<div><a class="button ghost small" href="/settings/backup/{{.ID}}/restore">{{t "backup.restore.open"}}</a></div>{{end}}</td>
+      {{end}}
+      <td class="small">{{range $i, $p := .Parts}}{{if $i}}, {{end}}{{t (print "backup.short." $p)}}{{end}}</td>
+      <td>{{if .Size}}{{size .Size}}{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{t "backup.empty"}}</div>{{end}}
+</div>
+<p class="muted small">{{t "backup.hint"}}</p>
+{{if $d.Busy}}{{/* the worker is making a copy: the journal follows */}}<script>setTimeout(() => location.reload(), 5000);</script>{{end}}
+{{end}}

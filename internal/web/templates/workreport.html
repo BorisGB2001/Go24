@@ -1,0 +1,52 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Period}}{{$r := $d.Report}}
+<div class="pagehead"><h1 style="flex:1">{{if $d.New}}{{t "wreport.new"}}{{else}}{{t "wreport.one"}}{{end}}</h1>
+  <a class="button ghost" href="/worktime/reports?tab={{if $d.CanMark}}team{{else}}mine{{end}}">{{icon "chevron-left"}} {{t "wreport.title"}}</a></div>
+{{if and $d.New $p.Empty}}<div class="empty">{{t "wreport.nothing"}}</div>{{else}}
+<div class="card stack wreport">
+  <div class="row">{{with $r}}<a href="/u/{{.UserID}}" data-user="{{.UserID}}" class="row">{{photo .UserName .PhotoURL false}} <b>{{.UserName}}</b></a>{{end}}
+    <span class="spacer"></span>{{with $r}}{{template "wrmark" .Mark}}{{end}}</div>
+  <div class="grid wrfacts">
+    <div><label>{{t "wreport.col.period"}}</label><b>{{day $p.From}}{{if ne $p.From $p.To}} — {{day $p.To}}{{end}}</b></div>
+    <div><label>{{t "wreport.col.worked"}}</label><b>{{dur $d.Worked}}</b></div>
+    {{with $r}}<div><label>{{t "wreport.col.sent"}}</label>{{datetime .Sent}}</div>{{end}}
+    {{if $d.New}}<div><label>{{t "wreport.to"}}</label>{{range $i, $m := $d.Managers}}{{if $i}}, {{end}}{{$m.Name}}{{else}}<span class="muted">{{t "wreport.to_none"}}</span>{{end}}</div>{{end}}
+  </div>
+  <h2>{{icon "checkbox"}} {{t "wreport.tasks"}} <span class="muted small">{{len $d.Items.Tasks}}</span></h2>
+  {{if $d.Items.Tasks}}<table class="tlist"><tbody>{{range $d.Items.Tasks}}<tr><td><a href="/t/{{.Key}}">{{.Key}}</a> {{.Title}}</td>
+    <td>{{if .Closed}}<span class="pill ev-accepted">{{t "wreport.task_closed"}}</span>{{else}}<span class="pill">{{t (print "status." .Status)}}</span>{{end}}</td>
+    <td class="small muted">{{if .Seconds}}{{dur .Seconds}}{{end}}</td></tr>{{end}}</tbody></table>
+  {{else}}<p class="muted small">{{t "wreport.tasks_none"}}</p>{{end}}
+  <h2>{{icon "calendar-event"}} {{t "wreport.events"}} <span class="muted small">{{len $d.Items.Events}}</span></h2>
+  {{if $d.Items.Events}}<table class="tlist"><tbody>{{range $d.Items.Events}}<tr><td><a href="/calendar/{{.ID}}">{{.Title}}</a></td>
+    <td class="small muted">{{day .Start}}{{if not .AllDay}} {{clock .Start}}–{{clock .End}}{{end}}</td></tr>{{end}}</tbody></table>
+  {{else}}<p class="muted small">{{t "wreport.events_none"}}</p>{{end}}
+  {{if $d.New}}<form method="post" action="/worktime/reports" class="stack">
+    <label>{{t "wreport.body"}}</label><textarea name="body" rows="6" maxlength="10000" placeholder="{{t "wreport.body_hint"}}"></textarea>
+    <div class="row"><button class="primary">{{icon "send"}} {{t "wreport.send"}}</button></div>
+  </form>{{else}}
+  <h2>{{icon "file-text"}} {{t "wreport.body"}}</h2>
+  {{with $r.Body}}<div class="dcomment-body">{{.}}</div>{{else}}<p class="muted small">{{t "wreport.body_none"}}</p>{{end}}
+  {{if $r.MarkedAt}}<p class="small muted">{{t "wreport.marked_by" $r.MarkedBy (datetime (deref $r.MarkedAt))}}</p>{{end}}{{end}}
+</div>
+{{with $r}}
+{{if $d.CanMark}}<div class="card stack"><h2>{{icon "star"}} {{t "wreport.mark_title"}}</h2>
+  <form method="post" action="/worktime/reports/{{.ID}}/mark" class="stack">
+    <textarea name="comment" rows="2" maxlength="5000" placeholder="{{t "wreport.mark_comment"}}"></textarea>
+    <div class="row"><button class="primary" name="mark" value="good">👍 {{t "wreport.mark.good"}}</button>
+      <button name="mark" value="bad">👎 {{t "wreport.mark.bad"}}</button>
+      <button class="ghost" name="mark" value="none">{{t "wreport.mark.none"}}</button></div>
+  </form></div>{{end}}
+<div class="card stack" id="comments">
+  <h2>{{icon "messages"}} {{t "wreport.comments"}}{{with len .Comments}} <span class="muted small">{{.}}</span>{{end}}</h2>
+  {{range .Comments}}<div class="dcomment" id="c-{{.ID}}">
+    <div class="row small"><b>{{if .AuthorName}}{{.AuthorName}}{{else}}—{{end}}</b><span class="muted">{{datetime .At}}</span></div>
+    <div class="dcomment-body">{{.Body}}</div></div>
+  {{else}}<p class="muted small">{{t "wreport.comments_none"}}</p>{{end}}
+  <form method="post" action="/worktime/reports/{{.ID}}/comments" class="stack">
+    <textarea name="body" rows="3" maxlength="5000" required placeholder="{{t "wreport.comment_hint"}}"></textarea>
+    <div class="row"><button class="primary">{{icon "send"}} {{t "wreport.comment_send"}}</button></div>
+  </form>
+</div>{{end}}
+{{end}}
+{{end}}

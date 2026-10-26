@@ -1,0 +1,135 @@
+# go24 и n8n
+
+## n8n на dev-сервере
+
+n8n работает в нашем docker compose (сервис `n8n`, образ `n8nio/n8n:1.123.4`, данные — том `n8n-data`):
+
+- редактор: **http://192.168.1.15:5678** — при первом входе n8n просит создать учётку владельца;
+- go24 обращается к n8n внутри сети compose: `http://n8n:5678/webhook/<путь>` (а n8n к go24 — `http://go24:8080/api/v1/…`);
+- ключ шифрования учётных данных n8n — `N8N_ENCRYPTION_KEY` в `deploy/.env` (не менять);
+- пока без https: `N8N_SECURE_COOKIE=false`; когда go24 выйдет в интернет — поставить n8n за caddy с https.
+
+Примеры для импорта (n8n → Workflows → Import from File) — `docs/n8n-examples/`:
+
+- `new-lead-to-task.json` — вебхук go24 «Новый лид» → задача ответственному через API go24
+  (подставьте ключ проекта и ключ API; в go24 создайте вебхук на `http://n8n:5678/webhook/go24-lead` с событием «Новый лид»);
+- `process-invoice.json` — для шага процесса «Вызвать n8n» с адресом `http://n8n:5678/webhook/go24-invoice`:
+  n8n отвечает `{"invoice": "INV-…"}`, и следующий шаг процесса может написать «Счёт {invoice} готов».
+
+Воркфлоу нужно активировать (переключатель Active) — иначе работают только тестовые адреса `/webhook-test/…`.
+
+Три способа связать go24 с n8n (или Make, Zapier — любым сервисом с HTTP).
+
+## 1. События go24 → n8n (вебхуки)
+
+Настройки → «Вебхуки (n8n)» (администратор): адрес узла **Webhook** из n8n и события:
+`deal.created`, `deal.stage`, `lead.created`, `lead.stage`, `task.created`, `task.completed`, `task.deleted` (задача перемещена в корзину),
+`openline.started` (новый диалог открытой линии), `openline.message` (сообщение посетителя или оператора, `data.from` —
+`visitor` | `operator`), `openline.closed` (диалог закрыт, `data.spam` — как спам). REST открытых линий — `/api/v1/openlines/…`
+(ключ `openlines:read` / `openlines:write`): линии, диалоги и сообщения, ответ, передача, закрытие, лид, быстрые ответы, статистика.
+
+Запрос — `POST` JSON:
+
+```json
+{"event": "deal.stage", "at": "2026-10-14T18:30:24Z", "data": {"id": "…", "title": "Поставка", "stage_id": "…", "stage_code": "won", …}}
+```
+
+Заголовки: `X-Go24-Event` (событие), `X-Go24-Signature: sha256=<HMAC-SHA256 тела с секретом вебхука>` — секрет
+показан на странице вебхука. Проверка подписи в n8n (узел Code):
+
+```js
+const crypto = require('crypto');
+const sig = 'sha256=' + crypto.createHmac('sha256', 'СЕКРЕТ').update(JSON.stringify($json.body)).digest('hex');
+// для точной проверки включите в узле Webhook «Raw Body» и считайте HMAC от сырого тела
+```
+
+События ставятся в очередь триггерами базы (любой путь изменения: интерфейс, API, робот, процесс), отправляются
+воркером в течение ~15 секунд; при ошибке — повтор через 1, 5, 30 мин, 2 и 6 ч. «Проверить» шлёт событие `ping`.
+
+## 2. Бизнес-процесс → n8n → бизнес-процесс
+
+В конструкторе процесса шаг **«Вызвать n8n (webhook)»** с адресом узла Webhook. go24 отправляет:
+
+```json
+{"event": "bp.step", "process": "Счёт", "process_id": "…", "link": "https://go24/bp/i/…",
+ "values": {"sum": "1500"}, "starter": {"id": "…", "name": "Анна"}, "entity": "deal", "entity_id": "…", "card": "https://go24/crm/deals/…"}
+```
+
+и ждёт ответа до 30 секунд. Если n8n отвечает JSON-объектом (узел **Respond to Webhook**), его поля становятся полями
+процесса: например ответ `{"invoice": "INV-1500"}` — и следующий шаг может написать «Счёт {invoice} готов».
+Ответ не 2xx — процесс останавливается с ошибкой (в истории процесса).
+
+## 3. n8n → go24 (REST API)
+
+Ключ: Настройки → «Ключи API» (права по областям). В n8n — узел **HTTP Request**:
+`https://go24/api/v1/…`, заголовок `Authorization: Bearer <ключ>`. Ключ действует от имени создавшего его сотрудника
+(его права в CRM и задачах).
+
+CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `contacts`, `companies`:
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/crm/pipelines` | воронки сделок со стадиями и стадии лидов (id, code) |
+| `GET /api/v1/crm/currencies` | валюты CRM: код, название, курс к базовой (`base` — базовая, `auto` — курс ЦБ РФ) |
+| `GET /api/v1/crm/products?section_id=&q=&all=1` | каталог товаров: товары раздела и его подразделов (`section` — путь раздела, `photo_url` — картинка); `all=1` — и неактивные |
+| `GET /api/v1/crm/product-sections` | разделы каталога деревом: `parent_id`, `path` («Оборудование / Принтеры»), `sort` |
+| `GET /api/v1/crm/{kind}?q=…` | список (для сделок можно `&pipeline=<id>`) |
+| `GET /api/v1/crm/{kind}/{id}` | карточка |
+| `POST /api/v1/crm/{kind}` | новая карточка: `{"title", "name", "phone", "email", "source", "amount", "currency", "company_id", "contact_id", "pipeline_id", "stage_id", "responsible_id", "observer_ids", "comment"}` (`observer_ids` — наблюдатели сделки или лида) |
+| `POST /api/v1/crm/{kind}/{id}/stage` | `{"stage_id": …}` — сделки и лиды (сработают роботы стадии) |
+| `PUT /api/v1/crm/{deals\|leads}/{id}/observers` | `{"observer_ids": [...]}` — наблюдатели карточки (весь список); видят её при любых правах и получают уведомления о комментариях и стадиях |
+| `PUT /api/v1/crm/{deals\|leads}/{id}/utm` | `{"utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"}` — UTM-метки карточки (все сразу; `{}` — убрать). Их же можно передать в `POST /api/v1/crm/{kind}` полем `"utm": {…}`; карточка сделки или лида отдаёт их в `utm` (сделка без своих — метки лида, из которого создана) |
+| `GET /api/v1/marketing/analytics?from=2026-10-01&to=2026-10-31` | «Сквозная аналитика» (по умолчанию — текущий месяц): `{"currency", "channels": [{"id", "name", "expenses", "leads", "deals", "won", "revenue", "cost_per_lead", "cost_per_sale", "roi", "campaigns": […]}], "total"}`; канал без `id` — карточки без источника; `roi` — процент, нет без расходов |
+| `GET /api/v1/marketing/sources` | рекламные источники: `[{"id", "name", "utm_source": [...], "crm_source_id"}]` |
+| `GET /api/v1/marketing/expenses?source=&from=&to=` | расходы на рекламу, новые сверху (до 1000) |
+| `POST /api/v1/marketing/expenses` | `{"source_id", "day": "2026-10-25", "amount", "currency", "campaign", "comment"}` — расход (например, выгрузка из рекламного кабинета) |
+| `DELETE /api/v1/marketing/expenses/{id}` | удалить свой расход (администратор — любой) |
+| `POST /api/v1/crm/{kind}/{id}/comments` | `{"body": …}` — строка в истории карточки |
+| `GET /api/v1/crm/{deals\|leads}/{id}/products` | товары карточки: `[{"product_id", "name", "price", "quantity", "unit", "discount", "vat_rate", "vat_included", "total"}]` |
+| `PUT /api/v1/crm/{deals\|leads}/{id}/products` | заменить товары карточки (тот же список; строка товара каталога без `name` берёт его название и цену) — ответ `{"amount"}`, сумма карточки считается по товарам |
+| `GET /api/v1/crm/{companies\|contacts}/{id}/requisites` | реквизиты карточки, основные — первыми: `[{"id", "preset", "name", "inn", "kpp", "ogrn", "director", "address", "bank", "bik", "account", "corr_account", "is_default"}]` (`preset`: `org` — организация, `ip` — ИП, `person` — физ. лицо) |
+| `POST /api/v1/crm/{companies\|contacts}/{id}/requisites` | новые реквизиты (тот же объект; без `id`) или изменение реквизитов с `id`; `"is_default": true` — сделать основными — ответ `{"id"}` |
+| `DELETE /api/v1/crm/{companies\|contacts}/{id}/requisites/{req}` | удалить реквизиты |
+
+Онлайн-запись (области `booking:read`, `booking:write`; как `booking.v1.*` корпоративного портала). Типы и ресурсы меняет только
+администратор, брони и лист ожидания — любой сотрудник. Время — RFC 3339 (`2026-10-27T11:00:00+01:00`), периоды —
+даты `from`/`to` включительно (по умолчанию текущий месяц, не больше года):
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/booking/types` | типы ресурсов (`resourceType.list`): `[{"id", "code", "name", "resources"}]`; `code` — у стандартных (`employee`, `room`, `equipment`) |
+| `POST /api/v1/booking/types`, `PUT …/types/{id}`, `DELETE …/types/{id}` | `{"name"}` — свой тип; удалить можно тип без ресурсов |
+| `GET /api/v1/booking/resources?type_id=` | ресурсы (`resource.list`): `[{"id", "type_id", "type_code", "type_name", "name", "description", "user_id", "user_name", "slot_minutes", "days": [1..7], "from": "09:00", "to": "18:00", "notify_mail", "remind_hours", "late_minutes", "overbooking"}]`; `GET …/resources/{id}` — один |
+| `POST /api/v1/booking/resources`, `PUT …/resources/{id}` | ресурс (те же поля; в `PUT` не переданные остаются; новый — Пн–Пт 9:00–18:00 по 30 минут); `DELETE …/resources/{id}` — вместе с бронями |
+| `GET /api/v1/booking/resources/{id}/slots?date=2026-10-27` | свободные слоты на день (`resource.slots.list`): `{"slot_minutes", "free": [начала слотов]}` |
+| `GET /api/v1/booking/bookings?from=&to=&resource_id=&status=` | брони, задевающие период (`booking.list`): `[{"id", "resource_id", "resource_name", "extra_resource_ids", "start", "end", "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id", "created_by", "link_id", "client_url"}]`; `resource_id` — и где ресурс дополнительный; `GET …/bookings/{id}` — одна |
+| `POST /api/v1/booking/bookings`, `PUT …/bookings/{id}` | бронь (`booking.add`/`update`, `client.set`): `{"resource_id", "extra_resource_ids", "start", "end" или "minutes" (по умолчанию — слот ресурса), "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id"}`; в `PUT` не переданные остаются, перенос без `end` сохраняет длительность. Время занято — `409`; сделка подтягивает контакт и компанию, контакт — имя и телефон клиента; в истории карточек CRM — «Запись клиента» |
+| `POST /api/v1/booking/bookings/{id}/status` | `{"status"}`: `unconfirmed`, `confirmed`, `came`, `no_show`, `cancelled` |
+| `POST /api/v1/booking/bookings/{id}/wait` | клиента — в лист ожидания, бронь удаляется (`waitlist.createfrombooking`); `DELETE …/bookings/{id}` — удалить бронь |
+| `GET /api/v1/booking/waitlist`, `GET …/waitlist/{id}` | лист ожидания (`waitlist.list`): `[{"id", "resource_id", "resource_name", "client_name", "client_phone", "client_email", "note", "contact_id", "company_id", "deal_id", "created_by", "created_at"}]` |
+| `POST /api/v1/booking/waitlist`, `PUT …/waitlist/{id}`, `DELETE …/waitlist/{id}` | клиент в листе (те же поля; `resource_id` — желаемый ресурс, без него — любой) |
+| `POST /api/v1/booking/waitlist/{id}/book` | `{"resource_id", "start"}` — записать клиента из листа на слот ресурса; ответ — бронь |
+| `GET /api/v1/booking/stats?from=&to=&type_id=` | загрузка ресурсов (как «Онлайн-запись → Статистика»): `{"resources": [{"resource_id", "name", "work_minutes", "busy_minutes", "load", "bookings", "statuses": {…}, "no_show_share"}], "total": {…}}`; `load` и `no_show_share` — проценты, `no_show_share` — `null`, пока никто не пришёл и не «не пришёл» |
+
+Бизнес-процессы (как `bizproc.workflow.*`, `bizproc.workflow.template.*`, `bizproc.task.*` в корпоративном портале; области `bp:read` —
+чтение, `bp:write` — запуск, решения, остановка). Шаблоны создают и меняют администраторы портала (они же видят
+выключенные шаблоны и шаги), запускает активный шаблон любой; процесс видят запустивший, у кого в нём задание, кто
+может читать его карточку CRM, и администраторы. Шаги нумеруются с 1, как `goto` шага; id шаблона виден и в адресе
+конструктора (`/bp/templates/<id>`):
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/bp/templates?entity=` | шаблоны (`deal`, `lead`, `contact`, `company`, `none` — без карточки): `[{"id", "name", "description", "entity", "type_id", "active", "auto_create", "auto_change", "fields", "steps", "url"}]`; `steps` — администраторам |
+| `GET /api/v1/bp/templates/{id}` | шаблон |
+| `POST /api/v1/bp/templates` | создать (администраторы): `{"name", "description", "entity", "type_id", "active", "auto_create", "auto_change", "fields": [{"key", "label", "kind": "string"\|"text"\|"number"\|"date", "required"}], "steps": [{"kind", "text", "to", …}]}` — шаги в том виде, в каком их отдаёт `GET` |
+| `PATCH /api/v1/bp/templates/{id}` | изменить: что не передано — остаётся |
+| `DELETE /api/v1/bp/templates/{id}` | удалить шаблон вместе с его процессами, как в конструкторе |
+| `POST /api/v1/bp/templates/{id}/start` | запустить (`bizproc.workflow.start`): `{"entity_id": … (шаблон карточки CRM), "values": {…}}`; ответ — процесс; прежний адрес `POST /api/v1/bp/{id}/start` тоже работает |
+| `GET /api/v1/bp/instances` | свои процессы, новые сверху; `?status=`; `?entity=deal&entity_id=…` — процессы карточки; `?all=1&status=&template_id=&limit=&offset=` — всех (администраторы) |
+| `GET /api/v1/bp/instances/{id}` | процесс: `{"id", "template_id", "name", "entity", "entity_id", "status": "running"\|"done"\|"rejected"\|"failed"\|"stopped", "step", "values", "started_by", "can_stop", "fields", "steps": [{"n", "kind", "text", "state": "done"\|"now"\|""}], "tasks", "log": [{"step", "actor", "kind", "text", "at"}], "url"}` |
+| `POST /api/v1/bp/instances/{id}/stop` | «Остановить» (`bizproc.workflow.terminate`): `{"reason"}` — запустивший, кто может менять карточку, администраторы |
+| `DELETE /api/v1/bp/instances/{id}` | удалить процесс с историей (`bizproc.workflow.kill`, администраторы) |
+| `GET /api/v1/bp/tasks` | задания, которые ждут решения владельца ключа (`bizproc.task.list`): `[{"id", "process_id", "process", "kind": "approve"\|"review"\|"request", "text", "step", "fields", "can_reject", "url"}]` |
+| `POST /api/v1/bp/tasks/{id}/complete` | решение (`bizproc.task.complete`): `{"decision": "approve"\|"reject"\|"seen"\|"answer", "comment", "values": {…} (ответ на запрос)}`; ответ — процесс |
+
+Задачи, проекты, комментарии, уведомления, мессенджер — см. `internal/web/api.go`.

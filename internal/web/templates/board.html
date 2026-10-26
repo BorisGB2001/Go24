@@ -1,0 +1,84 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}
+<div class="crumbs">{{if $p.Collab}}<a href="/collabs">{{t "collab.title"}}</a>{{else}}<a href="/projects">{{t "nav.projects"}}</a>{{end}} {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a></div>
+<h1>{{$p.Name}}</h1>
+<div class="sub">{{t "board.subtitle"}}</div>
+<div class="tabs">
+  {{template "pviews" (dict "P" $p "On" "board")}}
+  {{if and $p.CanManage (not $p.Frozen)}}<span class="spacer"></span><a href="/p/{{$p.Key}}/robots">🤖 {{t "taskrobot.title"}}</a>{{end}}
+</div>
+{{with $d.Sprint}}<div class="sprinthead card">
+  <div><b>{{.Name}}</b> <span class="muted small">{{with .DateStart}}{{day .}}{{end}} – {{with .DateEnd}}{{day .}}{{end}}</span>
+    {{if .Overdue}}<span class="dl over">{{t "sprint.overdue"}}</span>{{end}}{{with .Goal}}<div class="small muted">{{.}}</div>{{end}}</div>
+  <span class="spacer"></span>
+  <a href="/p/{{$p.Key}}/sprints">{{icon "history"}} {{t "sprint.stats"}}</a>
+  {{if $p.CanLead}}<details class="tsettings"><summary class="button primary">{{icon "check"}} {{t "sprint.complete"}}</summary>
+    <div class="pop"><form method="post" action="/p/{{$p.Key}}/sprints"><input type="hidden" name="op" value="complete"><input type="hidden" name="id" value="{{.ID}}">
+      <label>{{t "sprint.unfinished_to"}}</label>
+      <select name="move_to"><option value="">{{t "sprint.backlog"}}</option>{{range $d.Planned}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+      <p><button class="primary">{{t "sprint.complete"}}</button></p></form></div></details>{{end}}
+</div>{{end}}
+{{if and $p.Scrum (not $d.Sprint)}}<div class="empty card">{{icon "player-play"}} {{t "sprint.none_active"}} <a href="/p/{{$p.Key}}/scrum">{{t "tabs.planning"}}</a></div>{{else}}
+<div class="board stages" data-board="stage" data-project="{{$p.Key}}" data-cols-board="stages-{{$p.Key}}" data-failed="{{t "board.move_failed"}}">
+  {{range $i, $c := $d.Columns}}
+  <div class="col" data-stage="{{.ID}}" style="--stage:#{{.Color}}">
+    <div class="colhead stagehead">
+      <b class="stitle">{{if .Title}}{{.Title}}{{else}}{{t (print "stage." .Code)}}{{end}}</b>
+      <span class="colcount">{{.Total}}</span>
+      {{if and $p.CanManage (not $p.Frozen)}}
+      <details class="stage-menu"><summary title="{{t "stage.edit"}}">{{icon "edit"}}</summary>
+        <div class="stage-pop">
+          <form method="post" action="/p/{{$p.Key}}/stages"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{.ID}}">
+            <input type="text" name="title" required value="{{if .Title}}{{.Title}}{{else}}{{t (print "stage." .Code)}}{{end}}">
+            <div class="swatches">{{range $d.Colors}}<label style="--sw:#{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $c.Color}}checked{{end}}></label>{{end}}</div>
+            <button>{{t "common.save"}}</button></form>
+          {{if not .Finish}}
+          <div class="row">
+            <form method="post" action="/p/{{$p.Key}}/stages"><input type="hidden" name="op" value="left"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost" title="{{t "stage.left"}}">{{icon "chevron-left"}}</button></form>
+            <form method="post" action="/p/{{$p.Key}}/stages"><input type="hidden" name="op" value="right"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost" title="{{t "stage.right"}}">{{icon "chevron-right"}}</button></form>
+            <form method="post" action="/p/{{$p.Key}}/stages"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "stage.delete"}}</button></form>
+          </div>
+          {{else}}<p class="muted small">{{t "stage.finish_hint"}}</p>{{end}}
+        </div>
+      </details>
+      {{end}}
+    </div>
+    {{if and $p.CanCreate (not .Finish)}}
+    <details class="quick"><summary title="{{t "stage.quick_add"}}">{{icon "plus"}}</summary>
+      <form method="post" action="/p/{{$p.Key}}/tasks" data-quick><input type="hidden" name="stage" value="{{.ID}}">
+        <input type="text" name="title" required placeholder="{{t "stage.quick_placeholder"}}" maxlength="500">
+        <button>{{t "common.add"}}</button></form>
+    </details>
+    {{end}}
+    <div class="cards">{{range .Cards}}{{template "kcard" .}}{{end}}</div>
+    {{if and .Finish (gt .Total (len .Cards))}}<div class="muted small more">{{t "stage.more" (len .Cards) .Total}}</div>{{end}}
+    <div class="empty small" {{if .Cards}}hidden{{end}}>{{t "plan.empty"}}</div>
+  </div>
+  {{end}}
+  {{if and $p.CanManage (not $p.Frozen)}}
+  <div class="col add-col">
+    <form method="post" action="/p/{{$p.Key}}/stages"><input type="hidden" name="op" value="add">
+      <label>{{t "stage.add"}}</label><input type="text" name="title" required placeholder="{{t "stage.placeholder"}}">
+      <div class="swatches">{{range $i, $c := $d.Colors}}<label style="--sw:#{{$c}}"><input type="radio" name="color" value="{{$c}}" {{if eq $i 3}}checked{{end}}></label>{{end}}</div>
+      <p><button>{{icon "plus"}} {{t "common.add"}}</button></p></form>
+  </div>
+  {{end}}
+</div>
+{{end}}
+<script src="{{asset "js/boards.js"}}"></script>
+{{end}}
+
+{{define "kcard"}}{{$t := .}}
+<div class="kcard" draggable="{{if .CanMove}}true{{else}}false{{end}}" data-key="{{.Key}}">
+  <a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}{{if eq .Priority 2}} <span class="prio" title="{{t "priority.2"}}">{{icon "flame"}}</span>{{end}}</a>
+  <div class="chips">
+    {{if .ChecklistTotal}}<span class="chip{{if eq .ChecklistDone .ChecklistTotal}} done{{end}}">{{icon "list-check"}} {{.ChecklistDone}}/{{.ChecklistTotal}}</span>{{end}}
+    {{if .Files}}<span class="chip">{{icon "paperclip"}} {{.Files}}</span>{{end}}
+    {{if .Unread}}<span class="chip newcmt" title="{{t "counter.comments_task" .Unread}}">{{icon "message-circle"}} +{{.Unread}}</span>{{else if .Comments}}<span class="chip">{{icon "message-circle"}} {{.Comments}}</span>{{end}}
+    {{if or (eq .Status "awaiting_control") (eq .Status "deferred")}}<span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span>
+    {{else if eq .Status "completed"}}<span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span>
+    {{else}}{{with date .Deadline}}<span class="dl{{if $t.Overdue}} over{{end}}">{{.}}</span>{{end}}{{end}}
+  </div>
+  <div class="foot">{{ava .CreatorName}}{{if ne .CreatorID .ResponsibleID}}{{icon "chevron-right"}}{{ava .ResponsibleName}}{{end}}{{guestMark .ResponsibleID}}<span class="tkey">{{.Key}}</span></div>
+</div>
+{{end}}

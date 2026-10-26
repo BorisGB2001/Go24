@@ -1,0 +1,102 @@
+{{define "kbtree"}}<ul class="kbtree">{{range .}}<li><a href="/kb/{{.SpaceID}}/{{.ID}}" data-kb-page="{{.ID}}">{{.Title}}</a>{{with .Children}}{{template "kbtree" .}}{{end}}</li>{{end}}</ul>{{end}}
+
+{{define "kbattach"}}<label class="button ghost" title="{{t "kb.attach_hint"}}">{{icon "paperclip"}} {{t "kb.attach"}}<input type="file" multiple hidden data-kb-file></label>{{end}}
+
+{{define "kbtools"}}<div class="kbtools" role="toolbar" data-kb-preview="/kb/{{.}}/preview">
+  <span class="kbtabs"><button type="button" class="ghost small on" data-kb-tab="write">{{icon "edit"}} {{t "kb.tab_write"}}</button><button type="button" class="ghost small" data-kb-tab="preview">{{icon "eye"}} {{t "kb.tab_preview"}}</button></span>
+  <span class="kbfmt"><button type="button" class="ghost small" data-kb-fmt="h2" title="{{t "kb.fmt_h2"}}"><b>H2</b></button><button type="button" class="ghost small" data-kb-fmt="h3" title="{{t "kb.fmt_h3"}}"><b>H3</b></button>
+  <button type="button" class="ghost small" data-kb-fmt="bold" title="{{t "kb.fmt_bold"}} (Ctrl+B)">{{icon "bold"}}</button><button type="button" class="ghost small" data-kb-fmt="italic" title="{{t "kb.fmt_italic"}} (Ctrl+I)">{{icon "italic"}}</button><button type="button" class="ghost small" data-kb-fmt="strike" title="{{t "kb.fmt_strike"}}">{{icon "strikethrough"}}</button><button type="button" class="ghost small" data-kb-fmt="code" title="{{t "kb.fmt_code"}}">{{icon "code"}}</button>
+  <button type="button" class="ghost small" data-kb-fmt="link" title="{{t "kb.fmt_link"}} (Ctrl+K)" data-kb-link-text="{{t "kb.fmt_link_text"}}">{{icon "link"}}</button>
+  <button type="button" class="ghost small" data-kb-fmt="ul" title="{{t "kb.fmt_ul"}}">{{icon "list"}}</button><button type="button" class="ghost small" data-kb-fmt="ol" title="{{t "kb.fmt_ol"}}">{{icon "list-numbers"}}</button><button type="button" class="ghost small" data-kb-fmt="check" title="{{t "kb.fmt_check"}}">{{icon "list-check"}}</button><button type="button" class="ghost small" data-kb-fmt="quote" title="{{t "kb.fmt_quote"}}">{{icon "quote"}}</button>
+  <button type="button" class="ghost small" data-kb-fmt="pre" title="{{t "kb.fmt_pre"}}">{{icon "code"}}<small>{}</small></button><button type="button" class="ghost small" data-kb-fmt="table" title="{{t "kb.fmt_table"}}" data-kb-table="{{t "kb.fmt_table_cells"}}">{{icon "table"}}</button><button type="button" class="ghost small" data-kb-fmt="hr" title="{{t "kb.fmt_hr"}}">—</button></span>
+</div>{{end}}
+
+{{/* kbmarks: «В избранное» (a bookmark: the star at a title is «Добавить в левое меню») and «Следить» of a base (page "") or a page; .Fav, .Watch — set now, .Via — watched through
+   a page above or the base */}}
+{{define "kbmarks"}}<form method="post" action="/kb/{{.Space}}/mark" class="kbmarks">{{with .Page}}<input type="hidden" name="page" value="{{.}}">{{end}}
+  <button class="ghost small kbstar{{if .Fav}} on{{end}}" name="kind" value="fav" formaction="/kb/{{.Space}}/mark?on={{if .Fav}}0{{else}}1{{end}}" title="{{if .Fav}}{{t "kb.fav_off"}}{{else}}{{t "kb.fav_on"}}{{end}}" aria-pressed="{{.Fav}}">{{icon "bookmark"}}</button>
+  <button class="ghost small kbwatch{{if or .Watch .Via}} on{{end}}" name="kind" value="watch" formaction="/kb/{{.Space}}/mark?on={{if .Watch}}0{{else}}1{{end}}"{{if and .Via (not .Watch)}} disabled{{end}}
+    title="{{if .Watch}}{{t "kb.watch_off"}}{{else if .Via}}{{t "kb.watch_via"}}{{else if .Page}}{{t "kb.watch_page_hint"}}{{else}}{{t "kb.watch_space_hint"}}{{end}}" aria-pressed="{{or .Watch .Via}}">{{if or .Watch .Via}}{{icon "bell"}} {{t "kb.watching"}}{{else}}{{icon "bell-off"}} {{t "kb.watch"}}{{end}}</button>
+</form>{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.Space}}
+<div class="crumbs"><a href="/kb">{{t "kb.title"}}</a> {{icon "chevron-right"}} <a href="/kb/{{$s.ID}}">{{$s.Name}}</a>{{range $d.Crumbs}} {{icon "chevron-right"}} <a href="/kb/{{.SpaceID}}/{{.ID}}">{{.Title}}</a>{{end}}{{with $d.Page}} {{icon "chevron-right"}} {{.Title}}{{end}}</div>
+<div class="kblayout" data-kb-current="{{with $d.Page}}{{.ID}}{{end}}">
+  <nav class="card kbnav" data-kb-space="{{$s.ID}}" data-kb-toggle="{{t "kb.toggle"}}" data-kb-add="{{t "kb.add_sub"}}"{{if $s.CanEdit}} data-kb-edit{{end}}>
+    <b>{{$s.Name}}</b>{{if $s.Restricted}} <span class="muted" title="{{t "kb.rights_on"}}">{{icon "shield-lock"}}</span>{{end}}{{if $s.ProjectKey}}<div class="small muted">{{icon "folders"}} {{$s.ProjectName}}</div>{{end}}
+    {{with $d.Marks}}{{template "kbmarks" (dict "Space" $s.ID "Page" "" "Fav" .FavSpace "Watch" .WatchSpace "Via" false)}}{{end}}
+    <form method="get" action="/kb/{{$s.ID}}" class="kbfind"><input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "kb.search_space"}}" aria-label="{{t "kb.search_space"}}"></form>
+    {{with $d.Tree}}{{template "kbtree" .}}{{if $s.CanEdit}}<p class="small muted">{{t "kb.drag_hint"}}</p>{{end}}{{else}}<p class="muted small">{{t "kb.empty"}}</p>{{end}}
+    {{if $s.CanEdit}}<p><a class="button ghost" href="/kb/{{$s.ID}}?new=1">{{icon "plus"}} {{t "kb.new_page"}}</a></p>{{end}}
+    {{if $s.CanEdit}}<p><a class="button ghost small" href="/kb/trash">{{icon "trash"}} {{t "trash.title"}}</a></p>{{end}}
+    <p><a class="button ghost small" href="/kb/{{$s.ID}}/export" title="{{t "kb.export_hint"}}">{{icon "file-zip"}} {{t "kb.export"}}</a></p>
+    {{if $s.CanEdit}}<details class="kbimport"><summary class="button ghost small">{{icon "cloud-upload"}} {{t "kb.import"}}</summary>
+      <form method="post" action="/kb/{{$s.ID}}/import" enctype="multipart/form-data"><p class="small muted">{{t "kb.import_hint"}}</p>
+        <input type="file" name="file" multiple required accept=".zip,.md,.markdown" aria-label="{{t "kb.import"}}">
+        {{with $d.Page}}<label class="small"><input type="checkbox" name="parent" value="{{.ID}}" checked> {{t "kb.import_under" .Title}}</label>{{end}}
+        <p><button class="small primary">{{t "kb.import_do"}}</button></p></form></details>{{end}}
+    {{if $s.CanManage}}<p><a class="button ghost small" href="/kb/{{$s.ID}}/settings">{{icon "settings"}} {{t "kb.settings"}}</a></p>
+    <form method="post" action="/kb/{{$s.ID}}/delete" data-confirm="{{t "kb.delete_space_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "kb.delete_space"}}</button></form>{{end}}
+  </nav>
+  <div>
+  {{if $d.Q}}<div class="card">
+    <h2>{{t "kb.found" (len $d.Hits)}}</h2>
+    {{range $d.Hits}}<div class="kbhit"><a href="/kb/{{.SpaceID}}/{{.ID}}"><b>{{mark .Title $d.Q}}</b></a>
+      <div class="small muted">{{mark .Snippet $d.Q}}</div></div>{{else}}<p class="muted">{{t "kb.nothing"}}</p>{{end}}
+    <p class="small"><a href="/kb?q={{$d.Q}}">{{icon "search"}} {{t "kb.search_all"}}</a></p>
+  </div>
+  {{else if $d.New}}<div class="card">
+    <h2>{{with $d.Under}}{{t "kb.new_sub" .}}{{else}}{{t "kb.new_page"}}{{end}}</h2>
+    <form method="post" action="/kb/{{$s.ID}}/pages"><input type="hidden" name="parent" value="{{$d.Parent}}">
+      <input type="text" name="title" maxlength="300" required placeholder="{{t "kb.page_title"}}">
+      {{template "kbtools" $s.ID}}<textarea name="body" rows="18" placeholder="{{t "kb.markdown_hint"}}" data-kb-upload="/kb/{{$s.ID}}/files" data-kb-uploading="{{t "kb.uploading" "%s"}}" data-kb-failed="{{t "kb.upload_failed" "%s"}}" data-kb-leave="{{t "kb.leave_confirm"}}"></textarea>
+      <p class="row"><button class="primary">{{t "common.save"}}</button>{{template "kbattach"}}</p></form>
+  </div>
+  {{else}}{{with $d.Page}}{{$p := .}}
+  {{if $d.Edit}}<div class="card">
+    <form method="post" action="/kb/{{$s.ID}}/{{.ID}}">
+      <input type="text" name="title" value="{{.Title}}" maxlength="300" required>
+      {{template "kbtools" $s.ID}}<textarea name="body" rows="22" data-kb-upload="/kb/{{$s.ID}}/files" data-kb-uploading="{{t "kb.uploading" "%s"}}" data-kb-failed="{{t "kb.upload_failed" "%s"}}" data-kb-leave="{{t "kb.leave_confirm"}}">{{.Body}}</textarea>
+      <p class="small muted">{{t "kb.markdown_hint"}}</p>
+      <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/kb/{{$s.ID}}/{{.ID}}">{{t "common.cancel"}}</a>{{template "kbattach"}}</p></form>
+  </div>
+  {{else}}<article class="card kbpage">
+    {{with $d.Old}}<div class="flash row">{{icon "history"}} <span style="flex:1">{{t "kb.old_version" .Editor (datetime .Updated)}} · <a href="/kb/{{$s.ID}}/{{$p.ID}}">{{t "kb.current"}}</a></span>
+      {{if $d.Diff}}<a class="button ghost small" href="/kb/{{$s.ID}}/{{$p.ID}}?v={{$d.Version}}">{{t "kb.as_page"}}</a>{{else}}<a class="button ghost small" href="/kb/{{$s.ID}}/{{$p.ID}}?v={{$d.Version}}&diff=1">{{icon "arrows-exchange"}} {{t "kb.compare"}}</a>{{end}}
+      {{if $s.CanEdit}}<form method="post" action="/kb/{{$s.ID}}/{{$p.ID}}/restore" data-confirm="{{t "kb.restore_confirm"}}"><input type="hidden" name="v" value="{{$d.Version}}"><button class="small">{{icon "arrow-back-up"}} {{t "kb.restore"}}</button></form>{{end}}</div>
+    {{if $d.Diff}}<p class="small muted">{{t "kb.diff_hint"}}</p><div class="kbdiff">{{range $d.Diff}}<div class="{{if eq .Op "+"}}add{{else if eq .Op "-"}}del{{end}}">{{.Op}} {{.Text}}</div>{{end}}</div>
+    {{else}}<h1>{{.Title}}</h1>{{md .Body}}{{end}}
+    {{else}}<div class="row"><h1 style="flex:1">{{.Title}}</h1>
+      {{with $d.Marks}}{{template "kbmarks" (dict "Space" $s.ID "Page" $p.ID "Fav" .FavPage "Watch" .WatchPage "Via" .Inherited)}}{{end}}
+      {{if $s.CanEdit}}<a class="button ghost" href="/kb/{{$s.ID}}/{{.ID}}?edit=1">{{icon "edit"}} {{t "task.change"}}</a>
+      <a class="button ghost" href="/kb/{{$s.ID}}?new=1&parent={{.ID}}" title="{{t "kb.add_sub"}}">{{icon "plus"}}</a>
+      <details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
+        <form method="post" action="/kb/{{$s.ID}}/{{.ID}}/order"><button class="ghost" name="dir" value="up">{{icon "arrow-up"}} {{t "kb.up"}}</button><button class="ghost" name="dir" value="down">{{icon "arrow-down"}} {{t "kb.down"}}</button></form>
+        <form method="post" action="/kb/{{$s.ID}}/{{.ID}}/copy"><button class="ghost">{{icon "copy"}} {{t "kb.copy"}}</button></form>
+        <button type="button" class="ghost" data-toggle="kbmove">{{icon "arrows-exchange"}} {{t "kb.move"}}</button>
+        {{if not $d.Pub}}<form method="post" action="/kb/{{$s.ID}}/publish"><input type="hidden" name="page" value="{{.ID}}"><button class="ghost">{{icon "world"}} {{t "kb.publish_page"}}</button></form>{{end}}
+      </div></details>{{end}}</div>
+    {{if $s.CanEdit}}<form method="post" action="/kb/{{$s.ID}}/{{.ID}}/move" class="card row" id="kbmove" hidden>
+      <select name="to" required style="flex:1"><option value="">{{t "kb.move_to"}}</option>{{range $d.Targets}}{{if .PageID}}<option value="{{.SpaceID}}:{{.PageID}}">{{indent .Depth}}{{.Title}}</option>{{else}}<option value="{{.SpaceID}}">{{.SpaceName}} — {{t "kb.move_top"}}</option>{{end}}{{end}}</select>
+      <button>{{t "kb.move"}}</button></form>{{end}}
+    {{with $d.Pub}}<form method="post" action="/kb/{{$s.ID}}/publish" class="flash row kbpub"><input type="hidden" name="page" value="{{$p.ID}}">{{icon "world"}} <span>{{t "kb.published"}}</span>
+      <input type="text" readonly value="{{$d.Base}}/kbp/{{.}}" style="flex:1"><button type="button" class="ghost small" data-copy="{{$d.Base}}/kbp/{{.}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button>
+      <a class="button ghost small" href="/kbp/{{.}}" target="_blank" rel="noopener">{{icon "external-link"}}</a>
+      <button class="ghost small" name="off" value="1" data-confirm="{{t "kb.unpublish_confirm"}}">{{t "kb.unpublish"}}</button></form>{{end}}
+    {{if gt (len $d.TOC) 1}}<nav class="kbtoc" aria-label="{{t "kb.toc"}}"><b>{{t "kb.toc"}}</b><ul>{{range $d.TOC}}<li class="l{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>{{end}}</ul></nav>{{end}}
+    {{md .Body}}{{end}}
+    {{if and $d.Children (not $d.Old)}}<div class="kbchildren"><h3>{{t "kb.children"}}</h3><ul>{{range $d.Children}}<li><a href="/kb/{{.SpaceID}}/{{.ID}}">{{icon "file-text"}} {{.Title}}</a>{{with .Children}} <span class="muted small">{{t "kb.trash_sub" (len .)}}</span>{{end}}</li>{{end}}</ul>
+      {{if $s.CanEdit}}<a class="button ghost small" href="/kb/{{$s.ID}}?new=1&parent={{.ID}}">{{icon "plus"}} {{t "kb.add_sub"}}</a>{{end}}</div>{{end}}
+    <p class="small muted">{{t "kb.meta" .Author (datetime .Created) .Editor (datetime .Updated)}}</p>
+  </article>
+  {{with $d.Versions}}<details class="card"><summary>{{icon "history"}} {{t "kb.history"}} <span class="muted small">{{len .}}</span></summary>
+    {{range .}}<div class="small"><a href="/kb/{{$s.ID}}/{{$p.ID}}?v={{.ID}}">{{datetime .EditedAt}}</a> · {{.Editor}} · {{.Title}} · <a href="/kb/{{$s.ID}}/{{$p.ID}}?v={{.ID}}&diff=1">{{t "kb.compare"}}</a></div>{{end}}</details>{{end}}
+  {{if $s.CanEdit}}<form method="post" action="/kb/{{$s.ID}}/{{.ID}}/delete" data-confirm="{{if $d.Sub}}{{t "kb.delete_tree_confirm" $d.Sub}}{{else}}{{t "kb.delete_page_confirm"}}{{end}}"><button class="ghost small">{{icon "trash"}} {{t "kb.delete_page"}}</button></form>{{end}}
+  {{end}}{{end}}{{end}}
+  </div>
+</div>
+<script src="{{asset "js/kb.js"}}"></script>
+<script src="{{asset "js/kbedit.js"}}"></script>
+<script src="{{asset "js/kbtree.js"}}"></script>
+{{end}}

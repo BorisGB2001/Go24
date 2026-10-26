@@ -1,0 +1,39 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/mail">{{t "mail.title"}}</a> {{icon "chevron-right"}} {{t "mail.export.title"}}</div>
+<div class="pagehead"><h1>{{icon "download"}} {{t "mail.export.title"}}</h1></div>
+{{if not $d.Boxes}}<div class="card"><p class="muted">{{t "mail.export.no_boxes"}}</p></div>{{else}}
+<div class="layout2 mexport">
+<div class="card"><h2>{{t "mail.export.new"}}</h2>
+  <form method="get" action="/mail/export" class="row"><label>{{t "mail.export.box"}}</label>
+    <select name="box" data-export-box>{{range $d.Boxes}}<option value="{{.ID}}"{{if eq .ID $d.Box}} selected{{end}}>{{.Email}}</option>{{end}}</select></form>
+  <form method="post" action="/mail/export" class="msettings-form" data-export-form>
+    <input type="hidden" name="box" value="{{$d.Box}}">
+    <label>{{t "mail.export.what"}}</label>
+    <label class="check"><input type="radio" name="scope" value="all"{{if not $d.Folder}} checked{{end}}> {{t "mail.export.all"}}</label>
+    <label class="check"><input type="radio" name="scope" value="folders"{{if $d.Folder}} checked{{end}}> {{t "mail.export.chosen"}}</label>
+    <div class="mexport-folders" data-export-folders>{{range $d.Folders}}{{if and .Selectable (not .Local)}}
+      <label class="check" style="padding-left:calc({{.Depth}} * 1.2em)"><input type="checkbox" name="folder" value="{{.ID}}"{{if eq .ID $d.Folder}} checked{{end}}> {{if .Role}}{{t (print "mail.folder." .Role)}}{{else}}{{.Title}}{{end}} <span class="muted small">{{.Total}}</span></label>{{end}}{{end}}
+      <label class="check"><input type="checkbox" name="subfolders" value="1" checked> {{t "mail.export.subfolders"}}</label></div>
+    <label>{{t "mail.export.period"}}</label>
+    <div class="row"><input type="date" name="since" title="{{t "mail.export.since"}}"> — <input type="date" name="until" title="{{t "mail.export.until"}}"></div>
+    <p class="small muted">{{t "mail.export.period_hint"}}</p>
+    <label>{{t "mail.export.format"}}</label>
+    {{range $i, $f := $d.Formats}}<label class="check"><input type="radio" name="format" value="{{$f}}"{{if eq $i 0}} checked{{end}}> {{t (print "mail.export.format_" $f)}}</label>
+    <p class="small muted">{{t (print "mail.export.format_" $f "_hint")}}</p>{{end}}
+    <p class="small muted">{{t "mail.export.hint"}}</p>
+    <p><button class="primary">{{icon "download"}} {{t "mail.export.start"}}</button></p></form>
+</div>
+<div class="card"{{if $d.Busy}} data-export-busy{{end}}><h2>{{t "mail.export.list"}}</h2>
+  {{range $d.Exports}}<div class="row mexport-item">
+    <div style="flex:1"><b>{{.Email}}</b> · {{t (print "mail.export.format_" .Format)}}{{with .Since}} · {{t "mail.export.from"}} {{day (deref .)}}{{end}}{{with .Until}} · {{t "mail.export.to"}} {{day (deref .)}}{{end}}
+      <div class="small muted">{{datetime .CreatedAt}}{{if .Folders}} · {{t "mail.export.folders_n" (len .Folders)}}{{else}} · {{t "mail.export.all"}}{{end}}
+        {{if eq .Status "done"}} · {{t "mail.export.letters_n" .Letters}} · {{size .Size}}{{else if eq .Status "running"}} · {{t "mail.export.letters_n" .Letters}}{{end}}</div>
+      {{with .Error}}<div class="small dl over">{{.}}</div>{{end}}</div>
+    <span class="pill mexport-{{.Status}}">{{t (print "mail.export.status_" .Status)}}</span>
+    {{if and (eq .Status "done") .URL}}<a class="button ghost small" href="{{.URL}}">{{icon "folder"}} {{t "mail.export.open"}}</a>{{end}}
+    {{if ne .Status "running"}}<form method="post" action="/mail/export/{{.ID}}/delete"{{if eq .Status "queued"}} data-confirm="{{t "mail.export.cancel_confirm"}}"{{end}}><button class="ghost small" title="{{if eq .Status "queued"}}{{t "common.cancel"}}{{else}}{{t "mail.export.remove"}}{{end}}">{{icon "x"}}</button></form>{{end}}
+  </div>{{else}}<p class="muted">{{t "mail.export.none"}}</p>{{end}}
+</div>
+</div>{{end}}
+<script src="{{asset "js/mailexport.js"}}"></script>
+{{end}}

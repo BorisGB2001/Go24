@@ -1,0 +1,10 @@
+{{define "content"}}{{$d := .Data}}{{$t := $d.Doc.PublicToken}}
+<div class="share pubdoc">
+  <div class="row diskhead"><h2 style="flex:1">{{icon "file-text"}} {{$d.Title}}</h2>
+    {{if $d.PDF}}<a class="button primary" href="/d/{{$t}}/pdf">{{icon "download"}} PDF</a>{{end}}
+    <a class="button{{if not $d.PDF}} primary{{end}}" href="/d/{{$t}}/docx">{{icon "download"}} DOCX</a></div>
+  {{with index $d.Doc.Values "DocumentDate"}}<div class="muted small">{{.}}</div>{{end}}
+  {{if $d.PDF}}<iframe class="pubdoc-view" src="/d/{{$t}}/pdf?inline=1" title="{{$d.Title}}"></iframe>{{end}}
+  <p class="muted small share-foot">go24 · {{t "share.foot"}}</p>
+</div>
+{{end}}

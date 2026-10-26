@@ -1,0 +1,34 @@
+/* «CRM-формы»: the editor in CRM (.crmform-*) and the form as the client sees it (.cf, templates/crmformpub.html). */
+.crmform-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 16px; align-items: end; }
+.crmform-fields td { vertical-align: middle; }
+.crmform-fields td.drag { cursor: grab; width: 24px; color: var(--muted, #888); }
+.crmform-fields tr.dragging { opacity: .5; }
+.crmform-fields input[type=text] { width: 100%; }
+.crmform-edit textarea, .crmform-edit input[type=url] { width: 100%; }
+textarea.mono { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.crmform-answers { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+.crmform-answers dt { color: var(--muted, #888); }
+.crmform-answers dd { margin: 0; white-space: pre-wrap; }
+
+body.cf { margin: 0; padding: 32px 16px; background: #f4f6fa; color: #1d2330;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body.cf.cf-embed { padding: 0; background: transparent; }
+.cf-card { max-width: 560px; margin: 0 auto; padding: 28px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); box-sizing: border-box; }
+.cf-embed .cf-card { box-shadow: none; max-width: none; }
+.cf h1 { font-size: 24px; line-height: 1.25; margin: 0 0 8px; }
+.cf-text { color: #5b6474; margin: 0 0 16px; }
+.cf-field { margin: 0 0 14px; }
+.cf-field > label { display: block; font-size: 14px; margin-bottom: 4px; color: #5b6474; }
+.cf input[type=text], .cf input[type=email], .cf input[type=tel], .cf input[type=url], .cf input[type=date], .cf select, .cf textarea {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #ccd3df; border-radius: 8px; font: inherit; background: #fff; color: inherit; }
+.cf input:focus, .cf select:focus, .cf textarea:focus { outline: 2px solid #1f6feb33; border-color: #1f6feb; }
+.cf-check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.cf-check input { margin-top: 4px; }
+.cf-consent { margin: 4px 0 16px; color: #5b6474; }
+.cf-req { color: #d1242f; }
+.cf button { width: 100%; padding: 12px 20px; border: 0; border-radius: 8px; background: #1f6feb; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.cf button:hover { background: #1a5fcc; }
+.cf-err { margin: 0 0 16px; padding: 10px 12px; border-radius: 8px; background: #ffebe9; color: #a40e26; }
+.cf-done { text-align: center; padding: 24px 0; }
+.cf-ok { width: 56px; height: 56px; margin: 0 auto 12px; border-radius: 50%; background: #dafbe1; color: #1a7f37; font-size: 30px; line-height: 56px; }
+.cf-hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }

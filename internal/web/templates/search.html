@@ -1,0 +1,5 @@
+{{define "content"}}
+<h1>{{t "title.search"}}</h1>
+<div class="sub">{{if .Query}}{{t "search.found" .Query (len .Data)}}{{else}}{{t "search.hint"}}{{end}}</div>
+{{if .Query}}<div class="card flush">{{template "tasklist" (tl .Data .Cols true)}}</div>{{end}}
+{{end}}

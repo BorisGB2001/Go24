@@ -1,0 +1,35 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "notify.settings"}}</h1></div>
+{{if $d.Links}}<section class="card nset nchan" id="channels">
+  <h2>{{t "notifyout.channels"}}</h2>
+  <p class="muted small">{{t "notifyout.channels_hint"}}</p>
+  {{range $d.Links}}<div class="nchan-row" id="ch-{{.Channel}}">
+    <b>{{t (print "notifyout.ch." .Channel)}}</b>
+    {{if .Linked}}<span>{{t "notifyout.linked_as" .Account}}</span>
+    <form method="post" action="/settings/notifications/{{.Channel}}/unlink" data-confirm="{{t "notifyout.unlink_confirm"}}"><button class="ghost small">{{t "notifyout.unlink"}}</button></form>
+    {{else if .Code}}{{if .URL}}<a class="button primary small" href="{{.URL}}" target="_blank" rel="noopener">{{t "notifyout.open" (t (print "notifyout.ch." .Channel))}}</a>
+    <span class="muted small">{{t "notifyout.open_hint"}}</span>{{else}}<span class="muted small">{{t "notifyout.code_hint" .Bot}}</span> <code>{{.Code}}</code>{{end}}
+    <a class="small" href="/settings/notifications?check=1#ch-{{.Channel}}">{{t "notifyout.check"}}</a>
+    {{else}}<form method="post" action="/settings/notifications/{{.Channel}}/link"><button class="small">{{t "notifyout.link"}}</button></form>{{end}}
+  </div>{{end}}
+</section>{{end}}
+<form method="post" action="/settings/notifications" class="card nset">
+  <p class="muted">{{t "notify.settings_hint"}}</p>
+  <table class="nset-table">
+    <thead><tr><th></th><th>{{t "notifyout.col_go24"}}</th>{{range $d.Linked}}<th>{{t (print "notifyout.ch." .Channel)}}<input type="hidden" name="chs" value="{{.Channel}}"></th>{{end}}</tr></thead>
+    {{range $d.Kinds}}<tbody>
+      <tr><th colspan="99" class="nset-group">{{t (print "notify.group." .Group)}}</th></tr>
+      {{range $k := .Kinds}}<tr><td>{{t (print "notify.set." $k)}}</td>
+        <td><input type="checkbox" name="on" value="{{$k}}" aria-label="{{t "notifyout.col_go24"}}" {{if not (index $d.Settings.Off $k)}}checked{{end}}></td>
+        {{range $d.Linked}}<td><input type="checkbox" name="ch_{{.Channel}}" value="{{$k}}" aria-label="{{t (print "notifyout.ch." .Channel)}}" {{if not (index .Off $k)}}checked{{end}}></td>{{end}}</tr>{{end}}
+    </tbody>{{end}}
+  </table>
+  {{if $d.Messenger}}
+  <fieldset><legend>{{t "notify.group.messenger"}}</legend>
+    <label class="check"><input type="checkbox" name="matrix" value="on" {{if $d.Settings.Matrix}}checked{{end}}> {{t "notify.set.matrix"}}</label>
+    <p class="muted small">{{t "notify.set.matrix_hint"}}</p>
+  </fieldset>
+  {{end}}
+  <div><button>{{t "common.save"}}</button></div>
+</form>
+{{end}}

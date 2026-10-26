@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<h1>{{t "audit.title"}}</h1>
+<div class="sub">{{t "audit.subtitle"}}</div>
+<form class="row filters" method="get" action="/settings/events">
+  <select name="kind" style="width:auto" onchange="this.form.submit()"><option value="">{{t "audit.kind.all"}}</option>
+    {{range $d.Kinds}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "audit.kind." .)}}</option>{{end}}</select>
+  <span style="min-width:14em">{{template "upick" (upick "user" $f.UserID nil "submit" "ph" (t "audit.anyone"))}}</span>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $f.From.IsZero}}{{$f.From.Format "2006-01-02"}}{{end}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{if not $f.To.IsZero}}{{$f.To.Format "2006-01-02"}}{{end}}"></span></span>
+  <button>{{icon "search"}} {{t "common.find"}}</button>
+  {{if $d.Filtered}}<a class="button ghost" href="/settings/events">{{t "filter.reset"}}</a>{{end}}
+  <a class="button ghost" href="{{$d.CSV}}">{{icon "download"}} {{t "audit.csv"}}</a>
+</form>
+{{if $d.Events}}
+<div class="card flush"><table class="tlist audit">
+  <thead><tr><th>{{t "audit.col.at"}}</th><th>{{t "audit.col.event"}}</th><th>{{t "audit.col.user"}}</th><th>{{t "audit.col.target"}}</th><th>{{t "audit.col.ip"}}</th><th>{{t "audit.col.agent"}}</th></tr></thead>
+  {{range $d.Events}}<tr>
+    <td class="nowrap">{{datetime .At}}</td>
+    <td><span class="pill audit-{{.Kind}}">{{t (print "audit.kind." .Kind)}}</span></td>
+    <td>{{if .UserID}}<a href="/u/{{.UserID}}" data-user="{{.UserID}}">{{.Name}}</a>{{else}}<span class="muted">{{or .Name "—"}}</span>{{end}}</td>
+    <td>{{if .TargetID}}<a href="/u/{{.TargetID}}" data-user="{{.TargetID}}">{{.Target}}</a>{{else if eq .Kind "audit_days"}}{{t "audit.days_n" .Target}}{{else}}{{.Target}}{{end}}</td>
+    <td class="nowrap"><code>{{.IP}}</code></td>
+    <td class="muted small" title="{{.Agent}}">{{browser .Agent}}</td></tr>{{end}}
+</table></div>
+{{with $d.More}}<p><a class="button ghost" href="{{.}}">{{t "common.more"}}</a></p>{{end}}
+{{else}}<p class="muted">{{t "audit.empty"}}</p>{{end}}
+<form class="card row" method="post" action="/settings/events">
+  <label style="margin:0">{{t "audit.keep"}}</label>
+  <select name="days" style="width:auto">{{range $d.DaysChoice}}<option value="{{.}}" {{if eq . $d.Days}}selected{{end}}>{{t "audit.days_n" .}}</option>{{end}}</select>
+  <button class="primary">{{t "common.save"}}</button>
+</form>
+{{end}}

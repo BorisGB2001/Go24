@@ -1,0 +1,20 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.F}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1>
+  {{if $d.Rights.CanAny "write"}}<details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "stock.doc_new"}}</summary>
+    <div class="pop links">{{range $d.Kinds}}{{if $d.Rights.Can . "write"}}<a href="/store/docs/new?kind={{.}}">{{t (print "stock.kind." .)}}</a>{{end}}{{end}}</div></details>{{end}}</div>
+<div class="tabs">{{template "stocktabs" $d}}<span class="spacer"></span>
+  <form method="get" action="/store/docs" class="row">{{with $f.Kind}}<input type="hidden" name="kind" value="{{.}}">{{end}}{{with $f.Status}}<input type="hidden" name="status" value="{{.}}">{{end}}
+    <input type="search" name="q" value="{{$f.Q}}" placeholder="{{t "stock.search"}}"></form></div>
+<div class="row presets"><a class="chip{{if not $f.Kind}} on{{end}}" href="/store/docs{{with $f.Status}}?status={{.}}{{end}}">{{t "stock.all_docs"}}</a>
+  {{range $d.Kinds}}{{if $d.Rights.Can . "read"}}<a class="chip{{if eq . $f.Kind}} on{{end}}" href="/store/docs?kind={{.}}{{with $f.Status}}&status={{.}}{{end}}">{{t (print "stock.kinds." .)}}</a>{{end}}{{end}}
+  <span class="spacer"></span>
+  {{range $d.Statuses}}<a class="chip{{if eq . $f.Status}} on{{end}}" href="/store/docs?status={{if ne . $f.Status}}{{.}}{{end}}{{with $f.Kind}}&kind={{.}}{{end}}">{{t (print "stock.status." .)}}</a>{{end}}</div>
+<div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th>{{t "stock.doc"}}</th><th>{{t "stock.doc_status"}}</th><th>{{t "stock.doc_date"}}</th><th>{{t "crm.f.amount"}}</th><th>{{t "stock.supplier"}}</th><th>{{t "crm.f.responsible"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/store/docs/{{.ID}}" class="ttitle">{{t (print "stock.kind." .Kind)}} № {{.Number}}</a>{{with .Title}}<div class="small muted">{{.}}</div>{{end}}{{if .Deal.ID}}<div class="small"><span class="muted">{{t "stock.deal"}}:</span> <a href="/crm/deals/{{.Deal.ID}}">{{.Deal.Name}}</a></div>{{end}}</td>
+    <td>{{template "stockstatus" .Status}}</td><td class="small nowrap">{{day .Date}}</td><td class="nowrap">{{if ne .Kind "moving"}}<b>{{money .Amount}} {{.Currency}}</b>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="small">{{if .Supplier.ID}}<a href="/crm/companies/{{.Supplier.ID}}">{{.Supplier.Name}}</a>{{end}}{{with .IncomingNumber}}<div class="muted">{{t "stock.incoming"}} {{.}}</div>{{end}}</td>
+    <td class="small">{{.Responsible.Name}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "stock.no_docs"}}</div>{{end}}</div>
+{{end}}

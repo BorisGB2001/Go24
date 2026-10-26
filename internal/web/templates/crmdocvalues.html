@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/crm/{{$d.Kind}}">{{t (print "crm." $d.Kind)}}</a> › <a href="{{$d.Back}}">{{$d.CardTitle}}</a></div>
+<h1>{{$d.Template.Name}}{{with $d.Doc.Number}} № {{.}}{{end}}</h1>
+<div class="sub">{{if $d.Doc.ID}}{{t "docs.values_doc"}}{{else}}{{t "docs.values_new"}}{{end}}</div>
+<div class="card" style="max-width:720px">
+  <form method="post" action="{{if $d.Doc.ID}}/crm/{{$d.Kind}}/{{$d.ID}}/documents/{{$d.Doc.ID}}{{else}}/crm/{{$d.Kind}}/{{$d.ID}}/document{{end}}" data-docvalues>
+    {{if not $d.Doc.ID}}<input type="hidden" name="template" value="{{$d.Template.ID}}">{{end}}
+    {{range $d.Fields}}<label><code>{{"{"}}{{.Name}}{{"}"}}</code></label>
+    {{if gt (len .Value) 80}}<textarea name="v.{{.Name}}" rows="3">{{.Value}}</textarea>{{else}}<input type="text" name="v.{{.Name}}" value="{{.Value}}">{{end}}
+    {{else}}<p class="muted">{{t "docs.no_fields"}}</p>{{end}}
+    <p><button class="primary">{{icon "file-plus"}} {{if $d.Doc.ID}}{{t "docs.remake"}}{{else}}{{t "docs.make_doc"}}{{end}}</button> <a class="button ghost" href="{{$d.Back}}">{{t "common.cancel"}}</a></p>
+  </form></div>
+{{end}}

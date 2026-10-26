@@ -1,0 +1,41 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/templates">{{t "templates.title"}}</a> {{icon "chevron-right"}}{{with $d.T.ParentID}} <a href="/templates/{{.}}">{{$d.T.ParentTitle}}</a> {{icon "chevron-right"}}{{end}} {{if $d.T.ID}}{{$d.T.Title}}{{else if $d.T.ParentID}}{{t "templates.new_subtask"}}{{else}}{{t "templates.new"}}{{end}}</div>
+<div class="pagehead"><h1>{{if $d.T.ParentID}}{{if $d.T.ID}}{{t "templates.edit_subtask"}}{{else}}{{t "templates.new_subtask"}}{{end}}{{else if $d.T.ID}}{{t "templates.edit"}}{{else}}{{t "templates.new"}}{{end}}</h1>
+  {{if $d.T.ID}}<span style="flex:1"></span><a class="button" href="/tasks/new?template={{$d.T.ID}}">{{icon "plus"}} {{t "templates.run"}}</a>{{end}}</div>
+{{if not $d.Projects}}
+<div class="card empty">{{icon "folders"}} {{t "task.need_project"}} <a href="/projects">{{t "nav.all_projects"}}</a></div>
+{{else}}
+{{if eq $d.T.Shared "read"}}<p class="muted">{{icon "lock"}} {{t "templates.read_only" $d.T.CreatorName}}</p>
+<div class="card newtask"><fieldset disabled style="border:0;padding:0;margin:0;min-width:0">{{template "taskform" $d.Form}}</fieldset></div>
+{{else}}<div class="card newtask">{{template "taskform" $d.Form}}</div>{{end}}
+{{if $d.T.ID}}
+<div class="card tpl-subs">
+  <div class="row"><h3>{{icon "hierarchy-2"}} {{t "templates.subtasks"}}</h3><span style="flex:1"></span>
+    {{if $d.T.CanEdit}}<a class="button" href="/templates/new?parent={{$d.T.ID}}">{{icon "plus"}} {{t "templates.add_subtask"}}</a>{{end}}</div>
+  {{if $d.T.Subtasks}}
+  <table class="list" data-cols="template-subtasks">
+    <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "props.responsible"}}</th><th>{{t "props.deadline_full"}}</th><th data-nosize></th></tr></thead>
+    <tbody>{{range $d.T.Subtasks}}
+    <tr><td><a href="/templates/{{.ID}}"><b>{{.Title}}</b></a>{{if .SubCount}} <span class="badge">{{icon "hierarchy-2"}} {{.SubCount}}</span>{{end}}</td>
+      <td>{{person .ResponsibleName}}</td>
+      <td>{{if .DeadlineAfter}}{{t "templates.after" .AfterDays .AfterHours}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="tpl-actions"><div class="acts">{{if $d.T.CanEdit}}<form method="post" action="/templates/{{.ID}}/delete" data-confirm="{{t "templates.sub_delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div></td></tr>
+    {{end}}</tbody>
+  </table>
+  {{else}}<p class="muted small">{{t "templates.subtasks_empty"}}</p>{{end}}
+</div>
+{{end}}
+{{if and $d.T.ID (not $d.T.ParentID) $d.T.CanEdit}}
+<div class="card tpl-access">
+  <h3>{{icon "lock"}} {{t "templates.access"}}</h3>
+  <p class="muted small">{{t "templates.access_hint" $d.T.CreatorName}}</p>
+  <form method="post" action="/templates/{{$d.T.ID}}/access" class="stack">
+    <label>{{t "templates.access_read"}}{{template "upick" (upick "read" $d.Read nil "multi" "depts" "ph" (t "templates.access_nobody"))}}</label>
+    <label>{{t "templates.access_full"}}{{template "upick" (upick "full" $d.Full nil "multi" "depts" "ph" (t "templates.access_nobody"))}}</label>
+    <div><button>{{t "common.save"}}</button></div>
+  </form>
+</div>
+{{end}}
+{{if $d.T.ID}}<p class="muted small">{{t "templates.stats" $d.T.CreatedCount}}{{with $d.T.LastRun}} · {{t "templates.last"}} {{datetime .}}{{end}}{{with $d.T.NextRun}} · {{t "templates.next"}}: {{datetime .}}{{end}}</p>{{end}}
+{{end}}
+{{end}}

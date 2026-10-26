@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a></div>
+<div class="pagehead"><h1>{{t "bp.templates"}}</h1><a class="button create" href="/bp/templates/new">{{icon "plus"}} {{t "bp.new_template"}}</a></div>
+<div class="card flush">{{if $d.Templates}}<table class="tlist"><tbody>{{range $d.Templates}}<tr>
+  <td><a href="/bp/templates/{{.ID}}" class="ttitle">⚙ {{.Name}}</a>{{if not .Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</td>
+  <td class="small">{{if eq .Entity "none"}}{{t "bp.standalone"}}{{else}}{{t (print "crm." .Entity)}}{{end}}</td><td class="small">{{t "bp.n_steps" (len .Steps)}}</td>
+  <td><form method="post" action="/bp/templates/{{.ID}}/delete" data-confirm="{{t "bp.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>
+  {{else}}<div class="empty">{{t "bp.no_templates"}}</div>{{end}}</div>
+{{with $d.Std}}<div class="card" style="max-width:640px"><h3>{{t "bp.std.title"}}</h3>
+  <p class="small muted">{{range $i, $k := .}}{{if $i}}, {{end}}{{t (print "bp.std." $k)}}{{end}}. {{t "bp.std.hint"}}</p>
+  <form method="post" action="/bp/standard"><label>{{t "bp.std.accountant"}}</label>{{template "upick" (upick "accountant" "" $d.Users "required")}}
+    <p><button class="primary">{{icon "download"}} {{t "bp.std.install"}}</button></p></form></div>{{end}}
+{{end}}

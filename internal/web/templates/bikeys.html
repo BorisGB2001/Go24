@@ -1,0 +1,71 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/bi">{{t "bi.title"}}</a></div>
+<h1>{{t "bi.keys.title"}}</h1>
+<div class="sub">{{t "bi.keys.subtitle"}}</div>
+
+{{if $d.NewToken}}
+<div class="card bi-token">
+  <h2>{{icon "alert-triangle"}} {{t "keys.created_title"}}</h2>
+  <p class="muted">{{t "keys.created_hint"}}</p>
+  <input type="text" readonly value="{{$d.NewToken}}" onclick="this.select()" class="mono">
+  <p class="small">{{t "bi.keys.url_json"}}<br><code>{{$d.BaseURL}}/api/v1/bi/export/crm_deal?key={{$d.NewToken}}</code></p>
+  <p class="small">{{t "bi.keys.url_csv"}}<br><code>{{$d.BaseURL}}/api/v1/bi/export/crm_deal?format=csv&amp;names=1&amp;key={{$d.NewToken}}</code></p>
+  <p class="small">{{t "bi.keys.url_list"}}<br><code>{{$d.BaseURL}}/api/v1/bi/export?key={{$d.NewToken}}</code></p>
+</div>
+{{end}}
+
+<div class="card flush">
+  {{if $d.Keys}}
+  <table class="tlist">
+    <thead><tr><th>{{t "col.name"}}</th><th>{{t "bi.keys.datasets"}}</th><th>{{t "bi.d.author"}}</th><th>{{t "col.created"}}</th><th>{{t "col.used"}}</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Keys}}
+    <tr {{if .RevokedAt}}class="muted"{{end}}>
+      <td>{{icon "key"}} {{.Name}}<div class="small muted"><code>{{.KeyID}}</code>{{if .RevokedAt}} · {{t "keys.revoked"}}{{end}}</div></td>
+      <td class="small">{{if .Datasets}}{{range $i, $c := .Datasets}}{{if $i}}, {{end}}{{or (index $d.Names $c) $c}}{{end}}{{else}}{{t "bi.keys.all"}}{{end}}</td>
+      <td><a href="/u/{{.CreatedBy}}" data-user="{{.CreatedBy}}">{{.AuthorName}}</a></td>
+      <td class="small nowrap">{{datetime .CreatedAt}}</td>
+      <td class="small nowrap">{{with .LastUsedAt}}{{datetime (deref .)}}{{else}}—{{end}}{{if .LastUsedAt}}<div class="muted">{{.LastUsedIP}} · {{t "bi.keys.uses"}}: {{.Uses}}</div>{{end}}</td>
+      <td class="nowrap">{{if not .RevokedAt}}<form method="post" action="/bi/keys/{{.ID}}/revoke" class="inline"><button class="ghost" title="{{t "keys.revoke"}}">{{icon "ban"}}</button></form>{{end}}<form method="post" action="/bi/keys/{{.ID}}/delete" class="inline" data-confirm="{{t "bi.keys.delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{t "bi.keys.empty"}}</div>{{end}}
+</div>
+
+<div class="card">
+  <h2>{{icon "plus"}} {{t "bi.keys.new"}}</h2>
+  <form method="post" action="/bi/keys">
+    <label>{{t "keys.name_label"}}<input type="text" name="name" placeholder="Power BI" required maxlength="200"></label>
+    <div class="small">{{t "bi.keys.datasets"}}</div>
+    <div class="row bi-sets">{{range $d.Datasets}}<label class="check"><input type="checkbox" name="datasets" value="{{.Code}}"> {{.Name}}</label>{{end}}</div>
+    <p class="small muted">{{t "bi.keys.sets_hint"}} {{t "bi.keys.rights"}}</p>
+    <p><button class="primary">{{icon "key"}} {{t "keys.create"}}</button></p>
+  </form>
+</div>
+
+<div class="card bi-help">
+  <h2>{{icon "notebook"}} {{t "bi.keys.how"}}</h2>
+  <ul>
+    <li>{{t "bi.keys.how_pbi"}}</li>
+    <li>{{t "bi.keys.how_looker"}}</li>
+    <li>{{t "bi.keys.how_datalens"}}</li>
+  </ul>
+  <h3>{{t "bi.keys.params"}}</h3>
+  <table class="tlist small">
+    <tr><td><code>format=csv</code></td><td>{{t "bi.keys.p_format"}}</td></tr>
+    <tr><td><code>fields=title,amount</code></td><td>{{t "bi.keys.p_fields"}}</td></tr>
+    <tr><td><code>period=</code>{{range $i, $p := $d.Periods}}{{if and (ne $p "range") (ne $p "all")}}<code>{{$p}}</code> {{end}}{{end}}</td><td>{{t "bi.keys.p_period"}}</td></tr>
+    <tr><td><code>from=2026-01-01&amp;to=2026-03-31</code></td><td>{{t "bi.keys.p_range"}}</td></tr>
+    <tr><td><code>date_field=closed_at</code></td><td>{{t "bi.keys.p_date_field"}}</td></tr>
+    <tr><td><code>filter=won:yes</code>, <code>filter=amount:gte:1000</code>, <code>filter=stage:in:A|B</code></td><td>{{t "bi.keys.p_filter"}}</td></tr>
+    <tr><td><code>limit=1000&amp;offset=2000</code></td><td>{{t "bi.keys.p_page"}}</td></tr>
+    <tr><td><code>names=1&amp;lang=en</code></td><td>{{t "bi.keys.p_names"}}</td></tr>
+  </table>
+  <h3>{{t "bi.keys.fields"}}</h3>
+  {{range $d.Datasets}}<details><summary><b>{{.Name}}</b> — <code>{{.Code}}</code></summary>
+    <p class="small"><code>id</code> — {{t "bi.f.id"}}{{range .Fields}}, <code>{{.Code}}</code> — {{.Name}}{{end}}</p></details>{{end}}
+</div>
+{{end}}

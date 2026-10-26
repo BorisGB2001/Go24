@@ -1,0 +1,5 @@
+{{/* «Приложения» in a card: the tabs of the applications bound to its place; the frame opens when the tab does */}}
+{{define "apptabs"}}{{$id := .ID}}{{range .Tabs}}<details class="card apptab" data-app-tab>
+  <summary><h2>{{icon "layout-grid"}} {{.Tab}}</h2>{{with .Description}} <span class="muted small">{{.}}</span>{{end}}</summary>
+  <iframe title="{{.Tab}}" data-src="/apps/tab/{{.ID}}?id={{$id}}" allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
+</details>{{end}}{{end}}

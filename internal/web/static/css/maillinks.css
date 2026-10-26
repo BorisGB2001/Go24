@@ -1,0 +1,46 @@
+/* «Почта» with the calendar, tasks, the CRM; shared mailboxes (templates/parts/mail.html, mailshared.html) */
+.mread-links { flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; align-items: center; }
+.mread-links .tag { display: inline-flex; gap: 4px; align-items: center; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcrm-menu .mbox-pop { min-width: 260px; max-width: 360px; }
+.mcrm-search input[type=search] { width: 100%; margin-top: 4px; }
+.mcrm-res { display: flex; flex-direction: column; max-height: 220px; overflow: auto; }
+.mcrm-res button { text-align: left; justify-content: flex-start; }
+
+.minvite { border-left: 4px solid var(--accent); padding: 10px 12px; margin: 0 0 12px; background: var(--accent-soft); }
+.minvite.cancelled { border-left-color: var(--danger); background: var(--danger-soft); }
+.minv-head { gap: 8px; align-items: center; margin-bottom: 6px; }
+.minv-head .pill { margin-left: auto; }
+.minvite .props { margin: 4px 0 8px; }
+.minv-form .row { gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.minv-form textarea { width: 100%; margin-top: 4px; }
+.minv-conflict { color: var(--warn); }
+
+.msender { margin: 12px 0 0; padding: 10px 12px; }
+.msender summary { gap: 6px; align-items: center; cursor: pointer; }
+.msender > div, .msender > b { display: block; margin-top: 6px; }
+.msender-emp { display: flex; gap: 10px; align-items: center; }
+
+.mshared .mbox-head a { margin-left: auto; }
+
+/* a shared mailbox as a helpdesk */
+.mshare { display: grid; grid-template-columns: minmax(280px, 420px) 1fr; gap: var(--gap); align-items: start; }
+.mshare-list { padding: 0; }
+.mshare-bar { gap: 6px; flex-wrap: wrap; padding: 10px; border-bottom: 1px solid var(--line); align-items: center; }
+.mticket { display: block; padding: 8px 12px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+.mticket:hover { background: var(--hover); }
+.mticket.on { background: var(--accent-soft); }
+.mticket.unread .msubj { font-weight: 600; }
+.mticket .row { gap: 6px; align-items: center; }
+.mticket .msubj { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tst-new { background: var(--accent-soft); color: var(--accent); }
+.tst-progress { background: var(--warn-soft); color: var(--warn); }
+.tst-done { background: var(--ok-soft); color: var(--ok); }
+.mshare-read .mmsg { border-top: 1px solid var(--line); padding: 8px 0; }
+.mshare-tools { gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0 12px; }
+.mshare-reply textarea { width: 100%; }
+@media (max-width: 900px) { .mshare { grid-template-columns: 1fr; } }
+/* «Поделиться» of a letter: to the feed or a chat */
+.msend-menu .mbox-pop { width: 320px; max-width: calc(100vw - 32px); }
+.msend-pop form + form { border-top: 1px solid var(--line); padding-top: 8px; }
+.msend-pop textarea, .msend-pop select, .msend-pop input[name="name"] { width: 100%; }
+.msend-people { display: grid; gap: 2px; max-height: 140px; overflow: auto; }

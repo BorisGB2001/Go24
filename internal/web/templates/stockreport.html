@@ -1,0 +1,46 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.F}}{{$cost := $d.Rights.PurchasePrice}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1>
+  <a class="button ghost" href="{{$d.CSV}}" title="{{t "crm.export_hint"}}">{{icon "download"}} {{t "crm.export"}}</a></div>
+<div class="tabs">{{template "stocktabs" $d}}</div>
+<form method="get" action="/store/reports/{{$d.Report}}" class="row stockreportbar">
+  <span class="seg"><a class="chip{{if eq $d.Report "stock"}} on{{end}}" href="/store/reports/stock">{{t "stock.stock_report"}}</a><a class="chip{{if eq $d.Report "moves"}} on{{end}}" href="/store/reports/moves">{{t "stock.moves_report"}}</a></span>
+  {{if eq $d.Report "stock"}}<label class="small">{{t "stock.on_date"}} <input type="date" name="date" value="{{dinput (ptr $f.Date)}}" data-autosubmit style="width:auto"></label>
+  {{else}}<span class="period small"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput (ptr $f.From)}}" data-autosubmit style="width:auto"></span>
+    <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput (ptr $f.To)}}" data-autosubmit style="width:auto"></span></span>{{end}}
+  <select name="warehouse" data-autosubmit style="width:auto"><option value="">{{t "stock.all_warehouses"}}</option>
+    {{range $d.Warehouses}}<option value="{{.ID}}" {{if eq .ID $f.Warehouse}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  {{with $d.Product}}<input type="hidden" name="product" value="{{.ID}}">
+  {{else}}<select name="section" data-autosubmit style="width:auto"><option value="">{{t "crm.sections_all"}}</option>
+    {{range $d.Sections}}<option value="{{.ID}}" {{if eq .ID $f.Section}}selected{{end}}>{{.Path}}</option>{{end}}</select>
+  <input type="search" name="q" value="{{$f.Q}}" placeholder="{{t "crm.search"}}" style="width:auto">{{end}}
+</form>
+{{if $d.Product}}{{$p := $d.Product}}
+<div class="card flush"><div class="stockreporthead"><a href="/store/reports/moves?from={{dinput (ptr $f.From)}}&to={{dinput (ptr $f.To)}}&warehouse={{$f.Warehouse}}" class="small">{{icon "chevron-left"}} {{t "stock.moves_report"}}</a>
+  <h2>{{$p.Name}}{{with $p.SKU}} <span class="small muted">{{.}}</span>{{end}}</h2></div>
+  <div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "stock.doc_date"}}</th><th>{{t "stock.doc"}}</th><th>{{t "stock.warehouse"}}</th><th class="right">{{t "stock.in"}}</th><th class="right">{{t "stock.out"}}</th><th class="right">{{t "stock.balance"}}</th></tr></thead>
+  <tbody><tr><td class="small nowrap">{{day $f.From}}</td><td class="muted" colspan="4">{{t "stock.opening"}}</td><td class="right"><b>{{fnum $d.Opening}}</b></td></tr>
+  {{range $d.Moves}}<tr><td class="small nowrap">{{day .Date}}</td><td><a href="/store/docs/{{.DocID}}">{{t (print "stock.kind." .Kind)}} №{{.Number}}</a>{{with .Title}} <span class="small muted">{{.}}</span>{{end}}</td>
+    <td class="small">{{.Warehouse.Name}}</td><td class="right nowrap">{{with .In}}+{{fnum .}}{{end}}</td><td class="right nowrap">{{with .Out}}−{{fnum .}}{{end}}</td>
+    <td class="right nowrap"><b>{{fnum .Balance}}</b></td></tr>
+  {{else}}<tr><td colspan="6" class="empty">{{t "stock.no_moves"}}</td></tr>{{end}}</tbody>
+</table></div></div>
+{{else if $d.Items}}<div class="card flush"><div class="tablewrap"><table class="tlist">
+  {{if eq $d.Report "stock"}}
+  <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.product_sku"}}</th>{{if not $f.Warehouse}}{{range $d.Warehouses}}<th class="right">{{.Name}}</th>{{end}}{{end}}<th class="right">{{t "stock.total"}}</th>{{if $cost}}<th class="right">{{t "stock.cost"}}</th><th class="right">{{t "stock.sum"}}</th>{{end}}</tr></thead>
+  <tbody>{{range $d.Items}}{{$x := .}}<tr><td><a href="/store/reports/moves?product={{.ID}}&warehouse={{$f.Warehouse}}&to={{dinput (ptr $f.Date)}}" class="ttitle">{{.Name}}</a>{{with .SectionPath}}<div class="small muted">{{icon "folder"}} {{.}}</div>{{end}}</td><td class="small">{{.SKU}}</td>
+    {{if not $f.Warehouse}}{{range $d.Warehouses}}<td class="right nowrap">{{with index $x.On .ID}}{{fnum .}}{{else}}<span class="muted">0</span>{{end}}</td>{{end}}{{end}}
+    <td class="right nowrap"><b>{{fnum .Quantity}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td>
+    {{if $cost}}<td class="right nowrap">{{money .Cost}}</td><td class="right nowrap">{{money .Sum}}</td>{{end}}</tr>{{end}}</tbody>
+  {{else}}
+  <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.product_sku"}}</th><th class="right">{{t "stock.opening"}}</th><th class="right">{{t "stock.in"}}</th><th class="right">{{t "stock.out"}}</th><th class="right">{{t "stock.closing"}}</th>{{if $cost}}<th class="right">{{t "stock.cost"}}</th><th class="right">{{t "stock.sum"}}</th>{{end}}</tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/store/reports/moves?product={{.ID}}&warehouse={{$f.Warehouse}}&from={{dinput (ptr $f.From)}}&to={{dinput (ptr $f.To)}}" class="ttitle">{{.Name}}</a>{{with .SectionPath}}<div class="small muted">{{icon "folder"}} {{.}}</div>{{end}}</td><td class="small">{{.SKU}}</td>
+    <td class="right nowrap">{{fnum .Opening}}</td><td class="right nowrap">{{if .In}}+{{fnum .In}}{{else}}<span class="muted">0</span>{{end}}</td><td class="right nowrap">{{if .Out}}−{{fnum .Out}}{{else}}<span class="muted">0</span>{{end}}</td>
+    <td class="right nowrap"><b>{{fnum .Closing}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td>
+    {{if $cost}}<td class="right nowrap">{{money .Cost}}</td><td class="right nowrap">{{money .Sum}}</td>{{end}}</tr>{{end}}</tbody>
+  {{end}}
+</table></div>{{if $cost}}<div class="stockreportfoot">{{t "stock.value"}}: <b>{{money $d.Sum}}</b></div>{{end}}</div>
+{{else}}<div class="card"><div class="empty">{{if eq $d.Report "stock"}}{{t "stock.no_stock"}}{{else}}{{t "stock.no_moves"}}{{end}}</div></div>{{end}}
+<script src="{{asset "js/stock.js"}}"></script>
+{{end}}

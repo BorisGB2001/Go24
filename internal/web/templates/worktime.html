@@ -1,0 +1,59 @@
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.Schedule}}
+<h1>{{t "title.worktime"}}</h1>
+<div class="sub">{{t "worktime.subtitle"}}</div>
+<div class="card" style="max-width:640px">
+  <form method="post" action="/settings/worktime">
+    <div class="grid">
+      <div><label>{{t "worktime.start"}}</label><input type="time" name="start" value="{{$s.Start}}" required></div>
+      <div><label>{{t "worktime.end"}}</label><input type="time" name="end" value="{{$s.End}}" required></div>
+    </div>
+    <label>{{t "worktime.weekend"}}</label>
+    <div class="row">{{range $d.Days}}<label class="check"><input type="checkbox" name="weekend" value="{{.}}" {{if index $d.Off .}}checked{{end}}> {{t (print "weekday." .)}}</label>{{end}}</div>
+    <label>{{t "worktime.holidays"}}</label>
+    <textarea name="holidays" rows="5" placeholder="01-01 03-08 2026-12-31">{{range $s.Holidays}}{{.}} {{end}}</textarea>
+    <p class="small muted">{{t "worktime.holidays_hint"}}</p>
+    <h2>{{t "worktime.violations"}}</h2>
+    <p class="small muted">{{t "worktime.violations_hint"}}</p>
+    <div class="grid">
+      <div><label>{{t "worktime.late_after"}}</label><input type="time" name="late_after" value="{{$s.LateAfter}}"></div>
+      <div><label>{{t "worktime.leave_before"}}</label><input type="time" name="leave_before" value="{{$s.LeaveBefore}}"></div>
+      <div><label>{{t "worktime.min_duration"}}</label><input type="time" name="min_duration" value="{{$s.MinDuration}}"></div>
+    </div>
+    <label class="check"><input type="checkbox" name="free_edit" {{if $s.FreeEdit}}checked{{end}}> {{t "worktime.free_edit"}}</label>
+    <p class="small muted">{{t "worktime.free_edit_hint"}}</p>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+<div class="card" style="max-width:640px" id="reports">
+  <h2>{{icon "file-text"}} {{t "wreport.title"}}</h2>
+  <p class="small muted">{{t "wreport.settings_hint"}}</p>
+  <form method="post" action="/settings/worktime/reports" class="stack">
+    {{$rr := $d.Rules}}
+    <div class="grid">
+      <div><label>{{t "wreport.period"}}</label>{{template "wrperiod" (dict "Name" "period" "Value" $rr.Period "Periods" $d.Periods)}}</div>
+      <div><label>{{t "wreport.weekday"}}</label>{{template "wrweekday" (dict "Name" "weekday" "Value" $rr.Weekday "Days" $d.Days)}}</div>
+      <div><label>{{t "wreport.monthday"}}</label><input type="number" name="monthday" min="1" max="31" value="{{if $rr.Monthday}}{{$rr.Monthday}}{{else}}31{{end}}"></div>
+    </div>
+    <h3>{{t "wreport.depts"}}</h3>
+    <p class="small muted">{{t "wreport.depts_hint"}}</p>
+    <table class="tlist wrdepts"><thead><tr><th>{{t "wreport.dept"}}</th><th>{{t "wreport.period"}}</th><th>{{t "wreport.weekday"}}</th><th>{{t "wreport.monthday"}}</th></tr></thead><tbody>
+    {{range $id, $r := $rr.Depts}}<tr>{{template "wrdept" (dict "ID" $id "Depts" $d.Departments)}}
+      <td>{{template "wrperiod" (dict "Name" "dept_period" "Value" $r.Period "Periods" $d.Periods)}}</td>
+      <td>{{template "wrweekday" (dict "Name" "dept_weekday" "Value" $r.Weekday "Days" $d.Days)}}</td>
+      <td><input type="number" name="dept_monthday" min="1" max="31" value="{{if $r.Monthday}}{{$r.Monthday}}{{else}}31{{end}}"></td></tr>{{end}}
+    <tr>{{template "wrdept" (dict "ID" "" "Depts" $d.Departments)}}
+      <td>{{template "wrperiod" (dict "Name" "dept_period" "Value" "day" "Periods" $d.Periods)}}</td>
+      <td>{{template "wrweekday" (dict "Name" "dept_weekday" "Value" 5 "Days" $d.Days)}}</td>
+      <td><input type="number" name="dept_monthday" min="1" max="31" value="31"></td></tr>
+    </tbody></table>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+{{end}}
+
+{{define "wrperiod"}}<select name="{{.Name}}"><option value="">{{t "wreport.period.none"}}</option>{{$v := .Value}}
+  {{range .Periods}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "wreport.period." .)}}</option>{{end}}</select>{{end}}
+{{define "wrweekday"}}<select name="{{.Name}}">{{$v := .Value}}{{range .Days}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "wreport.wdn." .)}}</option>{{end}}</select>{{end}}
+{{define "wrdept"}}<td><select name="dept_id"><option value="">{{if .ID}}{{t "wreport.dept_remove"}}{{else}}{{t "wreport.dept_add"}}{{end}}</option>{{$id := .ID}}
+  {{range .Depts}}<option value="{{.ID}}" {{if eq .ID $id}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select></td>{{end}}

@@ -1,0 +1,20 @@
+{{define "content"}}{{$d := .Data}}
+<div class="share">
+{{if $d.Gone}}<div class="card empty">{{icon "phone"}} {{t "call.guest_gone_text"}}</div>
+{{else if $d.Ask}}<form method="post" action="/call/g/{{$d.Token}}" class="card share-pass" data-native>
+  <h2>{{icon "phone"}} {{$d.Title}}</h2>
+  <span class="muted small">{{t "call.guest_welcome"}}</span>
+  {{if $d.Wrong}}<div class="form-error">{{t "share.password_wrong"}}</div>{{end}}
+  <input type="text" name="name" required maxlength="60" autofocus value="{{$d.Name}}" placeholder="{{t "call.guest_name"}}">
+  {{if $d.Password}}<input type="password" name="password" required placeholder="{{t "call.guest_password"}}">{{end}}
+  <button class="primary">{{t "call.guest_enter"}}</button></form>
+{{else if $d.Waiting}}<div class="card share-pass" data-guest-wait="/call/g/{{$d.Token}}/state">
+  <h2>{{icon "clock"}} {{$d.Title}}</h2><p>{{t "call.guest_waiting"}}</p></div>
+<script src="{{asset "js/callguest.js"}}"></script>
+{{else if $d.Denied}}<div class="card empty">{{icon "x"}} {{t "call.guest_denied"}}</div>
+{{else if $d.Left}}<div class="card share-pass"><h2>{{icon "phone"}} {{$d.Title}}</h2><p>{{t "call.guest_left"}}</p>
+  <a class="button primary" href="/call/g/{{$d.Token}}">{{t "call.guest_back"}}</a></div>
+{{end}}
+<p class="muted small share-foot">go24 · {{t "call.guest_foot"}}</p>
+</div>
+{{end}}

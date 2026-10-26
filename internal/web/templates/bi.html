@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row bi-head">
+  <h1>{{t "bi.title"}}</h1>
+  <a class="button ghost" href="/bi/groups">{{icon "folder"}} {{t "bi.groups"}}</a>
+  <a class="button ghost" href="/bi/files">{{icon "table"}} {{t "bi.files.title"}}</a>
+  {{if $d.Admin}}<a class="button ghost" href="/bi/keys">{{icon "key"}} {{t "bi.keys.title"}}</a>{{end}}
+  <details class="bi-menu"><summary class="button primary">{{icon "plus"}} {{t "bi.new"}}</summary>
+    <form class="card pop" method="post" action="/bi">
+      <label>{{t "bi.d.title"}}<input type="text" name="title" required maxlength="200" autofocus></label>
+      <label>{{t "bi.d.period"}}<select name="period">{{range $d.Periods}}{{if ne . "range"}}<option value="{{.}}" {{if eq . "month"}}selected{{end}}>{{t (print "bi.p." .)}}</option>{{end}}{{end}}</select></label>
+      <button class="primary">{{t "common.create"}}</button>
+    </form></details>
+</div>
+<div class="sub">{{t "bi.subtitle"}}</div>
+<form class="row filters" method="get" action="/bi">
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "bi.search"}}" style="max-width:20em">
+  {{if $d.Groups}}<select name="group" style="width:auto" onchange="this.form.submit()"><option value="">{{t "bi.group_all"}}</option>{{range $d.Groups}}<option value="{{.ID}}" {{if eq .ID $d.Group}}selected{{end}}>{{.Title}} ({{.Dashboards}})</option>{{end}}</select>{{end}}
+  <button>{{icon "search"}} {{t "common.find"}}</button>
+  {{if or $d.Q $d.Group}}<a class="button ghost" href="/bi">{{t "filter.reset"}}</a>{{end}}
+</form>
+{{with $d.Ready}}<h2 class="bi-sect">{{t "bi.ready"}}</h2>
+<div class="bi-ready">{{range .}}<a class="card bi-tile" href="/bi/{{.ID}}">{{if eq .Code "leads"}}{{icon "users"}}{{else if eq .Code "tasks"}}{{icon "list-check"}}{{else if eq .Code "timeman"}}{{icon "clock"}}{{else}}{{icon "chart-bar"}}{{end}}<b>{{.Title}}</b><span class="small muted">{{.Description}}</span><span class="small muted">{{t "bi.d.widgets"}}: {{.Widgets}}</span></a>{{end}}</div>
+<h2 class="bi-sect">{{t "bi.own"}}</h2>{{end}}
+{{if $d.Dashboards}}
+<div class="card flush"><table class="tlist bi-list">
+  <thead><tr><th>{{t "bi.d.title"}}</th><th>{{t "bi.group"}}</th><th>{{t "bi.d.widgets"}}</th><th>{{t "bi.d.author"}}</th><th>{{t "bi.d.updated"}}</th></tr></thead>
+  {{range $d.Dashboards}}<tr>
+    <td><a href="/bi/{{.ID}}">{{icon "layout-dashboard"}} {{.Title}}</a>{{if eq .Status "draft"}} <span class="pill">{{t "bi.status_draft"}}</span>{{end}}{{with .Description}}<div class="small muted">{{.}}</div>{{end}}</td>
+    <td>{{if .GroupID}}<a class="small" href="/bi?group={{.GroupID}}">{{.GroupTitle}}</a>{{end}}</td>
+    <td>{{.Widgets}}</td>
+    <td>{{if .CreatedBy}}<a href="/u/{{.CreatedBy}}" data-user="{{.CreatedBy}}">{{.AuthorName}}</a>{{end}}</td>
+    <td class="nowrap">{{datetime .UpdatedAt}}</td></tr>{{end}}
+</table></div>
+{{else}}<div class="card bi-empty">{{icon "chart-bar"}}<p>{{if or $d.Q $d.Group}}{{t "bi.not_found"}}{{else if $d.Ready}}{{t "bi.empty_own"}}{{else}}{{t "bi.empty"}}{{end}}</p></div>{{end}}
+{{end}}

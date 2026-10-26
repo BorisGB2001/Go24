@@ -1,0 +1,19 @@
+{{define "content"}}
+{{$d := .Data}}
+{{/* «Доски»: the board in Excalidraw (static/vendor/excalidraw, bundled into go24); static/js/diskboard.js saves it */}}
+<div class="officepage boardpage">
+  <div class="row officebar"><a class="button ghost" href="{{$d.Back}}">{{icon "arrow-back-up"}} {{t "office.back"}}</a>
+    <b style="flex:1">{{$d.Name}}</b>{{if not $d.Edit}}<span class="pill">{{t "office.view_only"}}</span>{{end}}
+    <span class="pill" data-board-people hidden></span>
+    <span class="small muted" data-board-status aria-live="polite"></span>
+    <a class="button ghost" href="{{$d.About}}">{{icon "file-text"}} {{t "disk.about"}}</a>
+    <a class="button ghost" href="{{$d.Download}}">{{icon "download"}} {{t "disk.download"}}</a></div>
+  <div class="officeframe"><div id="board-editor" data-scene="{{$d.Scene}}" data-edit="{{$d.Edit}}" data-lang="{{$d.Lang}}"
+    data-assets="/static/vendor/excalidraw/" data-l-saving="{{t "dboard.saving"}}" data-l-saved="{{t "dboard.saved"}}"
+    data-l-failed="{{t "dboard.save_failed"}}" data-l-merged="{{t "dboard.merged"}}" data-l-load-failed="{{t "dboard.load_failed"}}"
+    data-l-unsaved="{{t "dboard.unsaved"}}" data-l-here="{{t "dboard.here"}}"></div></div>
+</div>
+<link rel="stylesheet" href="{{asset "vendor/excalidraw/excalidraw.css"}}">
+<script type="module" src="{{asset "vendor/excalidraw/excalidraw.js"}}"></script>
+<script src="{{asset "js/diskboard.js"}}"></script>
+{{end}}

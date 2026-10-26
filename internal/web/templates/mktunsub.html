@@ -1,0 +1,13 @@
+{{define "content"}}{{$d := .Data}}
+<div class="share">
+{{if $d.Gone}}<div class="card empty">{{icon "link"}} {{t "mkt.unsub_gone"}}</div>
+{{else if $d.Test}}<div class="card empty">{{icon "mail-off"}} {{t "mkt.unsub_test"}}</div>
+{{else if $d.Done}}<div class="card share-file">{{icon "mail-off"}}<h2>{{t "mkt.unsub_done"}}</h2><p class="muted">{{t "mkt.unsub_done_text" $d.Email}}</p></div>
+{{else}}<form method="post" action="/m/u/{{$d.Token}}" class="card share-file" data-native>
+  {{icon "mail-off"}}<h2>{{t "mkt.unsub_title"}}</h2>
+  <p class="muted">{{t "mkt.unsub_text" $d.Email $d.Campaign}}</p>
+  <button class="primary">{{t "mkt.unsub_btn"}}</button></form>
+{{end}}
+<p class="muted small share-foot">go24</p>
+</div>
+{{end}}

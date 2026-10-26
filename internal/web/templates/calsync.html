@@ -1,0 +1,52 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/calendar">{{t "calendar.title"}}</a> {{icon "chevron-right"}} {{t "calsync.title"}}</div>
+<h1>{{t "calsync.title"}}</h1>
+<div class="sub">{{t "calsync.subtitle"}}</div>
+<div class="card" style="max-width:760px">
+  {{if $d.Link}}
+  <label>{{t "calsync.link"}}</label>
+  <div class="row evwhen"><input type="text" readonly value="{{$d.Link}}" style="flex:1" onfocus="this.select()">
+    <button type="button" class="ghost" data-copy="{{$d.Link}}">{{icon "link"}} {{t "calsync.copy"}}</button>
+    <a class="button ghost" href="{{$d.Webcal}}">{{icon "calendar-event"}} {{t "calsync.open"}}</a></div>
+  <p class="small muted">{{t "calsync.secret"}}</p>
+  <ul class="small">
+    <li>{{t "calsync.how.outlook"}}</li>
+    <li>{{t "calsync.how.google"}}</li>
+    <li>{{t "calsync.how.apple"}}</li>
+  </ul>
+  {{end}}
+  <form method="post" action="/calendar/sync" class="row evwhen">
+    <label class="check"><input type="checkbox" name="tasks" {{if $d.Feed.Tasks}}checked{{end}}> {{t "calsync.tasks"}}</label>
+    <span style="flex:1"></span>
+    {{if $d.Link}}<button class="ghost">{{t "common.save"}}</button>
+    <button class="ghost" name="renew" value="1" data-confirm="{{t "calsync.renew_confirm"}}">{{icon "refresh"}} {{t "calsync.renew"}}</button>
+    {{else}}<button class="primary" name="renew" value="1">{{icon "link"}} {{t "calsync.create"}}</button>{{end}}
+  </form>
+</div>
+{{with $d.CalDAV}}<h2>{{t "calsync.caldav"}}</h2>
+<div class="card" style="max-width:760px">
+  <p class="small muted">{{t "calsync.caldav_hint"}}</p>
+  <label>{{t "calsync.caldav_url"}}</label>
+  <div class="row evwhen"><input type="text" readonly value="{{.}}" style="flex:1" onfocus="this.select()">
+    <button type="button" class="ghost" data-copy="{{.}}">{{icon "link"}} {{t "calsync.copy"}}</button>
+    <a class="button ghost" href="/settings/keys">{{icon "plus"}} {{t "calsync.caldav_keys"}}</a></div>
+  <ul class="small">
+    <li>{{t "calsync.caldav.apple"}}</li>
+    <li>{{t "calsync.caldav.android"}}</li>
+    <li>{{t "calsync.caldav.thunderbird"}}</li>
+    <li>{{t "calsync.caldav.outlook"}}</li>
+  </ul>
+  <p class="small muted">{{t "calsync.caldav_note"}}</p>
+</div>{{end}}
+<h2>{{t "calsync.import"}}</h2>
+<div class="card" style="max-width:760px">
+  <p class="small muted">{{t "calsync.import_hint"}}</p>
+  <form method="post" action="/calendar/import" enctype="multipart/form-data" class="row evwhen">
+    <input type="file" name="file" accept=".ics,text/calendar" required>
+    {{with $d.Sections}}<select name="calendar" style="width:auto" aria-label="{{t "calendar.calendar"}}"><option value="">{{t "calendar.cals.personal"}}</option>
+      {{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>{{end}}
+    <span style="flex:1"></span>
+    <button class="primary">{{icon "cloud-upload"}} {{t "calsync.import_do"}}</button>
+  </form>
+</div>
+{{end}}

@@ -1,0 +1,37 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/calendar">{{t "calendar.title"}}</a> {{icon "chevron-right"}} {{t "calslots.title"}}</div>
+<div class="pagehead"><h1>{{t "calslots.title"}}</h1><span style="flex:1"></span>
+  {{if not $d.Edit}}<a class="button create" href="/calendar/slots?edit=new">{{icon "users"}} {{t "calslots.add_joint"}}</a>{{end}}</div>
+<div class="sub">{{t "calslots.subtitle"}}</div>
+{{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+{{with $d.Edit}}{{$e := .}}
+<form method="post" action="/calendar/slots{{if not $d.New}}/{{.ID}}/save{{end}}" class="card" style="max-width:760px">
+  <h3>{{if $d.New}}{{t "calslots.add_joint"}}{{else if .Joint}}{{t "calslots.joint"}}{{else}}{{t "calslots.personal"}}{{end}}</h3>
+  {{if or $d.New .Joint}}<label>{{t "calslots.members"}}</label>{{template "upick" (upick "members" .Members $d.Users "multi" "noself" "ph" (t "calslots.members_hint"))}}{{end}}
+  <label for="sl-len">{{t "calslots.length"}}</label>
+  <select id="sl-len" name="length">{{range $d.Lengths}}<option value="{{.}}"{{if eq . $e.Length}} selected{{end}}>{{t "calslots.length_n" (printf "%d" .)}}</option>{{end}}</select>
+  <label>{{t "calslots.rules"}}</label>
+  {{range $i, $r := $d.Rules}}<div class="row evwhen" style="flex-wrap:wrap;margin-bottom:8px">
+    {{range $d.Days}}{{$n := .}}<label class="check"><input type="checkbox" name="days_{{$i}}" value="{{.}}"{{range $r.Days}}{{if eq . $n}} checked{{end}}{{end}}> {{t (print "wd." .)}}</label>{{end}}
+    <select name="from_{{$i}}" style="width:auto" aria-label="{{t "calset.work_from"}}">{{range $d.Minutes}}{{if lt . 1440}}<option value="{{.}}"{{if eq . $r.From}} selected{{end}}>{{hhmm .}}</option>{{end}}{{end}}</select> —
+    <select name="to_{{$i}}" style="width:auto" aria-label="{{t "calset.work_to"}}">{{range $d.Minutes}}{{if gt . 0}}<option value="{{.}}"{{if eq . $r.To}} selected{{end}}>{{hhmm .}}</option>{{end}}{{end}}</select>
+  </div>{{end}}
+  <p class="small muted">{{t "calslots.rules_hint"}}</p>
+  <label for="sl-days">{{t "calslots.days_ahead"}}</label>
+  <input id="sl-days" type="number" name="days_ahead" min="1" max="365" value="{{.DaysAhead}}" style="max-width:120px">
+  <label class="check"><input type="checkbox" name="active"{{if .Active}} checked{{end}}> {{t "calslots.active"}}</label>
+  <div class="row" style="margin-top:16px"><span class="spacer"></span><a class="button ghost" href="/calendar/slots">{{t "common.cancel"}}</a><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}
+{{range $d.Links}}{{$u := print $d.Base "/cs/" .Token}}
+<div class="card" style="max-width:760px">
+  <div class="row"><h3 style="margin:0">{{if .Joint}}{{icon "users"}} {{t "calslots.joint"}}: {{range $i, $p := .MemberNames}}{{if $i}}, {{end}}{{$p}}{{end}}{{else}}{{icon "share"}} {{t "calslots.personal"}}{{end}}</h3>
+    <span style="flex:1"></span>{{if .Active}}<span class="chip on">{{t "calslots.on"}}</span>{{else}}<span class="chip">{{t "calslots.off"}}</span>{{end}}</div>
+  {{if .Active}}<div class="row"><input type="text" readonly value="{{$u}}" style="flex:1" aria-label="{{t "calslots.link"}}"><button type="button" class="ghost" data-copy="{{$u}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button>
+    <a class="button ghost" href="{{$u}}" target="_blank" rel="noopener" title="{{t "calslots.open"}}">{{icon "external-link"}}</a></div>{{end}}
+  <p class="small muted">{{t "calslots.length_n" (printf "%d" .Length)}} · {{range $i, $r := .Rules}}{{if $i}}; {{end}}{{range $j, $n := $r.Days}}{{if $j}}, {{end}}{{t (print "wd." $n)}}{{end}} {{hhmm $r.From}}–{{hhmm $r.To}}{{end}} · {{t "calslots.days_ahead_n" (printf "%d" .DaysAhead)}} · {{t "calslots.meetings_n" (printf "%d" .Meetings)}}</p>
+  <div class="row"><a class="button ghost" href="/calendar/slots?edit={{.ID}}">{{icon "settings"}} {{t "calslots.setup"}}</a>
+    <form method="post" action="/calendar/slots/{{.ID}}/toggle" class="inline"><button class="ghost">{{if .Active}}{{t "calslots.turn_off"}}{{else}}{{t "calslots.turn_on"}}{{end}}</button></form>
+    {{if .Joint}}<form method="post" action="/calendar/slots/{{.ID}}/delete" class="inline" data-confirm="{{t "calslots.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}</div>
+</div>{{end}}
+{{end}}

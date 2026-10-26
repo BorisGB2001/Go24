@@ -1,0 +1,18 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1></div>
+<div class="tabs">{{template "stocktabs" $d}}<span class="spacer"></span>
+  <form method="get" action="/store/stock" class="row"><select name="section" data-autosubmit style="width:auto"><option value="">{{t "crm.sections_all"}}</option>
+    {{range $d.Sections}}<option value="{{.ID}}" {{if eq .ID $d.Section}}selected{{end}}>{{.Path}}</option>{{end}}</select>
+    <label class="small"><input type="checkbox" name="all" value="1" {{if $d.All}}checked{{end}} data-autosubmit> {{t "stock.show_all"}}</label>
+    <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "crm.search"}}"></form></div>
+<div class="card flush">{{if $d.Items}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.product_sku"}}</th>{{range $d.Warehouses}}<th class="right">{{.Name}}</th>{{end}}<th class="right">{{t "stock.total"}}</th><th class="right">{{t "stock.reserved"}}</th><th class="right">{{t "stock.free"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}{{$x := .}}<tr><td><a href="/store/docs?product={{.ID}}" class="ttitle">{{.Name}}</a>{{with .SectionPath}}<div class="small muted">{{icon "folder"}} {{.}}</div>{{end}}</td><td class="small">{{.SKU}}</td>
+    {{range $d.Warehouses}}<td class="right nowrap">{{with index $x.On .ID}}{{fnum .}}{{else}}<span class="muted">0</span>{{end}}</td>{{end}}
+    <td class="right nowrap"><b>{{fnum .Total}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td>
+    <td class="right nowrap">{{if .Reserve}}{{fnum .Reserve}}{{else}}<span class="muted">0</span>{{end}}</td>
+    <td class="right nowrap{{if lt .Free 0.0}} stockshort{{end}}"><b>{{fnum .Free}}</b></td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{t "stock.no_stock"}}</div>{{end}}</div>
+<script src="{{asset "js/stock.js"}}"></script>
+{{end}}

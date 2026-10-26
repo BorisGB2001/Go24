@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<div class="row presets"><a class="chip{{if not $d.DocKind}} on{{end}}" href="/crm/invoices">{{t "crm.inv_all"}}</a>
+  {{range list "quote" "invoice"}}<a class="chip{{if eq . $d.DocKind}} on{{end}}" href="/crm/invoices?kind={{.}}">{{t (print "crm.docs." .)}}</a>{{end}}
+  {{with $d.DocKind}}<span class="spacer"></span>{{range index $d.Statuses .}}<a class="chip{{if eq . $d.Status}} on{{end}}" href="/crm/invoices?kind={{$d.DocKind}}&status={{.}}">{{t (print "crm.inv." .)}}</a>{{end}}
+    {{if eq $d.DocKind "invoice"}}<a class="chip{{if eq "overdue" $d.Status}} on{{end}}" href="/crm/invoices?kind=invoice&status=overdue">{{t "crm.inv.overdue"}}</a>{{end}}{{end}}</div>
+<div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th>{{t "crm.doc"}}</th><th>{{t "crm.inv_status"}}</th><th>{{t "crm.f.amount"}}</th><th>{{t "crm.inv_date"}}</th><th>{{t "crm.deal"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/crm/invoices/{{.ID}}" class="ttitle">{{t (print "crm.doc." .Kind)}} № {{.Code}}</a><div class="small muted">{{.Title}}</div></td>
+    <td><span class="pill inv-{{.Status}}">{{t (print "crm.inv." .Status)}}</span>{{if .Overdue}} <span class="pill inv-overdue">{{t "crm.inv.overdue"}}</span>{{else if .Due}}{{if .Paid}}<div class="small muted">{{t "crm.inv_left" (money .Due) .Currency}}</div>{{end}}{{end}}</td><td class="nowrap"><b>{{money .Amount}} {{.Currency}}</b></td>
+    <td class="small nowrap">{{day .IssueDate}}{{with .DueDate}}<br><span class="muted">{{t "crm.inv_due"}} {{day (deref .)}}</span>{{end}}</td>
+    <td class="small"><a href="{{.CardPath}}">{{.CardTitle}}</a>{{with .Company.Name}}<br>{{.}}{{end}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "crm.no_invoices"}}</div>{{end}}</div>
+{{end}}

@@ -1,0 +1,54 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}{{$tm := $d.Team}}
+<div class="crumbs"><a href="/projects">{{t "nav.projects"}}</a> {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a></div>
+<h1>{{$p.Name}}</h1>
+<div class="tabs">{{template "pviews" (dict "P" $p "On" "dod")}}</div>
+
+<div class="card">
+  <h2>{{icon "users"}} {{t "scrum.team"}}</h2>
+  {{if and $p.CanManage (not $p.Archived)}}
+  <form method="post" action="/p/{{$p.Key}}/dod" class="grid"><input type="hidden" name="op" value="team">
+    <div><label>{{t "scrum.owner"}}</label><select name="owner"><option value="">—</option>
+      {{range $tm.Team}}<option value="{{.ID}}"{{if and $tm.Owner (eq $tm.Owner.ID .ID)}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+    <div><label>{{t "scrum.master"}}</label><select name="master"><option value="">—</option>
+      {{range $tm.Team}}<option value="{{.ID}}" {{if and $tm.Master (eq $tm.Master.ID .ID)}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+    <div><button class="primary">{{t "common.save"}}</button></div>
+  </form>
+  {{else}}
+  <div class="row small">
+    <span><span class="muted">{{t "scrum.owner"}}:</span> {{with $tm.Owner}}{{ava .Name}} {{.Name}}{{else}}—{{end}}</span>
+    <span><span class="muted">{{t "scrum.master"}}:</span> {{with $tm.Master}}{{ava .Name}} {{.Name}}{{else}}—{{end}}</span>
+  </div>
+  {{end}}
+  <p class="muted small">{{t "scrum.team_hint"}}</p>
+  <h3>{{t "scrum.members" (len $tm.Team)}}</h3>
+  <div class="row small">{{range $tm.Team}}<span>{{ava .Name}} {{.Name}}</span>{{end}}</div>
+</div>
+
+<div class="card" id="dod">
+  <h2>{{icon "list-check"}} {{t "dod.title"}}</h2>
+  <p class="muted small">{{t "dod.hint"}}</p>
+  {{range $d.Types}}
+  <div class="tblock">
+    {{if $p.CanLead}}
+    <form method="post" action="/p/{{$p.Key}}/dod"><input type="hidden" name="op" value="type"><input type="hidden" name="id" value="{{.ID}}">
+      <label>{{t "dod.type"}}</label><input type="text" name="name" value="{{.Name}}" required maxlength="100">
+      <label>{{t "dod.items"}}</label><textarea name="items" rows="4" placeholder="{{t "dod.items_placeholder"}}">{{range .Items}}{{.Title}}
+{{end}}</textarea>
+      <label class="check"><input type="checkbox" name="required" {{if .Required}}checked{{end}}> {{t "dod.required"}}</label>
+      <p class="row"><button class="primary">{{t "common.save"}}</button></p>
+    </form>
+    {{if gt (len $d.Types) 1}}<form method="post" action="/p/{{$p.Key}}/dod" data-confirm="{{t "dod.delete_confirm"}}"><input type="hidden" name="op" value="type_delete"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "dod.delete_type"}}</button></form>{{end}}
+    {{else}}
+    <h3>{{.Name}}{{if .Required}} <span class="pill">{{t "dod.required_short"}}</span>{{end}}</h3>
+    <ul>{{range .Items}}<li>{{.Title}}</li>{{else}}<li class="muted">{{t "dod.no_items"}}</li>{{end}}</ul>
+    {{end}}
+  </div>
+  {{end}}
+  {{if $p.CanLead}}
+  <form method="post" action="/p/{{$p.Key}}/dod" class="row" style="margin-top:8px"><input type="hidden" name="op" value="type">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "dod.new_type"}}" style="flex:1">
+    <button>{{icon "plus"}} {{t "dod.add_type"}}</button></form>
+  {{end}}
+</div>
+{{end}}

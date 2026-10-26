@@ -1,0 +1,20 @@
+{{define "kbptree"}}<ul class="kbtree">{{range .T}}<li><a href="/kbp/{{$.Token}}/{{.ID}}"{{if eq .ID $.Current}} class="on" aria-current="page"{{end}}>{{.Title}}</a>{{with .Children}}{{template "kbptree" (dict "T" . "Token" $.Token "Current" $.Current)}}{{end}}</li>{{end}}</ul>{{end}}
+
+{{define "content"}}{{$d := .Data}}
+<div class="share kbpublic">
+{{if $d.Gone}}<div class="card empty">{{icon "link"}} {{t "share.gone_text"}}</div>
+{{else}}{{$pub := $d.Public}}{{$p := $d.Page}}
+<div class="crumbs"><a href="/kbp/{{$pub.Token}}">{{if $pub.RootID}}{{$pub.RootTitle}}{{else}}{{$pub.Name}}{{end}}</a>{{range $d.Crumbs}}{{if ne .ID $pub.RootID}} {{icon "chevron-right"}} <a href="/kbp/{{$pub.Token}}/{{.ID}}">{{.Title}}</a>{{end}}{{end}}{{if ne $p.ID $pub.RootID}} {{icon "chevron-right"}} {{$p.Title}}{{end}}</div>
+<div class="kblayout">
+  <nav class="card kbnav"><b>{{$pub.Name}}</b>{{with $pub.Description}}<div class="small muted">{{.}}</div>{{end}}
+    {{template "kbptree" (dict "T" $d.Tree "Token" $pub.Token "Current" $p.ID)}}</nav>
+  <article class="card kbpage"><h1>{{$p.Title}}</h1>
+    {{if gt (len $d.TOC) 1}}<nav class="kbtoc" aria-label="{{t "kb.toc"}}"><b>{{t "kb.toc"}}</b><ul>{{range $d.TOC}}<li class="l{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>{{end}}</ul></nav>{{end}}
+    {{md $p.Body}}
+    <p class="small muted">{{t "kb.public_updated" (datetime $p.Updated)}}</p>
+  </article>
+</div>
+{{end}}
+<p class="muted small share-foot">go24 · {{t "kb.public_foot"}}</p>
+</div>
+{{end}}

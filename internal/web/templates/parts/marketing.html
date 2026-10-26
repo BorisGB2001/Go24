@@ -1,0 +1,24 @@
+{{/* the tabs of «Маркетинг» */}}
+{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
+
+{{/* a campaign's status: a draft, planned, being sent, paused, done, stopped */}}
+{{define "mktstatus"}}{{if .Planned}}<span class="pill mkt-planned" title="{{date .SendAt}}">{{icon "clock"}} {{t "mkt.st.planned"}}</span>
+{{- else}}<span class="pill mkt-{{.Status}}">{{t (print "mkt.st." .Status)}}</span>{{end}}{{end}}
+
+{{/* what a segment's filter takes */}}
+{{define "mktfilter"}}{{$f := .Filter}}{{if eq .Entity "list"}}{{else if or $f.Q $f.Responsible $f.Source $f.Stage $f.Semantic $f.From $f.To}}<div class="small muted">{{icon "filter"}}
+  {{with $f.Q}}«{{.}}»{{end}}{{with $f.Semantic}} {{t (print "mkt.f.sem_" .)}}{{end}}{{if or $f.From $f.To}} {{t "mkt.f.created"}}: {{$f.From}} — {{$f.To}}{{end}}{{if or $f.Responsible $f.Source $f.Stage}} {{t "mkt.f.more"}}{{end}}</div>
+{{- else}}<div class="small muted">{{t "mkt.f.all"}}</div>{{end}}{{end}}
+
+{{/* a count of a started campaign: its addressees of a status, a share of Of */}}
+{{define "mktstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/campaigns/{{.ID}}?status={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span>{{with .Of}}<small>{{pct $.N .}}%</small>{{end}}</a>{{end}}
+
+{{/* a line of «Сквозная аналитика»: a channel (Top), a campaign of it or the total */}}
+{{define "mktline"}}{{$c := .C}}<tr class="{{if .Total}}mkt-total{{else if not .Top}}mkt-camp{{end}}">
+  <td>{{if .Total}}<b>{{t "mkt.an.total"}}</b>{{else if .Top}}{{if $c.ID}}<span class="mkt-dot" style="background:{{if $c.Color}}{{$c.Color}}{{else}}var(--muted){{end}}"></span> <b>{{$c.Name}}</b>{{else}}<span class="muted">{{t "mkt.an.none"}}</span>{{end}}{{else}}{{if $c.Name}}<code>{{$c.Name}}</code>{{else}}<span class="muted">{{t "mkt.an.no_campaign"}}</span>{{end}}{{end}}</td>
+  <td class="num">{{if $c.Expenses}}{{money $c.Expenses}}{{else}}—{{end}}</td><td class="num">{{$c.Leads}}</td>
+  <td class="num">{{if $c.CostPerLead}}{{money $c.CostPerLead}}{{else}}—{{end}}</td><td class="num">{{$c.Deals}}</td><td class="num">{{$c.Won}}</td>
+  <td class="num">{{if $c.CostPerSale}}{{money $c.CostPerSale}}{{else}}—{{end}}</td><td class="num">{{if $c.Revenue}}{{money $c.Revenue}}{{else}}—{{end}}</td>
+  <td class="num {{template "mktroicls" $c}}">{{with mktROI $c}}{{.}}{{else}}—{{end}}</td></tr>{{end}}
+
+{{define "mktroicls"}}{{with mktROI .}}{{if hasPrefix . "-"}}red{{else}}green{{end}}{{end}}{{end}}

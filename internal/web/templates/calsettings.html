@@ -1,0 +1,25 @@
+{{define "content"}}{{$d := .Data}}{{$s := $d.S}}
+<div class="crumbs"><a href="/calendar">{{t "calendar.title"}}</a> {{icon "chevron-right"}} {{t "calset.title"}}</div>
+<h1>{{t "calset.title"}}</h1>
+<div class="sub">{{t "calset.subtitle"}}</div>
+<form method="post" action="/calendar/settings" class="card" style="max-width:760px">
+  <label for="cs-week">{{t "calset.week_start"}}</label>
+  <select id="cs-week" name="week_start">{{range $d.Days}}<option value="{{.}}"{{if eq . $s.WeekStart}} selected{{end}}>{{t (print "calset.day." .)}}</option>{{end}}</select>
+  <label>{{t "calset.work_hours"}}</label>
+  <div class="row evwhen">
+    <select name="work_from" aria-label="{{t "calset.work_from"}}">{{range $d.Hours}}{{if lt . 24}}<option value="{{.}}"{{if eq . $s.WorkFrom}} selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}{{end}}</select>
+    —
+    <select name="work_to" aria-label="{{t "calset.work_to"}}">{{range $d.Hours}}{{if gt . 0}}<option value="{{.}}"{{if eq . $s.WorkTo}} selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}{{end}}</select>
+  </div>
+  <p class="small muted">{{t "calset.work_hint"}}</p>
+  <label>{{t "calset.days_off"}}</label>
+  <div class="row evwhen">{{range $d.Days}}{{$n := .}}<label class="check"><input type="checkbox" name="days_off" value="{{.}}"{{range $s.DaysOff}}{{if eq . $n}} checked{{end}}{{end}}> {{t (print "wd." .)}}</label>{{end}}</div>
+  <label>{{t "calset.show"}}</label>
+  <label class="check"><input type="checkbox" name="show_declined"{{if $s.ShowDeclined}} checked{{end}}> {{t "calset.show_declined"}}</label>
+  <label class="check"><input type="checkbox" name="show_tasks"{{if $s.ShowTasks}} checked{{end}}> {{t "calset.show_tasks"}}</label>
+  <label for="cs-remind">{{t "calset.remind"}}</label>
+  <select id="cs-remind" name="remind"><option value="-1"{{if eq $s.Remind -1}} selected{{end}}>{{t "calset.remind_none"}}</option>
+    {{range $d.Reminds}}<option value="{{.}}"{{if eq . $s.Remind}} selected{{end}}>{{t (print "calendar.remind." .)}}</option>{{end}}</select>
+  <div class="row" style="margin-top:16px"><span class="spacer"></span><a class="button ghost" href="/calendar">{{t "common.cancel"}}</a><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}

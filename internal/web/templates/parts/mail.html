@@ -1,0 +1,105 @@
+{{/* The mail with the calendar, tasks and the CRM (web/mailinvite.go, web/maillinks.go): parts of the reading pane
+   (. — its data, web.mailRead) and of the folder pane. No "content" here: every page is parsed with these parts. */}}
+
+{{/* what a letter becomes: a task, a meeting, a CRM card — and what it is linked to already */}}
+{{define "mlinks"}}{{$d := .}}{{with .Letter}}<div class="row mread-links">
+  <a class="button ghost small" href="/tasks/new?mail={{.ID}}" title="{{t "mail.to_task_hint"}}">{{icon "list-check"}}<span class="mlabel"> {{t "mail.to_task"}}</span></a>
+  <details class="mbox-menu mact-menu"><summary class="button ghost small" title="{{t "mail.meeting"}}">{{icon "calendar-event"}}<span class="mlabel"> {{t "mail.meeting"}}</span></summary><div class="card mbox-pop">
+    <a class="button ghost small" href="/calendar/new?mail={{.ID}}&reply=1">{{t "mail.meeting_reply"}}</a>
+    <a class="button ghost small" href="/calendar/new?mail={{.ID}}">{{t "mail.meeting_new"}}</a></div></details>
+  {{with $d.CRMCan}}<details class="mbox-menu mact-menu mcrm-menu"><summary class="button ghost small" title="{{t "mail.crm"}}">{{icon "users-group"}}<span class="mlabel"> {{t "mail.crm"}}</span></summary><div class="card mbox-pop">
+    {{range list "lead" "deal" "contact" "company"}}{{if index $d.CRMCan .}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/crm"><input type="hidden" name="folder" value="{{$d.FolderID}}">
+      <button class="ghost small" name="kind" value="{{.}}">{{icon "plus"}} {{t (print "mail.crm.new." .)}}</button></form>{{end}}{{end}}
+    <b class="small muted">{{t "mail.crm.link"}}</b>
+    {{with $d.Sender}}{{range .Deals}}{{template "mcrmlink" (dict "D" $d "Path" (print "/crm/deals/" .ID) "Kind" "deal" "Title" .Title)}}{{end}}
+      {{range .Leads}}{{template "mcrmlink" (dict "D" $d "Path" (print "/crm/leads/" .ID) "Kind" "lead" "Title" .Title)}}{{end}}
+      {{range .Contacts}}{{template "mcrmlink" (dict "D" $d "Path" (print "/crm/contacts/" .ID) "Kind" "contact" "Title" .Name)}}{{end}}
+      {{range .Companies}}{{template "mcrmlink" (dict "D" $d "Path" (print "/crm/companies/" .ID) "Kind" "company" "Title" .Title)}}{{end}}{{end}}
+    <form method="post" action="/mail/letters/{{$d.Letter.ID}}/crm" class="mcrm-search" data-crm-search><input type="hidden" name="folder" value="{{$d.FolderID}}">
+      <input type="search" placeholder="{{t "mail.crm.search"}}" data-crm-q autocomplete="off" aria-label="{{t "mail.crm.search"}}"><input type="hidden" name="target" data-crm-target>
+      <div class="mcrm-res" data-crm-res role="listbox"></div></form>
+  </div></details>{{end}}
+  {{if $d.Share}}{{template "mshare" $d}}{{end}}
+  {{range $d.LetterTasks}}<a class="tag" href="/t/{{.Key}}" title="{{t "mail.linked_task"}}">{{icon "list-check"}} {{.Key}} {{.Title}}</a>{{end}}
+  {{range $d.LetterCRM}}<a class="tag" href="{{.Path}}" title="{{t "mail.linked_crm"}}">{{icon "users-group"}} {{t (print "crm." .Entity)}}: {{.Title}}</a>{{end}}
+  {{range $d.LetterShares}}<a class="tag" href="{{.Path}}" title="{{t (print "mail.share.linked_" .Kind)}}">{{icon (index (dict "post" "news" "chat" "messages") .Kind)}} {{if .Title}}{{.Title}}{{else}}{{t (print "mail.share.linked_" .Kind)}}{{end}}</a>{{end}}
+</div>{{end}}{{end}}
+
+{{/* «Поделиться»: the letter to the feed or to a chat (web/mailshare.go) */}}
+{{define "mshare"}}{{$d := .}}<details class="mbox-menu mact-menu msend-menu" data-share><summary class="button ghost small" title="{{t "mail.share.hint"}}">{{icon "share"}}<span class="mlabel"> {{t "mail.share"}}</span></summary><div class="card mbox-pop msend-pop">
+  <form method="post" action="/mail/letters/{{$d.Letter.ID}}/share" class="stack"><input type="hidden" name="folder" value="{{$d.FolderID}}"><input type="hidden" name="do" value="post">
+    <b>{{icon "news"}} {{t "mail.share.post"}}</b>
+    <label class="small">{{t "mail.share.to"}} <select name="to" data-share-to>
+      <option value="">{{t "mail.share.to_all"}}</option>
+      {{range $d.ShareProjects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+      {{if $d.SharePeople}}<option value="people">{{t "mail.share.to_people"}}</option>{{end}}</select></label>
+    {{template "msharepeople" $d}}
+    <textarea name="note" rows="2" maxlength="2000" placeholder="{{t "mail.share.note"}}"></textarea>
+    {{if $d.Files}}<label class="check small"><input type="checkbox" name="files" value="1" checked> {{t "mail.share.files"}}</label>{{end}}
+    <button class="primary small">{{t "mail.share.post_do"}}</button></form>
+  {{if $d.ShareChat}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/share" class="stack"><input type="hidden" name="folder" value="{{$d.FolderID}}"><input type="hidden" name="do" value="chat">
+    <b>{{icon "messages"}} {{t "mail.share.chat"}}</b>
+    <label class="small">{{t "mail.share.chat_to"}} <select name="room" data-share-rooms>
+      <option value="">{{t "mail.share.chat_new"}}</option></select></label>
+    <div data-share-new class="stack">
+      <input name="name" maxlength="200" placeholder="{{t "mail.share.chat_name"}}" value="{{$d.Letter.Subject}}">
+      {{if $d.SharePeople}}{{template "msharepeople" $d}}{{else}}<p class="small muted">{{t "mail.share.no_people"}}</p>{{end}}</div>
+    <textarea name="note" rows="2" maxlength="2000" placeholder="{{t "mail.share.note"}}"></textarea>
+    {{if $d.Files}}<label class="check small"><input type="checkbox" name="files" value="1" checked> {{t "mail.share.files"}}</label>{{end}}
+    <button class="primary small">{{t "mail.share.chat_do"}}</button></form>{{end}}
+</div></details>{{end}}
+
+{{define "msharepeople"}}<div class="small msend-people" data-share-people>{{range .SharePeople}}<label class="check"><input type="checkbox" name="users" value="{{.ID}}" checked> {{.Name}}</label>{{end}}</div>{{end}}
+
+{{define "mcrmlink"}}<form method="post" action="/mail/letters/{{.D.Letter.ID}}/crm"><input type="hidden" name="folder" value="{{.D.FolderID}}"><input type="hidden" name="target" value="{{.Path}}">
+  <button class="ghost small">{{icon "link"}} {{t (print "crm." .Kind)}}: {{.Title}}</button></form>{{end}}
+
+{{/* the meeting of a letter, as Outlook's card above the text */}}
+{{define "minvite"}}{{$d := .}}{{with .Invite}}{{$c := .}}{{$in := .Inv}}<div class="card minvite{{if .Cancel}} cancelled{{end}}" data-invite>
+  <div class="row minv-head">{{icon "calendar-event"}} <b>{{if $in.Summary}}{{$in.Summary}}{{else}}{{t "mail.no_subject"}}{{end}}</b>
+    <span class="pill">{{if .Cancel}}{{t "mail.inv.cancelled"}}{{else if .Reply}}{{t "mail.inv.reply"}}{{else if .Update}}{{t "mail.inv.updated"}}{{else}}{{t "mail.inv.request"}}{{end}}</span></div>
+  <div class="props small">
+    <span class="k">{{t "calendar.when"}}</span><span>{{if $in.AllDay}}{{day $in.Start}}{{if ne (day $in.Start) (day $in.End)}} — {{day $in.End}}{{end}}{{else}}{{datetime $in.Start}} — {{if eq (day $in.Start) (day $in.End)}}{{clock $in.End}}{{else}}{{datetime $in.End}}{{end}}{{end}}{{with $in.Repeat}} · {{t (print "repeat.period." .)}}{{end}}</span>
+    {{with $in.Location}}<span class="k">{{t "calendar.where"}}</span><span>{{.}}</span>{{end}}
+    {{with $in.Join}}<span class="k">{{t "mail.inv.online"}}</span><span><a class="button small" href="{{.}}" target="_blank" rel="noopener noreferrer">{{icon "video"}} {{t "mail.inv.join"}}</a></span>{{end}}
+    {{with $in.Organizer.Email}}<span class="k">{{t "calendar.organizer"}}</span><span>{{$in.Organizer.Display}} <span class="muted">&lt;{{.}}&gt;</span></span>{{end}}
+    {{with $in.Attendees}}<span class="k">{{t "calendar.attendees"}}</span><span>{{range $i, $a := .}}{{if $i}}, {{end}}{{$a.Display}}{{with $a.Status}}{{if ne . "needs-action"}} <span class="muted">({{t (print "mail.inv.st." .)}})</span>{{end}}{{end}}{{end}}</span>{{end}}
+  </div>
+  {{if .Reply}}<p>{{.Reply.Display}} — {{t (print "mail.inv.replied." .Reply.Status)}}{{with $in.Comment}}: «{{.}}»{{end}}{{with $c.EventID}} · <a href="/calendar/{{.}}">{{t "mail.inv.open_event"}}</a>{{end}}</p>
+  {{else if .Cancel}}<p class="small">{{t "mail.inv.cancelled_text"}}</p>
+    {{if and .State.EventID (ne .State.Status "cancelled")}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/invite"><input type="hidden" name="folder" value="{{$d.FolderID}}">
+      <button name="status" value="cancelled">{{icon "trash"}} {{t "mail.inv.remove"}}</button></form>{{end}}
+  {{else}}
+    {{with .Conflicts}}<p class="small minv-conflict">{{icon "alert-triangle"}} {{t "mail.inv.conflicts"}}: {{range $i, $e := .}}{{if $i}}, {{end}}<a href="/calendar/{{$e.ID}}">{{$e.Title}}</a> ({{clock $e.Start}}–{{clock $e.End}}){{end}}</p>
+    {{else}}<p class="small muted">{{icon "circle-check"}} {{t "mail.inv.free"}}</p>{{end}}
+    {{with .State.Status}}<p class="small">{{t "mail.inv.your_answer"}}: <b>{{t (print "mail.inv.st." .)}}</b>{{with $c.State.EventID}} · <a href="/calendar/{{.}}">{{t "mail.inv.open_event"}}</a>{{end}}{{if $c.Update}} · {{t "mail.inv.answer_again"}}{{end}}</p>{{end}}
+    <form method="post" action="/mail/letters/{{$d.Letter.ID}}/invite" class="minv-form"><input type="hidden" name="folder" value="{{$d.FolderID}}">
+      <div class="row">{{range .Answers}}<button class="{{if eq . "accepted"}}primary{{else}}ghost{{end}}" name="status" value="{{.}}">{{icon (index (dict "accepted" "check" "tentative" "circle-dashed" "declined" "x") .)}} {{t (print "mail.inv.do." .)}}</button>{{end}}</div>
+      {{if and (eq $in.Method "REQUEST") $in.Organizer.Email}}<div class="row small">
+        <label class="check"><input type="radio" name="reply" value="send" checked> {{t "mail.inv.reply_send"}}</label>
+        <label class="check"><input type="radio" name="reply" value="none"> {{t "mail.inv.reply_none"}}</label></div>
+      <details class="minv-comment"><summary class="small">{{t "mail.inv.comment"}}</summary><textarea name="comment" rows="2" maxlength="2000" placeholder="{{t "mail.inv.comment_hint"}}"></textarea></details>{{end}}
+    </form>
+  {{end}}
+</div>{{end}}{{end}}
+
+{{/* who wrote the letter, as go24 knows them: an employee, the CRM's cards, their deals and tasks, their letters */}}
+{{define "msender"}}{{with .Sender}}<details class="card msender"{{if not .Empty}} open{{end}}>
+  <summary class="row">{{icon "user"}} <b>{{t "mail.sender.title"}}</b> <span class="muted small">{{with .Name}}{{.}} {{end}}&lt;{{.Addr}}&gt;</span></summary>
+  {{with .Employee}}<div class="row msender-emp">{{ava .Name}}<div style="flex:1"><a href="/u/{{.ID}}"><b>{{.Name}}</b></a> <span class="tag">{{t "mail.k.employee"}}</span>
+    <div class="small muted">{{.Position}}{{with .Departments}}{{if $.Sender.Employee.Position}} · {{end}}{{join . ", "}}{{end}}</div></div>
+    <a class="button ghost small" href="/im/direct?user={{.ID}}">{{icon "message-circle"}} {{t "mail.sender.chat"}}</a></div>{{end}}
+  {{range .Contacts}}<div class="small">{{icon "user"}} <a href="/crm/contacts/{{.ID}}">{{.Name}}</a> <span class="muted">{{t "crm.contact"}}{{with .Position}} · {{.}}{{end}}{{with .Phone}} · {{.}}{{end}}</span></div>{{end}}
+  {{range .Companies}}<div class="small">{{icon "users-group"}} <a href="/crm/companies/{{.ID}}">{{.Title}}</a> <span class="muted">{{t "crm.company"}}{{with .Phone}} · {{.}}{{end}}</span></div>{{end}}
+  {{range .Leads}}<div class="small">{{icon "flame"}} <a href="/crm/leads/{{.ID}}">{{.Title}}</a> <span class="muted">{{t "crm.lead"}} · {{if .Stage.Name}}{{.Stage.Name}}{{else}}{{t (print "crm.stage." .Stage.Code)}}{{end}}</span></div>{{end}}
+  {{with .Deals}}<b class="small muted">{{t "mail.sender.deals"}}</b>{{range .}}<div class="small"><a href="/crm/deals/{{.ID}}">{{.Title}}</a> <span class="muted">{{money .Amount}} {{.Currency}} · {{if .Stage.Name}}{{.Stage.Name}}{{else}}{{t (print "crm.stage." .Stage.Code)}}{{end}}</span></div>{{end}}{{end}}
+  {{with .Tasks}}<b class="small muted">{{t "mail.sender.tasks"}}</b>{{range .}}<div class="small"><a href="/t/{{.Key}}"><span class="tkey">{{.Key}}</span> {{.Title}}</a></div>{{end}}{{end}}
+  {{with .Recent}}<b class="small muted">{{t "mail.sender.recent"}}</b>{{range .}}<div class="small"><a href="/mail?folder={{.FolderID}}&letter={{.ID}}">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</a> <span class="muted">{{datetime .SentAt}}</span></div>{{end}}{{end}}
+  {{if and .Empty (not .Recent)}}<p class="small muted">{{t "mail.sender.unknown"}}</p>{{end}}
+</details>{{end}}{{end}}
+
+{{/* the shared mailboxes in the folder pane */}}
+{{define "msharednav"}}<div class="mbox mshared">
+  <div class="mbox-head"><b>{{t "mail.shared.title"}}</b><a class="button ghost small" href="/mail/shared" title="{{t "mail.shared.manage"}}">{{icon "settings"}}</a></div>
+  {{range .}}<a class="mfolder" href="/mail/shared/{{.MailboxID}}" title="{{.Email}}">{{icon "users-group"}}<span class="mf-name">{{.Title}}</span>{{if .Open}}<span class="cnt">{{.Open}}</span>{{end}}</a>{{end}}
+</div>{{end}}

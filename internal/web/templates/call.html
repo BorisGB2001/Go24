@@ -1,0 +1,41 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="callpage" data-call data-lk="{{$d.URL}}" data-token="{{$d.Token}}" data-failed="{{t "call.failed"}}" data-you="{{t "call.you"}}"
+  data-video="{{$d.Video}}" data-ring="{{$d.Ring}}" data-ringing="{{t "call.calling"}}" data-accepted="{{t "call.accepted" "%s"}}" data-declined="{{t "call.declined" "%s"}}" data-no-answer="{{t "call.no_answer"}}"
+  data-chat="{{$d.Chat}}" data-record="{{$d.Query}}" data-saving="{{t "call.record_saving"}}" data-screen="{{t "call.screen"}}" data-ringing-more="{{t "call.ringing_more"}}"
+  {{if $d.Guests}}data-guests="{{$d.Query}}" data-lobby-text="{{t "call.lobby_waits" "%s"}}" data-until="{{t "call.guest_until" "%s"}}" data-copied="{{t "call.guest_copied"}}"{{end}}>
+  <div class="row"><h1 style="flex:1">{{icon "message-circle"}} {{t "call.title"}} · {{$d.Name}}
+    <span class="callrec small" data-call-rec hidden>{{t "call.recording"}}</span></h1>
+    {{if not $d.Guest}}<button type="button" class="ghost" data-copy="{{$d.Link}}" title="{{t "call.copy_hint"}}">{{icon "link"}} {{t "call.copy"}}</button>{{end}}
+    {{if $d.Guests}}<details class="callpop callinvite" data-call-invite><summary class="button ghost">{{icon "user"}} {{t "call.guest_invite"}}</summary>
+      <div class="pop"><b class="small">{{t "call.guest_invite"}}</b><span class="small muted">{{t "call.guest_hint"}}</span>
+        <ul class="callpeople" data-call-links data-copy="{{t "call.guest_copy"}}" data-revoke="{{t "call.guest_revoke"}}" hidden></ul>
+        <form data-call-invite-form data-native class="callinvite-form">
+          <label class="small">{{t "call.guest_ttl"}} <select name="ttl"><option value="1">{{t "call.guest_ttl_hour"}}</option><option value="24" selected>{{t "call.guest_ttl_day"}}</option><option value="168">{{t "call.guest_ttl_week"}}</option></select></label>
+          <label class="small">{{t "call.guest_password"}} <input type="text" name="password" autocomplete="off" placeholder="{{t "call.guest_password_none"}}"></label>
+          <label class="small"><input type="checkbox" name="lobby" value="1" checked> {{t "call.guest_lobby"}}</label>
+          <button class="primary">{{icon "link"}} {{t "call.guest_create"}}</button></form></div></details>{{end}}
+    <a class="button ghost" href="{{$d.Base}}{{$d.Back}}">{{icon "arrow-back-up"}} {{t "call.back"}}</a></div>
+  {{if $d.Guests}}<div class="calllobby" data-call-lobby data-admit="{{t "call.guest_admit"}}" data-deny="{{t "call.decline"}}" hidden></div>{{end}}
+  <div class="flash" data-call-status>{{t "call.connecting"}}</div>
+  <div class="callgrid" data-call-grid></div>
+  <div class="callbar row">
+    <button type="button" data-call-mic><span data-text-on="{{t "call.mic_off"}}" data-text-off="{{t "call.mic_on"}}">{{t "call.mic_off"}}</span></button>
+    <button type="button" data-call-cam><span data-text-on="{{t "call.cam_off"}}" data-text-off="{{t "call.cam_on"}}">{{t "call.cam_off"}}</span></button>
+    <button type="button" data-call-screen><span data-text-on="{{t "call.screen_off"}}" data-text-off="{{t "call.screen_on"}}">{{t "call.screen_on"}}</span></button>
+    <button type="button" data-call-layout><span data-text-on="{{t "call.layout_speaker"}}" data-text-off="{{t "call.layout_grid"}}">{{t "call.layout_speaker"}}</span></button>
+    <button type="button" data-call-record data-start="{{t "call.record_start"}}" data-stop="{{t "call.record_stop"}}" hidden>{{t "call.record_start"}}</button>
+    <button type="button" class="ghost" data-call-full title="{{t "call.fullscreen"}}">⛶</button>
+    <details class="callpop" data-call-people-pop><summary class="button ghost">{{icon "users"}} <span data-call-count>1</span></summary>
+      <div class="pop"><b class="small">{{t "call.people"}}</b><ul class="callpeople" data-call-people></ul>
+        {{if $d.RingMore}}<button type="button" class="ghost" data-call-ring-more>{{icon "phone"}} {{t "call.ring_more"}}</button>{{end}}</div></details>
+    <details class="callpop" data-call-devices><summary class="button ghost" title="{{t "call.devices"}}">⚙</summary>
+      <div class="pop"><label class="small">{{t "call.dev_mic"}} <select data-kind="audioinput"></select></label>
+        <label class="small">{{t "call.dev_cam"}} <select data-kind="videoinput"></select></label>
+        <label class="small">{{t "call.dev_out"}} <select data-kind="audiooutput"></select></label></div></details>
+    <button type="button" class="danger" data-call-leave>{{icon "x"}} {{t "call.leave"}}</button>
+  </div>
+</div>
+<script src="{{asset "js/vendor/livekit-client-2.5.7.umd.js"}}"></script>
+<script src="{{asset "js/call.js"}}"></script>
+{{end}}

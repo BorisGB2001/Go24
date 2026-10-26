@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.S}}
+<h1>{{icon "home"}} {{t "portal.title"}}</h1>
+<div class="sub"><a href="/settings">{{t "settings.title"}}</a> · {{t "portal.subtitle"}}</div>
+<form method="post" action="/settings/portal" enctype="multipart/form-data" class="card stack portal-form">
+  <label>{{t "portal.name"}} <input type="text" name="name" value="{{$s.Name}}" maxlength="100" placeholder="go24"></label>
+  <div>
+    <label>{{t "portal.logo"}}</label>
+    <div class="row">
+      {{if $s.HasLogo}}<img class="portal-logo" src="/portal/logo" alt="">
+      <label class="check"><input type="checkbox" name="logo_delete" value="1"> {{t "portal.logo_delete"}}</label>{{end}}
+      <input type="file" name="logo" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml">
+    </div>
+    <p class="muted small">{{t "portal.logo_hint" $d.MaxLogo}}</p>
+  </div>
+  <div class="grid">
+    <label>{{t "portal.lang"}}
+      <select name="lang"><option value="">{{t "portal.lang_browser"}}</option>
+        {{range .Langs}}<option value="{{.Code}}" {{if eq .Code $s.Lang}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+    <label>{{t "portal.tz"}}
+      <input type="text" name="tz" value="{{$s.TZ}}" list="portal-zones" placeholder="{{t "portal.tz_server"}}"></label>
+  </div>
+  <datalist id="portal-zones">{{range $d.Zones}}<option value="{{.}}">{{end}}</datalist>
+  <p class="muted small">{{t "portal.tz_hint"}}</p>
+  <div class="grid">
+    <label>{{t "portal.date_format"}}
+      <select name="date_format"><option value="">{{t "portal.by_lang"}}</option>
+        {{range $d.DateFormats}}<option value="{{.}}" {{if eq . $s.DateFormat}}selected{{end}}>{{index $d.Samples .}}</option>{{end}}</select></label>
+    <label>{{t "portal.time_format"}}
+      <select name="time_format"><option value="">{{t "portal.by_lang"}}</option>
+        <option value="24" {{if eq $s.TimeFormat "24"}}selected{{end}}>{{t "portal.time_24"}}</option>
+        <option value="12" {{if eq $s.TimeFormat "12"}}selected{{end}}>{{t "portal.time_12"}}</option></select></label>
+  </div>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}

@@ -1,0 +1,111 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  <a class="button ghost" href="/crm/products/export?{{with $d.Section}}section={{.ID}}&{{end}}q={{$d.Q}}" title="{{t "crm.pcsv.export_hint"}}">{{icon "download"}} {{t "crm.export"}}</a>
+  {{if $.User.Admin}}<details class="tsettings"><summary class="button ghost">{{icon "cloud-upload"}} {{t "crm.import"}}</summary>
+    <div class="pop"><form method="post" action="/crm/products/import" enctype="multipart/form-data">
+      <p class="small muted">{{t "crm.pcsv.import_hint"}}</p>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <label class="small"><input type="checkbox" name="update" value="1" checked> {{t "crm.pcsv.update"}}</label>
+      <p><button class="primary">{{t "crm.import"}}</button></p></form></div></details>
+  <a class="button ghost" href="/crm/products/settings">{{icon "settings"}} {{t "crm.catalog_settings"}}</a><details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.product_new"}}</summary>
+    <div class="pop">{{template "crmproductform" (dict "P" $d.New "ID" "new" "Currencies" $d.Currencies "Sections" $d.Sections "Units" $d.Units "Props" $d.Props "New" true)}}</div></details>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}<span class="spacer"></span>
+  <span class="seg">{{range list "" "product" "service"}}<a class="chip{{if eq . $d.PType}} on{{end}}" href="/crm/products?{{with $d.Section}}section={{.ID}}&{{end}}{{with $d.Q}}q={{.}}&{{end}}type={{.}}">{{if .}}{{t (print "crm.kinds." .)}}{{else}}{{t "crm.kinds.all"}}{{end}}</a>{{end}}</span>
+  <form method="get" action="/crm/products" class="row">{{with $d.PType}}<input type="hidden" name="type" value="{{.}}">{{end}}<input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "crm.search"}}"></form></div>
+<div class="crmcatalog">
+  <nav class="card crmsections">
+    <a href="/crm/products{{with $d.PType}}?type={{.}}{{end}}" {{if not $d.Section}}class="on"{{end}}>{{icon "box"}} {{t "crm.sections_all"}}</a>
+    {{range $d.Sections}}<a href="/crm/products?section={{.ID}}{{with $d.PType}}&type={{.}}{{end}}" style="--d:{{.Depth}}" {{if and $d.Section (eq $d.Section.ID .ID)}}class="on"{{end}}>{{icon "folder"}} {{.Name}}{{with .Products}} <span class="muted small">{{.}}</span>{{end}}</a>{{end}}
+    {{if $.User.Admin}}<details class="tsettings"><summary class="button ghost small">{{icon "plus"}} {{t "crm.section_new"}}</summary>
+      <div class="pop">{{template "crmsectionform" (dict "ID" "new" "Parent" (or (and $d.Section $d.Section.ID) "") "Sections" $d.Sections)}}</div></details>{{end}}
+  </nav>
+  <div>
+  {{if $d.Section}}<div class="row crmsectionhead"><div class="crumbs" style="flex:1"><a href="/crm/products">{{t "crm.sections_all"}}</a>
+    {{range $d.Crumbs}} {{icon "chevron-right"}} <a href="/crm/products?section={{.ID}}">{{.Name}}</a>{{end}}</div>
+    {{if $.User.Admin}}{{$x := $d.Section}}<details class="tsettings"><summary class="button ghost small">{{icon "edit"}} {{t "crm.section_edit"}}</summary>
+      <div class="pop">{{template "crmsectionform" (dict "ID" $x.ID "Name" $x.Name "Sort" $x.Sort "Parent" $x.ParentID "Self" $x.ID "Sections" $d.Sections)}}
+      <form method="post" action="/crm/product-sections/{{$x.ID}}/delete" data-confirm="{{t "crm.section_delete_confirm"}}"><input type="hidden" name="parent" value="{{$x.ParentID}}">
+        <button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details>{{end}}</div>{{end}}
+  <div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th></th><th>{{t "crm.f.title"}}</th><th>{{t "crm.product_sku"}}</th><th>{{t "crm.product_price"}}</th>{{if $d.Purchase}}<th>{{t "crm.product_purchase"}}</th>{{end}}<th>{{t "crm.product_unit"}}</th>{{range $d.PropCols}}<th>{{.Name}}</th>{{end}}<th class="right"><a href="/store/stock">{{t "stock.on_hand"}}</a></th><th>{{t "crm.vat"}}</th>{{if $.User.Admin}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Items}}<tr {{if not .Active}}class="muted"{{end}}><td class="crmthumb">{{if .PhotoKey}}<a href="/crm/products/{{.ID}}/photo" target="_blank"><img src="/crm/products/{{.ID}}/photo?v={{.PhotoKey}}" alt="" loading="lazy"></a>{{else}}<span>{{if .Service}}{{icon "tool"}}{{else}}{{icon "box"}}{{end}}</span>{{end}}</td>
+    <td><b>{{.Name}}</b>{{if .Service}} <span class="pill">{{t "crm.kind.service"}}</span>{{end}}{{if not .Active}} <span class="pill">{{t "crm.product_inactive"}}</span>{{end}}{{if and .SectionPath (or (not $d.Section) (ne .SectionID $d.Section.ID))}}<div class="small muted">{{icon "folder"}} {{.SectionPath}}</div>{{end}}{{with .Description}}<div class="small muted">{{.}}</div>{{end}}{{with .Variants}}<div class="small muted">{{icon "stack-2"}} {{t "crm.variants_n" (len .)}}</div>{{end}}</td>
+    <td class="small">{{.SKU}}{{range .Barcodes}}<div class="muted nowrap" title="{{t "crm.product_barcodes"}}">{{icon "barcode"}} {{.}}</div>{{end}}</td><td><b>{{money .Price}} {{.Currency}}</b></td>{{if $d.Purchase}}<td class="small">{{with .PurchasePrice}}{{money .}}{{end}}{{if .PurchasePrice}} {{.Currency}}{{end}}</td>{{end}}<td class="small">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</td>
+    {{$x := .}}{{range $d.PropCols}}<td class="small">{{$v := index $x.Props .ID}}{{if $v}}{{if eq .Kind "bool"}}{{icon "check"}}{{else}}{{$v}}{{end}}{{end}}</td>{{end}}
+    <td class="right nowrap">{{if .Service}}<span class="muted" title="{{t "crm.service_no_stock"}}">—</span>{{else}}{{with index $d.Stock .ID}}{{fnum .}}{{else}}<span class="muted">0</span>{{end}}{{end}}</td>
+    <td class="small">{{with fpts .VATRate}}{{.}}%{{else}}{{t "crm.vat_none"}}{{end}}</td>
+    {{if $.User.Admin}}<td class="nowrap">{{if not .Service}}<details class="tsettings"><summary class="button ghost small" title="{{t "crm.variant_new"}}">{{icon "plus"}}</summary><div class="pop"><h3>{{t "crm.variant_new"}}</h3>{{template "crmvariantform" (dict "P" nil "ID" "new" "Parent" . "Currencies" $d.Currencies "Props" $d.Props)}}</div></details>{{end}}
+      <details class="tsettings"><summary class="button ghost small">{{icon "edit"}}</summary><div class="pop">{{template "crmproductform" (dict "P" . "ID" .ID "Currencies" $d.Currencies "Sections" $d.Sections "Units" $d.Units "Props" $d.Props)}}
+      <form method="post" action="/crm/products/{{.ID}}/delete" data-confirm="{{if .Variants}}{{t "crm.product_delete_variants_confirm"}}{{else}}{{t "crm.product_delete_confirm"}}{{end}}"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details></td>{{end}}</tr>
+    {{$par := .}}{{range .Variants}}<tr class="crmvariant{{if not .Active}} muted{{end}}"><td class="crmthumb">{{if .PhotoKey}}<a href="/crm/products/{{.ID}}/photo" target="_blank"><img src="/crm/products/{{.ID}}/photo?v={{.PhotoKey}}" alt="" loading="lazy"></a>{{else}}<span>{{icon "stack-2"}}</span>{{end}}</td>
+      <td>{{.Name}}{{if not .Active}} <span class="pill">{{t "crm.product_inactive"}}</span>{{end}}</td>
+      <td class="small">{{.SKU}}{{range .Barcodes}}<div class="muted nowrap" title="{{t "crm.product_barcodes"}}">{{icon "barcode"}} {{.}}</div>{{end}}</td><td>{{money .Price}} {{.Currency}}</td>{{if $d.Purchase}}<td class="small">{{with .PurchasePrice}}{{money .}}{{end}}{{if .PurchasePrice}} {{.Currency}}{{end}}</td>{{end}}<td class="small">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</td>
+      {{$x := .}}{{range $d.PropCols}}<td class="small">{{$v := index $x.Props .ID}}{{if $v}}{{if eq .Kind "bool"}}{{icon "check"}}{{else}}{{$v}}{{end}}{{end}}</td>{{end}}
+      <td class="right nowrap">{{with index $d.Stock .ID}}{{fnum .}}{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="small">{{with fpts .VATRate}}{{.}}%{{else}}{{t "crm.vat_none"}}{{end}}</td>
+      {{if $.User.Admin}}<td><details class="tsettings"><summary class="button ghost small">{{icon "edit"}}</summary><div class="pop">{{template "crmvariantform" (dict "P" . "ID" .ID "Parent" $par "Currencies" $d.Currencies "Props" $d.Props)}}
+        <form method="post" action="/crm/products/{{.ID}}/delete" data-confirm="{{t "crm.variant_delete_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details></td>{{end}}</tr>{{end}}{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "crm.no_products"}}</div>{{end}}</div>
+  </div>
+</div>
+{{end}}
+
+{{define "crmproductform"}}{{$p := .P}}
+<form method="post" action="/crm/products/{{.ID}}" enctype="multipart/form-data">
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" required maxlength="300" value="{{with $p}}{{.Name}}{{end}}">
+  <label>{{t "crm.pcsv.kind"}}</label><select name="kind">{{range list "product" "service"}}<option value="{{.}}" {{if and $p (eq $p.Kind .)}}selected{{end}}>{{t (print "crm.kind." .)}}</option>{{end}}</select>
+  <label>{{t "crm.section"}}</label><select name="section"><option value="">{{t "crm.sections_root"}}</option>
+    {{range .Sections}}<option value="{{.ID}}" {{if and $p (eq $p.SectionID .ID)}}selected{{end}}>{{.Path}}</option>{{end}}</select>
+  <label>{{t "crm.product_sku"}}</label><input type="text" name="sku" maxlength="100" value="{{with $p}}{{.SKU}}{{end}}">
+  <label>{{t "crm.product_price"}}</label><div class="row"><input type="text" name="price" inputmode="decimal" style="flex:1" value="{{with $p}}{{if .ID}}{{fnum .Price}}{{end}}{{end}}">
+    {{template "crmcurrency" (dict "List" .Currencies "Value" (or (and $p $p.Currency) ""))}}</div>
+  <label>{{t "crm.product_purchase"}}</label><input type="text" name="purchase_price" inputmode="decimal" value="{{with $p}}{{fpts .PurchasePrice}}{{end}}">
+  <label>{{t "crm.product_unit"}}</label>{{$u := or (and $p $p.Unit) ""}}{{$found := false}}<select name="unit">
+    {{range .Units}}<option value="{{.ShownSymbol}}" {{if eq $u .ShownSymbol}}selected{{$found = true}}{{else if and (not $u) .Default}}selected{{end}}>{{.ShownName}} ({{.ShownSymbol}})</option>{{end}}
+    {{if and $u (not $found)}}<option value="{{$u}}" selected>{{$u}}</option>{{end}}</select>
+  <label>{{t "crm.product_barcodes"}}</label><textarea name="barcodes" rows="2" placeholder="{{t "crm.product_barcodes_hint"}}">{{with $p}}{{range $i, $b := .Barcodes}}{{if $i}}
+{{end}}{{$b}}{{end}}{{end}}</textarea>
+  {{template "crmpropfields" (dict "P" $p "Props" .Props "Variant" false)}}
+  <label>{{t "crm.vat"}}</label><div class="row">{{template "crmvat" (and $p $p.VATRate)}}
+    <label class="small"><input type="checkbox" name="vat_included" value="1" {{if or (not $p) $p.VATIncluded}}checked{{end}}> {{t "crm.vat_included"}}</label></div>
+  <label>{{t "crm.f.comment"}}</label><textarea name="description" rows="2" maxlength="10000">{{with $p}}{{.Description}}{{end}}</textarea>
+  <label>{{t "crm.product_photo"}}</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/gif">
+  {{if and $p $p.PhotoKey}}<label class="small"><input type="checkbox" name="photo_delete" value="1"> {{t "crm.product_photo_delete"}}</label>{{end}}
+  {{if not .New}}<label class="small"><input type="checkbox" name="active" value="1" {{if $p.Active}}checked{{end}}> {{t "crm.product_active"}}</label>{{end}}
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}
+
+{{define "crmsectionform"}}
+<form method="post" action="/crm/product-sections/{{.ID}}">
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" required maxlength="200" value="{{.Name}}">
+  <label>{{t "crm.section_parent"}}</label><select name="parent"><option value="">{{t "crm.sections_root"}}</option>
+    {{$c := .}}{{range .Sections}}{{if ne .ID (or $c.Self "-")}}<option value="{{.ID}}" {{if eq $c.Parent .ID}}selected{{end}}>{{.Path}}</option>{{end}}{{end}}</select>
+  <label>{{t "crm.section_sort"}}</label><input type="number" name="sort" value="{{or .Sort 0}}">
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}
+
+{{define "crmpropfields"}}{{$p := .P}}{{$var := .Variant}}{{range $pr := .Props}}{{if eq $pr.Variant $var}}{{$v := ""}}{{with $p}}{{with .Props}}{{$v = index . $pr.ID}}{{end}}{{end}}<label>{{$pr.Name}}</label>
+    {{if eq $pr.Kind "list"}}<select name="prop.{{$pr.ID}}"><option value=""></option>{{range $pr.Options}}<option {{if eq . $v}}selected{{end}}>{{.}}</option>{{end}}</select>
+    {{else if eq $pr.Kind "bool"}}<label class="small"><input type="checkbox" name="prop.{{$pr.ID}}" value="1" {{if $v}}checked{{end}}> {{t "crm.prop_yes"}}</label>
+    {{else}}<input type="text" name="prop.{{$pr.ID}}" value="{{$v}}" {{if eq $pr.Kind "number"}}inputmode="decimal"{{else}}maxlength="1000"{{end}}>{{end}}{{end}}{{end}}{{end}}
+
+{{define "crmvariantform"}}{{$p := .P}}{{$par := .Parent}}
+<form method="post" action="/crm/products/{{.ID}}" enctype="multipart/form-data">
+  <input type="hidden" name="parent" value="{{$par.ID}}"><input type="hidden" name="section" value="{{$par.SectionID}}">
+  <p class="small muted">{{icon "box"}} {{$par.Name}}</p>
+  {{$has := false}}{{range .Props}}{{if .Variant}}{{$has = true}}{{end}}{{end}}
+  {{if $has}}{{template "crmpropfields" (dict "P" $p "Props" .Props "Variant" true)}}{{else}}<p class="small muted">{{t "crm.variant_no_props"}} <a href="/crm/products/settings">{{t "crm.catalog_settings"}}</a></p>{{end}}
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" maxlength="300" placeholder="{{t "crm.variant_name_auto"}}" value="{{with $p}}{{.Name}}{{end}}">
+  <label>{{t "crm.product_sku"}}</label><input type="text" name="sku" maxlength="100" value="{{with $p}}{{.SKU}}{{end}}">
+  <label>{{t "crm.product_price"}}</label><div class="row"><input type="text" name="price" inputmode="decimal" style="flex:1" value="{{with $p}}{{fnum .Price}}{{else}}{{fnum $par.Price}}{{end}}">
+    {{template "crmcurrency" (dict "List" .Currencies "Value" (or (and $p $p.Currency) $par.Currency))}}</div>
+  <label>{{t "crm.product_purchase"}}</label><input type="text" name="purchase_price" inputmode="decimal" value="{{with $p}}{{fpts .PurchasePrice}}{{else}}{{fpts $par.PurchasePrice}}{{end}}">
+  <label>{{t "crm.product_barcodes"}}</label><textarea name="barcodes" rows="2" placeholder="{{t "crm.product_barcodes_hint"}}">{{with $p}}{{range $i, $b := .Barcodes}}{{if $i}}
+{{end}}{{$b}}{{end}}{{end}}</textarea>
+  <label>{{t "crm.product_photo"}}</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/gif">
+  {{if and $p $p.PhotoKey}}<label class="small"><input type="checkbox" name="photo_delete" value="1"> {{t "crm.product_photo_delete"}}</label>{{end}}
+  {{if $p}}<label class="small"><input type="checkbox" name="active" value="1" {{if $p.Active}}checked{{end}}> {{t "crm.product_active"}}</label>{{end}}
+  <p class="small muted">{{t "crm.variant_inherits"}}</p>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

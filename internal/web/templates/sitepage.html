@@ -1,0 +1,80 @@
+{{/* «Добавить блок»: the library of blocks, a new block goes to position .At. */}}
+{{define "siteadd"}}{{$a := .}}<details class="siteadd"><summary>{{icon "plus"}} {{t "site.add_block"}}</summary>
+  <form method="post" action="{{.Base}}/blocks" class="sitelib"><input type="hidden" name="at" value="{{.At}}">
+    {{range .Types}}<button class="ghost" name="type" value="{{.Type}}">{{icon .Icon}} {{t (print "site.block." .Type)}}</button>{{end}}</form></details>{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.Site}}{{$p := $d.Page}}{{$base := print "/sites/" $s.ID "/p/" $p.ID}}
+<link rel="stylesheet" href="{{asset "css/site.css"}}">
+<div class="crumbs"><a href="/sites">{{t "site.title"}}</a> {{icon "chevron-right"}} {{$s.Name}} {{icon "chevron-right"}} {{$p.Title}}</div>
+<div class="sitelayout">
+  <nav class="card sitenav">
+    <b>{{$s.Name}}</b>
+    <div class="small">{{if $s.Published}}<span class="sitepub on">{{t "site.published"}}</span> <a href="/site/{{$s.Slug}}" target="_blank" rel="noopener">{{icon "external-link"}} {{t "site.open"}}</a>{{else}}<span class="sitepub">{{t "site.draft"}}</span>{{end}}</div>
+    <form method="post" action="/sites/{{$s.ID}}/publish">{{if $s.Published}}<button class="ghost small" name="on" value="0">{{icon "eye-off"}} {{t "site.unpublish_site"}}</button>{{else}}<button class="primary small" name="on" value="1">{{icon "world"}} {{t "site.publish_site"}}</button>{{end}}</form>
+    <h3>{{t "site.pages"}}</h3>
+    <ul class="sitepages">{{range $d.Pages}}<li><a href="/sites/{{$s.ID}}/p/{{.ID}}" {{if eq .ID $p.ID}}class="on"{{end}}>{{if .Home}}{{icon "home"}} {{end}}{{.Title}}{{if not .Published}} <span class="muted small" title="{{t "site.draft"}}">{{icon "eye-off"}}</span>{{end}}</a></li>{{end}}</ul>
+    <details><summary class="button ghost small">{{icon "plus"}} {{t "site.new_page"}}</summary>
+      <form method="post" action="/sites/{{$s.ID}}/pages"><input type="text" name="title" maxlength="200" required placeholder="{{t "site.page_title"}}">
+        <input type="text" name="slug" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" placeholder="{{t "site.address_auto"}}">
+        <button class="primary small">{{t "common.create"}}</button></form></details>
+    <details><summary class="button ghost small">{{icon "settings"}} {{t "site.settings"}}</summary>
+      <form method="post" action="/sites/{{$s.ID}}/settings">
+        <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$s.Name}}" maxlength="200" required>
+        <label>{{t "site.address"}}</label><input type="text" name="slug" value="{{$s.Slug}}" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" required>
+        <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$s.Description}}</textarea>
+        <button class="primary small">{{t "common.save"}}</button></form>
+      {{if $d.CanDelete}}<form method="post" action="/sites/{{$s.ID}}/delete" data-confirm="{{t "site.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "site.delete"}}</button></form>{{end}}</details>
+  </nav>
+  <div>
+    <div class="card row sitehead">
+      <div style="flex:1"><h1 class="sitetitle">{{$p.Title}}</h1>{{if $p.Home}} <span class="muted small">{{icon "home"}} {{t "site.home"}}</span>{{end}}
+        <div class="small muted">/site/{{$s.Slug}}{{if not $p.Home}}/{{$p.Slug}}{{end}} · {{if $p.Published}}{{t "site.published"}}{{else}}{{t "site.draft"}}{{end}}{{with $p.Editor}} · {{t "site.edited" . (datetime $p.Updated)}}{{end}}</div></div>
+      <a class="button ghost" href="{{$base}}/preview" target="_blank" rel="noopener">{{icon "eye"}} {{t "site.preview"}}</a>
+      <form method="post" action="{{$base}}/{{if $p.Published}}unpublish{{else}}publish{{end}}">{{if $p.Published}}<button class="ghost">{{icon "eye-off"}} {{t "site.unpublish"}}</button>{{else}}<button class="primary">{{icon "world"}} {{t "site.publish"}}</button>{{end}}</form>
+      <details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
+        <button type="button" class="ghost" data-toggle="sitepageform">{{icon "edit"}} {{t "site.page_settings"}}</button>
+        {{if not $p.Home}}<form method="post" action="{{$base}}/home"><button class="ghost">{{icon "home"}} {{t "site.make_home"}}</button></form>
+        <form method="post" action="{{$base}}/delete" data-confirm="{{t "site.delete_page_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "site.delete_page"}}</button></form>{{end}}
+      </div></details>
+    </div>
+    <form method="post" action="{{$base}}" class="card" id="sitepageform" hidden>
+      <label>{{t "site.page_title"}}</label><input type="text" name="title" value="{{$p.Title}}" maxlength="200" required>
+      <label>{{t "site.address"}}</label><input type="text" name="slug" value="{{$p.Slug}}" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" required>
+      <p><button class="primary">{{t "common.save"}}</button></p></form>
+    <div class="siteedit lp" data-site-upload="/sites/{{$s.ID}}/files" data-site-failed="{{t "site.upload_failed"}}">
+      {{template "siteadd" (dict "Base" $base "At" 0 "Types" $d.Types)}}
+      {{range $i, $b := $p.Blocks}}{{$t := index $d.TypeOf .Type}}
+      <div class="siteblk{{if .Hidden}} off{{end}}" id="b-{{.ID}}">
+        <div class="sitetools">
+          <span class="muted small">{{t (print "site.block." .Type)}}{{if .Hidden}} · {{t "site.hidden"}}{{end}}</span>
+          <button type="button" class="ghost small" data-toggle="e-{{.ID}}">{{icon "edit"}} {{t "task.change"}}</button>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/up"><button class="ghost small" title="{{t "kb.up"}}" {{if eq $i 0}}disabled{{end}}>{{icon "arrow-up"}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/down"><button class="ghost small" title="{{t "kb.down"}}">{{icon "arrow-down"}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/hide"><button class="ghost small" title="{{if .Hidden}}{{t "site.show"}}{{else}}{{t "site.hide"}}{{end}}">{{if .Hidden}}{{icon "eye"}}{{else}}{{icon "eye-off"}}{{end}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/delete" data-confirm="{{t "site.delete_block_confirm"}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+        </div>
+        <form method="post" action="{{$base}}/blocks/{{.ID}}" class="card siteform" id="e-{{.ID}}" hidden>
+          {{range $t.Fields}}<label>{{t (print "site.f." .Name)}}</label>
+          {{if or (eq .Kind "textarea") (eq .Kind "pairs")}}<textarea name="{{.Name}}" rows="4">{{$b.Get .Name}}</textarea>{{if eq .Kind "pairs"}}<div class="small muted">{{t (print "site.hint." .Name)}}</div>{{end}}
+          {{else if eq .Kind "image"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" placeholder="https://…" style="flex:1" data-site-image>
+            <label class="button ghost small">{{icon "cloud-upload"}} {{t "site.upload"}}<input type="file" accept="image/*" hidden data-site-file></label></div>
+          {{else if eq .Kind "show"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.ask.off"}}</option>
+            <option value="on" {{if eq $v "on"}}selected{{end}}>{{t "site.ask.on"}}</option><option value="req" {{if eq $v "req"}}selected{{end}}>{{t "site.ask.req"}}</option></select>
+          {{else if eq .Kind "user"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.responsible_creator"}}</option>
+            {{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+          {{else if eq .Kind "color"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" pattern="#[0-9a-fA-F]{6}" placeholder="#1f6feb" style="width:120px" data-site-color>
+            <input type="color" value="{{or ($b.Get .Name) "#1f6feb"}}" data-site-picker></div>
+          {{else}}<input type="text" name="{{.Name}}" value="{{$b.Get .Name}}"{{if eq .Kind "url"}} placeholder="https://…"{{end}}>{{end}}
+          {{end}}
+          <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="e-{{.ID}}">{{t "common.cancel"}}</button></p>
+        </form>
+        {{template "siteblock" .}}
+      </div>
+      {{template "siteadd" (dict "Base" $base "At" (add $i 1) "Types" $d.Types)}}
+      {{else}}<p class="muted siteempty">{{t "site.no_blocks"}}</p>{{end}}
+    </div>
+  </div>
+</div>
+<script src="{{asset "js/sites.js"}}"></script>
+{{end}}

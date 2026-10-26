@@ -1,0 +1,299 @@
+{{define "content"}}
+{{$d := .Data}}{{$dr := $d.Drive}}
+{{if $dr.Collab}}<div class="crumbs"><a href="/collabs">{{t "collab.title"}}</a> {{icon "chevron-right"}} <a href="/p/{{$dr.ProjectKey}}">{{$dr.Name}}</a></div>
+<h1>{{t "collab.drive_of" $dr.Name}}</h1>
+{{else}}<h1>{{t "disk.title"}}</h1>{{end}}
+{{if not $dr.Collab}}<div class="tabs">
+  <a href="/disk/recent" {{if $d.RecentPage}}class="on"{{end}}>{{icon "clock"}} {{t "disk.recent"}}</a>
+  <a href="/disk/my" {{if and (eq $dr.Kind "user") (not $dr.Root) (not $dr.Employee)}}class="on"{{end}}>{{icon "user"}} {{t "disk.my"}}</a>
+  <a href="/disk/company" {{if eq $dr.Kind "company"}}class="on"{{end}}>{{icon "home"}} {{t "disk.company"}}</a>
+  <a href="/disk/shared" {{if or $d.SharedPage $dr.Root}}class="on"{{end}}>{{icon "users"}} {{t "disk.shared"}}</a>
+  {{range $d.Projects}}<a href="/disk/p/{{.Key}}" {{if eq $dr.ProjectKey .Key}}class="on"{{end}}>{{icon "folders"}} {{.Name}}</a>{{end}}
+  <span class="spacer"></span>{{with $d.DavURL}}<details class="tsettings davinfo"><summary class="button ghost">{{icon "link"}} {{t "disk.dav"}}</summary>
+    <div class="pop"><div class="row"><input type="text" readonly value="{{.}}" style="flex:1"><button type="button" class="ghost" data-copy="{{.}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
+      <p class="small muted">{{t "disk.dav_hint"}}</p><a class="button ghost" href="/settings/keys">{{icon "plus"}} {{t "disk.dav_keys"}}</a></div></details>{{end}}
+  <a href="/settings/storages">{{icon "database"}} {{t "nav.storages"}}</a>
+</div>{{end}}
+{{if $d.RecentPage}}{{template "diskRecent" .}}{{else if $d.SharedPage}}{{template "diskShared" .}}{{else}}
+{{if $dr.Root}}<p class="muted small">{{t "disk.shared_by" $dr.Owner (t (print "disk.access_" $dr.Access))}}</p>{{end}}
+{{if $dr.Employee}}<p class="muted small" data-disk-employee>{{icon "shield-lock"}} {{t "disk.employee_hint" $dr.Owner}}{{if $dr.Dismissed}} · <b>{{t "disk.dismissed"}}</b>{{end}} · <a href="/settings/disk">{{t "disk.limits"}}</a></p>{{end}}
+{{with $d.Usage}}{{if not $dr.Root}}<div class="row small muted diskusage" data-disk-usage>{{icon "database"}} {{if .Limit}}{{t "disk.used_of" (size .Used) (size .Limit)}}
+  <span class="progress{{if ge .Percent 90}} over{{end}}" title="{{.Percent}}%"><span style="width:{{.Percent}}%"></span></span>{{else}}{{t "disk.used" (size .Used)}}{{end}}
+  {{if $dr.MayClean}}<a href="{{$dr.Path}}?space">{{icon "trash"}} {{t "disk.space"}}</a>{{end}}</div>{{end}}{{end}}
+<div class="row diskhead"><div class="crumbs" style="flex:1"><a href="{{$dr.Path}}" data-drop-folder="">{{if $dr.Root}}{{$dr.Name}}{{else if $dr.Employee}}{{t "disk.employee" $dr.Owner}}{{else if eq $dr.Kind "user"}}{{t "disk.my"}}{{else if eq $dr.Kind "company"}}{{t "disk.company"}}{{else}}{{$dr.Name}}{{end}}</a>
+  {{range $d.Trail}} {{icon "chevron-right"}} <a href="{{$dr.Path}}?folder={{.ID}}" data-drop-folder="{{.ID}}">{{.Name}}</a>{{end}}
+  {{if $d.Searching}} {{icon "chevron-right"}} {{t "disk.found" (len $d.Files)}}{{end}}</div>
+  {{if not $d.Aside}}<form method="get" action="{{$dr.Path}}" class="row disk-search" data-disk-filter>
+    <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "disk.search"}}" maxlength="200">
+    <select name="type"><option value="">{{t "disk.type_all"}}</option>{{range $d.Types}}<option value="{{.}}" {{if eq . $d.Type}}selected{{end}}>{{t (print "disk.type_" .)}}</option>{{end}}</select>
+    {{if $d.Sort}}<input type="hidden" name="sort" value="{{$d.Sort}}">{{end}}{{if $d.Desc}}<input type="hidden" name="desc" value="1">{{end}}
+    <button class="ghost" title="{{t "disk.search"}}">{{icon "search"}}</button>
+    {{if $d.Searching}}<a class="button ghost" href="{{$dr.Path}}" title="{{t "disk.search_reset"}}">{{icon "x"}}</a>{{end}}</form>{{end}}
+  {{if $d.Aside}}<a class="button ghost" href="{{$dr.Path}}">{{icon "arrow-back-up"}} {{t "disk.back_to_drive"}}</a>
+  {{else}}<div class="seg" data-disk-view><button type="button" class="ghost" data-view-mode="list" title="{{t "disk.view_list"}}">{{icon "layout-list"}}</button><button type="button" class="ghost" data-view-mode="tiles" title="{{t "disk.view_tiles"}}">{{icon "photo"}}</button></div>
+  {{with $d.Conn}}<form method="post" action="/disk/connect"><input type="hidden" name="which" value="{{.Which}}"><input type="hidden" name="back" value="{{$dr.Path}}">
+    {{if .On}}<button class="ghost" name="off" value="1" title="{{t "disk.connected_hint"}}">{{icon "unlink"}} {{t "disk.disconnect"}}</button>{{else}}<button class="ghost" title="{{t "disk.connect_hint"}}">{{icon "link"}} {{t "disk.connect"}}</button>{{end}}</form>{{end}}
+  {{if not $dr.Root}}<a class="button ghost" href="{{$dr.Path}}?trash" data-drop-trash>{{icon "trash"}} {{t "trash.title"}}</a>{{end}}{{end}}</div>
+{{if $d.InSpace}}{{template "diskSpace" .}}{{else if $d.InTrash}}{{template "diskTrash" .}}{{else}}
+{{if $dr.CanWrite}}<div class="card row diskbar">
+  <form method="post" action="{{$dr.Path}}/upload" enctype="multipart/form-data" class="row" style="flex:1" data-disk-upload>
+    <input type="hidden" name="folder" value="{{$d.Folder}}">
+    {{icon "paperclip"}} <input type="file" name="file" multiple required>
+    {{template "storageSelect" $d.Storages}}
+    <button class="primary">{{icon "cloud-upload"}} {{t "files.upload"}}</button>
+    <label class="button ghost" hidden data-disk-dir>{{icon "folder"}} {{t "disk.upload_folder"}}<input type="file" webkitdirectory multiple hidden></label>
+  </form>
+  <details class="tsettings"><summary class="button ghost">{{icon "plus"}} {{t "disk.new_folder"}}</summary>
+    <div class="pop"><form method="post" action="{{$dr.Path}}/folders" class="row"><input type="hidden" name="folder" value="{{$d.Folder}}">
+      <input type="text" name="name" maxlength="200" required placeholder="{{t "disk.folder_name"}}" style="flex:1"><button>{{t "common.create"}}</button></form></div></details>
+  <details class="tsettings"><summary class="button ghost">{{icon "file-pencil"}} {{t "office.create"}}</summary>
+    <div class="pop"><form method="post" action="{{$dr.Path}}/new-doc" class="officenew"><input type="hidden" name="folder" value="{{$d.Folder}}">
+      <input type="text" name="name" maxlength="200" placeholder="{{t "office.name"}}">
+      {{if $d.Office}}<button name="kind" value="docx" class="ghost">{{icon "file-text"}} {{t "office.new_docx"}}</button>
+      <button name="kind" value="xlsx" class="ghost">{{icon "table"}} {{t "office.new_xlsx"}}</button>
+      <button name="kind" value="pptx" class="ghost">{{icon "presentation"}} {{t "office.new_pptx"}}</button>{{end}}
+      <button formaction="{{$dr.Path}}/new-board" class="ghost" data-new-board>{{icon "brush"}} {{t "dboard.new_board"}}</button></form></div></details>
+</div>{{end}}
+<div class="card flush disk" data-disk="{{$dr.Path}}" data-folder="{{$d.Folder}}" data-write="{{$dr.CanWrite}}"
+  data-l-upload="{{t "disk.uploading"}}" data-l-failed="{{t "disk.upload_failed"}}" data-l-move="{{t "disk.move_here"}}" data-l-copy="{{t "disk.copy_here"}}"
+  data-l-move-title="{{t "disk.move_title"}}" data-l-copy-title="{{t "disk.copy_title"}}" data-l-top="{{t "disk.top"}}" data-l-no-write="{{t "disk.no_write"}}"
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}">
+  <div class="disk-bulk row" data-disk-bulk hidden>
+    <b data-disk-count></b>
+    <button type="button" class="ghost" data-disk-act="zip">{{icon "file-zip"}} {{t "disk.download"}}</button>
+    {{if $dr.CanWrite}}<button type="button" class="ghost" data-disk-act="move">{{icon "arrows-exchange"}} {{t "disk.move"}}</button>{{end}}
+    <button type="button" class="ghost" data-disk-act="copy">{{icon "copy"}} {{t "disk.copy"}}</button>
+    {{if $dr.CanWrite}}<form method="post" action="{{$dr.Path}}/delete" data-disk-del data-confirm="{{t "disk.delete_selected_confirm"}}"><input type="hidden" name="folder" value="{{$d.Folder}}">
+      <button class="ghost">{{icon "trash"}} {{t "common.remove"}}</button></form>{{end}}
+  </div>
+  {{if or $d.Connected $d.Folders $d.Found $d.Files}}<table class="disk-list">
+    <thead><tr><th class="selcol"><input type="checkbox" data-disk-all title="{{t "disk.select_all"}}"></th><th class="thumb"></th><th>{{template "diskSort" (dict "d" $d "col" "name" "label" "col.file_name")}}</th><th>{{template "diskSort" (dict "d" $d "col" "size" "label" "col.size")}}</th><th>{{t "col.storage"}}</th><th>{{template "diskSort" (dict "d" $d "col" "date" "label" "col.uploaded")}}</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Connected}}<tr data-connected>
+      <td class="selcol"></td>
+      <td class="thumb"><a href="{{.Path}}" tabindex="-1"><span class="ticon">{{if .Project}}{{icon "folders"}}{{else}}{{icon "folder"}}{{end}}</span></a></td>
+      <td><a href="{{.Path}}" class="ttitle">{{if .Project}}{{icon "folders"}}{{else}}{{icon "folder"}}{{end}} {{.Name}}</a> <span class="dlink" title="{{t "disk.connected_hint"}}">{{icon "link"}}</span>
+        <span class="muted small">{{if .Owner}}{{.Owner}}{{else}}{{t "disk.connected_project"}}{{end}}</span></td>
+      <td class="meta"></td><td class="meta"></td><td class="meta small">{{datetime .CreatedAt}}</td>
+      <td><form method="post" action="/disk/connect"><input type="hidden" name="which" value="{{.Which}}"><input type="hidden" name="off" value="1"><input type="hidden" name="back" value="/disk/my">
+        <button class="ghost" title="{{t "disk.disconnect"}}">{{icon "unlink"}}</button></form></td></tr>{{end}}
+    {{range $d.Found}}<tr data-item="folder" data-id="{{.ID}}" data-name="{{.Name}}">
+      <td class="selcol"><input type="checkbox" data-sel></td>
+      <td class="thumb"><a href="{{$dr.Path}}?folder={{.ID}}" tabindex="-1"><span class="ticon">{{icon "folder"}}</span></a></td>
+      <td><a href="{{$dr.Path}}?folder={{.ID}}" class="ttitle">{{icon "folder"}} {{.Name}}</a>{{template "diskWhere" (dict "dr" $dr "f" .)}}</td>
+      <td class="meta"></td><td class="meta"></td><td class="meta"></td><td></td></tr>{{end}}
+    {{range $d.Folders}}<tr data-item="folder" data-id="{{.ID}}" data-name="{{.Name}}" {{if $dr.CanWrite}}draggable="true"{{end}}>
+      <td class="selcol"><input type="checkbox" data-sel></td>
+      <td class="thumb"><a href="{{$dr.Path}}?folder={{.ID}}" tabindex="-1"><span class="ticon">{{icon "folder"}}</span></a></td>
+      <td><a href="{{$dr.Path}}?folder={{.ID}}" class="ttitle">{{icon "folder"}} {{.Name}}</a>
+        {{$sh := false}}{{if $d.Shares}}{{$sh = index $d.Shares .ID}}{{end}}{{if $sh}}<span class="dlink" title="{{t "disk.share_on" (len $sh)}}">{{icon "users"}}</span>{{end}}
+        {{$rt := false}}{{if $d.Rights}}{{$rt = index $d.Rights .ID}}{{end}}{{if $rt}}<span class="dlink" title="{{t "disk.rights_on"}}" data-rights>{{icon "shield-lock"}}</span>{{end}}
+        {{if and $d.MayRight (index $d.MayRight .ID)}}<form method="post" action="{{$dr.Path}}/rights" class="linkform" id="rt-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="folder_id" value="{{.ID}}">
+          {{if not $rt}}<div class="muted small">{{t "disk.rights_inherited"}}</div>{{end}}
+          {{range index $d.Rights .ID}}<div class="row small"><span style="flex:1">{{if eq .Kind "department"}}{{icon "hierarchy-2"}} {{.Whom}}{{else if eq .Kind "all"}}{{icon "users"}} {{t "disk.rights_all"}}{{else}}{{icon "user"}} {{.Whom}}{{end}}</span><span class="muted">{{t (print "disk.access_" .Access)}}</span>
+            <button class="ghost" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></div>{{end}}
+          <select name="whom"><option value="">{{t "disk.share_whom"}}</option><option value="all">{{t "disk.rights_all"}}</option>
+            <optgroup label="{{t "disk.share_people"}}">{{range $d.RightUsers}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+            {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+          <select name="access">{{range $d.Accesses}}<option value="{{.}}">{{t (print "disk.access_" .)}}</option>{{end}}</select>
+          <div class="muted small">{{t "disk.rights_hint"}}</div>
+          <div class="row"><button>{{t "disk.share_give"}}</button>{{if $rt}}<button class="ghost" name="clear" value="1" data-confirm="{{t "disk.rights_clear_confirm"}}">{{t "disk.rights_clear"}}</button>{{end}}</div></form>{{end}}
+        {{if $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="linkform" id="sh-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="folder_id" value="{{.ID}}">
+          {{range index $d.Shares .ID}}<div class="row small"><span style="flex:1">{{if eq .Kind "department"}}{{icon "hierarchy-2"}}{{else}}{{icon "user"}}{{end}} {{.Whom}}</span><span class="muted">{{t (print "disk.access_" .Access)}}</span>
+            <button class="ghost" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></div>{{end}}
+          <select name="whom"><option value="">{{t "disk.share_whom"}}</option>
+            <optgroup label="{{t "disk.share_people"}}">{{range $d.Users}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+            {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+          <select name="access">{{range $d.Accesses}}<option value="{{.}}">{{t (print "disk.access_" .)}}</option>{{end}}</select>
+          <div class="muted small">{{t "disk.share_hint"}}</div>
+          <div class="row"><button>{{t "disk.share_give"}}</button></div></form>{{end}}
+        {{if $dr.CanWrite}}<form method="post" action="{{$dr.Path}}/rename" class="row" id="rn-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="folder_id" value="{{.ID}}">
+          <input type="text" name="name" value="{{.Name}}" maxlength="200" required style="flex:1"><button>{{t "common.save"}}</button></form>{{end}}
+        {{$l := index $d.Links .ID}}{{if $l.Token}}<a class="dlink" href="/s/{{$l.Token}}" target="_blank" title="{{t "disk.link_on"}}">{{icon "link"}}</a>{{end}}
+        {{if and $dr.CanWrite (not $d.LinksOff)}}<form method="post" action="{{$dr.Path}}/link" class="linkform" id="ln-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="folder_id" value="{{.ID}}">
+          {{if $l.Token}}<div class="row"><input type="text" readonly value="{{$d.Base}}/s/{{$l.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Base}}/s/{{$l.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
+          <div class="muted small">{{t "disk.link_downloads" $l.Downloads}}</div>{{end}}
+          <label class="small">{{t "disk.link_expires"}} <input type="date" name="expires" value="{{with $l.ExpiresAt}}{{dinput .}}{{end}}"></label>
+          <label class="small">{{t "disk.link_password"}} <input type="password" name="password" autocomplete="new-password" placeholder="{{if $l.Password}}{{t "disk.link_password_kept"}}{{end}}"></label>
+          {{if $l.Password}}<label class="small"><input type="checkbox" name="clear_password" value="1"> {{t "disk.link_password_clear"}}</label>{{end}}
+          <div class="row"><button>{{if $l.Token}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l.Token}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form>{{end}}</td>
+      <td class="meta"></td><td class="meta"></td><td class="meta"></td>
+      <td><details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
+        <a class="button ghost" href="{{$dr.Path}}?zip&folder_id={{.ID}}">{{icon "file-zip"}} {{t "disk.download"}}</a>
+        <button type="button" class="ghost" data-copy="{{$d.Base}}{{$dr.Path}}?folder={{.ID}}">{{icon "copy"}} {{t "disk.internal_link"}}</button>
+        {{if $d.Users}}<button type="button" class="ghost" data-toggle="sh-{{.ID}}">{{icon "users"}} {{t "disk.share"}}</button>{{end}}
+        {{if and $d.MayRight (index $d.MayRight .ID)}}<button type="button" class="ghost" data-toggle="rt-{{.ID}}">{{icon "shield-lock"}} {{t "disk.rights"}}</button>{{end}}
+        {{if and $dr.CanWrite (not $d.LinksOff)}}<button type="button" class="ghost" data-toggle="ln-{{.ID}}">{{icon "link"}} {{t "disk.link"}}</button>
+        <button type="button" class="ghost" data-toggle="rn-{{.ID}}">{{icon "edit"}} {{t "disk.rename"}}</button>
+        <button type="button" class="ghost" data-disk-act="move">{{icon "arrows-exchange"}} {{t "disk.move"}}</button>{{end}}
+        <button type="button" class="ghost" data-disk-act="copy">{{icon "copy"}} {{t "disk.copy"}}</button>
+        {{if $dr.CanWrite}}<form method="post" action="{{$dr.Path}}/delete" data-confirm="{{t "disk.delete_folder_confirm"}}"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="folder_id" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "common.remove"}}</button></form>{{end}}
+      </div></details></td></tr>{{end}}
+    {{range $d.Files}}{{$f := .}}{{$may := or $dr.CanManage (and $dr.CanWrite (eq .UploaderID $d.Me))}}{{$theirs := and .LockerID (ne .LockerID $d.Me)}}{{$mine := and $may (not $theirs)}}<tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}" {{if $mine}}draggable="true"{{end}}>
+      {{$kind := fileKind .Name .ContentType}}<td class="selcol"><input type="checkbox" data-sel></td>
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}" tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
+      {{$ok := and $d.Office (officeKind .Name)}}{{if eq $kind "pdf"}}{{$ok = false}}{{end}}
+      <td>{{if isBoard .Name}}<a href="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}" title="{{t "dboard.open"}}">{{icon "brush"}} {{.Name}}</a>{{else if $ok}}<a href="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}" title="{{t "office.open"}}">{{icon "file-pencil"}} {{.Name}}</a>{{else}}<a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a>{{end}}{{if .LockerID}} <span class="dlock" title="{{t "disk.locked_by" .Locker (datetime .LockedAt)}}" data-locked>{{icon "lock"}}</span>{{end}}{{with .Editors}} <span class="pill dediting" title="{{t "disk.editing_by" .}}" data-editing>{{icon "file-pencil"}} {{t "disk.editing"}}</span>{{end}}{{if $d.Searching}}{{template "diskWhere" (dict "dr" $dr "f" .)}}{{if $d.Snippets}}{{with index $d.Snippets .ID}}<div class="dsnip small" title="{{t "disk.found_in_text"}}">{{icon "search"}} {{.}}</div>{{end}}{{end}}{{end}}
+        {{$sh := false}}{{if $d.Shares}}{{$sh = index $d.Shares .ID}}{{end}}{{if $sh}}<span class="dlink" title="{{t "disk.share_on" (len $sh)}}">{{icon "users"}}</span>{{end}}{{with index $d.Comments .ID}}<a class="dlink" href="/files/{{$f.ID}}/about#comments" title="{{t "disk.comments_n" .}}">{{icon "message-circle"}} <small>{{.}}</small></a>{{end}}
+        {{if $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="linkform" id="sh-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}">
+          {{range index $d.Shares .ID}}<div class="row small"><span style="flex:1">{{if eq .Kind "department"}}{{icon "hierarchy-2"}}{{else}}{{icon "user"}}{{end}} {{.Whom}}</span><span class="muted">{{t (print "disk.access_" .Access)}}</span>
+            <button class="ghost" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></div>{{end}}
+          <select name="whom"><option value="">{{t "disk.share_whom"}}</option>
+            <optgroup label="{{t "disk.share_people"}}">{{range $d.Users}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+            {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+          <select name="access">{{range $d.FileAccesses}}<option value="{{.}}">{{t (print "disk.access_" .)}}</option>{{end}}</select>
+          <div class="muted small">{{t "disk.share_file_hint"}}</div>
+          <div class="row"><button>{{t "disk.share_give"}}</button></div></form>{{end}}
+        {{if $mine}}<form method="post" action="{{$dr.Path}}/rename" class="row" id="rn-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}">
+          <input type="text" name="name" value="{{.Name}}" maxlength="200" required style="flex:1"><button>{{t "common.save"}}</button></form>{{end}}
+        {{$l := index $d.Links .ID}}{{if $l.Token}}<a class="dlink" href="/s/{{$l.Token}}" target="_blank" title="{{t "disk.link_on"}}">{{icon "link"}}</a>{{end}}
+        {{if and $dr.CanWrite (not $d.LinksOff)}}<form method="post" action="{{$dr.Path}}/link" class="linkform" id="ln-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}">
+          {{if $l.Token}}<div class="row"><input type="text" readonly value="{{$d.Base}}/s/{{$l.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Base}}/s/{{$l.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
+          <div class="muted small">{{t "disk.link_downloads" $l.Downloads}}</div>{{end}}
+          <label class="small">{{t "disk.link_expires"}} <input type="date" name="expires" value="{{with $l.ExpiresAt}}{{dinput .}}{{end}}"></label>
+          <label class="small">{{t "disk.link_password"}} <input type="password" name="password" autocomplete="new-password" placeholder="{{if $l.Password}}{{t "disk.link_password_kept"}}{{end}}"></label>
+          {{if $l.Password}}<label class="small"><input type="checkbox" name="clear_password" value="1"> {{t "disk.link_password_clear"}}</label>{{end}}
+          <div class="row"><button>{{if $l.Token}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l.Token}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form>{{end}}</td>
+      <td class="small meta">{{size .Size}}</td>
+      <td class="small meta">{{if .StorageName}}{{.StorageName}}{{else}}{{t "storages.builtin"}}{{end}}</td>
+      <td class="small meta">{{datetime .CreatedAt}}<div class="muted">{{.Uploader}}</div></td>
+      <td><details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
+        {{if isBoard .Name}}<a class="button ghost" href="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}">{{if $mine}}{{icon "brush"}} {{t "office.edit"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>{{end}}
+        {{if and $d.Office (officeKind .Name)}}<a class="button ghost" href="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}">{{if and $mine (officeEditable .Name)}}{{icon "file-pencil"}} {{t "office.edit"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>{{end}}
+        <a class="button ghost" href="/files/{{.ID}}">{{icon "download"}} {{t "disk.download"}}</a>
+        <button type="button" class="ghost" data-copy="{{$d.Base}}/files/{{.ID}}/about">{{icon "copy"}} {{t "disk.internal_link"}}</button>
+        {{if $d.Users}}<button type="button" class="ghost" data-toggle="sh-{{.ID}}">{{icon "users"}} {{t "disk.share"}}</button>{{end}}
+        {{if and $dr.CanWrite (not $d.LinksOff)}}<button type="button" class="ghost" data-toggle="ln-{{.ID}}">{{icon "link"}} {{t "disk.link"}}</button>{{end}}
+        {{if $mine}}<button type="button" class="ghost" data-toggle="rn-{{.ID}}">{{icon "edit"}} {{t "disk.rename"}}</button>
+        <button type="button" class="ghost" data-disk-act="move">{{icon "arrows-exchange"}} {{t "disk.move"}}</button>{{end}}
+        <button type="button" class="ghost" data-disk-act="copy">{{icon "copy"}} {{t "disk.copy"}}</button>
+        <a class="button ghost" href="/files/{{.ID}}/about">{{icon "file-text"}} {{t "disk.about"}}</a>
+        <button type="button" class="ghost" data-disk-versions="{{.ID}}"{{if $mine}} data-mine{{end}}>{{icon "history"}} {{t "disk.versions"}}</button>
+        {{if and $mine (not .LockerID) (not $d.LocksOff)}}<form method="post" action="{{$dr.Path}}/lock"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost">{{icon "lock"}} {{t "disk.lock"}}</button></form>{{end}}
+        {{if and .LockerID (or (eq .LockerID $d.Me) $dr.CanManage)}}<form method="post" action="{{$dr.Path}}/lock"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><input type="hidden" name="unlock" value="1"><button class="ghost">{{icon "lock-open"}} {{t "disk.unlock"}}</button></form>{{end}}
+        {{if $mine}}<form method="post" action="{{$dr.Path}}/delete" data-confirm="{{t "disk.delete_file_confirm"}}"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "common.remove"}}</button></form>{{end}}
+      </div></details></td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{if $d.Searching}}{{t "disk.nothing_found"}}{{else}}{{t "disk.empty"}}{{end}}{{if $dr.CanWrite}}<div class="muted small">{{t "disk.drop_hint"}}</div>{{end}}</div>{{end}}
+  <div class="disk-drop" data-disk-drop hidden>{{icon "cloud-upload"}} {{t "disk.drop_here"}}</div>
+  <div class="disk-progress" data-disk-progress hidden></div>
+</div>
+<dialog class="disk-dlg" data-disk-dlg>
+  <form method="post" action="{{$dr.Path}}/move" data-disk-move>
+    <input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="copy"><input type="hidden" name="to"><input type="hidden" name="to_folder">
+    <h3 data-disk-dlg-title></h3>
+    <select data-disk-drives></select>
+    <div class="crumbs small" data-disk-path></div>
+    <div class="disk-pick" data-disk-folders></div>
+    <div class="row"><span class="spacer"></span><button type="button" class="ghost" data-disk-close>{{t "common.cancel"}}</button><button class="primary" data-disk-here></button></div>
+  </form>
+</dialog>
+<dialog class="disk-dlg" data-disk-ver data-l-current="{{t "disk.version_current"}}" data-l-restore="{{t "disk.version_restore"}}">
+  <h3>{{t "disk.versions"}}: <span data-disk-ver-name></span></h3>
+  <table class="list small"><thead><tr><th>{{t "disk.version"}}</th><th>{{t "col.uploaded"}}</th><th>{{t "col.size"}}</th><th></th></tr></thead><tbody data-disk-ver-list></tbody></table>
+  <p class="muted small">{{t "disk.versions_hint"}}</p>
+  <form method="post" action="{{$dr.Path}}/version-restore" data-disk-ver-form data-confirm="{{t "disk.version_restore_confirm"}}">
+    <input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file"><input type="hidden" name="version"></form>
+  <div class="row"><span class="spacer"></span><button type="button" class="ghost" data-disk-close>{{t "disk.close"}}</button></div>
+</dialog>
+<script src="{{asset "js/disk.js"}}"></script>
+{{end}}{{end}}{{end}}
+
+{{define "diskTrash"}}{{$d := .Data}}{{$dr := $d.Drive}}
+<div class="card flush disk" data-disk="{{$dr.Path}}" data-folder="" data-write="false">
+  <div class="muted small" style="padding:8px 12px">{{t "disk.trash_hint"}}</div>
+  {{if $d.Trash}}
+  <div class="disk-bulk row" data-disk-bulk hidden><b data-disk-count></b>
+    <form method="post" action="{{$dr.Path}}/restore" data-disk-sel-form><button class="ghost">{{icon "arrow-back-up"}} {{t "trash.restore"}}</button></form>
+    <form method="post" action="{{$dr.Path}}/purge" data-disk-sel-form data-confirm="{{t "disk.purge_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "trash.purge"}}</button></form>
+  </div>
+  <table class="disk-list">
+    <thead><tr><th class="selcol"><input type="checkbox" data-disk-all title="{{t "disk.select_all"}}"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.was_in"}}</th><th>{{t "col.size"}}</th><th>{{t "trash.deleted_by"}}</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Trash}}{{$may := $dr.MayRestore $d.Me .DeletedByID}}<tr data-item="{{.Kind}}" data-id="{{.ID}}" data-name="{{.Name}}">
+      <td class="selcol">{{if $may}}<input type="checkbox" data-sel>{{end}}</td>
+      <td>{{if eq .Kind "folder"}}{{icon "folder"}} {{.Name}}{{else}}<a href="/files/{{.ID}}">{{icon "download"}} {{.Name}}</a>{{end}}</td>
+      <td class="small">{{if .Where}}{{.Where}}{{else}}{{t "disk.top"}}{{end}}</td>
+      <td class="small">{{if eq .Kind "file"}}{{size .Size}}{{end}}</td>
+      <td class="small">{{.DeletedBy}} · {{datetime .DeletedAt}}{{with .PurgeAt}}<div class="muted">{{t "trash.days_left" (day .)}}</div>{{end}}</td>
+      <td class="row">{{if $may}}
+        <form method="post" action="{{$dr.Path}}/restore"><input type="hidden" name="{{if eq .Kind "file"}}file{{else}}folder_id{{end}}" value="{{.ID}}"><button class="ghost" title="{{t "trash.restore"}}">{{icon "arrow-back-up"}}</button></form>
+        <form method="post" action="{{$dr.Path}}/purge" data-confirm="{{t "disk.purge_confirm"}}"><input type="hidden" name="{{if eq .Kind "file"}}file{{else}}folder_id{{end}}" value="{{.ID}}"><button class="ghost" title="{{t "trash.purge"}}">{{icon "x"}}</button></form>
+      {{end}}</td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{t "trash.empty"}}</div>{{end}}
+</div>
+<script src="{{asset "js/disk.js"}}"></script>
+{{end}}
+
+{{/* «Очистка»: what the drive's place is taken by, its biggest files; the trash emptied, the former versions deleted */}}
+{{define "diskSpace"}}{{$d := .Data}}{{$dr := $d.Drive}}{{$sp := $d.Space}}
+<div class="card stack diskspace">
+  <p class="muted small">{{t "disk.space_hint"}}</p>
+  <table class="list">
+    <tbody>
+      <tr><td>{{icon "file-text"}} {{t "disk.space_files"}}</td><td class="small">{{t "disk.space_n" $sp.FileCount}}</td><td>{{size $sp.Files}}</td><td></td></tr>
+      <tr><td>{{icon "history"}} {{t "disk.space_versions"}}</td><td class="small">{{t "disk.space_n" $sp.VersionCount}}</td><td>{{size $sp.Versions}}</td>
+        <td>{{if $sp.VersionCount}}<form method="post" action="{{$dr.Path}}/clean" data-confirm="{{t "disk.space_versions_confirm"}}"><input type="hidden" name="what" value="versions"><button class="ghost">{{icon "trash"}} {{t "disk.space_versions_purge"}}</button></form>{{end}}</td></tr>
+      <tr><td>{{icon "trash"}} <a href="{{$dr.Path}}?trash">{{t "trash.title"}}</a></td><td class="small">{{t "disk.space_n" $sp.TrashCount}}</td><td>{{size $sp.Trash}}</td>
+        <td>{{if $sp.TrashCount}}<form method="post" action="{{$dr.Path}}/clean" data-confirm="{{t "disk.space_trash_confirm"}}"><input type="hidden" name="what" value="trash"><button class="ghost">{{icon "trash"}} {{t "disk.space_trash_purge"}}</button></form>{{end}}</td></tr>
+    </tbody>
+    <tfoot><tr><th>{{t "disk.limits_total"}}</th><th></th><th>{{size $sp.Used}}{{with $d.Usage.Limit}} / {{size .}}{{end}}</th><th></th></tr></tfoot>
+  </table>
+  {{with $d.KeepVersions}}<p class="muted small">{{t "disk.space_keep" .}}</p>{{end}}
+</div>
+{{if $sp.Big}}<h2>{{t "disk.space_big"}}</h2>
+<div class="card flush"><table class="list">
+  <thead><tr><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "col.size"}}</th><th>{{t "disk.versions"}}</th><th></th></tr></thead>
+  <tbody>{{range $sp.Big}}<tr>
+    <td><a href="/files/{{.ID}}">{{icon "download"}} {{.Name}}</a></td>
+    <td class="small"><a href="{{$dr.Path}}{{with .FolderID}}?folder={{.}}{{end}}">{{if .Where}}{{.Where}}{{else}}{{t "disk.top"}}{{end}}</a></td>
+    <td class="small">{{size .Total}}</td>
+    <td class="small">{{if .Versions}}{{t "disk.space_n" .Versions}} · {{size .VersionsSize}}{{end}}</td>
+    <td>{{if .Versions}}<form method="post" action="{{$dr.Path}}/clean" data-confirm="{{t "disk.space_versions_confirm"}}"><input type="hidden" name="what" value="versions"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost" title="{{t "disk.space_versions_purge"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}
+  </tbody></table></div>{{end}}
+<script src="{{asset "js/disk.js"}}"></script>
+{{end}}
+
+{{/* a column header of the list: sorts by the column, the arrow shows the order */}}
+{{define "diskSort"}}{{$d := .d}}<a href="{{index $d.SortURL .col}}" class="sortlink">{{t .label}}{{if or (eq $d.Sort .col) (and (eq .col "name") (eq $d.Sort ""))}} {{if $d.Desc}}↓{{else}}↑{{end}}{{end}}</a>{{end}}
+
+{{/* where a found file or folder is: its folder, a link to it */}}
+{{define "diskWhere"}}<div class="muted small"><a href="{{.dr.Path}}{{with .f.FolderID}}?folder={{.}}{{end}}">{{icon "folder"}} {{if .f.Where}}{{.f.Where}}{{else}}{{t "disk.top"}}{{end}}</a></div>{{end}}
+
+{{/* «Последние»: the files the user uploaded or changed lately, on every drive, each opening in the viewer */}}
+{{define "diskRecent"}}{{$d := .Data}}
+<div class="card flush disk" data-disk="/disk/my" data-folder="" data-write="false"
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}">
+  {{if $d.Recent}}<table class="disk-list">
+    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "col.size"}}</th><th>{{t "col.uploaded"}}</th></tr></thead>
+    <tbody>{{range $d.Recent}}{{$kind := fileKind .Name .ContentType}}{{$p := print "/disk/p/" .ProjectKey}}{{if eq .Drive "user"}}{{$p = "/disk/my"}}{{else if eq .Drive "company"}}{{$p = "/disk/company"}}{{end}}
+    <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}" tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
+      <td><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a></td>
+      <td class="small"><a href="{{$p}}{{with .FolderID}}?folder={{.}}{{end}}">{{if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
+      <td class="small meta">{{size .Size}}</td>
+      <td class="small meta">{{datetime .CreatedAt}}</td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{t "disk.recent_empty"}}</div>{{end}}
+</div>
+<script src="{{asset "js/disk.js"}}"></script>
+{{end}}
+
+{{/* «Общие со мной»: the folders and the files others shared with the user */}}
+{{define "diskShared"}}{{$d := .Data}}
+<div class="card flush">
+  {{if $d.Shared}}<table class="disk-list">
+    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.owner"}}</th><th>{{t "disk.access"}}</th><th>{{t "disk.shared_at"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Shared}}{{$u := print "/disk/sh/" .ID}}{{$ic := "folder"}}{{if .File}}{{$u = print "/disk/sf/" .ID}}{{$ic = "files"}}{{end}}<tr{{if .File}} data-shared-file{{end}}>
+      <td class="thumb"><a href="{{$u}}" tabindex="-1"><span class="ticon">{{icon $ic}}{{if .File}}<small>{{ext .Name}}</small>{{end}}</span></a></td>
+      <td><a href="{{$u}}" class="ttitle">{{icon $ic}} {{.Name}}</a>{{if .File}} <a class="button ghost" href="/files/{{.ID}}" title="{{t "disk.download"}}" download>{{icon "download"}}</a>{{end}}</td>
+      <td class="small">{{.Owner}}</td>
+      <td class="small">{{t (print "disk.access_" .Access)}}</td>
+      <td class="small meta">{{datetime .SharedAt}}</td>
+      <td>{{if not .File}}<form method="post" action="/disk/connect"><input type="hidden" name="which" value="sh:{{.ID}}"><input type="hidden" name="back" value="/disk/shared">
+        {{if and $d.ConnectedSet (index $d.ConnectedSet (print "sh:" .ID))}}<button class="ghost" name="off" value="1" title="{{t "disk.connected_hint"}}">{{icon "unlink"}} {{t "disk.disconnect"}}</button>{{else}}<button class="ghost" title="{{t "disk.connect_hint"}}">{{icon "link"}} {{t "disk.connect"}}</button>{{end}}</form>{{end}}</td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{t "disk.shared_empty"}}</div>{{end}}
+</div>
+{{end}}

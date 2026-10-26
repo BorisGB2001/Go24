@@ -1,0 +1,108 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Project}}
+<div class="crumbs"><a href="/projects">{{t "nav.projects"}}</a> {{icon "chevron-right"}} <a href="/p/{{$p.Key}}">{{$p.Key}}</a></div>
+<h1>{{$p.Name}}</h1>
+<div class="tabs">{{template "pviews" (dict "P" $p "On" "scrum")}}</div>
+
+<div class="scrum" data-scrum data-failed="{{t "board.move_failed"}}">
+  <section class="backlog" data-sprint="">
+    <div class="shead">
+      <div><b>{{t "sprint.backlog"}}</b><div class="muted small">{{t "sprint.tasks_points" (len $d.Backlog) (fnum $d.Points)}}</div></div>
+      <span class="spacer"></span>
+      {{if $p.CanWork}}<button type="button" class="ghostbtn" data-show="epics">{{icon "plus"}} {{t "epic.one"}}</button>{{end}}
+    </div>
+    {{if $p.CanWork}}
+    <form method="post" action="/p/{{$p.Key}}/tasks" class="quickrow" data-quick-row>
+      <input type="hidden" name="as" value="row">
+      <input type="text" name="title" required maxlength="500" placeholder="{{t "sprint.add_task"}}">
+      <button class="primary">{{icon "plus"}} {{t "sprint.task"}}</button>
+    </form>
+    {{end}}
+    <div class="srows" data-rows>{{range $d.Backlog}}{{template "srow" (dict "Row" . "Epics" $d.Epics "Project" $p)}}{{end}}</div>
+    <div class="empty small" {{if $d.Backlog}}hidden{{end}}>{{t "sprint.backlog_empty"}}</div>
+
+    <div class="card tblock" id="epics" {{if not $d.Epics}}hidden{{end}}>
+      <h2>{{icon "flag"}} {{t "epic.title"}}</h2>
+      {{range $d.Epics}}
+      <div class="epicline"><span class="epic" style="--epic:#{{.Color}}">{{.Name}}</span>
+        <span class="muted small">{{t "sprint.tasks_points" .Tasks (fnum .Points)}}</span>
+        {{if $p.CanWork}}<details class="tsettings"><summary>{{icon "edit"}}</summary><div class="pop">
+          <form method="post" action="/p/{{$p.Key}}/epics"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{.ID}}">
+            <input type="text" name="name" value="{{.Name}}" required><textarea name="description" rows="2">{{.Description}}</textarea>
+            <div class="swatches">{{$c := .Color}}{{range $.Data.Colors}}<label style="--sw:#{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $c}}checked{{end}}></label>{{end}}</div>
+            <button class="primary">{{t "common.save"}}</button></form>
+          <form method="post" action="/p/{{$p.Key}}/epics"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "common.delete"}}</button></form>
+        </div></details>{{end}}
+      </div>
+      {{end}}
+      {{if $p.CanWork}}
+      <form method="post" action="/p/{{$p.Key}}/epics" class="row" style="margin-top:8px"><input type="hidden" name="op" value="create">
+        <input type="text" name="name" required placeholder="{{t "epic.placeholder"}}" style="flex:1">
+        <div class="swatches">{{range $i, $c := $d.Colors}}<label style="--sw:#{{$c}}"><input type="radio" name="color" value="{{$c}}" {{if eq $i 0}}checked{{end}}></label>{{end}}</div>
+        <button>{{icon "plus"}} {{t "common.add"}}</button></form>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="sprints">
+    <div class="card scrummeet">{{$m := $d.Meet}}
+      <div class="shead"><b>{{icon "calendar-event"}} {{t "scrum.meet.title"}}</b><span class="spacer"></span>
+        {{if $p.CanWork}}<details class="tsettings"><summary class="button">{{icon "plus"}} {{t "scrum.meet.new"}}</summary><div class="pop">
+          {{range $m.Kinds}}<a class="button ghost" href="/calendar/new?project={{$p.Key}}&amp;scrum={{.Kind}}">{{t (print "scrum.meet." .Kind)}}</a>{{end}}
+          <a class="button ghost" href="/calendar/new?project={{$p.Key}}">{{t "scrum.meet.other"}}</a>
+        </div></details>{{end}}
+        <a href="/calendar?project={{$p.Key}}" class="ghostbtn" title="{{t "scrum.meet.calendar"}}">{{icon "calendar-event"}}</a></div>
+      {{range $m.Next}}
+      <div class="meetline"><span class="muted small">{{datetime .Start}}</span>
+        <a href="/calendar/{{.ID}}{{if .Repeat}}?at={{dtinput (ptr .Start)}}{{end}}">{{.Title}}</a>{{if .Repeat}} <span class="muted" title="{{t "calendar.repeat"}}">{{icon "refresh"}}</span>{{end}}
+        <span class="spacer"></span>
+        {{if .Video}}<a href="/call?event={{.ID}}" class="button{{if .Live}} primary{{end}}">{{icon "video"}} {{t "calendar.video_join"}}</a>{{end}}</div>
+      {{else}}<div class="empty small">{{t "scrum.meet.none"}}</div>{{end}}
+    </div>
+    {{range $d.Sprints}}{{$sp := .}}
+    <div class="sprint card{{if eq .Status "active"}} active{{end}}" data-sprint="{{.ID}}">
+      <div class="shead">
+        <div><b>{{.Name}}</b>{{if eq .Status "active"}} <span class="pill st-in_progress">{{t "sprint.active"}}</span>{{end}}
+          <div class="muted small">{{with .DateStart}}{{day .}}{{end}} – {{with .DateEnd}}{{day .}}{{end}} · {{t "sprint.done_pct" .Percent}} · {{t "sprint.tasks_points" (len .Tasks) (fnum .Points)}}</div>
+          {{with .Goal}}<div class="small">{{icon "flag"}} {{.}}</div>{{end}}</div>
+        <span class="spacer"></span>
+        {{if eq .Status "active"}}<a href="/p/{{$p.Key}}/board" class="button">{{icon "layout-kanban"}} {{t "tabs.active_sprint"}}</a>
+        {{else if $p.CanLead}}<form method="post" action="/p/{{$p.Key}}/sprints"><input type="hidden" name="op" value="start"><input type="hidden" name="id" value="{{.ID}}"><button class="primary">{{icon "player-play"}} {{t "sprint.start"}}</button></form>{{end}}
+        {{if $p.CanWork}}<details class="tsettings"><summary title="{{t "sprint.edit"}}">{{icon "edit"}}</summary><div class="pop">
+          <form method="post" action="/p/{{$p.Key}}/sprints"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{.ID}}">
+            <label>{{t "form.name"}}</label><input type="text" name="name" value="{{.Name}}" required>
+            <label>{{t "sprint.goal"}}</label><input type="text" name="goal" value="{{.Goal}}">
+            <div class="grid"><div><label>{{t "form.start_plan"}}</label><input type="date" name="date_start" value="{{dinput .DateStart}}"></div>
+              <div><label>{{t "form.end_plan"}}</label><input type="date" name="date_end" value="{{dinput .DateEnd}}"></div></div>
+            <p><button class="primary">{{t "common.save"}}</button></p></form>
+          {{if eq .Status "planned"}}<form method="post" action="/p/{{$p.Key}}/sprints"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "sprint.delete"}}</button></form>{{end}}
+        </div></details>{{end}}
+      </div>
+      <div class="progress"><span style="width:{{.Percent}}%"></span></div>
+      <div class="srows" data-rows>{{range .Rows}}{{template "srow" (dict "Row" . "Epics" $d.Epics "Project" $p)}}{{end}}</div>
+      <div class="empty small" {{if .Rows}}hidden{{end}}>{{t "sprint.drop_here"}}</div>
+    </div>
+    {{end}}
+    {{if $p.CanWork}}
+    <form method="post" action="/p/{{$p.Key}}/sprints" class="newsprint"><input type="hidden" name="op" value="create"><input type="hidden" name="name" value="{{$d.NextName}}">
+      <button>{{icon "plus"}} {{t "sprint.new"}}</button></form>
+    {{end}}
+  </section>
+</div>
+<script src="{{asset "js/scrum.js"}}"></script>
+{{end}}
+
+{{define "srow"}}{{$r := .Row}}{{$p := .Project}}
+<div class="srow{{if eq $r.Status "completed"}} done{{end}}" draggable="{{if $r.CanMove}}true{{else}}false{{end}}" data-key="{{$r.Key}}">
+  <span class="grip">{{icon "menu-2"}}</span>
+  <a href="/t/{{$r.Key}}" class="ttitle">{{$r.Title}}</a>
+  {{if eq $r.Priority 2}}<span class="prio">{{icon "flame"}}</span>{{end}}
+  {{with $r.Epic}}<span class="epic" style="--epic:#{{.Color}}">{{.Name}}</span>{{end}}
+  <span class="spacer"></span>
+  {{if eq $r.Status "completed"}}<span class="pill st-completed">{{icon "check"}}</span>{{end}}
+  {{if $r.CanMove}}{{if .Epics}}<select class="epicsel" data-epic title="{{t "epic.one"}}"><option value="">—</option>{{range .Epics}}<option value="{{.ID}}" {{if eq .ID $r.EpicID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}{{end}}
+  {{ava $r.ResponsibleName}}
+  {{if $r.CanMove}}<input class="sp" data-points value="{{fpts $r.StoryPoints}}" placeholder="–" inputmode="decimal" maxlength="6" title="{{t "sprint.points"}}">
+  {{else}}<span class="sp">{{with fpts $r.StoryPoints}}{{.}}{{else}}–{{end}}</span>{{end}}
+</div>
+{{end}}

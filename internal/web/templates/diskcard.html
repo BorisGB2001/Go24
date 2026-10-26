@@ -1,0 +1,70 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.Card}}{{$kind := fileKind $c.Name $c.ContentType}}
+<div class="crumbs"><a href="/disk/my">{{t "disk.title"}}</a> {{icon "chevron-right"}} {{if $d.At}}<a href="{{$d.At}}">{{if $c.ProjectName}}{{$c.ProjectName}}{{else if eq $c.Drive "company"}}{{t "disk.company"}}{{else}}{{t "disk.my"}}{{end}}{{with $c.Where}} · {{.}}{{end}}</a>{{else}}<a href="/disk/shared">{{t "disk.shared"}}</a>{{end}}</div>
+<h1>{{icon "files"}} {{$c.Name}}</h1>
+<div class="diskcard">
+  <div class="card stack">
+    <div class="row">
+      <a class="button primary" href="/files/{{$c.ID}}">{{icon "download"}} {{t "disk.download"}}</a>
+      {{if or (eq $kind "image") (eq $kind "pdf") (eq $kind "video") (eq $kind "audio")}}<a class="button ghost" href="/files/{{$c.ID}}/raw" target="_blank">{{icon "eye"}} {{t "disk.open"}}</a>{{end}}
+    </div>
+    {{if eq $kind "image"}}<img class="dcard-img" src="/files/{{$c.ID}}/raw" alt="">{{end}}
+    <div class="props">
+      <span class="k">{{t "disk.prop_type"}}</span><span>{{t (print "disk.type_" $d.Type)}} · {{ext $c.Name}}</span>
+      <span class="k">{{t "col.size"}}</span><span>{{size $c.Size}}</span>
+      <span class="k">{{t "disk.where"}}</span><span>{{if $d.At}}<a href="{{$d.At}}">{{icon "folder"}} {{if $c.Where}}{{$c.Where}}{{else}}{{t "disk.top"}}{{end}}</a>{{else}}{{icon "folder"}} {{if $c.Where}}{{$c.Where}}{{else}}{{t "disk.top"}}{{end}}{{end}}</span>
+      <span class="k">{{t "disk.prop_storage"}}</span><span>{{if $c.StorageName}}{{$c.StorageName}}{{else}}{{t "storages.builtin"}}{{end}}</span>
+      <span class="k">{{t "disk.owner"}}</span><span>{{$c.Uploader}}</span>
+      <span class="k">{{t "disk.prop_changed"}}</span><span>{{datetime $c.CreatedAt}}{{with $c.Changer}} · {{.}}{{end}}</span>
+      {{if $c.LockerID}}<span class="k">{{icon "lock"}} {{t "disk.lock"}}</span><span>{{t "disk.locked_by" $c.Locker (datetime $c.LockedAt)}}</span>{{end}}
+    </div>
+    {{$sh := $d.Sharing}}{{$dr := $d.Drive}}{{$own := and (eq $c.Drive "user") (eq $c.DriveOwner $d.Me) (eq $dr.Kind "user")}}
+    <h3 id="sharing">{{icon "users"}} {{t "disk.sharing"}}</h3>
+    <div class="stack small dsharing">
+      {{if eq $c.Drive "user"}}<div class="row">{{icon "user"}} <span style="flex:1">{{t "disk.sharing_owner" $c.OwnerName}}</span><span class="muted">{{t "disk.access_full"}}</span></div>
+      {{else if not $sh.Ruled}}<div class="row">{{icon "users"}} <span style="flex:1">{{if eq $c.Drive "project"}}{{t "disk.sharing_project" $c.ProjectName}}{{else}}{{t "disk.sharing_company"}}{{end}}</span></div>{{end}}
+      {{range $sh.Folders}}{{$f := .}}
+        {{if .Rights}}<div class="muted">{{icon "shield-lock"}} {{t "disk.sharing_rights" .Name}}</div>
+          {{range .Rights}}<div class="row">{{if eq .Kind "department"}}{{icon "hierarchy-2"}} {{.Whom}}{{else if eq .Kind "all"}}{{icon "users"}} {{t "disk.rights_all"}}{{else}}{{icon "user"}} {{.Whom}}{{end}}<span class="spacer"></span><span class="muted">{{t (print "disk.access_" .Access)}}</span></div>{{end}}{{end}}
+        {{if .Shares}}<div class="muted">{{icon "folder"}} {{t "disk.sharing_folder" .Name}}</div>
+          {{range .Shares}}<div class="row">{{if eq .Kind "department"}}{{icon "hierarchy-2"}}{{else}}{{icon "user"}}{{end}} {{.Whom}}<span class="spacer"></span><span class="muted">{{t (print "disk.access_" .Access)}}</span></div>{{end}}{{end}}
+        {{with .Link}}<div class="row">{{icon "link"}} <a href="/s/{{.Token}}" target="_blank">{{t "disk.sharing_folder_link" $f.Name}}</a><span class="spacer"></span><span class="muted">{{with .ExpiresAt}}{{t "disk.sharing_link_until" (date .)}}{{end}}{{if .Password}} · {{t "disk.sharing_link_password"}}{{end}}</span></div>{{end}}
+      {{end}}
+      {{if $sh.Shares}}<div class="muted">{{icon "files"}} {{t "disk.sharing_file"}}</div>{{end}}
+      {{range $sh.Shares}}<div class="row">{{if eq .Kind "department"}}{{icon "hierarchy-2"}}{{else}}{{icon "user"}}{{end}} {{.Whom}}<span class="spacer"></span><span class="muted">{{t (print "disk.access_" .Access)}}</span>
+        {{if $own}}<form method="post" action="{{$dr.Path}}/share"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></form>{{end}}</div>{{end}}
+      {{with $sh.Link}}<div class="row">{{icon "link"}} <a href="/s/{{.Token}}" target="_blank">{{t "disk.link"}}</a><span class="spacer"></span><span class="muted">{{with .ExpiresAt}}{{t "disk.sharing_link_until" (date .)}} · {{end}}{{if .Password}}{{t "disk.sharing_link_password"}} · {{end}}{{t "disk.link_downloads" .Downloads}}</span></div>{{end}}
+      {{if and (eq $c.Drive "user") (not $sh.Folders) (not $sh.Shares) (not $sh.Link)}}<div class="muted">{{t "disk.sharing_nobody"}}</div>{{end}}
+      {{if and $own $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="row" style="flex-wrap:wrap"><input type="hidden" name="back" value="{{$d.Back}}"><input type="hidden" name="file" value="{{$c.ID}}">
+        <select name="whom" required><option value="">{{t "disk.share_whom"}}</option>
+          <optgroup label="{{t "disk.share_people"}}">{{range $d.Users}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+          {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+        <select name="access">{{range $d.FileAccesses}}<option value="{{.}}">{{t (print "disk.access_" .)}}</option>{{end}}</select>
+        <button>{{t "disk.share_give"}}</button></form>{{end}}
+      {{if and $dr.CanWrite (not $d.LinksOff)}}{{$l := $sh.Link}}<details{{if $l}} open{{end}}><summary class="button ghost small">{{icon "link"}} {{t "disk.link"}}</summary>
+        <form method="post" action="{{$dr.Path}}/link" class="stack"><input type="hidden" name="back" value="{{$d.Back}}"><input type="hidden" name="file" value="{{$c.ID}}">
+          {{if $l}}<div class="row"><input type="text" readonly value="{{$d.Base}}/s/{{$l.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Base}}/s/{{$l.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>{{end}}
+          <label>{{t "disk.link_expires"}} <input type="date" name="expires" value="{{if $l}}{{with $l.ExpiresAt}}{{dinput .}}{{end}}{{end}}"></label>
+          <label>{{t "disk.link_password"}} <input type="password" name="password" autocomplete="new-password" placeholder="{{if and $l $l.Password}}{{t "disk.link_password_kept"}}{{end}}"></label>
+          {{if and $l $l.Password}}<label><input type="checkbox" name="clear_password" value="1"> {{t "disk.link_password_clear"}}</label>{{end}}
+          <div class="row"><button>{{if $l}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form></details>{{end}}
+    </div>
+    <h3>{{icon "history"}} {{t "disk.versions"}}</h3>
+    <table class="list small"><thead><tr><th>{{t "disk.version"}}</th><th>{{t "col.uploaded"}}</th><th>{{t "col.size"}}</th><th></th></tr></thead>
+      <tbody>{{range $d.Versions}}<tr><td>{{.No}}{{if not .ID}} · {{t "disk.version_current"}}{{end}}</td><td>{{datetime .CreatedAt}}<div class="muted">{{.Author}}</div></td><td>{{size .Size}}</td>
+        <td><a class="button ghost small" href="/files/{{$c.ID}}{{with .ID}}/versions/{{.}}{{end}}">{{icon "download"}}</a></td></tr>{{end}}</tbody></table>
+  </div>
+  <div class="card stack" id="comments">
+    <h3>{{icon "messages"}} {{t "disk.comments"}}{{with len $c.Comments}} <span class="muted">{{.}}</span>{{end}}</h3>
+    {{range $c.Comments}}<div class="dcomment" id="c-{{.ID}}">
+      <div class="row small"><b>{{if .Author}}{{.Author}}{{else}}—{{end}}</b><span class="muted">{{datetime .CreatedAt}}</span><span class="spacer"></span>
+        {{if or (eq .AuthorID $d.Me) $d.Admin}}<form method="post" action="/files/{{$c.ID}}/comments" data-confirm="{{t "disk.comment_delete_confirm"}}"><input type="hidden" name="delete" value="{{.ID}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "trash"}}</button></form>{{end}}</div>
+      <div class="dcomment-body">{{.Body}}</div></div>
+    {{else}}<p class="muted small">{{t "disk.comments_empty"}}</p>{{end}}
+    <form method="post" action="/files/{{$c.ID}}/comments" class="stack">
+      <textarea name="body" rows="3" required maxlength="10000" placeholder="{{t "disk.comment_placeholder"}}" data-mention></textarea>
+      <div><button class="primary">{{icon "send"}} {{t "disk.comment_send"}}</button></div>
+    </form>
+  </div>
+</div>
+{{end}}

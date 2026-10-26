@@ -1,0 +1,47 @@
+{{define "content"}}
+<h1>{{t "title.projects"}}</h1>
+<div class="sub">{{t "projects.subtitle"}}</div>
+{{with .Data.Invites}}<div class="card" id="invites">
+  <h2>{{icon "users"}} {{t "invites.title"}}</h2>
+  {{range .}}<div class="row" style="margin-bottom:8px">
+    <div style="flex:1"><b>{{.ProjectName}}</b> <code>{{.ProjectKey}}</code><div class="small muted">{{t "invites.from" .InvitedBy}} · {{t (print "role." .Role)}} · {{datetime .CreatedAt}}</div></div>
+    <form method="post" action="/p/{{.ProjectKey}}/invite"><input type="hidden" name="accept" value="1"><button class="primary">{{icon "check"}} {{t "invites.accept"}}</button></form>
+    <form method="post" action="/p/{{.ProjectKey}}/invite"><input type="hidden" name="accept" value="0"><button class="ghost">{{icon "x"}} {{t "invites.decline"}}</button></form>
+  </div>{{end}}
+</div>{{end}}
+<div class="tabs">
+  <a href="/projects" {{if not .Data.Archived}}class="on"{{end}}>{{icon "folders"}} {{t "projects.active"}}</a>
+  <a href="/projects?archived=1" {{if .Data.Archived}}class="on"{{end}}>{{icon "history"}} {{t "projects.archive"}}</a>
+</div>
+<div class="card flush">
+  {{if .Data.List}}
+  <table data-cols="projects">
+    <thead><tr><th>{{t "col.project"}}</th><th>{{t "col.key"}}</th><th>{{t "col.my_role"}}</th><th>{{t "col.open_tasks"}}</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.List}}
+    <tr>
+      <td><a href="/p/{{.Key}}" class="ttitle row">{{photo .Name .PhotoURL false}} {{.Name}}</a>{{if and .Kind (ne .Kind "group")}} <span class="pill st-in_progress">{{t (print "project.kind." .Kind)}}</span>{{end}}{{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}</td>
+      <td><code>{{.Key}}</code></td>
+      <td class="small">{{t (print "role." .MyRole)}}</td>
+      <td>{{.OpenTasks}}</td>
+      <td><a href="/p/{{.Key}}/board" title="{{t "projects.kanban"}}">{{icon "layout-kanban"}}</a></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{if .Data.Archived}}{{t "projects.archive_empty"}}{{else}}{{t "projects.empty"}}{{end}}</div>{{end}}
+</div>
+<div class="card">
+  <h2>{{icon "plus"}} {{t "projects.new"}}</h2>
+  <form method="post" action="/projects">
+    <div class="grid">
+      <div><label>{{t "projects.key_label"}}</label><input type="text" name="key" placeholder="GO" maxlength="10" required></div>
+      <div style="grid-column:span 2"><label>{{t "form.name"}}</label><input type="text" name="name" required></div>
+    </div>
+    <label>{{t "form.description"}}</label><textarea name="description"></textarea>
+    <label>{{t "project.kind"}}</label>
+    <select name="kind">{{range list "group" "project" "scrum"}}<option value="{{.}}">{{t (print "project.kind." .)}}</option>{{end}}</select>
+    <p><button class="primary">{{icon "plus"}} {{t "projects.create"}}</button></p>
+  </form>
+</div>
+{{end}}

@@ -1,0 +1,30 @@
+{{define "content"}}
+{{$d := .Data}}{{$me := .User.UserID}}
+<h1>{{icon "shield-lock"}} {{t "admins.title"}}</h1>
+<div class="sub">{{t "admins.subtitle"}}</div>
+<div class="card flush">
+  {{if $d.Admins}}
+  <table>
+    <thead><tr><th>{{t "col.name"}}</th><th>{{t "admins.col.source"}}</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Admins}}
+    <tr>
+      <td><a href="/u/{{.ID}}">{{.Name}}</a>{{if eq .ID $me}} <span class="muted small">({{t "admins.self"}})</span>{{end}}<div class="muted small">{{.Email}}</div></td>
+      <td class="small">{{if .Group}}<div>{{icon "users"}} {{t "admins.group"}}</div>{{end}}
+        {{if .Granted}}<div>{{icon "user"}} {{if .By}}{{t "admins.granted_by" .By (datetime .At)}}{{else}}{{t "admins.granted"}}{{end}}</div>{{end}}</td>
+      <td>{{if and .Granted (ne .ID $me)}}<form method="post" action="/settings/admins/{{.ID}}/remove" data-confirm="{{t "admins.remove_confirm"}}"><button class="ghost" title="{{t "admins.remove"}}">{{icon "trash"}} {{t "admins.remove"}}</button></form>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{t "admins.empty"}}</div>{{end}}
+</div>
+{{with $d.Groups}}<p class="muted small">{{t "admins.group_hint" (join . ", ")}}</p>{{end}}
+<div class="card">
+  <h2>{{icon "plus"}} {{t "admins.add"}}</h2>
+  <form method="post" action="/settings/admins" class="row">
+    <div>{{template "upick" (upick "user" "" $d.Users "noself" "ph" (t "admins.add_ph"))}}</div>
+    <button class="primary">{{icon "plus"}} {{t "admins.add"}}</button>
+  </form>
+</div>
+{{end}}

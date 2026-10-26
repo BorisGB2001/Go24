@@ -1,0 +1,37 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1 style="flex:1">{{t "kb.title"}}</h1><a class="button ghost" href="/kb/trash">{{icon "trash"}} {{t "trash.title"}}</a></div>
+<div class="sub">{{t "kb.subtitle"}}</div>
+<form method="get" action="/kb" class="row card" style="max-width:720px">
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "kb.search"}}" style="flex:1"><button>{{icon "search"}} {{t "filter.apply"}}</button>
+</form>
+{{if $d.Q}}<div class="card">
+  <h2>{{t "kb.found" (len $d.Hits)}}</h2>
+  {{range $d.Hits}}<div class="kbhit"><a href="/kb/{{.SpaceID}}/{{.ID}}"><b>{{mark .Title $d.Q}}</b></a> <span class="muted small">· {{.SpaceName}}</span>
+    <div class="small muted">{{mark .Snippet $d.Q}}</div></div>{{else}}<p class="muted">{{t "kb.nothing"}}</p>{{end}}
+</div>{{end}}
+{{if or $d.Favs $d.Recent}}<div class="kbquick">
+  {{with $d.Favs}}<div class="card"><h3>{{icon "bookmark"}} {{t "kb.favorites"}}</h3><ul class="kblinks">{{range .}}<li>{{if .PageID}}<a href="/kb/{{.SpaceID}}/{{.PageID}}">{{icon "file-text"}} {{.Title}}</a> <span class="muted small">· {{.SpaceName}}</span>{{else}}<a href="/kb/{{.SpaceID}}">{{icon "files"}} {{.SpaceName}}</a>{{end}}</li>{{end}}</ul></div>{{end}}
+  {{with $d.Recent}}<div class="card"><h3>{{icon "history"}} {{t "kb.recent"}}</h3><ul class="kblinks">{{range .}}<li><a href="/kb/{{.SpaceID}}/{{.PageID}}">{{icon "file-text"}} {{.Title}}</a> <span class="muted small">· {{.SpaceName}} · {{datetime .At}}</span></li>{{end}}</ul></div>{{end}}
+</div>{{end}}
+<div class="kbspaces">
+  {{range $d.Spaces}}<a class="card kbcard" href="/kb/{{.ID}}"><b>{{icon "files"}} {{.Name}}{{if .Restricted}} <span class="muted" title="{{t "kb.rights_on"}}">{{icon "shield-lock"}}</span>{{end}}</b>
+    <span class="small muted">{{if .ProjectKey}}{{icon "folders"}} {{.ProjectName}}{{else}}{{t "kb.for_all"}}{{end}} · {{t "kb.pages" .Pages}}</span>
+    {{with .Description}}<span class="small">{{.}}</span>{{end}}</a>{{else}}<div class="empty card">{{t "kb.none"}}</div>{{end}}
+</div>
+<details class="card" style="max-width:720px"{{if $d.Template}} open{{end}} id="new"><summary><b>{{icon "plus"}} {{t "kb.new_space"}}</b></summary>
+  <form method="post" action="/kb">
+    <label>{{t "kb.template"}}</label>
+    <div class="kbtpls">
+      <label class="kbtpl"><input type="radio" name="template" value=""{{if not $d.Template}} checked{{end}}><b>{{icon "file-plus"}} {{t "kb.template_empty"}}</b><span class="small muted">{{t "kb.template_empty_desc"}}</span></label>
+      {{range $d.Templates}}<label class="kbtpl"><input type="radio" name="template" value="{{.ID}}"{{if eq .ID $d.Template}} checked{{end}}>
+        <b>{{if .Builtin}}{{icon "notebook"}}{{else}}{{icon "template"}}{{end}} {{.Name}}</b>
+        <span class="small muted">{{with .Description}}{{.}} · {{end}}{{t "kb.pages" .Pages}}{{if not .Builtin}} · {{.Author}}{{end}}</span>
+        {{if .CanDelete}}<button class="ghost small" formaction="/kb/templates/{{.ID}}/delete" formnovalidate data-confirm="{{t "kb.template_delete_confirm"}}" title="{{t "kb.template_delete"}}">{{icon "trash"}}</button>{{end}}</label>{{end}}
+    </div>
+    <label>{{t "form.name"}}</label><input type="text" name="name" maxlength="200" required>
+    <label>{{t "form.description"}}</label><textarea name="description" rows="2"></textarea>
+    <label>{{t "kb.for"}}</label><select name="project"><option value="">{{t "kb.for_all"}}</option>{{range $d.Projects}}{{if .CanWork}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>
+    <p><button class="primary">{{t "common.create"}}</button></p>
+  </form></details>
+{{end}}

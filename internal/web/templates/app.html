@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+{{if .Bare}}{{/* a card's tab: the frame posts itself to the handler */}}
+<form method="post" action="{{$d.Action}}" data-submit-now hidden>
+  {{range $d.Fields}}<input type="hidden" name="{{index . 0}}" value="{{index . 1}}">{{end}}
+</form>
+<script src="{{asset "js/forms.js"}}"></script>
+{{else}}
+<div class="app-frame">
+  <iframe name="go24app" title="{{$d.App.Title}}" allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
+  <form method="post" action="{{$d.Action}}" target="go24app" data-submit-now hidden>
+    {{range $d.Fields}}<input type="hidden" name="{{index . 0}}" value="{{index . 1}}">{{end}}
+  </form>
+</div>
+{{end}}
+{{end}}

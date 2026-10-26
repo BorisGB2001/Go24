@@ -1,0 +1,82 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}
+<div class="crumbs"><a href="/marketing/campaigns">{{t "mkt.title"}}</a> {{icon "chevron-right"}} {{t "mkt.campaigns"}}</div>
+<div class="pagehead"><h1>{{if $c.ID}}{{$c.Title}}{{else}}{{t "mkt.new_campaign"}}{{end}}</h1>{{if $c.ID}}{{template "mktstatus" $c}}{{end}}
+  {{if and $c.ID $d.Mine}}<span class="spacer"></span>
+  {{if eq $c.Status "sending"}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/pause"><button class="ghost">{{icon "player-pause"}} {{t "mkt.pause"}}</button></form>{{end}}
+  {{if eq $c.Status "paused"}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/resume"><button class="primary">{{icon "player-play"}} {{t "mkt.resume"}}</button></form>{{end}}
+  {{if or (eq $c.Status "sending") (eq $c.Status "paused")}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/stop" data-confirm="{{t "mkt.stop_confirm"}}"><button class="ghost">{{icon "ban"}} {{t "mkt.stop"}}</button></form>{{end}}
+  <form method="post" action="/marketing/campaigns/{{$c.ID}}/copy"><button class="ghost">{{icon "copy"}} {{t "mkt.copy"}}</button></form>
+  {{if not (or (eq $c.Status "sending") (eq $c.Status "paused"))}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/delete" data-confirm="{{t "mkt.delete_confirm" $c.Title}}"><button class="ghost">{{icon "trash"}}</button></form>{{end}}
+  {{end}}</div>
+
+{{if $c.Editable}}
+{{if $d.Mine}}<form method="post" action="/marketing/campaigns/{{if $c.ID}}{{$c.ID}}{{else}}new{{end}}" class="mkt-edit" data-snippet-editor>
+<div class="mkt-cols">
+<div class="card">
+  <label>{{t "mkt.campaign_title"}}</label><input type="text" name="title" required maxlength="200" value="{{$c.Title}}" placeholder="{{t "mkt.campaign_title_hint"}}">
+  <label>{{t "mkt.from"}}</label>{{if $d.Boxes}}<select name="box">{{range $d.Boxes}}<option value="{{.ID}}" {{if eq .ID $c.MailboxID}}selected{{end}}>{{.Email}}</option>{{end}}</select>
+    {{else}}<div class="form-error">{{t "mkt.no_box"}} <a href="/mail/settings">{{t "mkt.no_box_link"}}</a></div>{{end}}
+  <label>{{t "crm.mailsend.subject"}}</label><input type="text" name="subject" maxlength="1000" value="{{$c.Subject}}">
+  <label>{{t "crm.mailsend.text"}}</label>{{template "crmeditor" $c.Body}}
+  <p class="small muted">{{t "mkt.fields_hint"}} <code>{Name}</code> <code>{Email}</code> <code>{Unsubscribe}</code></p>
+</div>
+<div>
+<div class="card">
+  <h3>{{icon "users"}} {{t "mkt.to"}}</h3>
+  {{if $d.Segments}}<table class="tlist mkt-segs"><thead><tr><th>{{t "mkt.segment"}}</th><th title="{{t "mkt.include_hint"}}">{{t "mkt.include"}}</th><th title="{{t "mkt.exclude_hint"}}">{{t "mkt.exclude"}}</th></tr></thead><tbody>
+  {{range $d.Segments}}<tr><td>{{.Name}}<div class="small muted">{{t (print "mkt.ent." .Entity)}}</div></td>
+    <td><input type="checkbox" name="seg" value="{{.ID}}" {{if index $d.In .ID}}checked{{end}}></td>
+    <td><input type="checkbox" name="exclude" value="{{.ID}}" {{if index $d.Out .ID}}checked{{end}}></td></tr>{{end}}</tbody></table>
+  {{else}}<p class="muted">{{t "mkt.no_segments"}}</p>{{end}}
+  <p class="small"><a href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a></p>
+  {{with $d.CountErr}}<div class="form-error">{{.}}</div>{{else}}{{if $c.Segments}}<p><b>{{t "mkt.will_get" $d.Count}}</b></p>{{end}}{{end}}
+  <p class="small muted">{{t "mkt.stop_note"}} <a href="/marketing/stoplist">{{t "mkt.stoplist"}}</a></p>
+</div>
+<div class="card">
+  <h3>{{icon "clock"}} {{t "mkt.when"}}</h3>
+  <label><input type="radio" name="planned" value="0" {{if not $c.SendAt}}checked{{end}}> {{t "mkt.now"}}</label>
+  <label><input type="radio" name="planned" value="1" {{if $c.SendAt}}checked{{end}}> {{t "mkt.at"}}</label>
+  <input type="datetime-local" name="send_at" value="{{with $c.SendAt}}{{.Format "2006-01-02T15:04"}}{{end}}">
+  <p class="small muted">{{t "mkt.rate_hint"}}</p>
+</div>
+<div class="card">
+  <h3>{{icon "send"}} {{t "mkt.test"}}</h3>
+  <div class="row"><input type="email" name="test_to" value="{{$d.Me.Email}}"><button class="ghost" name="go" value="test">{{t "mkt.test_btn"}}</button></div>
+</div>
+<p class="row"><button class="ghost" name="go" value="save">{{t "common.save"}}</button>
+  <button class="primary" name="go" value="start" data-confirm="{{t "mkt.start_confirm"}}">{{icon "send"}} {{t "mkt.start"}}</button>
+  <a class="button ghost" href="/marketing/campaigns">{{t "common.cancel"}}</a></p>
+</div>
+</div>
+</form>
+<script src="{{asset "js/compose.js"}}"></script>
+{{else}}<div class="card"><p class="muted">{{t "mkt.not_yours" $c.AuthorName}}</p><h3>{{$c.Subject}}</h3><div class="mkt-letter">{{$d.Letter}}</div></div>{{end}}
+
+{{else}}
+<div class="mkt-stats">
+  {{template "mktstat" (dict "N" $c.Total "L" "mkt.recipients" "S" "" "ID" $c.ID "On" $d.Status)}}
+  {{template "mktstat" (dict "N" $c.Sent "L" "mkt.sent" "S" "sent" "ID" $c.ID "On" $d.Status "Of" $c.Total)}}
+  {{template "mktstat" (dict "N" $c.Pending "L" "mkt.pending" "S" "pending" "ID" $c.ID "On" $d.Status "Of" $c.Total)}}
+  {{template "mktstat" (dict "N" $c.Errors "L" "mkt.errors" "S" "error" "ID" $c.ID "On" $d.Status "Of" $c.Total)}}
+  {{template "mktstat" (dict "N" $c.Skipped "L" "mkt.skipped" "S" "skipped" "ID" $c.ID "On" $d.Status "Of" $c.Total)}}
+  {{template "mktstat" (dict "N" $c.Opened "L" "mkt.opened" "S" "opened" "ID" $c.ID "On" $d.Status "Of" $c.Sent)}}
+  {{template "mktstat" (dict "N" $c.Clicked "L" "mkt.clicked" "S" "clicked" "ID" $c.ID "On" $d.Status "Of" $c.Sent)}}
+  {{template "mktstat" (dict "N" $c.Unsubscribed "L" "mkt.unsubscribed" "S" "unsubscribed" "ID" $c.ID "On" $d.Status "Of" $c.Sent)}}
+</div>
+<div class="small muted">{{if $c.Planned}}{{t "mkt.planned_at" (date $c.SendAt)}}{{else}}{{with $c.StartedAt}}{{t "mkt.started_at" (date .)}}{{end}}{{end}}{{with $c.FinishedAt}} · {{t "mkt.finished_at" (date .)}}{{end}} · {{$c.AuthorName}}</div>
+<div class="mkt-cols">
+<div class="card flush">{{if $d.Recipients}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.email"}}</th><th>{{t "mkt.status"}}</th><th>{{t "mkt.sent_at"}}</th><th>{{t "mkt.opened"}}</th><th>{{t "mkt.clicked"}}</th><th>{{t "mkt.unsubscribed"}}</th></tr></thead>
+  <tbody>{{range $d.Recipients}}<tr><td>{{if .EntityID}}<a href="/crm/{{.Entity}}s/{{.EntityID}}">{{.Email}}</a>{{else}}{{.Email}}{{end}}{{with .Name}}<div class="small muted">{{.}}</div>{{end}}</td>
+    <td><span class="pill mkt-r-{{.Status}}" {{with .Error}}title="{{.}}"{{end}}>{{t (print "mkt.r." .Status)}}</span>{{if and .Error (ne .Error "stoplist")}}<div class="small red">{{.Error}}</div>{{end}}</td>
+    <td class="small nowrap">{{date .SentAt}}</td><td class="small nowrap">{{date .OpenedAt}}</td><td class="small nowrap">{{date .ClickedAt}}</td><td class="small nowrap">{{date .Unsub}}</td></tr>{{end}}</tbody>
+</table>
+{{if gt (len $d.Pages) 1}}<div class="row pager" style="padding:10px">{{range $i := $d.Pages}}<a class="chip{{if eq $i $d.Page}} on{{end}}" href="?status={{$d.Status}}&page={{$i}}">{{$i}}</a>{{end}}</div>{{end}}
+{{else}}<div class="empty">{{t "mkt.no_recipients"}}</div>{{end}}</div>
+<div class="card"><h3>{{$c.Subject}}</h3><div class="mkt-letter">{{$d.Letter}}</div></div>
+</div>
+{{if eq $c.Status "sending"}}<script>setTimeout(() => location.reload(), 30000);</script>{{end}}
+{{end}}
+{{end}}
+

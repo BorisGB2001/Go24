@@ -1,0 +1,163 @@
+{{define "crmstage"}}{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}{{end}}
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "mkt.title"}}</h1>
+  {{if eq $d.Tab "campaigns"}}<a class="button create" href="/marketing/campaigns/new">{{icon "plus"}} {{t "mkt.new_campaign"}}</a>
+  {{else if eq $d.Tab "segments"}}<a class="button create" href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a>
+  {{else if and (eq $d.Tab "ads") $d.Admin}}<a class="button create" href="/marketing/ads?edit=new#edit">{{icon "plus"}} {{t "mkt.new_ad"}}</a>{{end}}</div>
+<div class="tabs">{{template "mkttabs" $d.Tab}}</div>
+
+{{if eq $d.Tab "campaigns"}}
+<div class="sub">{{t "mkt.campaigns_hint"}}</div>
+<div class="card flush">{{if $d.Campaigns}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.campaign"}}</th><th>{{t "mkt.status"}}</th><th>{{t "mkt.recipients"}}</th><th>{{t "mkt.sent"}}</th><th>{{t "mkt.opened"}}</th><th>{{t "mkt.unsubscribed"}}</th><th>{{t "crm.mailtpl.author"}}</th></tr></thead>
+  <tbody>{{range $d.Campaigns}}<tr><td><a href="/marketing/campaigns/{{.ID}}" class="ttitle">{{.Title}}</a><div class="small muted">{{.Subject}}</div></td>
+    <td>{{template "mktstatus" .}}</td><td>{{if .Total}}{{.Total}}{{else}}—{{end}}</td>
+    <td>{{if .Total}}{{.Sent}}{{if .Errors}} <span class="red small" title="{{t "mkt.errors"}}">+{{.Errors}} {{icon "alert-triangle"}}</span>{{end}}<div class="progress"><span style="width:{{pct (add .Sent .Errors) .Total}}%"></span></div>{{else}}—{{end}}</td>
+    <td>{{if .Sent}}{{.Opened}} <span class="muted small">({{pct .Opened .Sent}}%)</span>{{else}}—{{end}}</td>
+    <td>{{if .Unsubscribed}}{{.Unsubscribed}}{{else}}—{{end}}</td><td class="small">{{.AuthorName}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{icon "speakerphone"}} {{t "mkt.no_campaigns"}}</div>{{end}}</div>
+
+{{else if eq $d.Tab "segments"}}
+<div class="sub">{{t "mkt.segments_hint"}}</div>
+<div class="card flush">{{if $d.Segments}}<table class="tlist">
+  <thead><tr><th>{{t "form.name"}}</th><th>{{t "mkt.seg_entity"}}</th><th>{{t "mkt.addressees"}}</th><th>{{t "crm.mailtpl.author"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Segments}}<tr id="seg-{{.ID}}"><td><b>{{.Name}}</b>{{template "mktfilter" .}}</td><td>{{t (print "mkt.ent." .Entity)}}</td>
+    <td>{{index $d.Counts .ID}}</td><td class="small">{{.AuthorName}}</td>
+    <td>{{if or (eq .CreatedBy $d.Me) $d.Admin}}<div class="row"><a class="button ghost small" href="/marketing/segments?edit={{.ID}}#edit">{{icon "edit"}}</a>
+      <form method="post" action="/marketing/segments/{{.ID}}/delete" data-confirm="{{t "mkt.segment_delete" .Name}}"><button class="ghost small">{{icon "trash"}}</button></form></div>{{end}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "mkt.no_segments"}}</div>{{end}}</div>
+{{with $d.Edit}}<div class="card" style="max-width:820px" id="edit">
+  <h2>{{if .ID}}{{icon "edit"}} {{.Name}}{{else}}{{icon "plus"}} {{t "mkt.new_segment"}}{{end}}</h2>
+  <form method="post" action="/marketing/segments/{{if .ID}}{{.ID}}{{else}}new{{end}}">
+    <div class="grid">
+      <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" value="{{.Name}}" placeholder="{{t "mkt.seg_name_hint"}}"></div>
+      <div><label>{{t "mkt.seg_entity"}}</label><select name="entity" data-mkt-entity>{{$e := .Entity}}{{range $d.Entities}}<option value="{{.}}" {{if eq . $e}}selected{{end}}>{{t (print "mkt.ent." .)}}</option>{{end}}</select></div>
+    </div>
+    {{$f := .Filter}}
+    <div data-mkt-for="contact company lead" {{if eq .Entity "list"}}hidden{{end}}>
+      <div class="grid">
+        <div><label>{{t "mkt.f.q"}}</label><input type="text" name="q" value="{{$f.Q}}"></div>
+        <div><label>{{t "crm.f.responsible"}}</label><select name="responsible"><option value="">{{t "mkt.f.any"}}</option>{{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.Responsible}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+        <div data-mkt-for="contact lead"><label>{{t "crm.f.source"}}</label><select name="source"><option value="">{{t "mkt.f.any"}}</option>{{range index $d.Dicts "source"}}<option value="{{.ID}}" {{if eq .ID $f.Source}}selected{{end}}>{{template "crmdict" .Dict}}</option>{{end}}</select></div>
+        <div data-mkt-for="lead"><label>{{t "mkt.f.stage"}}</label><select name="stage"><option value="">{{t "mkt.f.any"}}</option>{{range $d.Stages}}<option value="{{.ID}}" {{if eq .ID $f.Stage}}selected{{end}}>{{template "crmstage" .}}</option>{{end}}</select></div>
+        <div data-mkt-for="lead"><label>{{t "mkt.f.semantic"}}</label><select name="semantic"><option value="">{{t "mkt.f.any"}}</option>{{range list "process" "success" "failure"}}<option value="{{.}}" {{if eq . $f.Semantic}}selected{{end}}>{{t (print "mkt.f.sem_" .)}}</option>{{end}}</select></div>
+        <div><label>{{t "mkt.f.created"}}</label><div class="row"><input type="date" name="from" value="{{$f.From}}"> — <input type="date" name="to" value="{{$f.To}}"></div></div>
+      </div>
+      <p class="small muted">{{t "mkt.f.hint"}}</p>
+    </div>
+    <div data-mkt-for="list" {{if ne .Entity "list"}}hidden{{end}}>
+      <label>{{t "mkt.list"}}</label><textarea name="emails" rows="10" placeholder="ivan@example.com&#10;Мария Петрова &lt;maria@example.com&gt;&#10;oleg@example.com;Олег">{{.Emails}}</textarea>
+      <p class="small muted">{{t "mkt.list_hint"}}</p>
+    </div>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/marketing/segments">{{t "common.cancel"}}</a></p>
+  </form>
+</div>
+<script>
+(() => { // the segment's fields of its kind only
+  const sel = document.querySelector('[data-mkt-entity]');
+  const show = () => document.querySelectorAll('[data-mkt-for]').forEach(el => { el.hidden = !el.dataset.mktFor.split(' ').includes(sel.value); });
+  sel.addEventListener('change', show);
+  show();
+})();
+</script>{{end}}
+
+{{else if eq $d.Tab "stoplist"}}
+<div class="sub">{{t "mkt.stoplist_hint"}}</div>
+<div class="row" style="align-items:flex-start;gap:16px;flex-wrap:wrap">
+<div class="card flush" style="flex:2;min-width:320px">
+  <form class="row" method="get" action="/marketing/stoplist" style="padding:10px" data-native><input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "mkt.stop_search"}}"><button class="ghost">{{icon "search"}}</button></form>
+  {{if $d.Stop}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.email"}}</th><th>{{t "mkt.stop_why"}}</th><th>{{t "mkt.stop_when"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Stop}}<tr><td>{{.Email}}</td>
+    <td class="small">{{if .Campaign}}{{t "mkt.stop_unsub"}} <a href="/marketing/campaigns/{{.Campaign}}">{{.CampaignTitle}}</a>{{else if .AddedBy}}{{t "mkt.stop_added_by" .AddedBy}}{{else}}{{t "mkt.stop_unsub"}}{{end}}</td>
+    <td class="small nowrap">{{datetime .At}}</td>
+    <td><form method="post" action="/marketing/stoplist" data-confirm="{{t "mkt.stop_remove" .Email}}"><input type="hidden" name="remove" value="{{.Email}}"><button class="ghost small" title="{{t "mkt.stop_remove_btn"}}">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">{{icon "mail-off"}} {{t "mkt.stop_empty"}}</div>{{end}}
+</div>
+<form class="card" method="post" action="/marketing/stoplist" style="flex:1;min-width:260px">
+  <h3>{{icon "ban"}} {{t "mkt.stop_add"}}</h3>
+  <textarea name="emails" rows="6" required placeholder="ivan@example.com"></textarea>
+  <p class="small muted">{{t "mkt.stop_add_hint"}}</p>
+  <button class="primary">{{t "mkt.stop_add_btn"}}</button>
+</form>
+</div>
+{{else if eq $d.Tab "ads"}}
+<div class="sub">{{t "mkt.ads_hint"}}</div>
+<div class="card flush">{{if $d.Sources}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.ad_source"}}</th><th>utm_source</th><th>{{t "mkt.ad_crm_source"}}</th>{{if $d.Admin}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Sources}}{{$cs := .CRMSource}}<tr><td><span class="mkt-dot" style="background:{{if .Color}}{{.Color}}{{else}}var(--muted){{end}}"></span> <b>{{.Name}}</b></td>
+    <td class="small">{{range $n, $u := .UTM}}{{if $n}}, {{end}}<code>{{$u}}</code>{{else}}—{{end}}</td>
+    <td class="small">{{range index $d.Dicts "source"}}{{if eq .ID $cs}}{{template "crmdict" .Dict}}{{end}}{{end}}{{if not $cs}}—{{end}}</td>
+    {{if $d.Admin}}<td><div class="row"><a class="button ghost small" href="/marketing/ads?edit={{.ID}}#edit">{{icon "edit"}}</a>
+      <form method="post" action="/marketing/ads/sources/{{.ID}}" data-confirm="{{t "mkt.ad_delete" .Name}}"><input type="hidden" name="delete" value="1"><button class="ghost small">{{icon "trash"}}</button></form></div></td>{{end}}</tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{icon "speakerphone"}} {{t "mkt.no_ads"}}{{if $d.Admin}} <a href="/marketing/ads?edit=new#edit">{{t "mkt.new_ad"}}</a>{{end}}</div>{{end}}</div>
+{{with $d.Edit}}<div class="card" style="max-width:820px" id="edit">
+  <h2>{{if .ID}}{{icon "edit"}} {{.Name}}{{else}}{{icon "plus"}} {{t "mkt.new_ad"}}{{end}}</h2>
+  <form method="post" action="/marketing/ads/sources/{{if .ID}}{{.ID}}{{else}}new{{end}}">{{$cs := .CRMSource}}
+    <div class="grid">
+      <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" value="{{.Name}}" placeholder="{{t "mkt.ad_name_hint"}}"></div>
+      <div><label>{{t "mkt.color"}}</label><input type="color" name="color" value="{{if .Color}}{{.Color}}{{else}}#3b82f6{{end}}"></div>
+      <div><label>utm_source</label><input type="text" name="utm" value="{{join .UTM ", "}}" placeholder="yandex, ya.direct"></div>
+      <div><label>{{t "mkt.ad_crm_source"}}</label><select name="crm_source"><option value="">—</option>{{range index $d.Dicts "source"}}<option value="{{.ID}}" {{if eq .ID $cs}}selected{{end}}>{{template "crmdict" .Dict}}</option>{{end}}</select></div>
+    </div>
+    <p class="small muted">{{t "mkt.ad_match_hint"}}</p>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/marketing/ads">{{t "common.cancel"}}</a></p>
+  </form>
+</div>{{end}}
+
+<h2 style="margin-top:20px">{{icon "chart-bar"}} {{t "mkt.expenses"}}</h2>
+{{if $d.Sources}}<div class="row" style="align-items:flex-start;gap:16px;flex-wrap:wrap">
+<div class="card flush mkt-scroll" style="flex:2;min-width:340px">
+  <form class="row crmtools mkt-expfilter" method="get" action="/marketing/ads" style="padding:10px" data-native>
+    <select name="source"><option value="">{{t "mkt.all_ads"}}</option>{{range $d.Sources}}<option value="{{.ID}}" {{if eq .ID $d.Source}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $d.From.IsZero}}{{$d.From.Format "2006-01-02"}}{{end}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{if not $d.To.IsZero}}{{$d.To.Format "2006-01-02"}}{{end}}"></span></span>
+    <button class="ghost">{{icon "search"}}</button></form>
+  {{if $d.Expenses}}<table class="tlist mkt-exp">
+  <thead><tr><th>{{t "mkt.day"}}</th><th>{{t "mkt.ad_source"}}</th><th>{{t "mkt.ad_campaign"}}</th><th class="num">{{t "mkt.amount"}}</th><th>{{t "crm.f.comment"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Expenses}}<tr><td class="nowrap">{{.Day.Format "02.01.2006"}}</td><td>{{.SourceName}}</td><td class="small">{{with .Campaign}}<code>{{.}}</code>{{end}}</td>
+    <td class="num nowrap">{{money .Amount}} {{.Currency}}</td><td class="small">{{.Comment}}<div class="muted">{{.AuthorName}}</div></td>
+    <td>{{if or (eq .CreatedBy $d.Me) $d.Admin}}<form method="post" action="/marketing/ads/expenses/{{.ID}}/delete" data-confirm="{{t "mkt.expense_delete"}}"><button class="ghost small">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">{{t "mkt.no_expenses"}}</div>{{end}}
+</div>
+<div style="flex:1;min-width:280px">
+<form class="card" method="post" action="/marketing/ads/expenses">
+  <h3>{{icon "plus"}} {{t "mkt.expense_add"}}</h3>
+  <label>{{t "mkt.ad_source"}}</label><select name="source" required>{{range $d.Sources}}<option value="{{.ID}}" {{if eq .ID $d.Source}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <label>{{t "mkt.day"}}</label><input type="date" name="day" required value="{{$d.Today.Format "2006-01-02"}}">
+  <label>{{t "mkt.amount"}}</label><div class="row"><input type="text" name="amount" required inputmode="decimal" style="flex:1">{{template "crmcurrency" (dict "List" $d.Currencies "Value" "")}}</div>
+  <label>{{t "mkt.ad_campaign"}} <span class="muted small">utm_campaign</span></label><input type="text" name="campaign" maxlength="200">
+  <label>{{t "crm.f.comment"}}</label><input type="text" name="comment" maxlength="1000">
+  <p><button class="primary">{{t "mkt.expense_add_btn"}}</button></p>
+</form>
+<form class="card" method="post" action="/marketing/ads/expenses" enctype="multipart/form-data">
+  <h3>{{icon "cloud-upload"}} {{t "mkt.expense_import"}}</h3>
+  <input type="file" name="file" accept=".csv,text/csv" required>
+  <p class="small muted">{{t "mkt.expense_import_hint"}}</p>
+  <button class="ghost">{{t "mkt.expense_import_btn"}}</button>
+</form>
+</div>
+</div>{{else}}<div class="card"><p class="muted">{{t "mkt.expenses_need_ads"}}</p></div>{{end}}
+
+{{else if eq $d.Tab "analytics"}}{{$r := $d.Report}}
+<div class="sub">{{t "mkt.analytics_hint"}}</div>
+<form method="get" action="/marketing/analytics" class="row crmtools" data-native>
+  <label class="small">{{t "crm.period"}}</label><span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput $d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput $d.To}}"></span></span>
+  <button>{{t "crm.find"}}</button>
+</form>
+{{with $r.Total}}<div class="crmkpi">
+  <div class="card"><div class="muted small">{{t "mkt.an.expenses"}}</div><b>{{money .Expenses}}</b> <span class="muted small">{{$r.Currency}}</span></div>
+  <div class="card"><div class="muted small">{{t "mkt.an.leads"}}</div><b>{{.Leads}}</b>{{if .CostPerLead}}<div class="small muted">{{t "mkt.an.cpl"}}: {{money .CostPerLead}}</div>{{end}}</div>
+  <div class="card"><div class="muted small">{{t "mkt.an.deals"}}</div><b>{{.Deals}}</b></div>
+  <div class="card"><div class="muted small">{{t "mkt.an.won"}}</div><b>{{.Won}}</b>{{if .CostPerSale}}<div class="small muted">{{t "mkt.an.cps"}}: {{money .CostPerSale}}</div>{{end}}</div>
+  <div class="card"><div class="muted small">{{t "mkt.an.revenue"}}</div><b>{{money .Revenue}}</b> <span class="muted small">{{$r.Currency}}</span></div>
+  <div class="card"><div class="muted small">ROI</div><b class="{{template "mktroicls" .}}">{{with mktROI .}}{{.}}{{else}}—{{end}}</b></div>
+</div>{{end}}
+<div class="card flush mkt-scroll">{{if $r.Channels}}<table class="tlist mkt-through">
+  <thead><tr><th>{{t "mkt.ad_source"}}</th><th class="num">{{t "mkt.an.expenses"}}</th><th class="num">{{t "mkt.an.leads"}}</th><th class="num">{{t "mkt.an.cpl"}}</th><th class="num">{{t "mkt.an.deals"}}</th><th class="num">{{t "mkt.an.won"}}</th><th class="num">{{t "mkt.an.cps"}}</th><th class="num">{{t "mkt.an.revenue"}}</th><th class="num">ROI</th></tr></thead>
+  <tbody>{{range $r.Channels}}{{template "mktline" (dict "C" . "Top" true)}}{{range .Campaigns}}{{template "mktline" (dict "C" . "Top" false)}}{{end}}{{end}}</tbody>
+  <tfoot>{{template "mktline" (dict "C" $r.Total "Top" true "Total" true)}}</tfoot>
+</table>{{else}}<div class="empty">{{icon "chart-bar"}} {{t "mkt.no_ads"}} <a href="/marketing/ads">{{t "mkt.ads"}}</a></div>{{end}}</div>
+<p class="small muted">{{t "mkt.analytics_note"}}</p>
+{{end}}
+{{end}}

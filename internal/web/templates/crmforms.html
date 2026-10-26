@@ -1,0 +1,84 @@
+{{define "content"}}
+<link rel="stylesheet" href="{{asset "css/crmform.css"}}">
+{{$d := .Data}}{{$admin := and .User .User.Admin}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  {{if and $admin (eq $d.Mode "list")}}<a class="button primary" href="/crm/forms/new">{{icon "plus"}} {{t "crm.form_new"}}</a>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+
+{{if eq $d.Mode "list"}}
+<p class="sub">{{t "crm.forms_about"}}</p>
+{{if $d.Forms}}<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "form.name"}}</th><th>{{t "crm.form_scheme"}}</th><th>{{t "crm.form_link"}}</th><th>{{t "crm.f.responsible"}}</th><th>{{t "crm.form_results"}}</th></tr></thead>
+  <tbody>{{range $d.Forms}}{{$u := print $d.Root "/cf/" .Token}}<tr{{if not .Active}} class="muted"{{end}}>
+    <td><b>{{if $admin}}<a href="/crm/forms/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</b>{{if not .Active}} <span class="small">· {{t "crm.form_off"}}</span>{{end}}</td>
+    <td>{{t (print "crm.form_scheme." .Scheme)}}</td>
+    <td class="small">{{if .Active}}<a href="{{$u}}" target="_blank" rel="noopener">{{$u}}</a>{{else}}—{{end}}</td>
+    <td>{{or .Responsible.Name (t "crm.form_responsible_auto")}}</td>
+    <td>{{if or $admin (and $.User (eq .Responsible.ID $.User.UserID))}}<a href="/crm/forms/{{.ID}}/results">{{.Results}}</a>{{else}}{{.Results}}{{end}}</td>
+  </tr>{{end}}</tbody></table></div>
+{{else}}<div class="card empty muted">{{t "crm.forms_none"}}</div>{{end}}
+
+{{else if eq $d.Mode "edit"}}{{$f := $d.Form}}
+<p><a href="/crm/forms">{{icon "chevron-left"}} {{t "crm.forms"}}</a>{{if $f.ID}} · <a href="/crm/forms/{{$f.ID}}/results">{{t "crm.form_results"}} ({{$f.Results}})</a>{{end}}</p>
+<form method="post" action="/crm/forms/{{or $f.ID "new"}}" class="crmform-edit" data-crmform>
+  <div class="card">
+    <h3>{{if $f.ID}}{{$f.Name}}{{else}}{{t "crm.form_new"}}{{end}}</h3>
+    <div class="crmform-grid">
+      <label>{{t "form.name"}}<input type="text" name="name" value="{{$f.Name}}" maxlength="200" required></label>
+      <label class="check"><input type="checkbox" name="active" value="1" {{if $f.Active}}checked{{end}}> {{t "crm.form_active"}}</label>
+      <label>{{t "crm.form_scheme"}}<select name="scheme" data-scheme>{{range list "lead" "deal"}}<option value="{{.}}" {{if eq . $f.Scheme}}selected{{end}}>{{t (print "crm.form_scheme." .)}}</option>{{end}}</select></label>
+      <label data-for-scheme="deal">{{t "crm.f.pipeline"}}<select name="pipeline">{{range $d.Pipelines}}<option value="{{.ID}}" {{if eq .ID $f.PipelineID}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}</option>{{end}}</select></label>
+      <label>{{t "crm.f.responsible"}}<select name="responsible"><option value="">{{t "crm.form_responsible_auto"}}</option>{{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $f.Responsible.ID}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select></label>
+    </div>
+  </div>
+  <div class="card">
+    <h3>{{t "crm.form_fields"}}</h3>
+    <p class="small muted">{{t "crm.form_fields_hint"}}</p>
+    <table class="tlist crmform-fields"><thead><tr><th></th><th>{{t "crm.form_field"}}</th><th>{{t "crm.form_label"}}</th><th>{{t "crm.form_required"}}</th></tr></thead>
+      <tbody>{{range $d.Choice}}<tr draggable="true"{{with .Scheme}} data-for-scheme="{{.}}"{{end}}>
+        <td class="drag" title="{{t "crm.form_drag"}}">{{icon "menu-2"}}<input type="hidden" name="key" value="{{.Key}}"></td>
+        <td><label class="check"><input type="checkbox" name="on_{{.Key}}" value="1" {{if .On}}checked{{end}}> {{if .Custom}}{{.Name}}{{else}}{{t (print "crm.form_field." .Key)}}{{end}}</label></td>
+        <td><input type="text" name="label_{{.Key}}" value="{{.Label}}" maxlength="200" placeholder="{{if .Custom}}{{.Name}}{{else}}{{t (print "crm.form_field." .Key)}}{{end}}"></td>
+        <td><input type="checkbox" name="req_{{.Key}}" value="1" {{if .Required}}checked{{end}} aria-label="{{t "crm.form_required"}}"></td>
+      </tr>{{end}}</tbody></table>
+  </div>
+  <div class="card">
+    <h3>{{t "crm.form_view"}}</h3>
+    <label>{{t "crm.form_title"}}<input type="text" name="title" value="{{$f.Title}}" maxlength="300" placeholder="{{t "crm.form_title_ph"}}"></label>
+    <label>{{t "crm.form_text"}}<textarea name="text" rows="2" maxlength="2000">{{$f.Text}}</textarea></label>
+    <label>{{t "crm.form_button"}}<input type="text" name="button" value="{{$f.Button}}" maxlength="100" placeholder="{{t "crm.form_send"}}"></label>
+    <label>{{t "crm.form_consent"}}<textarea name="consent" rows="2" maxlength="2000" placeholder="{{t "crm.form_consent_ph"}}">{{$f.Consent}}</textarea></label>
+    <label>{{t "crm.form_success"}}<textarea name="success" rows="2" maxlength="2000" placeholder="{{t "crm.form_thanks"}}">{{$f.Success}}</textarea></label>
+    <label>{{t "crm.form_redirect"}}<input type="url" name="redirect" value="{{$f.Redirect}}" maxlength="2000" placeholder="https://"></label>
+  </div>
+  <p class="row"><button class="primary">{{icon "device-floppy"}} {{t "common.save"}}</button></p>
+</form>
+{{if $f.ID}}{{$u := print $d.Root "/cf/" $f.Token}}
+<div class="card">
+  <h3>{{t "crm.form_publish"}}</h3>
+  <p>{{t "crm.form_link"}}: <a href="{{$u}}" target="_blank" rel="noopener">{{$u}}</a>{{if not $f.Active}} <span class="muted small">· {{t "crm.form_off"}}</span>{{end}}</p>
+  <p class="small muted">{{t "crm.form_embed_hint"}}</p>
+  <label>{{t "crm.form_embed_inline"}}<textarea readonly rows="2" class="mono" data-copy>&lt;script src="{{$d.Root}}/static/js/crmform.js" data-form="{{$u}}" async&gt;&lt;/script&gt;</textarea></label>
+  <label>{{t "crm.form_embed_button"}}<textarea readonly rows="2" class="mono" data-copy>&lt;script src="{{$d.Root}}/static/js/crmform.js" data-form="{{$u}}" data-button="{{or $f.Button (t "crm.form_open")}}" async&gt;&lt;/script&gt;</textarea></label>
+</div>
+<form method="post" action="/crm/forms/{{$f.ID}}" data-confirm="{{t "crm.form_delete_confirm"}}"><input type="hidden" name="op" value="delete">
+  <button class="ghost danger">{{icon "trash"}} {{t "crm.form_delete"}}</button></form>
+{{end}}
+<script src="{{asset "js/crmforms.js"}}"></script>
+
+{{else}}{{$f := $d.Form}}
+<p><a href="/crm/forms">{{icon "chevron-left"}} {{t "crm.forms"}}</a>{{if $admin}} · <a href="/crm/forms/{{$f.ID}}">{{$f.Name}}</a>{{else}} · {{$f.Name}}{{end}}</p>
+<h2>{{t "crm.form_results"}}: {{$f.Name}}</h2>
+{{if $d.Results}}<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "crm.form_filled_at"}}</th><th>{{t "crm.form_answers"}}</th><th>{{t "crm.form_cards"}}</th></tr></thead>
+  <tbody>{{range $d.Results}}<tr>
+    <td class="small muted nowrap">{{datetime .CreatedAt}}{{with .Page}}<div><a href="{{.}}" target="_blank" rel="noopener noreferrer" class="small">{{t "crm.form_page"}}</a></div>{{end}}</td>
+    <td><dl class="crmform-answers">{{range .Answers}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl></td>
+    <td class="small">{{if .LeadID}}<div>{{t "crm.lead"}}: {{if .LeadTitle}}<a href="/crm/leads/{{.LeadID}}">{{.LeadTitle}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
+      {{if .ContactID}}<div>{{t "crm.contact"}}: {{if .ContactName}}<a href="/crm/contacts/{{.ContactID}}">{{.ContactName}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
+      {{if .DealID}}<div>{{t "crm.deal"}}: {{if .DealTitle}}<a href="/crm/deals/{{.DealID}}">{{.DealTitle}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
+      {{if not (or .LeadID .ContactID .DealID)}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</td>
+  </tr>{{end}}</tbody></table></div>
+{{else}}<div class="card empty muted">{{t "crm.form_results_none"}}</div>{{end}}
+{{end}}
+{{end}}

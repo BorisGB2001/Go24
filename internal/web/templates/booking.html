@@ -1,0 +1,93 @@
+{{define "content"}}{{$d := .Data}}{{$day := $d.Day.Format "2006-01-02"}}
+<div class="pagehead">
+  <h1>{{t "booking.title"}}</h1>
+  <div class="row calnav">
+    <a class="button ghost" href="/booking?date={{$d.Prev}}{{with $d.Type}}&type={{.}}{{end}}" title="{{t "booking.prev"}}">{{icon "chevron-left"}}</a>
+    <b class="calmonth">{{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}</b>
+    <a class="button ghost" href="/booking?date={{$d.Next}}{{with $d.Type}}&type={{.}}{{end}}" title="{{t "booking.next"}}">{{icon "chevron-right"}}</a>
+    <a class="button ghost" href="/booking{{with $d.Type}}?type={{.}}{{end}}">{{t "calendar.today"}}</a>
+    <form method="get" action="/booking" class="row"><input type="hidden" name="type" value="{{$d.Type}}"><input type="date" name="date" value="{{$day}}" onchange="this.form.submit()"></form>
+  </div>
+  <div class="tabs calviews"><a href="/booking?date={{$day}}" {{if not $d.Type}}class="on"{{end}}>{{t "booking.all_resources"}}</a>{{range $d.Types}}{{if .Resources}}<a href="/booking?date={{$day}}&type={{.ID}}" {{if eq .ID $d.Type}}class="on"{{end}}>{{if .Code}}{{t (print "booking.type." .Code)}}{{else}}{{.Name}}{{end}}</a>{{end}}{{end}}</div>
+  <span style="flex:1"></span>
+  <a href="/booking/stats" class="button ghost">{{icon "chart-bar"}} {{t "booking.stats"}}</a>
+  <a href="/booking/links" class="button ghost">{{icon "link"}} {{t "booking.links"}}</a>
+  <a href="/booking/resources" class="button ghost">{{icon "settings"}} {{t "booking.resources"}}</a>
+  {{if $d.Cols}}<button type="button" class="button create" data-booking-new>{{icon "plus"}} {{t "booking.add"}}</button>{{end}}
+</div>
+{{with $d.Preset}}<div class="flash bk-for">{{icon "calendar-event"}} <span style="flex:1">{{t "booking.for_card"}} <a href="{{.path}}">{{.title}}</a></span><a class="button ghost small" href="{{.path}}">{{t "common.cancel"}}</a></div>{{end}}
+{{if $d.Cols}}
+<section class="card bk-wait" data-bk-wait>
+  <div class="row bk-wait-head"><b>{{icon "clock"}} {{t "booking.wait"}}</b>{{with $d.Wait}} <span class="pill">{{len .}}</span>{{end}}
+    <span class="small muted">{{if $d.Wait}}{{t "booking.wait_hint"}}{{else}}{{t "booking.wait_empty"}}{{end}}</span><span style="flex:1"></span>
+    <button type="button" class="button ghost small" data-wait-new>{{icon "plus"}} {{t "booking.wait_add"}}</button></div>
+  {{with $d.Wait}}<div class="bk-wait-list">{{range .}}<div class="bk-wait-item" draggable="true" data-wait="{{.ID}}" data-res="{{.ResourceID}}" data-name="{{.ClientName}}"
+    data-phone="{{.ClientPhone}}" data-email="{{.ClientEmail}}" data-note="{{.Note}}" data-contact-id="{{.ContactID}}" data-contact="{{.ContactName}}"
+    data-company-id="{{.CompanyID}}" data-company="{{.CompanyName}}" data-deal-id="{{.DealID}}" data-deal="{{.DealTitle}}" title="{{.CreatedByName}}">
+    <a href="#" data-wait-edit><b>{{or .ClientName .ClientPhone}}</b></a>{{if .ClientName}}{{with .ClientPhone}} <span class="small">{{.}}</span>{{end}}{{end}}
+    <div class="small muted">{{or .ResourceName (t "booking.wait_any")}}{{with .Note}} · {{.}}{{end}}</div>
+    <div class="row"><button type="button" class="ghost small" data-wait-book>{{icon "calendar-event"}} {{t "booking.wait_book"}}</button><span style="flex:1"></span>
+      <form method="post" action="/booking/wait/{{.ID}}/delete" data-confirm="{{t "booking.wait_delete_confirm"}}"><input type="hidden" name="date" value="{{$day}}"><button class="ghost small danger" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></div>
+  </div>{{end}}</div>{{end}}
+  <form method="post" action="#" data-wait-drop data-native hidden><input type="hidden" name="resource"><input type="hidden" name="date" value="{{$day}}"><input type="hidden" name="time"></form>
+</section>
+<div class="card flush calgrid bkgrid" style="--cols:{{len $d.Cols}};--hour:{{$d.HourPx}}px" data-booking data-date="{{$day}}" data-open="{{$d.Open}}" data-hour0="{{$d.Hour0}}" data-hour-px="{{$d.HourPx}}">
+  <div class="cg-row cg-head"><div></div>{{range $d.Cols}}<div class="cg-day bk-res" title="{{.R.Description}}"><b>{{.R.Name}}</b><br><span class="small muted">{{if .R.TypeCode}}{{t (print "booking.type." .R.TypeCode)}}{{else}}{{.R.TypeName}}{{end}}{{with .R.UserName}} · {{.}}{{end}}{{if not .Off}} · <span title="{{t "booking.load_hint"}}">{{.Load}}%</span>{{end}}</span></div>{{end}}</div>
+  <div class="cg-row cg-body"><div class="cg-hours">{{range $d.Hours}}<div>{{printf "%02d:00" .}}</div>{{end}}</div>
+    {{range $d.Cols}}<div class="cg-col bk-col{{if .Off}} off{{end}}" style="height:{{$d.GridPx}}px" data-resource="{{.R.ID}}" data-slot="{{.R.Slot}}" data-from="{{.R.From}}" data-to="{{.R.To}}">
+      {{if not .Off}}<div class="bk-off" style="top:0;height:{{.OffTop}}px"></div><div class="bk-off" style="top:{{.OffBot}}px;bottom:0"></div>{{end}}
+      {{range .Bookings}}<a class="calitem cg-ev bk-ev bk-{{.B.Status}}{{if .Late}} bk-late{{end}}{{if .Extra}} bk-extra{{end}}" style="top:{{.Top}}px;height:{{.Height}}px" href="#" data-bk="{{.B.ID}}"
+        data-res="{{.B.ResourceID}}" data-extras="{{join .B.Extras ","}}"
+        data-time="{{clock .B.Start}}" data-minutes="{{.Mins}}" data-name="{{.B.ClientName}}" data-phone="{{.B.ClientPhone}}"
+        data-email="{{.B.ClientEmail}}" data-note="{{.B.Note}}" data-status="{{.B.Status}}" data-contact-id="{{.B.ContactID}}" data-contact="{{.B.ContactName}}"
+        data-company-id="{{.B.CompanyID}}" data-company="{{.B.CompanyName}}" data-deal-id="{{.B.DealID}}" data-deal="{{.B.DealTitle}}" data-by="{{if .B.LinkName}}{{t "booking.by_link" .B.LinkName}}{{else}}{{.B.CreatedByName}}{{end}}"
+        title="{{clock .B.Start}}–{{clock .B.End}} {{.B.ClientName}} · {{t (print "booking.st." .B.Status)}}"><b>{{clock .B.Start}}–{{clock .B.End}}</b> {{.B.ClientName}}{{with .B.ClientPhone}} <span class="small">{{.}}</span>{{end}}<br><span class="small">{{t (print "booking.st." .B.Status)}}{{if .Late}} · {{t "booking.late_now"}}{{end}}{{if .Extra}} · {{.B.ResourceName}}{{else}}{{with .B.ExtraNames}} · + {{join . ", "}}{{end}}{{end}}</span></a>{{end}}
+    </div>{{end}}</div>
+</div>
+<p class="muted small calleg">{{range $d.Statuses}}<span class="calitem bk-ev bk-{{.}}">{{t (print "booking.st." .)}}{{with index $d.Counts .}} · {{.}}{{end}}</span> {{end}}{{with index $d.Counts "late"}}<span class="calitem bk-ev bk-late">{{t "booking.late_now"}} · {{.}}</span>{{end}}</p>
+<dialog class="disk-dlg bk-dlg" data-booking-dlg{{with $d.Preset}} data-preset-name="{{.name}}" data-preset-phone="{{.phone}}" data-preset-email="{{.email}}"
+  data-preset-contact-id="{{.contact_id}}" data-preset-contact="{{.contact}}" data-preset-company-id="{{.company_id}}" data-preset-company="{{.company}}"
+  data-preset-deal-id="{{.deal_id}}" data-preset-deal="{{.deal}}" data-preset-back="{{.path}}"{{end}}>
+  <form method="post" action="/booking" data-new-action="/booking">
+    <h3 data-title-new="{{t "booking.add"}}" data-title-edit="{{t "booking.card"}}">{{t "booking.add"}}</h3>
+    <input type="hidden" name="date" value="{{$day}}">
+    <input type="hidden" name="wait" disabled>
+    <label>{{t "booking.resource"}}<select name="resource" required>{{range $d.All}}<option value="{{.ID}}" data-slot="{{.Slot}}">{{.Name}}</option>{{end}}</select></label>
+    {{with $d.All}}{{if gt (len .) 1}}<div class="bk-extras" data-bk-extras><span class="small muted">{{t "booking.extras"}}</span>
+      <div class="bk-checks">{{range $d.All}}<label class="check"><input type="checkbox" name="extra" value="{{.ID}}"> {{.Name}}</label>{{end}}</div></div>{{end}}{{end}}
+    <div class="row"><label>{{t "booking.time"}}<input type="time" name="time" required step="300"></label>
+      <label>{{t "booking.minutes"}}<input type="number" name="minutes" min="5" max="1440" step="5" required></label></div>
+    <label>{{t "booking.client_name"}}<input type="text" name="client_name" maxlength="200"></label>
+    <div class="row"><label>{{t "booking.client_phone"}}<input type="tel" name="client_phone" maxlength="50"></label>
+      <label>{{t "booking.client_email"}}<input type="email" name="client_email" maxlength="200"></label></div>
+    <label>{{t "booking.note"}}<textarea name="note" rows="2"></textarea></label>
+    {{if $d.CRM}}<div class="bk-crm" data-bk-crm data-kind-contact="{{t "crm.contact"}}" data-kind-company="{{t "crm.company"}}" data-kind-deal="{{t "crm.deal"}}" data-unbind="{{t "booking.crm_unbind"}}">
+      <span class="small muted">{{t "booking.crm"}}</span>
+      <input type="hidden" name="contact_id"><input type="hidden" name="company_id"><input type="hidden" name="deal_id"><input type="hidden" name="crm_back" disabled>
+      <div class="row bk-chips" data-bk-chips></div>
+      <input type="search" data-bk-crm-q placeholder="{{t "booking.crm_search"}}" autocomplete="off" aria-label="{{t "booking.crm_search"}}">
+      <div class="bk-crm-res" data-bk-crm-res role="listbox"></div>
+    </div>{{end}}
+    <label>{{t "booking.status"}}<select name="status">{{range $d.Statuses}}<option value="{{.}}">{{t (print "booking.st." .)}}</option>{{end}}</select></label>
+    <p class="small muted" data-booking-by data-label="{{t "booking.created_by"}}"></p>
+    <div class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-booking-close>{{t "common.cancel"}}</button>
+      <span style="flex:1"></span>{{if $d.CRM}}<button class="ghost" formaction="#" formnovalidate data-booking-deal hidden>{{icon "cash"}} {{t "booking.make_deal"}}</button>{{end}}<button class="ghost" formaction="#" data-booking-towait data-confirm="{{t "booking.to_wait_confirm"}}" hidden>{{icon "clock"}} {{t "booking.to_wait"}}</button><button class="ghost danger" formaction="#" data-booking-delete data-confirm="{{t "booking.delete_confirm"}}" hidden>{{icon "trash"}} {{t "common.delete"}}</button></div>
+  </form>
+</dialog>
+<dialog class="disk-dlg bk-dlg" data-wait-dlg>
+  <form method="post" action="/booking/wait" data-new-action="/booking/wait">
+    <h3 data-title-new="{{t "booking.wait_new"}}" data-title-edit="{{t "booking.wait_card"}}">{{t "booking.wait_new"}}</h3>
+    <input type="hidden" name="date" value="{{$day}}">
+    <label>{{t "booking.client_name"}}<input type="text" name="client_name" maxlength="200"></label>
+    <div class="row"><label>{{t "booking.client_phone"}}<input type="tel" name="client_phone" maxlength="50"></label>
+      <label>{{t "booking.client_email"}}<input type="email" name="client_email" maxlength="200"></label></div>
+    <label>{{t "booking.resource"}}<select name="resource"><option value="">{{t "booking.wait_any"}}</option>{{range $d.All}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+    <label>{{t "booking.note"}}<textarea name="note" rows="2"></textarea></label>
+    <div class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-wait-close>{{t "common.cancel"}}</button></div>
+  </form>
+</dialog>
+{{else}}
+<div class="empty card">{{t "booking.no_resources"}} {{if $d.Admin}}<a href="/booking/resources?edit=new">{{t "booking.add_resource"}}</a>{{end}}</div>
+{{end}}
+<script src="{{asset "js/booking.js"}}"></script>
+{{end}}

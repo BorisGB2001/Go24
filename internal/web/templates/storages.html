@@ -1,0 +1,77 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "title.storages"}}</h1>
+<div class="sub">{{t "storages.subtitle"}}</div>
+
+<div class="card flush">
+  <table data-cols="storages">
+    <thead><tr><th>{{t "col.name"}}</th><th>{{t "col.type"}}</th><th>{{t "col.access"}}</th><th>{{t "col.check"}}</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>{{icon "server-2"}} {{t "storages.builtin"}}</td><td class="small">rclone</td><td class="small">{{t "storages.shared"}}</td><td><span class="pill st-completed">{{t "storages.ok"}}</span></td><td></td></tr>
+      {{range $d.Storages}}
+      <tr>
+        <td>{{icon "database"}} {{.Name}}<div class="small muted">{{.Summary}}{{if .Root}} · /{{.Root}}{{end}}</div></td>
+        <td class="small">{{t (print "storage_type." .Type)}}</td>
+        <td class="small">{{if .Shared}}{{t "storages.shared"}}{{else}}{{t "storages.personal"}}{{end}}</td>
+        <td>{{if .CheckOK}}<span class="pill st-completed">{{t "storages.ok"}}</span>{{else}}<span class="pill st-deferred" title="{{.CheckError}}">{{t "storages.error"}}</span>{{end}}
+          {{with date .CheckedAt}}<div class="small muted">{{.}}</div>{{end}}</td>
+        <td class="row">
+          <form method="post" action="/settings/storages/{{.ID}}/check"><button class="ghost" title="{{t "storages.check"}}">{{icon "circle-check"}}</button></form>
+          {{if or .Mine $.User.AdminActive}}<form method="post" action="/settings/storages/{{.ID}}/delete"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{if $d.Enabled}}
+<div class="card">
+  <h2>{{icon "plus"}} {{t "storages.new"}}</h2>
+  <form method="post" action="/settings/storages" id="storage-form">
+    <div class="grid">
+      <div><label>{{t "form.name"}}</label><input type="text" name="name" placeholder="{{t "storages.name_placeholder"}}" required></div>
+      <div><label>{{t "col.type"}}</label>
+        <select name="type" id="storage-type">{{range $d.Types}}<option value="{{.}}">{{t (print "storage_type." .)}}</option>{{end}}</select></div>
+      <div><label>{{t "storages.root"}}</label><input type="text" name="root" placeholder="go24"></div>
+    </div>
+    <div class="grid" data-for="webdav">
+      <div style="grid-column:span 2"><label>URL</label><input type="text" name="url" placeholder="https://cloud.example.ru/remote.php/dav/files/user/"></div>
+      <div><label>{{t "storages.vendor"}}</label><select name="vendor"><option value="nextcloud">Nextcloud</option><option value="owncloud">ownCloud</option><option value="other">WebDAV</option></select></div>
+    </div>
+    <div class="grid" data-for="sftp ftp smb">
+      <div><label>{{t "storages.host"}}</label><input type="text" name="host" placeholder="files.example.ru"></div>
+      <div><label>{{t "storages.port"}}</label><input type="text" name="port" placeholder="22 / 21 / 445"></div>
+      <div data-for="smb"><label>{{t "storages.domain"}}</label><input type="text" name="domain" placeholder="WORKGROUP"></div>
+    </div>
+    <div class="grid" data-for="webdav sftp ftp smb yandex mailru">
+      <div><label data-for="webdav sftp ftp smb">{{t "storages.user"}}</label><label data-for="yandex mailru">{{t "storages.login"}}</label><input type="text" name="user" autocomplete="off"></div>
+      <div><label data-for="webdav sftp ftp smb">{{t "storages.password"}}</label><label data-for="yandex mailru">{{t "storages.app_password"}}</label><input type="password" name="password" autocomplete="new-password"></div>
+    </div>
+    <p class="small muted" data-for="yandex">{{t "storages.yandex_hint"}}</p>
+    <p class="small muted" data-for="mailru">{{t "storages.mailru_hint"}}</p>
+    <p class="small muted" data-for="smb">{{t "storages.smb_hint"}}</p>
+    <div class="grid" data-for="s3">
+      <div style="grid-column:span 2"><label>Endpoint</label><input type="text" name="endpoint" placeholder="https://storage.example.ru"></div>
+      <div><label>{{t "storages.region"}}</label><input type="text" name="region" placeholder="ru-central1"></div>
+      <div><label>Access key ID</label><input type="text" name="key_id" autocomplete="off"></div>
+      <div><label>Secret access key</label><input type="password" name="secret" autocomplete="new-password"></div>
+    </div>
+    {{if $d.CanShare}}<label class="check"><input type="checkbox" name="shared"> {{t "storages.make_shared"}}</label>{{end}}
+    <p class="small muted">{{t "storages.secrets_hint"}}</p>
+    <p><button class="primary">{{icon "database"}} {{t "storages.connect"}}</button></p>
+  </form>
+</div>
+<script>
+(() => {
+  const sel = document.getElementById('storage-type');
+  const sync = () => document.querySelectorAll('#storage-form [data-for]').forEach(el => {
+    el.style.display = el.dataset.for.split(' ').includes(sel.value) ? '' : 'none';
+  });
+  sel.addEventListener('change', sync); sync();
+})();
+</script>
+{{else}}
+<div class="card"><p class="muted">{{t "storages.disabled"}}</p></div>
+{{end}}
+{{end}}

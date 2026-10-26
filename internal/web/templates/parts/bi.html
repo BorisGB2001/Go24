@@ -1,0 +1,74 @@
+{{define "bi-kind-icon"}}{{if eq . "kpi"}}{{icon "numbers"}}{{else if eq . "bar"}}{{icon "chart-bar"}}{{else if eq . "line"}}{{icon "chart-line"}}{{else if eq . "pie"}}{{icon "chart-pie"}}{{else}}{{icon "table"}}{{end}}{{end}}
+
+{{/* a widget's chart: .Chart of a biPanel */}}
+{{define "bi-chart"}}{{$c := .Chart}}
+{{if $c.Err}}<p class="bi-err">{{icon "alert-triangle"}} {{$c.Err}}</p>
+{{else if $c.Empty}}<p class="bi-empty muted">{{t "bi.no_data"}}</p>
+{{else if eq $c.Kind "kpi"}}<div class="bi-kpi">{{range $i, $k := $c.KPI}}{{if eq $i 0}}<b>{{.Value}}</b><span>{{.Name}}</span>{{else}}<div class="bi-kpi2"><b>{{.Value}}</b> <span>{{.Name}}</span></div>{{end}}{{end}}</div>
+{{else if eq $c.Kind "table"}}<div class="bi-table"><table class="tlist">
+  <thead><tr>{{range $c.Cols}}<th{{if .Num}} class="num"{{end}}>{{.Name}}</th>{{end}}</tr></thead>
+  <tbody>{{range $c.Rows}}<tr>{{range .}}<td{{if .Num}} class="num"{{end}}>{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
+  {{with $c.Sum}}<tfoot><tr>{{range .}}<td{{if .Num}} class="num"{{end}}>{{.Text}}</td>{{end}}</tr></tfoot>{{end}}
+</table>{{if $c.Cut}}<p class="small muted">{{t "bi.cut"}}</p>{{end}}</div>
+{{else if eq $c.Kind "pie"}}<div class="bi-pie">
+  <svg viewBox="0 0 {{$c.W}} {{$c.H}}" role="img" aria-label="{{$c.Value}}">
+    {{range $c.Slices}}<path class="{{.Class}}" d="{{.Path}}"><title>{{.Name}}: {{.Value}} ({{.Pct}})</title></path>{{end}}
+    <text class="bi-pie-total" x="110" y="112" text-anchor="middle">{{$c.Total}}</text>
+    <text class="bi-pie-cap" x="110" y="132" text-anchor="middle">{{t "bi.total"}}</text>
+  </svg>
+  <ul class="bi-legend">{{range $c.Slices}}<li><i class="{{.Class}}"></i><span class="bi-legend-name" title="{{.Name}}">{{.Name}}</span> <b>{{.Value}}</b> <span class="muted">{{.Pct}}</span></li>{{end}}</ul>
+</div>
+{{else}}{{if gt (len $c.Series) 1}}<ul class="bi-legend row">{{range $c.Series}}<li><i class="{{.Class}}"></i>{{.Name}}</li>{{end}}</ul>{{end}}
+<svg class="bi-svg" viewBox="0 0 {{$c.W}} {{$c.H}}" role="img" aria-label="{{$c.Value}}">
+  {{range $c.YTicks}}<line class="bi-gl" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{.Y}}" y2="{{.Y}}"/><text class="bi-ylab" x="{{$c.LabX}}" y="{{.Y}}" dy="4" text-anchor="end">{{.Text}}</text>{{end}}
+  {{range $c.Series}}<g class="{{.Class}}">{{range .Bars}}<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"><title>{{.Tip}}</title></rect>{{end}}{{if .Points}}<polyline points="{{.Points}}"/>{{range .Dots}}<circle cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Tip}}</title></circle>{{end}}{{end}}</g>{{end}}
+  <line class="bi-axis" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{$c.Base}}" y2="{{$c.Base}}"/>
+  {{range $c.XTicks}}<text class="bi-xlab" x="{{.X}}" y="{{$c.LabY}}" text-anchor="middle">{{.Text}}</text>{{end}}
+</svg>{{end}}
+{{end}}
+{{/* bi-rights is the form of «Права доступа» of a dashboard or a group: .A — its action, .D — the page's data. */}}
+{{define "bi-rights"}}{{$d := .D}}
+<div class="card bi-settings" id="rights">
+  <h3>{{icon "shield-lock"}} {{t "bi.rights"}}</h3>
+  <form method="post" action="{{.A}}">
+    {{with $d.Rights}}{{range .}}<div class="row small kbright"><span style="flex:1">{{if eq .Kind "department"}}{{icon "hierarchy-2"}} {{.Whom}}{{else if eq .Kind "all"}}{{icon "users"}} {{t "bi.rights_all"}}{{else}}{{icon "user"}} {{.Whom}}{{end}}</span><span class="muted">{{t (print "bi.access_" .Access)}}</span>
+      <button class="ghost" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></div>{{end}}
+    {{else}}<p class="muted small">{{t "bi.rights_default"}}</p>{{end}}
+    <div class="row"><select name="whom" required><option value="">{{t "disk.share_whom"}}</option><option value="all">{{t "bi.rights_all"}}</option>
+      <optgroup label="{{t "disk.share_people"}}">{{range $d.Users}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+      {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+    <select name="access">{{range $d.Accesses}}<option value="{{.}}">{{t (print "bi.access_" .)}}</option>{{end}}</select>
+    <button>{{t "disk.share_give"}}</button></div>
+    <p class="muted small">{{t "bi.rights_hint"}}</p>
+    {{if $d.Rights}}<p><button class="ghost" name="clear" value="1" formnovalidate data-confirm="{{t "bi.rights_clear_confirm"}}">{{t "bi.rights_clear"}}</button></p>{{end}}
+  </form>
+</div>{{end}}
+
+{{/* the period of a dashboard and its widgets: on its page (.Edit — with their tools) or in a section (.In) */}}
+{{define "bi-board"}}{{$d := .}}{{$db := $d.D}}
+<form class="row filters bi-period" method="get" action="{{$d.Path}}" onchange="this.submit()">
+  {{if $d.Edit}}<input type="hidden" name="edit" value="1">{{end}}{{with $d.In}}<input type="hidden" name="d" value="{{$db.ID}}">{{end}}
+  {{icon "calendar-event"}}<select name="period" style="width:auto">{{range $d.Periods}}<option value="{{.}}" {{if eq . $d.Period}}selected{{end}}>{{t (print "bi.p." .)}}</option>{{end}}</select>
+  {{if eq $d.Period "range"}}<span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput $d.PFrom}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput $d.PTo}}"></span></span>
+  {{else if $d.From}}<span class="muted small">{{day (deref $d.From)}}{{with $d.Last}} – {{day (deref .)}}{{end}}</span>{{end}}
+  <noscript><button>{{t "bi.apply"}}</button></noscript>
+</form>
+{{if $d.Panels}}
+<div class="bi-grid{{if $d.Edit}} editing{{end}}" data-bi-grid="/bi/{{$db.ID}}/order">
+{{range $d.Panels}}<section class="card bi-w bi-w{{.W.Width}}" id="w-{{.W.ID}}" data-id="{{.W.ID}}"{{if $d.Edit}} draggable="true"{{end}}>
+  <header class="bi-wh"><h3 title="{{.Title}}">{{.Title}}</h3>
+  {{if $d.Edit}}{{$id := .W.ID}}<div class="bi-tools">
+    <a class="button ghost" href="/bi/{{$db.ID}}/widget?w={{$id}}" title="{{t "bi.edit_widget"}}">{{icon "edit"}}</a>
+    <form method="post" action="/bi/w/{{$id}}/width" onchange="this.submit()"><select name="width" title="{{t "bi.w.width"}}">{{$w := .W.Width}}{{range $d.Widths}}<option value="{{.}}" {{if eq . $w}}selected{{end}}>{{t (print "bi.width." .)}}</option>{{end}}</select></form>
+    <form method="post" action="/bi/w/{{$id}}/up"><button class="ghost" title="{{t "bi.earlier"}}">{{icon "arrow-up"}}</button></form>
+    <form method="post" action="/bi/w/{{$id}}/down"><button class="ghost" title="{{t "bi.later"}}">{{icon "arrow-down"}}</button></form>
+    <form method="post" action="/bi/w/{{$id}}/copy"><button class="ghost" title="{{t "bi.copy_widget"}}">{{icon "copy"}}</button></form>
+    <form method="post" action="/bi/w/{{$id}}/delete" onsubmit="return confirm(this.dataset.q)" data-q="{{t "bi.delete_widget_q"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+  </div>{{else}}{{if .W.NoPeriod}}<span class="pill" title="{{t "bi.w.no_period"}}">{{t "bi.p.all"}}</span>{{end}}
+    {{if not .Chart.Err}}<a class="button ghost bi-csv" href="/bi/w/{{.W.ID}}/csv{{$d.Keep}}" title="{{t "bi.csv"}}">{{icon "download"}}</a>{{end}}{{end}}</header>
+  {{template "bi-chart" .}}
+</section>{{end}}
+</div>
+{{else}}<div class="card bi-empty">{{icon "layout-dashboard"}}<p>{{t "bi.no_widgets"}}</p>
+  {{if $d.Can}}<div class="row">{{range $d.Kinds}}<a class="button ghost" href="/bi/{{$db.ID}}/widget?kind={{.}}">{{template "bi-kind-icon" .}} {{t (print "bi.kind." .)}}</a>{{end}}</div>{{end}}</div>{{end}}
+{{end}}

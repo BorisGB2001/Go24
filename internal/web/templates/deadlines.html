@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "title.deadlines"}}</h1><a href="/tasks/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<div class="sub">{{t "deadlines.subtitle"}}</div>
+<div class="tabs">
+  {{range $d.Roles}}<a href="/deadlines?role={{.}}" {{if eq . $d.Role}}class="on"{{end}}>{{t (print "role." .)}}</a>{{end}}
+</div>
+<div class="board deadlines" data-board="deadline" data-cols-board="deadlines" data-failed="{{t "board.move_failed"}}">
+  {{range $d.Columns}}
+  <div class="col dcol-{{.Period}}" data-stage="{{.Period}}">
+    <div class="colhead"><b>{{t (print "deadlines." .Period)}}</b> <span class="muted small colcount">{{len .Tasks}}</span></div>
+    {{range .Tasks}}{{$t := .}}
+    <div class="kcard" draggable="true" data-key="{{.Key}}">
+      <a href="/t/{{.Key}}" class="ttitle">{{.Title}}</a>
+      <div class="foot">
+        <span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span>
+        <span class="tkey">{{.Key}}</span><span style="flex:1"></span>
+        {{if eq .Priority 2}}<span class="prio">{{icon "flag"}}</span>{{end}}
+        <span class="dl{{if $t.Overdue}} over{{end}}">{{date .Deadline}}</span>
+      </div>
+    </div>
+    {{end}}
+    <div class="empty small" {{if .Tasks}}hidden{{end}}>{{t "plan.empty"}}</div>
+  </div>
+  {{end}}
+</div>
+<script src="{{asset "js/boards.js"}}"></script>
+{{end}}

@@ -1,0 +1,49 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "title.all_tasks"}}</h1>{{if .User.Admin}}<a class="button ghost" href="/tasks/roles">{{icon "shield-lock"}} {{t "taskroles.title"}}</a>{{end}}
+  {{if $d.CanExport}}<a class="button ghost" href="/tasks/export?{{$d.Query}}" title="{{t "tasks.export_hint"}}">{{icon "download"}} {{t "tasks.export"}}</a>{{end}}
+  {{if $d.CanImport}}<details class="tsettings"><summary class="button ghost">{{icon "cloud-upload"}} {{t "tasks.import"}}</summary>
+    <div class="pop"><form method="post" action="/tasks/import" enctype="multipart/form-data">
+      <p class="small muted">{{t "tasks.import_hint"}}</p>
+      <label>{{t "props.project"}}</label><select name="project"><option value="">{{t "tasks.import_project_column"}}</option>
+        {{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key $d.Project.Key}}selected{{end}}>{{.Key}} · {{.Name}}</option>{{end}}</select>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <p><button class="primary">{{t "tasks.import"}}</button></p></form></div></details>{{end}}
+  <a href="/tasks/new{{with $d.Project.Key}}?project={{.}}{{end}}" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<div class="sub">{{if .User.AdminActive}}{{t "tasks.subtitle_admin"}}{{else}}{{t "tasks.subtitle"}}{{end}}</div>
+<div class="tabs">
+  <a href="/tasks{{with $d.Project.Key}}?project={{.}}{{end}}" {{if not $d.ShowAll}}class="on"{{end}}>{{icon "list-check"}} {{t "tabs.open"}}</a>
+  <a href="/tasks?all=1{{with $d.Project.Key}}&project={{.}}{{end}}" {{if $d.ShowAll}}class="on"{{end}}>{{icon "history"}} {{t "tabs.all"}}</a>
+</div>
+{{$q := $d.Q}}
+<div class="presets row">
+  {{range $d.BuiltIn}}<a class="chip{{if eq $d.Query .Query}} on{{end}}" href="/tasks?{{.Query}}">{{t (print "preset." .Key)}}</a>{{end}}
+  {{range $d.Presets}}<span class="chip{{if eq $d.Query .Query}} on{{end}}"><a href="/tasks?{{.Query}}">{{.Name}}</a>
+    <form method="post" action="/tasks/presets/{{.ID}}/delete" data-confirm="{{t "preset.delete_confirm"}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{end}}
+</div>
+<details class="card tfilter"{{if $d.Filtered}} open{{end}}><summary>{{icon "adjustments"}} {{t "filter.title"}}{{if $d.Filtered}} · <a href="/tasks">{{t "filter.reset"}}</a>{{end}}</summary>
+  <form method="get" action="/tasks">
+    <div class="grid">
+      <div><label>{{t "filter.search"}}</label><input type="search" name="q" value="{{$q.Get "q"}}"></div>
+      <div><label>{{t "props.project"}}</label><select name="project"><option value="">{{t "tasks.all_projects"}}</option>
+        {{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key $d.Project.Key}}selected{{end}}>{{.Key}} · {{.Name}}</option>{{end}}</select></div>
+      {{range $f := list "responsible" "creator" "member"}}<div><label>{{t (print "filter." $f)}}</label>{{template "upick" (upick $f ($q.Get $f) $d.Users "+me" (t "filter.me"))}}</div>{{end}}
+      <div><label>{{t "props.deadline_full"}}</label><select name="period"><option value=""></option>
+        {{range $d.Periods}}<option value="{{.}}" {{if eq ($q.Get "period") .}}selected{{end}}>{{t (print "deadlines." .)}}</option>{{end}}</select></div>
+      <div><label>{{t "props.tags"}}</label><input type="text" name="tag" value="{{$q.Get "tag"}}"></div>
+    </div>
+    <label>{{t "props.status"}}</label>
+    <div class="row">{{range $d.Statuses}}<label class="check"><input type="checkbox" name="status" value="{{.}}" {{if has (index $q "status") (print .)}}checked{{end}}> {{t (print "status." .)}}</label>{{end}}
+      <label class="check"><input type="checkbox" name="prio" value="high" {{if eq ($q.Get "prio") "high"}}checked{{end}}> {{t "filter.important"}}</label>
+      <label class="check"><input type="checkbox" name="all" value="1" {{if $d.ShowAll}}checked{{end}}> {{t "filter.with_completed"}}</label></div>
+    <p class="row"><button class="primary">{{icon "adjustments"}} {{t "filter.apply"}}</button></p>
+  </form>
+  {{if $d.Filtered}}<form method="post" action="/tasks/presets" class="row">
+    <input type="hidden" name="query" value="{{$d.Query}}">
+    <input type="text" name="name" maxlength="60" required placeholder="{{t "preset.name"}}" style="flex:1">
+    <button>{{icon "check"}} {{t "preset.save"}}</button></form>{{end}}
+</details>
+<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+{{if $d.Tasks}}{{template "bulkbar" $d.Bulk}}{{end}}
+{{if ge (len $d.Tasks) $d.Limit}}<p class="small muted">{{t "tasks.limit" $d.Limit}}</p>{{end}}
+{{end}}

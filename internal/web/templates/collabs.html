@@ -1,0 +1,40 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "collab.title"}}</h1>{{if $d.CanCreate}}<a href="#new" class="button create">{{icon "plus"}} {{t "collab.create"}}</a>{{end}}</div>
+<div class="sub">{{t "collab.subtitle"}}</div>
+<div class="tabs">
+  <a href="/collabs"{{if not $d.Archived}} class="on"{{end}}>{{icon "users-group"}} {{t "collab.active"}}</a>
+  <a href="/collabs?archived=1"{{if $d.Archived}} class="on"{{end}}>{{icon "history"}} {{t "collab.archive"}}</a>
+</div>
+<form class="row filters" method="get" action="/collabs">
+  {{if $d.Archived}}<input type="hidden" name="archived" value="1">{{end}}
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "collab.search"}}" aria-label="{{t "collab.search"}}" style="max-width:20em">
+  <button>{{icon "search"}} {{t "common.find"}}</button>
+</form>
+{{if $d.List}}<div class="collabs">
+  {{range $d.List}}<div class="card collab">
+    <a href="/p/{{.Key}}" class="row ttitle">{{photo .Name .PhotoURL true}} <b>{{.Name}}</b></a>
+    {{with .Description}}<p class="small muted">{{.}}</p>{{end}}
+    <div class="small muted">{{t (print "collab.role." .MyRole)}} · {{t "collab.members_n" .Members}}{{if .Guests}} · <span class="pill guest">{{t "collab.guests_n" .Guests}}</span>{{end}} · {{t "project.open_tasks" .OpenTasks}}</div>
+    <div class="row collab-links">
+      {{with index $d.Rooms .ID}}<a href="/im?room={{.}}">{{icon "message-circle"}} {{t "collab.chat"}} <span class="cnt green" data-room-unread="{{.}}" title="{{t "im.unread"}}" hidden></span></a>{{end}}
+      <a href="/p/{{.Key}}">{{icon "list-check"}} {{t "collab.tasks"}}</a>
+      {{if .Overdue}}<a href="/my?view=overdue&amp;project={{.Key}}" class="cnt red" title="{{t "counter.overdue"}}">{{.Overdue}}</a>{{end}}
+      {{if .Comments}}<a href="/my?view=comments&amp;project={{.Key}}" class="cnt green" title="{{t "counter.comments"}}">{{.Comments}}</a>{{end}}
+      <a href="/disk/p/{{.Key}}">{{icon "folder"}} {{t "collab.drive"}}</a>
+      <a href="/calendar?project={{.Key}}">{{icon "calendar-event"}} {{t "collab.calendar"}}</a>
+    </div>
+  </div>{{end}}
+</div>
+{{else}}<div class="card"><div class="empty">{{if $d.Q}}{{t "collab.search_empty"}}{{else if $d.Archived}}{{t "collab.archive_empty"}}{{else}}{{t "collab.empty"}}{{end}}</div></div>{{end}}
+{{if $d.CanCreate}}<div class="card" id="new">
+  <h2>{{icon "users-group"}} {{t "collab.new"}}</h2>
+  <form method="post" action="/collabs" enctype="multipart/form-data">
+    <label>{{t "form.name"}}</label><input type="text" name="name" maxlength="200" required>
+    <label>{{t "form.description"}}</label><textarea name="description" rows="3"></textarea>
+    <label>{{t "project.photo"}} <input type="file" name="photo" accept="image/*"></label>
+    <label>{{t "collab.members"}}</label>{{template "upick" (upick "members" "" nil "multi" "noself")}}
+    <p class="small muted">{{t "collab.guests_hint"}}</p>
+    <p><button class="primary">{{icon "plus"}} {{t "collab.create"}}</button></p>
+  </form>
+</div>{{end}}
+{{end}}

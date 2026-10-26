@@ -1,0 +1,33 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/booking">{{t "booking.title"}}</a> {{icon "chevron-right"}}</div>
+<div class="pagehead"><h1>{{t "booking.links"}}</h1><span style="flex:1"></span>
+  {{if $d.Admin}}<a href="/booking/links?edit=new" class="button create">{{icon "plus"}} {{t "booking.add_link"}}</a>{{end}}</div>
+{{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+<p class="muted">{{t "booking.links_hint"}}</p>
+{{with $d.Edit}}{{$e := .}}
+<div class="card" style="max-width:720px">
+  <h2>{{if .ID}}{{.Name}}{{else}}{{t "booking.add_link"}}{{end}}</h2>
+  <form method="post" action="/booking/links{{with .ID}}/{{.}}{{end}}">
+    <label>{{t "form.name"}}</label><input type="text" name="name" value="{{.Name}}" maxlength="200" required placeholder="{{t "booking.link_name_ph"}}">
+    <label>{{t "booking.link_text"}}</label><textarea name="description" rows="3" maxlength="2000">{{.Description}}</textarea>
+    <label>{{t "booking.link_resources"}}</label>
+    <div class="bk-checks">{{range $d.Resources}}<label class="check"><input type="checkbox" name="resources" value="{{.ID}}" {{if has $e.Resources .ID}}checked{{end}}> {{.Name}}</label>{{else}}<span class="muted">{{t "booking.no_resources"}}</span>{{end}}</div>
+    <p class="small muted">{{t "booking.link_resources_hint"}}</p>
+    <div class="row"><label>{{t "booking.days_ahead"}}<input type="number" name="days_ahead" value="{{.DaysAhead}}" min="1" max="365" style="width:7em"></label>
+      <label>{{t "booking.responsible"}}<select name="responsible"><option value="">{{t "booking.responsible_auto"}}</option>{{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $e.ResponsibleID}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select></label></div>
+    <label class="check"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}> {{t "booking.link_active"}}</label>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/booking/links">{{t "common.cancel"}}</a></p>
+  </form>
+  {{if .ID}}<form method="post" action="/booking/links/{{.ID}}/delete" data-confirm="{{t "booking.delete_link_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+</div>
+{{end}}
+<div class="card flush">
+  <table class="list"><thead><tr><th>{{t "form.name"}}</th><th>{{t "booking.link_address"}}</th><th>{{t "booking.link_resources"}}</th><th>{{t "booking.responsible"}}</th><th>{{t "booking.link_bookings"}}</th></tr></thead><tbody>
+  {{range $d.Links}}{{$u := print $d.Base "/bk/" .Token}}<tr{{if not .Active}} class="muted"{{end}}><td>{{if $d.Admin}}<a href="/booking/links?edit={{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}{{if not .Active}} <span class="small">· {{t "booking.link_off"}}</span>{{end}}</td>
+    <td><div class="row bk-url"><input type="text" readonly value="{{$u}}" onclick="this.select()"><button type="button" class="ghost small" data-copy="{{$u}}" title="{{t "booking.copy_link"}}">{{icon "copy"}}</button><a class="button ghost small" href="/bk/{{.Token}}" target="_blank" rel="noopener" title="{{t "booking.link_open"}}">{{icon "external-link"}}</a></div></td>
+    <td>{{range $i, $id := .Resources}}{{if $i}}, {{end}}{{index $d.Names $id}}{{else}}{{t "booking.all_resources"}}{{end}}</td>
+    <td>{{or .Responsible (t "booking.responsible_auto")}}</td><td>{{.Bookings}}</td></tr>
+  {{else}}<tr><td colspan="5" class="muted">{{t "booking.no_links"}}</td></tr>{{end}}
+  </tbody></table>
+</div>
+{{end}}

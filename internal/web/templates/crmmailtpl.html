@@ -1,0 +1,30 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/crm/deals">{{t "crm.title"}}</a></div>
+<div class="pagehead"><h1>{{t "crm.mailtpl.title"}}</h1><a class="button create" href="/crm/mail-templates?edit=new">{{icon "plus"}} {{t "crm.mailtpl.new"}}</a></div>
+<div class="sub">{{t "crm.mailtpl.subtitle"}}</div>
+<div class="card flush">{{if $d.Templates}}<table class="tlist">
+  <thead><tr><th>{{t "form.name"}}</th><th>{{t "docs.for"}}</th><th>{{t "crm.mailtpl.access"}}</th><th>{{t "crm.mailtpl.author"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Templates}}<tr><td><b>{{.Name}}</b><div class="small muted">{{.Subject}}</div></td><td>{{t (print "crm." .Entity)}}</td>
+    <td>{{if .Shared}}{{t "crm.mailtpl.shared"}}{{else}}{{t "crm.mailtpl.private"}}{{end}}</td><td class="small">{{.AuthorName}}</td>
+    <td>{{if or (eq .CreatedBy $d.Me) $d.Admin}}<div class="row"><a class="button ghost small" href="/crm/mail-templates?edit={{.ID}}">{{icon "edit"}}</a>
+      <form method="post" action="/crm/mail-templates/{{.ID}}/delete" data-confirm="{{t "crm.mailtpl.delete_confirm" .Name}}"><button class="ghost small">{{icon "trash"}}</button></form></div>{{end}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{t "crm.mailtpl.none"}}</div>{{end}}</div>
+{{with $d.Edit}}<div class="card" style="max-width:820px" id="edit">
+  <h2>{{if .ID}}{{icon "edit"}} {{.Name}}{{else}}{{icon "plus"}} {{t "crm.mailtpl.new"}}{{end}}</h2>
+  <form method="post" action="/crm/mail-templates/{{if .ID}}{{.ID}}{{else}}new{{end}}" data-snippet-editor>
+    <div class="grid">
+      <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" value="{{.Name}}" placeholder="{{t "crm.mailtpl.name_hint"}}"></div>
+      <div><label>{{t "docs.for"}}</label><select name="entity">{{$e := .Entity}}{{range $d.Entities}}<option value="{{.}}" {{if eq . $e}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}</select></div>
+    </div>
+    <label><input type="checkbox" name="shared" value="1" {{if .Shared}}checked{{end}}> {{t "crm.mailtpl.shared_hint"}}</label>
+    <label>{{t "crm.mailsend.subject"}}</label><input type="text" name="subject" maxlength="1000" value="{{.Subject}}">
+    <label>{{t "crm.mailsend.text"}}</label>{{template "crmeditor" .Body}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/crm/mail-templates">{{t "common.cancel"}}</a></p>
+  </form>
+  <h3>{{t "docs.fields"}}</h3>
+  {{range $e := $d.Entities}}<p class="small"><b>{{t (print "crm." $e)}}:</b> {{range index $d.Fields $e}}<code>{{"{"}}{{.}}{{"}"}}</code> {{end}}</p>{{end}}
+  <p class="small muted">{{t "docs.fields_custom"}}</p>
+</div>{{end}}
+<script src="{{asset "js/compose.js"}}"></script>
+{{end}}

@@ -1,0 +1,158 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.P}}
+<div class="crumbs">{{if $d.Guest}}<a href="/collabs">{{t "collab.title"}}</a>{{else}}<a href="/company">{{t "nav.employees"}}</a>{{end}} {{icon "chevron-right"}} {{$p.FullName}}</div>
+<div class="profile" data-blocks>
+<div>
+  <div class="card phead">
+    <div class="pphoto">{{photo $p.Name $p.PhotoURL true}}
+      {{if $d.CanEdit}}<form method="post" action="/u/{{$p.ID}}/photo" enctype="multipart/form-data" class="photoform">
+        <label class="link" title="{{t "profile.photo_hint"}}">{{icon "cloud-upload"}} {{t "profile.photo_upload"}}
+          <input type="file" name="photo" accept="image/jpeg,image/png,image/webp,image/gif" hidden data-autosubmit></label></form>
+      {{if $p.PhotoKey}}<form method="post" action="/u/{{$p.ID}}/photo"><input type="hidden" name="op" value="delete"><button class="link muted small">{{t "profile.photo_remove"}}</button></form>{{end}}{{end}}
+    </div>
+    <div style="flex:1">
+      <h1>{{$p.FullName}}{{if $p.Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}</h1>
+      <div class="muted">{{with $p.Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</div>
+      {{if not $p.Active}}<span class="pill st-deferred">{{t "profile.dismissed"}}</span>{{end}}
+    </div>
+    {{if $d.CanEdit}}<button type="button" class="link" data-show="pedit">{{icon "edit"}} {{t "task.change"}}</button>{{end}}
+  </div>
+  <div class="tabs">
+    <a href="/u/{{$p.ID}}" {{if not $d.Tab}}class="on"{{end}}>{{icon "user"}} {{t "profile.tab.general"}}</a>
+    <a href="/u/{{$p.ID}}?tab=tasks" {{if eq $d.Tab "tasks"}}class="on"{{end}}>{{icon "list-check"}} {{t "profile.tasks"}} <span class="cnt">{{len $d.Tasks}}</span></a>
+    {{if not $d.Guest}}<a href="/u/{{$p.ID}}?tab=thanks" {{if eq $d.Tab "thanks"}}class="on"{{end}}>{{icon "star"}} {{t "gratitude.received"}} <span class="cnt">{{len $d.Thanks}}</span></a>{{end}}
+    {{if and (not $d.Guest) (not $p.Guest) $p.Active}}<a href="/calendar?user={{$p.ID}}">{{icon "calendar-event"}} {{t "calendar.title"}}</a>{{end}}
+    {{if $d.Me}}<a href="/settings/notifications#channels">{{icon "bell"}} {{t "notifyout.my"}}</a>{{end}}
+  </div>
+
+  {{if $d.CanEdit}}
+  <div class="card" id="pedit" hidden>
+    <h2>{{icon "edit"}} {{t "profile.edit"}}</h2>
+    <form method="post" action="/u/{{$p.ID}}" data-ajax data-failed="{{t "common.save_failed"}}">
+      <div class="form-error" data-error hidden></div>
+      <div class="grid">
+        <div><label>{{t "profile.last_name"}}</label><input type="text" name="last_name" value="{{$p.EditLast}}"></div>
+        <div><label>{{t "profile.first_name"}} <span class="req">*</span></label><input type="text" name="first_name" value="{{$p.EditFirst}}" required></div>
+        <div><label>{{t "profile.second_name"}}</label><input type="text" name="second_name" value="{{$p.SecondName}}"></div>
+        <div><label>{{t "profile.position"}}</label><input type="text" name="position" value="{{$p.Position}}"></div>
+        <div><label>{{t "profile.work_phone"}}</label><input type="tel" name="work_phone" value="{{$p.WorkPhone}}" inputmode="tel" pattern="\+?[0-9][0-9 ()\-.]{3,24}[0-9]" title="{{t "err.phone_hint"}}" placeholder="+7 (900) 000-00-00"></div>
+        <div><label>{{t "profile.mobile_phone"}}</label><input type="tel" name="mobile_phone" value="{{$p.MobilePhone}}" inputmode="tel" pattern="\+?[0-9][0-9 ()\-.]{3,24}[0-9]" title="{{t "err.phone_hint"}}" placeholder="+7 (900) 000-00-00"></div>
+        <div><label>{{t "profile.inner_phone"}}</label><input type="text" name="inner_phone" value="{{$p.InnerPhone}}" inputmode="numeric" pattern="[0-9]{1,8}" maxlength="8" title="{{if $d.NumberLocked}}{{t "tel.number_admin"}}{{else}}{{t "err.inner_phone"}}{{end}}"{{if $d.NumberLocked}} readonly{{end}}></div>
+        <div><label>{{t "profile.birthday"}}</label><input type="date" name="birthday" value="{{dinput $p.Birthday}}">
+          <label class="check small"><input type="checkbox" name="birthday_year" value="1" {{if $p.BirthdayYear}}checked{{end}}> {{t "profile.birthday_year"}}</label></div>
+        <div><label>{{t "profile.gender"}}</label><select name="gender"><option value="">—</option>
+          <option value="M" {{if eq $p.Gender "M"}}selected{{end}}>{{t "profile.gender.M"}}</option><option value="F" {{if eq $p.Gender "F"}}selected{{end}}>{{t "profile.gender.F"}}</option></select></div>
+        <div><label>{{t "profile.city"}}</label><input type="text" name="city" value="{{$p.City}}"></div>
+        <div><label>Telegram</label><input type="text" name="telegram" value="{{$p.Telegram}}" placeholder="@username" pattern="@?[A-Za-z][A-Za-z0-9_]{4,31}" title="{{t "err.telegram"}}"></div>
+        <div><label>WhatsApp</label><input type="tel" name="whatsapp" value="{{$p.WhatsApp}}" inputmode="tel" pattern="\+?[0-9][0-9 ()\-.]{3,24}[0-9]" placeholder="+7 900 000-00-00" title="{{t "err.phone_hint"}}"></div>
+        <div><label>{{t "profile.website"}}</label><input type="text" name="website" value="{{$p.Website}}" placeholder="https://"></div>
+        <div><label>{{t "profile.employment_date"}}</label><input type="date" name="employment_date" value="{{dinput $p.Employment}}"></div>
+      </div>
+      <label>{{t "profile.about"}}</label><textarea name="about" rows="3">{{$p.About}}</textarea>
+      <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-hide="pedit">{{t "common.cancel"}}</button></p>
+    </form>
+  </div>
+  {{end}}
+
+  {{if not $d.Tab}}<div class="card">
+    <h2>{{icon "user"}} {{t "profile.contacts"}}</h2>
+    <div class="props">
+      <span class="k">{{t "company.col.email"}}</span><span>{{with $p.Email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<span class="muted">—</span>{{end}}</span>
+      <span class="k">{{t "profile.work_phone"}}</span><span>{{with $p.WorkPhone}}<a href="tel:{{.}}">{{.}}</a>{{else}}<span class="muted">—</span>{{end}}</span>
+      <span class="k">{{t "profile.mobile_phone"}}</span><span>{{with $p.MobilePhone}}<a href="tel:{{.}}">{{.}}</a>{{else}}<span class="muted">—</span>{{end}}</span>
+      <span class="k">{{t "profile.inner_phone"}}</span><span>{{with $p.InnerPhone}}<a href="tel:{{.}}">{{.}}</a>{{if and $.Phone (ne $p.ID $.User.UserID)}} <a href="tel:{{.}}" class="button small" title="{{t "phone.call"}}">{{icon "phone"}} {{t "phone.call"}}</a>{{end}}{{else}}<span class="muted">—</span>{{end}}</span>
+      {{if $p.Birthday}}<span class="k">{{t "profile.birthday"}}</span><span>{{bday (deref $p.Birthday) $p.BirthdayYear}}</span>{{end}}
+      {{with $p.Gender}}<span class="k">{{t "profile.gender"}}</span><span>{{t (print "profile.gender." .)}}</span>{{end}}
+      {{with $p.City}}<span class="k">{{t "profile.city"}}</span><span>{{.}}</span>{{end}}
+      {{if $p.Employment}}<span class="k">{{t "profile.employment_date"}}</span><span>{{day (deref $p.Employment)}}</span>{{end}}
+      {{template "pcontacts" (dict "P" $p "Matrix" $d.MatrixID "Element" $d.ElementURL)}}
+      <span class="k">{{t "profile.last_login"}}</span><span>{{datetime $p.LastLogin}}</span>
+    </div>
+    {{with $p.About}}<p style="margin-bottom:0">{{nl2br .}}</p>{{end}}
+  </div>
+
+  {{with $d.Fields}}<div class="card" id="pfields">
+    <h2>{{icon "adjustments"}} {{t "profile.fields"}}</h2>
+    <div class="props">{{range .}}<span class="k">{{.Name}}</span>
+      <span>{{if not .Value}}<span class="muted">—</span>{{else if eq .Kind "bool"}}{{t "bool.true"}}{{else if eq .Kind "url"}}<a href="{{.Value}}" target="_blank" rel="noopener">{{.Value}}</a>{{else}}{{.Text (t "format.date")}}{{end}}</span>{{end}}</div>
+    {{if $d.CanEdit}}<details><summary>{{icon "edit"}} {{t "fields.edit"}}</summary>
+      <form method="post" action="/u/{{$p.ID}}/fields">{{range .}}
+        {{if eq .Kind "bool"}}<label class="check"><input type="checkbox" name="f_{{.ID}}" value="1"{{if .Value}} checked{{end}}> {{.Name}}</label>
+        {{else}}<label>{{.Name}}</label>
+        {{if eq .Kind "list"}}{{$v := .Value}}<select name="f_{{.ID}}"><option value=""></option>{{range .Options}}<option{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}</select>
+        {{else if eq .Kind "date"}}<input type="date" name="f_{{.ID}}" value="{{.Value}}">
+        {{else if eq .Kind "url"}}<input type="url" name="f_{{.ID}}" value="{{.Value}}">
+        {{else}}<input type="text" name="f_{{.ID}}" value="{{.Value}}" maxlength="2000">{{end}}{{end}}{{end}}
+        <p><button class="primary">{{t "common.save"}}</button></p></form></details>{{end}}
+  </div>{{end}}{{end}}
+
+  {{if eq $d.Tab "thanks"}}<div class="card" id="thanks">
+    <h2 class="row">{{icon "star"}} {{t "gratitude.received"}} <span class="muted small">{{len $d.Thanks}}</span><span style="flex:1"></span>
+      <a class="small" href="/company/thanks?user={{$p.ID}}">{{t "gratitude.page"}}</a>
+      {{if and (not $d.Me) $p.Active (not $p.Guest)}}<a class="button" href="/feed?thank={{$p.ID}}">🏆 {{t "gratitude.give"}}</a>{{end}}</h2>
+    <div class="pthanks">{{range $d.Thanks}}<a href="/feed?post={{.PostID}}" class="pthank" title="{{.Text}}"><span class="gbadge">{{.Emoji}}</span>
+      <span>{{.Text}}<span class="muted small"> · {{.From}} · {{day .At}}</span></span></a>{{else}}<p class="muted">{{t "gratitude.none"}}</p>{{end}}</div>
+  </div>{{end}}
+
+  {{if eq $d.Tab "tasks"}}<div class="card">
+    <h2>{{icon "list-check"}} {{t "profile.tasks"}} <span class="muted small">{{len $d.Tasks}}</span></h2>
+    {{template "tasklist" (tl $d.Tasks $.Cols false)}}
+  </div>{{end}}
+</div>
+
+<div>
+  {{if $p.Guest}}<div class="card"><h2>{{icon "users-group"}} {{t "collab.guest_card"}}</h2><p class="muted small">{{t "collab.guest_card_hint"}}</p></div>
+  {{else if not $d.Guest}}
+  <div class="card">
+    <h2>{{icon "hierarchy-2"}} {{t "profile.department"}}</h2>
+    {{range $p.Departments}}<div><a href="/company?dept={{.ID}}">{{icon "folders"}} {{.Name}}</a></div>{{else}}<p class="muted small">{{t "profile.no_department"}}</p>{{end}}
+    {{if $d.Admin}}
+    <details style="margin-top:10px"><summary>{{icon "edit"}} {{t "profile.change_departments"}}</summary>
+      <form method="post" action="/u/{{$p.ID}}/departments">
+        <select name="dept" multiple size="8">{{range $d.Departments}}<option value="{{.ID}}" {{if index $d.InDept .ID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+        <p><button>{{t "common.save"}}</button></p></form>
+    </details>
+    {{end}}
+    <label>{{t "profile.managers"}}</label>
+    {{range $d.Managers}}<a href="/u/{{.ID}}" class="person">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{else}}<p class="muted small">{{t "common.none"}}</p>{{end}}
+    {{if $d.Subordinates}}<label>{{t "profile.subordinates"}}</label>
+    {{range $d.Subordinates}}<a href="/u/{{.ID}}" class="person">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{end}}{{end}}
+  </div>
+  {{end}}
+  {{with $d.Phone}}{{$l := .Line}}<div class="card" id="ptel">
+    <h2>{{icon "phone"}} {{t "tel.title"}}</h2>
+    <div class="props">
+      <span class="k">{{t "profile.inner_phone"}}</span><span><b>{{$l.Number}}</b></span>
+      {{with .SIPHost}}<span class="k">{{t "tel.sip_server"}}</span><span><code>{{.}}</code></span>{{end}}
+      <span class="k">{{t "tel.login"}}</span><span><code>{{$l.Login}}</code></span>
+      <span class="k">{{t "tel.password"}}</span><span><details><summary class="link">{{t "tel.show_password"}}</summary><code>{{$l.Password}}</code></details></span>
+    </div>
+    <p class="muted small">{{t "tel.phone_hint"}}</p>
+    <p><a href="/telephony/calls{{if ne $l.UserID $.User.UserID}}?user={{$l.UserID}}{{end}}">{{icon "list"}} {{t "tel.calls"}}</a></p>
+    <form method="post" action="/u/{{$l.UserID}}/telephony/password" data-confirm="{{t "tel.password_confirm" $l.Name}}">
+      <button class="ghost">{{icon "key"}} {{t "tel.new_password"}}</button></form>
+  </div>{{end}}
+  {{if and $d.Admin (not $d.Me)}}
+  <div class="card">
+    {{if $p.Guest}}<form method="post" action="/u/{{$p.ID}}/employee" data-confirm="{{t "profile.make_employee_confirm" $p.Name}}">
+      <button>{{icon "user"}} {{t "profile.make_employee"}}</button>
+      <p class="muted small">{{t "profile.make_employee_hint"}}</p>
+    </form>{{end}}
+    {{if not $p.Guest}}<form method="post" action="/u/{{$p.ID}}/hr" class="hrform">
+      <label class="check"><input type="checkbox" name="hr" value="1" {{if $d.HR.On}}checked{{end}}> <b>{{t "hr.role"}}</b></label>
+      {{range $d.HRRights}}<label class="check small" style="margin-left:22px"><input type="checkbox" name="rights" value="{{.}}" {{if has $d.HR.Rights .}}checked{{end}}> {{t (print "hr.right." .)}}</label>{{end}}
+      <p class="muted small">{{t "hr.hint"}}</p>
+      <p><button>{{t "common.save"}}</button></p>
+    </form>{{end}}
+    <p><a class="button ghost" href="/disk/u/{{$p.ID}}" data-employee-disk>{{icon "folder"}} {{t "disk.employee_open"}}</a></p>
+    <form method="post" action="/u/{{$p.ID}}/active">
+      {{if $p.Active}}<input type="hidden" name="active" value="0"><button class="ghost danger">{{icon "lock"}} {{t "profile.dismiss"}}</button>
+      <p class="muted small">{{t "profile.dismiss_hint"}}</p>
+      {{else}}<input type="hidden" name="active" value="1"><button>{{icon "user"}} {{t "profile.restore"}}</button>{{end}}
+    </form>
+  </div>
+  {{end}}
+</div>
+</div>
+<script src="{{asset "js/task.js"}}"></script>
+{{end}}

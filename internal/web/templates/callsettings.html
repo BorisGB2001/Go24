@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "phone"}} {{t "call.settings"}}</h1>
+{{if $d.Recording}}<form method="post" action="/settings/calls" class="card stack">
+  <h2>{{t "call.record_title"}}</h2>
+  <label><input type="checkbox" name="record" value="1" {{if $d.Record}}checked{{end}}> {{t "call.record_allow"}}</label>
+  <p class="muted small">{{t "call.record_allow_hint"}}</p>
+  {{if not $d.Ready}}<p class="flash">{{t "call.record_not_ready"}}</p>{{end}}
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
+{{if $d.Services}}<h2>{{t "call.ext_title"}}</h2>
+<p class="muted small">{{t "call.ext_hint"}}</p>
+<div class="settings-grid">
+{{range $d.Services}}<form method="post" action="/settings/call-services/{{.Service}}" class="card stack" id="svc-{{.Service}}">
+  <h3>{{t (printf "call.svc.%s" .Service)}}</h3>
+  <label><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> {{t "call.ext_enable"}}</label>
+  {{if eq .Service "zoom"}}
+  <label class="small">Account ID <input type="text" name="account_id" value="{{.AccountID}}" autocomplete="off"></label>
+  <label class="small">Client ID <input type="text" name="client_id" value="{{.ClientID}}" autocomplete="off"></label>
+  <label class="small">Client Secret <input type="password" name="secret" autocomplete="new-password" placeholder="{{if .HasSecret}}{{t "call.ext_secret_set"}}{{end}}"></label>
+  <p class="muted small">{{t "call.ext_zoom_hint"}}</p>
+  {{else if eq .Service "telemost"}}
+  <label class="small">{{t "call.ext_token"}} <input type="password" name="secret" autocomplete="new-password" placeholder="{{if .HasSecret}}{{t "call.ext_secret_set"}}{{end}}"></label>
+  <p class="muted small">{{t "call.ext_telemost_hint"}}</p>
+  {{else if eq .Service "vk"}}
+  <label class="small">{{t "call.ext_token"}} <input type="password" name="secret" autocomplete="new-password" placeholder="{{if .HasSecret}}{{t "call.ext_secret_set"}}{{end}}"></label>
+  <label class="small">{{t "call.ext_vk_group"}} <input type="text" inputmode="numeric" name="group_id" value="{{.GroupID}}" autocomplete="off"></label>
+  <p class="muted small">{{t "call.ext_vk_hint"}}</p>
+  {{else}}<p class="muted small">{{t "call.ext_link_only"}}</p>{{end}}
+  {{if .HasSecret}}<label class="small"><input type="checkbox" name="clear" value="1"> {{t "call.ext_clear"}}</label>{{end}}
+  <p class="small">{{if .Ready}}✓ {{t "call.ext_api_ready"}}{{else if .Enabled}}{{t "call.ext_by_links"}}{{end}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
+</div>{{end}}
+{{end}}

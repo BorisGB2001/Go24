@@ -1,0 +1,31 @@
+{{define "roleform"}}{{$d := .D}}{{$r := .R}}
+<table class="tlist roletable"><thead><tr><th></th>{{range $d.Actions}}<th>{{t (print "crmroles.action." .)}}</th>{{end}}</tr></thead>
+  <tbody>{{range $e := $d.Entities}}<tr><td>{{t (print "crm." (index (dict "deal" "deals" "lead" "leads" "contact" "contacts" "company" "companies") $e))}}</td>
+    {{range $a := $d.Actions}}<td><select name="{{$e}}.{{$a}}">{{range $d.Levels}}<option value="{{.}}" {{if $r}}{{if eq (index (index $r.Perms $e) $a) .}}selected{{end}}{{end}}>{{t (print "crmroles.level." .)}}</option>{{end}}</select></td>{{end}}</tr>{{end}}</tbody></table>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/crm/deals">{{t "crm.title"}}</a></div>
+<h1>{{t "crmroles.title"}}</h1>
+<div class="sub">{{t "crmroles.subtitle"}}</div>
+{{range $r := $d.Roles}}<div class="card">
+  <form method="post" action="/crm/roles/{{$r.ID}}">
+    <div class="row"><h2 style="flex:1">{{if $r.Code}}{{t (print "crm.role." $r.Code)}}{{else}}{{$r.Name}}{{end}}{{if $r.Default}} <span class="pill st-in_progress">{{t "crmroles.default"}}</span>{{end}}</h2>
+      {{if not $r.Code}}<input type="text" name="name" value="{{$r.Name}}" maxlength="100" style="width:220px">{{end}}</div>
+    {{template "roleform" (dict "D" $d "R" $r)}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+  {{if $r.Default}}<p class="small muted">{{t "crmroles.default_hint"}}</p>{{else}}
+  <div class="row" style="flex-wrap:wrap;gap:6px"><b>{{t "crmroles.members"}}:</b>
+    {{range $r.Members}}<span class="tag">{{.Name}}<form method="post" action="/crm/roles/{{$r.ID}}/members"><input type="hidden" name="op" value="remove"><input type="hidden" name="user_id" value="{{.ID}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
+    <form method="post" action="/crm/roles/{{$r.ID}}/members" class="row">{{template "upick" (upick "user_id" "" $d.Users "required")}}<button>{{icon "plus"}}</button></form></div>
+  <form method="post" action="/crm/roles/{{$r.ID}}/delete" data-confirm="{{t "crmroles.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "crmroles.delete"}}</button></form>{{end}}
+</div>{{end}}
+<details class="card"><summary><b>{{icon "plus"}} {{t "crmroles.new"}}</b></summary>
+  <form method="post" action="/crm/roles/new">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "crmroles.name_hint"}}">
+    {{template "roleform" (dict "D" $d "R" nil)}}
+    <p><button class="primary">{{t "common.create"}}</button></p>
+  </form></details>
+{{end}}

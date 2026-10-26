@@ -1,0 +1,29 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "hooks.title"}}</h1>
+<div class="sub">{{t "hooks.subtitle"}}</div>
+{{range $h := $d.Hooks}}<div class="card">
+  <div class="row"><h2 style="flex:1">🔗 {{$h.Name}}{{if not $h.Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</h2>
+    <form method="post" action="/settings/webhooks/{{$h.ID}}"><input type="hidden" name="op" value="ping"><button class="ghost">{{icon "send"}} {{t "hooks.ping"}}</button></form>
+    <form method="post" action="/settings/webhooks/{{$h.ID}}" data-confirm="{{t "hooks.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}}</button></form></div>
+  <div class="small"><code>{{$h.URL}}</code></div>
+  <div class="small muted">{{range $h.Events}}{{.}} {{end}}</div>
+  <div class="small">{{t "hooks.secret"}}: <code class="olcode">{{$h.Secret}}</code></div>
+  <div class="small muted">{{with $h.LastAt}}{{t "hooks.last" (datetime (deref .))}}{{end}}{{with $h.LastStatus}} · HTTP {{.}}{{end}}{{with $h.LastError}} · <span class="dl over">{{.}}</span>{{end}}{{if $h.Pending}} · {{t "hooks.pending" $h.Pending}}{{end}}</div>
+  <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
+    <form method="post" action="/settings/webhooks/{{$h.ID}}"><input type="hidden" name="op" value="save">
+      <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$h.Name}}" required maxlength="100">
+      <label>URL</label><input type="url" name="url" value="{{$h.URL}}" required>
+      <label>{{t "hooks.events"}}</label><div class="row" style="flex-wrap:wrap">{{range $e := $d.Events}}<label class="check"><input type="checkbox" name="events" value="{{$e}}" {{range $h.Events}}{{if eq . $e}}checked{{end}}{{end}}> {{t (print "hooks.ev." $e)}}</label>{{end}}</div>
+      <label class="check"><input type="checkbox" name="active" {{if $h.Active}}checked{{end}}> {{t "ol.active"}}</label>
+      <p><button class="primary">{{t "common.save"}}</button></p></form></details>
+</div>{{end}}
+<details class="card"{{if not $d.Hooks}} open{{end}}><summary><b>{{icon "plus"}} {{t "hooks.new"}}</b></summary>
+  <form method="post" action="/settings/webhooks/new"><input type="hidden" name="op" value="save">
+    <label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="100" placeholder="{{t "hooks.name_hint"}}">
+    <label>URL</label><input type="url" name="url" required placeholder="https://n8n.example.com/webhook/…">
+    <label>{{t "hooks.events"}}</label><div class="row" style="flex-wrap:wrap">{{range $d.Events}}<label class="check"><input type="checkbox" name="events" value="{{.}}"> {{t (print "hooks.ev." .)}}</label>{{end}}</div>
+    <label class="check"><input type="checkbox" name="active" checked> {{t "ol.active"}}</label>
+    <p><button class="primary">{{t "common.create"}}</button></p></form></details>
+<div class="card small">{{t "hooks.howto" $d.Base}}</div>
+{{end}}

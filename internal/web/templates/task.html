@@ -1,0 +1,458 @@
+{{define "content"}}
+{{$c := .Data.Card}}{{$users := .Data.Users}}{{$key := $c.Key}}{{$ck := ""}}{{if $c.Collab}}{{$ck = $c.ProjectKey}}{{end}}
+{{$canLink := or $c.CanEdit $c.Roles.Responsible}}{{$canPeople := or $c.CanEdit $c.Roles.Responsible}}
+{{$canSub := and .Data.CanSub (or $c.Roles.Manager (eq $c.MemberRole "member"))}}{{$canTime := or $c.CanWork $c.Roles.Manager}}
+<div class="tcard" data-task="{{$key}}" data-copied="{{t "task.copied"}}">
+<section class="tleft">
+  <div class="crumbs">
+    {{if or $.Guest $c.Collab}}<a href="/collabs">{{t "collab.title"}}</a>{{else}}<a href="/projects">{{t "nav.projects"}}</a>{{end}} {{icon "chevron-right"}} <a href="/p/{{$c.ProjectKey}}">{{$c.ProjectKey}}</a>
+    {{range .Data.Ancestors}}{{icon "chevron-right"}} <a href="/t/{{.Key}}" title="{{.Title}}">{{.Key}} {{.Title}}</a>{{end}}
+  </div>
+  {{if $c.Frozen}}<div class="flash">{{icon "history"}} {{t "collab.archived_task"}}</div>{{end}}
+  <div class="thead">
+    <h1>{{$c.Title}}</h1>
+    {{if index .Data.Marks "pin"}}<span class="markic" title="{{t "mark.pinned"}}">{{icon "mark-pin"}}</span>{{end}}
+    {{if index .Data.Marks "favorite"}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}
+    {{if index .Data.Marks "mute"}}<span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}
+    {{if eq $c.Priority 2}}<span class="prio" title="{{t "task.high_priority"}}">{{icon "flame"}}</span>{{end}}
+    <details class="tmenu"><summary title="{{t "task.menu"}}">{{icon "menu-2"}}</summary>
+      <div class="pop">
+        <button type="button" class="ghost" data-copy="{{$.Data.BaseURL}}/t/{{$key}}">{{icon "link"}} {{t "task.copy_link"}}</button>
+        {{if $canSub}}<button type="button" class="ghost" data-show="subtasks" data-focus="#subtasks input[name=title]">{{icon "hierarchy-2"}} {{t "subtasks.add"}}</button>{{end}}
+        <button type="button" class="ghost" data-show="history">{{icon "history"}} {{t "history.title" (len $c.History)}}</button>
+        {{range $m := list "favorite" "pin" "mute"}}{{$on := index $.Data.Marks $m}}
+        <form method="post" action="/t/{{$key}}/mark"><input type="hidden" name="mark" value="{{$m}}"><input type="hidden" name="on" value="{{if $on}}0{{else}}1{{end}}">
+          <button class="ghost">{{icon (print "mark-" $m)}} {{t (print "mark." $m (ifs $on ".off" ".on"))}}</button></form>{{end}}
+        {{if not (or $c.Frozen $.Guest)}}<a class="button ghost" href="/tasks/new?copy={{$key}}">{{icon "copy"}} {{t "task.copy"}}</a>{{end}}
+        {{if and $c.Roles.Responsible (not $c.Status.Closed)}}<button type="button" class="ghost" data-show="delegate" data-focus="#delegate input">{{icon "arrow-forward-up"}} {{t "task.delegate"}}</button>{{end}}
+        {{if not (or $c.Frozen $.Guest)}}<a class="button ghost" href="/templates/new?from={{$key}}">{{icon "copy"}} {{t "templates.from_task"}}</a>{{end}}
+        {{if $c.CanDelete}}<form method="post" action="/t/{{$key}}/delete" data-confirm="{{if $c.SubTotal}}{{t "trash.delete_confirm_sub" $c.SubTotal}}{{else}}{{t "trash.delete_confirm"}}{{end}}"><button class="ghost danger">{{icon "trash"}} {{t "trash.delete"}}</button></form>{{end}}
+      </div>
+    </details>
+  </div>
+
+  <div class="card tdesc">
+    <div class="desc clamp" data-clamp>{{if $c.Description}}{{nl2br $c.Description}}{{else}}<span class="muted">{{t "task.no_description"}}</span>{{end}}</div>
+    <div class="row tdesc-foot">
+      {{if $c.CanEdit}}<button type="button" class="link" data-show="edit" data-focus="#edit input[name=title]">{{icon "edit"}} {{t "task.change"}}</button>{{end}}
+      <span class="spacer"></span><button type="button" class="link" data-expand data-less="{{t "task.collapse"}}" hidden>{{t "task.expand"}}</button>
+    </div>
+  </div>
+
+  {{if $c.CanEdit}}
+  <div class="card tblock" id="edit" hidden>
+    <h2>{{icon "edit"}} {{t "task.edit"}}</h2>
+    {{template "taskform" .Data.Form}}
+  </div>
+  {{end}}
+
+  <div class="card tfields">
+    <div class="props">
+      <span class="k">{{t "props.creator"}}</span><span>{{person $c.CreatorName}}{{guestMark $c.CreatorID}}</span>
+      <span class="k">{{t "props.responsible"}}</span><span>{{person $c.ResponsibleName}}{{guestMark $c.ResponsibleID}}</span>
+      <span class="k">{{t "props.deadline_full"}}</span>
+      <span class="row">{{icon "calendar-event"}}
+        {{if $c.CanChangeDeadline}}<details class="tsettings dledit"><summary title="{{t "task.change_deadline"}}">{{with date $c.Deadline}}<span class="dl{{if $c.Overdue}} over{{end}}">{{.}}</span>{{else}}<span class="muted">{{t "task.no_deadline"}}</span>{{end}}</summary>
+          <div class="pop"><form method="post" action="/t/{{$key}}/deadline" class="row">
+            <input type="datetime-local" name="deadline" value="{{dtinput $c.Deadline}}" required style="flex:1">
+            <button class="primary">{{t "common.save"}}</button></form>
+            {{if $c.Deadline}}<form method="post" action="/t/{{$key}}/deadline"><input type="hidden" name="op" value="clear"><button class="ghost">{{icon "x"}} {{t "task.clear_deadline"}}</button></form>{{end}}
+            {{if $c.MatchWorkTime}}<p class="muted small">{{t "task.match_work_time_hint"}}</p>{{end}}
+          </div></details>
+        {{else}}{{with date $c.Deadline}}<span class="dl{{if $c.Overdue}} over{{end}}">{{.}}</span>{{else}}<span class="muted">{{t "task.no_deadline"}}</span>{{end}}
+        {{if $c.DatesFollow}}<span class="muted small" title="{{t "task.dates_from_subtasks_hint"}}">{{icon "lock"}}</span>{{else if $c.Roles.Responsible}}<span class="muted small" title="{{t "task.deadline_locked"}}">{{icon "lock"}}</span>{{end}}{{end}}
+        {{if $c.CanEdit}}<details class="tsettings"><summary title="{{t "task.settings"}}">{{icon "adjustments"}}</summary>
+          <div class="pop">
+            <b>{{t "task.settings"}}</b>
+            <form method="post" action="/t/{{$key}}/edit">
+              <label class="check"><input type="checkbox" name="requires_control" {{if $c.RequiresControl}}checked{{end}}> {{t "form.control_short"}}</label>
+              <label class="check"><input type="checkbox" name="allow_change_deadline" {{if $c.AllowChangeDeadline}}checked{{end}}> {{t "form.allow_change_deadline"}}</label>
+              <label class="check"><input type="checkbox" name="match_work_time" {{if $c.MatchWorkTime}}checked{{end}}> {{t "form.match_work_time"}}</label>
+              {{template "params" $c.Params}}
+              <label class="check"><input type="checkbox" name="no_efficiency" {{if $c.NoEfficiency}}checked{{end}}> {{t "form.no_efficiency"}}</label>
+              <input type="hidden" name="efficiency_form" value="1">
+              {{template "keep" (keepOf $c "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required")}}
+              <p><button class="primary">{{t "common.save"}}</button></p>
+            </form>
+          </div>
+        </details>{{end}}
+      </span>
+      <span class="k">{{t "props.status"}}</span>
+      <span class="row"><span class="st {{statusClass $c.Status}}">{{icon (statusIcon $c.Status)}} {{t (print "status." $c.Status)}}</span>
+        {{if .Data.CanTake}}<form method="post" action="/t/{{$key}}/take"><button class="primary small">{{icon "player-play"}} {{t "flows.take"}}</button></form>{{end}}
+        {{if $c.RequiresControl}}<span class="muted small" title="{{t "form.control_short"}}">{{icon "eye"}}</span>{{end}}</span>
+      {{if or (eq $c.Status "completed") $c.Rating}}<span class="k">{{t "props.rating"}}</span>
+      <span class="row rating">{{if or $c.Roles.Creator $c.Roles.Manager}}{{range $r := list "positive" "negative"}}<form method="post" action="/t/{{$key}}/rate">
+          <input type="hidden" name="rating" value="{{if eq $c.Rating $r}}{{else}}{{$r}}{{end}}">
+          <button class="ghost rate{{if eq $c.Rating $r}} on {{$r}}{{end}}" title="{{t (print "rating." $r)}}">{{if eq $r "positive"}}👍{{else}}👎{{end}}</button></form>{{end}}
+        {{else}}{{if $c.Rating}}{{if eq $c.Rating "positive"}}👍{{else}}👎{{end}} {{t (print "rating." $c.Rating)}}{{else}}<span class="muted">{{t "rating.none"}}</span>{{end}}{{end}}</span>{{end}}
+      <span class="k">{{t "props.tags"}}</span>
+      <span class="row tags">{{range .Data.Tags}}<span class="tag"><a href="/tasks?tag={{.}}">#{{.}}</a>{{if $c.CanWork}}<form method="post" action="/t/{{$key}}/tags"><input type="hidden" name="op" value="remove"><input type="hidden" name="tag" value="{{.}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</span>{{end}}
+        {{if $c.CanWork}}<form method="post" action="/t/{{$key}}/tags" class="tagadd"><input type="text" name="tag" list="alltags" maxlength="50" placeholder="{{t "tags.add"}}" required></form>
+        <datalist id="alltags">{{range .Data.AllTags}}<option value="{{.}}">{{end}}</datalist>{{end}}</span>
+      {{if or .Data.CRM $c.CanWork}}<span class="k">{{t "props.crm"}}</span>
+      <span class="row tags">{{range .Data.CRM}}<span class="tag"><a href="{{.URL}}"{{if not .Own}} target="_blank" rel="noopener"{{end}} title="{{.URL}}">{{if .Own}}go24 · {{end}}{{t (print "crm." .Kind)}}{{if .EntityID}} #{{.EntityID}}{{end}}</a>{{if $c.CanWork}}<form method="post" action="/t/{{$key}}/crm"><input type="hidden" name="op" value="remove"><input type="hidden" name="url" value="{{.URL}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</span>{{end}}
+        {{if $c.CanWork}}<form method="post" action="/t/{{$key}}/crm" class="tagadd"><input type="url" name="url" maxlength="1000" placeholder="{{t "crm.add"}}" required></form>{{end}}</span>{{end}}
+      {{with .Data.Letters}}<span class="k">{{t "props.letters"}}</span>
+      <span class="tlinks">{{range .}}<span class="row small">{{icon "mail"}} {{if and .LetterID (eq .OwnerID $.Data.Me)}}<a href="/mail?letter={{.LetterID}}">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</a>{{else}}{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}{{end}}
+        <span class="muted">· {{if .FromName}}{{.FromName}}{{else}}{{.FromAddr}}{{end}} · {{datetime .SentAt}}</span></span>{{end}}</span>{{end}}
+      <span class="k">{{t "props.reminders"}}</span>
+      <span class="reminders">{{range .Data.Reminders}}<span class="row{{if .Sent}} muted{{end}}">{{icon "bell"}}
+          <span style="flex:1">{{if .At}}{{date .At}}{{else}}{{t (print "reminder.before." .BeforeMinutes)}}{{if .Due}} <span class="muted small">({{date .Due}})</span>{{else}} <span class="muted small">({{t "task.no_deadline"}})</span>{{end}}{{end}}
+            · {{t (print "reminder.to." .Recipient)}}{{if .Sent}} ✓{{end}}</span>
+          {{if not $c.Frozen}}<form method="post" action="/t/{{$key}}/reminders/{{.ID}}/delete"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</span>{{end}}
+        {{if not $c.Frozen}}<details class="tsettings"><summary>{{t "reminder.add"}}</summary>
+          <div class="pop"><form method="post" action="/t/{{$key}}/reminders">
+            <label class="check"><input type="radio" name="when" value="at" checked> <input type="datetime-local" name="at"></label>
+            <label class="check"><input type="radio" name="when" value="deadline"{{if not $c.Deadline}} disabled{{end}}>
+              <select name="before">{{range .Data.ReminderBefore}}<option value="{{.}}">{{t (print "reminder.before." .)}}</option>{{end}}</select></label>
+            <label>{{t "reminder.recipient"}} <select name="recipient">{{range list "self" "responsible" "creator"}}<option value="{{.}}">{{t (print "reminder.to." .)}}</option>{{end}}</select></label>
+            <p><button class="primary">{{t "common.save"}}</button></p>
+          </form></div></details>{{end}}</span>
+      <span class="k">{{t "props.project"}}</span><span><a href="/p/{{$c.ProjectKey}}">{{icon "folders"}} {{$c.ProjectKey}}</a></span>
+      {{if $c.FlowID}}<span class="k">{{t "flows.flow"}}</span><span><a href="/flows/{{$c.FlowID}}">{{icon "send"}} {{$c.FlowName}}</a></span>{{end}}
+      {{if $c.ParentKey}}<span class="k">{{t "props.parent"}}</span><span><a href="/t/{{$c.ParentKey}}"><span class="tkey">{{$c.ParentKey}}</span>{{$c.ParentTitle}}</a></span>{{end}}
+      <span class="k">{{t "props.created"}}</span>
+      <span class="row">{{icon "calendar-event"}} {{datetime $c.CreatedAt}} <span class="muted">/ ID: {{$key}}</span>
+        <button type="button" class="ghost" data-copy="{{$key}}" title="{{t "task.copy_id"}}">{{icon "copy"}}</button></span>
+      {{if $c.ClosedAt}}<span class="k">{{t "props.closed"}}</span><span>{{date $c.ClosedAt}}</span>{{end}}
+      <span class="k">{{t "task.views"}}</span>
+      <details class="tviews"><summary class="ghostbtn small muted" title="{{t "task.views_who"}}">{{icon "eye"}} {{len .Data.Viewers}}</summary>
+        <div class="card rwho"><b class="small">{{t "task.views_who"}}</b>{{range .Data.Viewers}}
+          <a class="person" href="/u/{{.ID}}" data-user="{{.ID}}"><img src="{{with photoURL .ID .Photo}}{{.}}{{else}}/static/img/avatar.svg{{end}}" alt=""><span>{{.Name}}</span>
+            <span class="muted small" title="{{t "task.views_first"}}: {{datetime .First}}{{if gt .Times 1}} · {{t "task.views_times" .Times}}{{end}}">{{datetime .Last}}</span></a>{{else}}
+          <p class="muted small">{{t "feed.views_none"}}</p>{{end}}</div></details>
+    </div>
+  </div>
+
+  {{with .Data.Fields}}<div class="card tufields" id="fields">
+    <div class="props">{{range .}}
+      <span class="k">{{.Name}}</span>
+      <span>{{if not .Value}}<span class="muted">—</span>{{else if eq .Kind "bool"}}{{t "bool.true"}}{{else if eq .Kind "url"}}<a href="{{.Value}}" target="_blank" rel="noopener">{{.Value}}</a>{{else}}{{.Text (t "format.date")}}{{end}}</span>{{end}}
+    </div>
+    {{if $c.CanEdit}}<details class="tsettings"><summary>{{icon "edit"}} {{t "fields.edit"}}</summary>
+      <div class="pop"><form method="post" action="/t/{{$key}}/fields">{{range .}}
+        {{if eq .Kind "bool"}}<label class="check"><input type="checkbox" name="f_{{.ID}}" value="1"{{if .Value}} checked{{end}}> {{.Name}}</label>
+        {{else}}<label>{{.Name}}</label>
+        {{if eq .Kind "list"}}{{$v := .Value}}<select name="f_{{.ID}}"><option value=""></option>{{range .Options}}<option{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}</select>
+        {{else if eq .Kind "date"}}<input type="date" name="f_{{.ID}}" value="{{.Value}}">
+        {{else if eq .Kind "number"}}<input type="text" inputmode="decimal" name="f_{{.ID}}" value="{{.Value}}">
+        {{else if eq .Kind "url"}}<input type="url" name="f_{{.ID}}" value="{{.Value}}">
+        {{else}}<input type="text" name="f_{{.ID}}" value="{{.Value}}" maxlength="2000">{{end}}{{end}}{{end}}
+        <p><button class="primary">{{t "common.save"}}</button></p>
+      </form></div></details>{{end}}
+  </div>{{end}}
+
+  <div class="card tpeople" id="people" {{if not (or $c.Accomplices $c.Auditors)}}hidden data-block{{end}}>
+    <div class="props">
+    {{range $role := list "accomplice" "auditor"}}
+      {{$list := $c.Accomplices}}{{if eq $role "auditor"}}{{$list = $c.Auditors}}{{end}}
+      <span class="k">{{if eq $role "accomplice"}}{{t "props.accomplices"}}{{else}}{{t "props.auditors"}}{{end}}</span>
+      <div>
+        {{range $list}}
+        <div class="row"><span style="flex:1">{{person .Name}}{{guestMark .ID}}</span>
+          {{if $canPeople}}<form method="post" action="/t/{{$key}}/participants"><input type="hidden" name="op" value="remove">
+            <input type="hidden" name="role" value="{{$role}}"><input type="hidden" name="user_id" value="{{.ID}}">
+            <button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}
+        </div>
+        {{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
+        {{if $canPeople}}
+        <form method="post" action="/t/{{$key}}/participants" class="row addp" data-role="{{$role}}">
+          <input type="hidden" name="role" value="{{$role}}">
+          {{template "upick" (upick "user_id" "" $users "submit" "collab" $ck)}}
+          <button title="{{t "common.add"}}">{{icon "plus"}}</button>
+        </form>
+        {{end}}
+      </div>
+    {{end}}
+    </div>
+  </div>
+
+  {{if .Data.Results}}
+  <div class="card tblock" id="results">
+    <h2>📌 {{t "results.title"}}</h2>
+    {{range .Data.Results}}<div class="result"><div class="muted small">{{.AuthorName}} · {{datetime .CreatedAt}}</div><div>{{nl2br .Body}}</div></div>{{end}}
+  </div>
+  {{end}}
+
+  {{with .Data.Dod}}{{$dod := .}}
+  <div class="card tblock" id="dod">
+    <h2>{{icon "list-check"}} {{t "dod.title"}}{{if .Type.Required}} <span class="pill">{{t "dod.required_short"}}</span>{{end}}</h2>
+    <form method="post" action="/t/{{$key}}/dod">
+      <div class="row small"><span class="muted">{{t "dod.type"}}</span>
+        {{if .CanEdit}}<select name="type" data-autosubmit>{{range .Types}}<option value="{{.ID}}" {{if eq .ID $dod.Type.ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+        {{else}}<b>{{.Type.Name}}</b>{{end}}</div>
+      <ul class="dodlist">{{range .Type.Items}}
+        <li><label class="check"><input type="checkbox" name="item" value="{{.ID}}" {{if .Done}}checked{{end}} {{if not $dod.CanEdit}}disabled{{end}}> {{.Title}}</label></li>
+      {{else}}<li class="muted small">{{t "dod.no_items"}} <a href="/p/{{$c.ProjectKey}}/dod#dod">{{t "dod.setup"}}</a></li>{{end}}</ul>
+      {{if .Blocks}}<p class="muted small">{{icon "alert-triangle"}} {{t "dod.blocks_hint"}}</p>{{end}}
+      {{if and .CanEdit .Type.Items}}<p class="row"><button>{{t "common.save"}}</button>
+        {{if $.Data.DodComplete}}<button class="primary" name="complete" value="1">{{icon "check"}} {{t "dod.save_complete"}}</button>{{end}}</p>{{end}}
+    </form>
+  </div>
+  {{end}}
+  <div class="card tblock" id="checklist" {{if not $c.Checklists}}hidden{{end}} data-checklist>
+    <h2>{{icon "list-check"}} {{t "checklist.title"}}
+      {{if $c.Checklist}}<span class="muted small">{{t "checklist.progress" $c.ChecklistDone (len $c.Checklist)}}</span>
+      <button type="button" class="ghost small ck-hide" data-ck-hide data-show-text="{{t "checklist.show_done"}}" data-hide-text="{{t "checklist.hide_done"}}">{{icon "eye-off"}} <span>{{t "checklist.hide_done"}}</span></button>{{end}}</h2>
+    {{range $l := $c.Checklists}}
+    <div class="ck-list" data-list="{{$l.ID}}">
+      <div class="ck-head">
+        {{if $c.CanWork}}
+        <form method="post" action="/t/{{$key}}/checklists/{{$l.ID}}" class="ck-name">
+          <input type="text" name="title" value="{{$l.Title}}" maxlength="200" placeholder="{{t "checklist.name_n" $l.N}}" data-ck-name title="{{t "checklist.rename"}}"></form>
+        {{else}}<b class="ck-name">{{if $l.Title}}{{$l.Title}}{{else}}{{t "checklist.name_n" $l.N}}{{end}}</b>{{end}}
+        {{if $l.Items}}<span class="progress"><span style="width:{{pct $l.Done (len $l.Items)}}%"></span></span>
+        <span class="muted small" data-ck-count>{{t "checklist.progress" $l.Done (len $l.Items)}}</span>{{end}}
+        {{if $c.CanWork}}
+        <form method="post" action="/t/{{$key}}/checklists/{{$l.ID}}" data-confirm="{{t "checklist.delete_confirm"}}"><input type="hidden" name="op" value="delete">
+          <button class="ghost" title="{{t "checklist.delete"}}">{{icon "trash"}}</button></form>
+        {{end}}
+      </div>
+      <div class="ck-items" data-ck-items>
+      {{range $l.Items}}
+      <div class="ck-item{{if .Done}} done{{end}}{{if .Important}} important{{end}}" data-item="{{.ID}}"{{if $c.CanWork}} draggable="true"{{end}}>
+        {{if $c.CanWork}}
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="toggle">
+          <button class="ghost" title="{{t "checklist.toggle"}}" style="color:var(--{{if .Done}}ok{{else}}muted{{end}})">{{if .Done}}{{icon "circle-check"}}{{else}}{{icon "circle-dashed"}}{{end}}</button></form>
+        {{else}}{{if .Done}}{{icon "circle-check"}}{{else}}{{icon "circle-dashed"}}{{end}}{{end}}
+        {{if .Important}}<span class="ck-imp" title="{{t "checklist.important"}}">{{icon "exclamation-mark"}}</span>{{end}}
+        <span class="t" {{if $c.CanWork}}data-ck-edit title="{{t "checklist.edit_hint"}}"{{end}}>{{.Title}}</span>
+        {{if $c.CanWork}}
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}" class="ck-edit" hidden><input type="hidden" name="op" value="edit">
+          <input type="text" name="title" value="{{.Title}}" maxlength="500" required></form>
+        <span class="ck-tools">
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="important"><input type="hidden" name="on" value="{{if not .Important}}1{{end}}">
+          <button class="ghost" title="{{if .Important}}{{t "checklist.unimportant"}}{{else}}{{t "checklist.important"}}{{end}}">{{icon "exclamation-mark"}}</button></form>
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="task"><input type="hidden" name="title" value="{{.Title}}">
+          <button class="ghost" title="{{t "checklist.to_task"}}">{{icon "hierarchy-2"}}</button></form>
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="delete">
+          <button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+        </span>
+        {{end}}
+      </div>
+      {{end}}
+      </div>
+      {{if $c.CanWork}}
+      <form method="post" action="/t/{{$key}}/checklist" class="row ck-add"><input type="hidden" name="list" value="{{$l.ID}}">
+        <textarea name="title" rows="1" placeholder="{{t "checklist.new_item"}}" title="{{t "checklist.paste_hint"}}" required data-ck-new></textarea><button>{{icon "plus"}} {{t "common.add"}}</button>
+      </form>
+      {{end}}
+    </div>
+    {{end}}
+    {{if $c.CanWork}}
+    {{if not $c.Checklists}}
+    <form method="post" action="/t/{{$key}}/checklist" class="row ck-add">
+      <textarea name="title" rows="1" placeholder="{{t "checklist.new_item"}}" title="{{t "checklist.paste_hint"}}" required data-ck-new></textarea><button>{{icon "plus"}} {{t "common.add"}}</button>
+    </form>
+    {{end}}
+    <form method="post" action="/t/{{$key}}/checklists" class="ck-more"><button class="ghost">{{icon "plus"}} {{t "checklist.add_list"}}</button></form>
+    {{end}}
+  </div>
+
+  <div class="card tblock" id="files" {{if not .Data.Files}}hidden{{end}}>
+    <h2>{{icon "paperclip"}} {{t "files.attachments"}} <span class="muted small">{{len .Data.Files}}</span></h2>
+    {{range .Data.Files}}
+    <div class="cl-item"><a class="t" href="/files/{{.ID}}">{{icon "download"}} {{.Name}}</a>
+      <span class="small muted">{{.Uploader}} · {{datetime .CreatedAt}}{{if .StorageName}} · {{.StorageName}}{{end}}</span>
+      {{if not $.Guest}}<form method="post" action="/files/{{.ID}}/drive" class="inline"><input type="hidden" name="back" value="/t/{{$key}}#files">
+        <button class="ghost small" title="{{t "disk.save_to"}}">{{icon "device-floppy"}}</button></form>{{end}}</div>
+    {{end}}
+    {{if .Data.CanAttach}}<form method="post" action="/files?task={{$key}}" enctype="multipart/form-data" class="row" style="margin-top:10px">
+      <input type="file" name="file" required> {{template "storageSelect" .Data.Storages}}
+      <button>{{icon "cloud-upload"}} {{t "files.attach"}}</button>
+      {{if not $.Guest}}<button type="button" class="ghost" data-disk-pick data-to="/t/{{$key}}/files/drive" {{template "diskPickL"}}>{{icon "folders"}} {{t "disk.pick"}}</button>{{end}}
+    </form><script src="{{asset "js/drivepick.js"}}"></script>{{end}}
+  </div>
+
+  <div class="card tblock" id="subtasks" {{if not $c.Subtasks}}hidden{{end}}>
+    <h2>{{icon "hierarchy-2"}} {{t "subtasks.title"}}
+      {{with .Data.SubTotal}}<span class="progress" title="{{t "subtasks.tree_hint"}}"><span style="width:{{pct $.Data.SubDone .}}%"></span></span>
+      <span class="muted small">{{t "subtasks.tree" $.Data.SubDone .}}</span>{{end}}</h2>
+    {{if $c.Subtasks}}{{template "tasklist" (tl $c.Subtasks nil false)}}{{end}}
+    {{if $canSub}}
+    <form method="post" action="/p/{{$c.ProjectKey}}/tasks" class="row" style="margin-top:10px">
+      <input type="hidden" name="parent" value="{{$key}}">
+      <input type="text" name="title" required placeholder="{{t "subtasks.placeholder"}}" style="flex:1;min-width:200px">
+      {{template "upick" (upick "responsible" $c.ResponsibleID $users "required" "collab" $ck)}}
+      <button>{{icon "plus"}} {{t "common.create"}}</button>
+    </form>
+    {{end}}
+  </div>
+
+  <div class="card tblock" id="links" {{if not (or .Data.Pred .Data.Succ)}}hidden{{end}}>
+    <h2>{{icon "link"}} {{t "links.title"}}</h2>
+    <div class="grid">
+      <div><label>{{t "links.predecessors"}}</label>
+        {{range .Data.Pred}}<div class="row"><a href="/t/{{.FromKey}}" style="flex:1"><span class="tkey">{{.FromKey}}</span>{{.FromTitle}}</a>
+          {{if $canLink}}<form method="post" action="/t/{{$key}}/links/{{.ID}}/delete"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</div>
+        {{else}}<div class="muted small">{{t "common.none"}}</div>{{end}}
+        {{if $canLink}}<form method="post" action="/t/{{$key}}/links" class="row" style="margin-top:6px">
+          <input type="text" name="pred" placeholder="{{$c.ProjectKey}}-1" required style="width:120px"><button title="{{t "links.add_hint"}}">{{icon "plus"}} {{t "common.add"}}</button></form>{{end}}
+      </div>
+      <div><label>{{t "links.successors"}}</label>
+        {{range .Data.Succ}}<div class="row"><a href="/t/{{.ToKey}}" style="flex:1"><span class="tkey">{{.ToKey}}</span>{{.ToTitle}}</a></div>
+        {{else}}<div class="muted small">{{t "common.none"}}</div>{{end}}
+      </div>
+    </div>
+  </div>
+
+  <div class="card tblock" id="plan" {{if not (or $c.StartPlan $c.EndPlan)}}hidden{{end}}>
+    <h2>{{icon "calendar-event"}} {{t "task.block.plan"}}</h2>
+    {{if $c.DatesFollow}}<p class="muted small">{{icon "lock"}} {{t "task.dates_from_subtasks_hint"}}: {{with date $c.StartPlan}}{{.}}{{else}}…{{end}} — {{with date $c.EndPlan}}{{.}}{{else}}…{{end}}</p>
+    {{else if $c.CanEdit}}
+    <form method="post" action="/t/{{$key}}/edit" class="row">
+      <label>{{t "form.start_plan"}} <input type="date" name="start_plan" value="{{dinput $c.StartPlan}}"></label>
+      <label>{{t "form.end_plan"}} <input type="date" name="end_plan" value="{{dinput $c.EndPlan}}"></label>
+      {{template "keep" (keepOf $c "start_plan" "end_plan")}}
+      <button>{{t "common.save"}}</button>
+      <a href="/p/{{$c.ProjectKey}}/gantt">{{icon "calendar-event"}} {{t "tabs.gantt"}}</a>
+    </form>
+    {{else}}<p>{{with $c.StartPlan}}{{day .}}{{end}} – {{with $c.EndPlan}}{{day .}}{{end}}</p>{{end}}
+  </div>
+
+  <div class="card tblock" id="time" {{if not (or $c.TimeEntries $c.EstimateMinutes (and $.Timer (eq $.Timer.TaskKey $key)))}}hidden{{end}}>
+    <h2>{{icon "clock"}} {{t "time.title"}}
+      <span class="muted small">{{dur $c.TimeTotal}}{{with durm $c.EstimateMinutes}} {{t "time.of"}} {{.}}{{end}}</span>
+      {{if $c.EstimateMinutes}}<span class="progress{{if $c.OverEstimate}} over{{end}}"><span style="width:{{$c.TimePercent}}%"></span></span>{{end}}</h2>
+    {{$running := and .Timer (eq .Timer.TaskKey $key)}}
+    {{if $canTime}}
+    <div class="row" style="margin-bottom:10px">
+      {{if $running}}
+      <form method="post" action="/timer/stop"><button class="ok">{{icon "player-pause"}} {{t "time.stop"}} <b data-timer-since="{{.Timer.StartedAt.Unix}}">0:00:00</b></button></form>
+      {{else}}
+      <form method="post" action="/t/{{$key}}/timer"><button class="primary">{{icon "player-play"}} {{t "time.start"}}</button></form>
+      {{end}}
+      <details><summary>{{icon "plus"}} {{t "time.add"}}</summary>
+        <form method="post" action="/t/{{$key}}/time" class="row" style="margin-top:8px">
+          <input type="text" name="duration" placeholder="1:30" required style="width:90px" title="{{t "time.duration_hint"}}">
+          <input type="date" name="date" style="width:auto">
+          <input type="text" name="comment" placeholder="{{t "time.comment"}}" style="flex:1;min-width:160px">
+          <button>{{t "common.add"}}</button>
+        </form>
+      </details>
+    </div>
+    {{end}}
+    {{if $c.CanEdit}}
+    <form method="post" action="/t/{{$key}}/edit" class="row" style="margin-bottom:10px">
+      <label>{{t "form.estimate"}} <input type="text" name="estimate" value="{{hm $c.EstimateMinutes}}" placeholder="4:00" title="{{t "time.duration_hint"}}" style="width:90px"></label>
+      {{template "keep" (keepOf $c "estimate")}}<button>{{t "common.save"}}</button>
+    </form>
+    {{end}}
+    {{if $c.TimeEntries}}
+    <table class="history">
+      {{range $c.TimeEntries}}
+      <tr><td class="muted">{{day .SpentOn}}</td><td>{{.UserName}}</td><td><b>{{dur .Seconds}}</b>{{if eq .Source "timer"}} {{icon "clock"}}{{end}}</td>
+        <td class="muted">{{.Comment}}</td>
+        <td class="row te-actions">{{if or (eq .UserID $.User.UserID) $c.Roles.Manager}}<button type="button" class="ghost" data-toggle="te-{{.ID}}" title="{{t "task.change"}}">{{icon "edit"}}</button>
+          <form method="post" action="/t/{{$key}}/time/{{.ID}}/delete" data-confirm="{{t "time.delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>
+      {{if or (eq .UserID $.User.UserID) $c.Roles.Manager}}
+      <tr id="te-{{.ID}}" hidden><td colspan="5">
+        <form method="post" action="/t/{{$key}}/time/{{.ID}}" class="row">
+          <input type="text" name="duration" value="{{dur2hm .Seconds}}" required style="width:90px" title="{{t "time.duration_hint"}}">
+          <input type="date" name="date" value="{{.SpentOn.Format "2006-01-02"}}" required style="width:auto">
+          <input type="text" name="comment" value="{{.Comment}}" placeholder="{{t "time.comment"}}" style="flex:1;min-width:160px">
+          <button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="te-{{.ID}}">{{t "common.cancel"}}</button>
+        </form></td></tr>
+      {{end}}
+      {{end}}
+    </table>
+    {{else}}<p class="muted small">{{t "time.empty"}}</p>{{end}}
+  </div>
+
+  {{if and $c.Roles.Responsible (not $c.Status.Closed)}}
+  {{template "apptabs" (dict "ID" $key "Tabs" .Data.AppTabs)}}
+  <div class="card tblock" id="delegate" hidden>
+    <h2>{{icon "arrow-forward-up"}} {{t "task.delegate"}}</h2>
+    <p class="muted small">{{t "task.delegate_hint"}}</p>
+    <form method="post" action="/t/{{$key}}/delegate" class="row">
+      {{template "upick" (upick "to" "" $users "required" "collab" $ck)}}
+      <button class="primary">{{t "task.delegate_do"}}</button>
+    </form>
+  </div>
+  {{end}}
+
+  <div class="card tblock" id="history" hidden>
+    <h2>{{icon "history"}} {{t "history.title" (len $c.History)}}</h2>
+    <table class="history">
+      {{range $c.History}}
+      <tr><td class="muted">{{datetime .CreatedAt}}</td><td>{{.ActorName}}{{with .ActingName}} <span class="muted small">({{t "acting.sign" .}})</span>{{end}}</td><td>{{t (print "field." .Field)}}</td>
+        <td>{{if and .Old (not .New)}}{{t "history.removed"}} <span class="muted">{{hv .Field .Old}}</span>{{else}}{{if .Old}}<span class="muted">{{hv .Field .Old}}</span> → {{end}}{{hv .Field .New}}{{end}}</td></tr>
+      {{end}}
+    </table>
+  </div>
+
+  <div class="tchips">
+    <button type="button" class="tchip" data-show="history">{{icon "history"}} {{t "history.title" (len $c.History)}}</button>
+    <button type="button" class="tchip" data-show="checklist" {{if or $c.Checklists (not $c.CanWork)}}hidden{{end}}>{{icon "list-check"}} {{t "task.block.checklist"}}</button>
+    <button type="button" class="tchip" data-show="files" {{if .Data.Files}}hidden{{end}}>{{icon "paperclip"}} {{t "task.block.files"}}</button>
+    <button type="button" class="tchip" data-show="people" {{if or $c.Accomplices $c.Auditors (not $canPeople)}}hidden{{end}}>{{icon "users"}} {{t "task.block.people"}}</button>
+    <button type="button" class="tchip" data-show="subtasks" {{if or $c.Subtasks (not $canSub)}}hidden{{end}}>{{icon "hierarchy-2"}} {{t "task.block.subtasks"}}</button>
+    <button type="button" class="tchip" data-show="links" {{if or .Data.Pred .Data.Succ (not $canLink)}}hidden{{end}}>{{icon "link"}} {{t "task.block.links"}}</button>
+    <button type="button" class="tchip" data-show="plan" {{if or $c.StartPlan $c.EndPlan (not $c.CanEdit)}}hidden{{end}}>{{icon "calendar-event"}} {{t "task.block.plan"}}</button>
+    <button type="button" class="tchip" data-show="time" {{if or $c.TimeEntries $c.EstimateMinutes (not $canTime)}}hidden{{end}}>{{icon "clock"}} {{t "task.block.time"}}</button>
+  </div>
+
+  {{if $c.Actions}}
+  {{if and $c.ResultRequired (not .Data.Results) $c.CanComplete}}<p class="muted small">{{icon "alert-triangle"}} {{t "task.result_required_hint"}}</p>{{end}}
+  <div class="tfoot">
+    {{range $i, $a := $c.Actions}}{{if lt $i 2}}
+    <form method="post" action="/t/{{$key}}/action"><input type="hidden" name="action" value="{{$a}}">
+      <button class="{{if eq $i 0}}primary{{end}}">{{icon (actionIcon $a)}} {{t (print "action." $a)}}</button></form>
+    {{end}}{{end}}
+    {{if gt (len $c.Actions) 2}}
+    <details class="more"><summary title="{{t "task.more_actions"}}">{{icon "dots"}}</summary>
+      <div class="pop up">
+        {{range $i, $a := $c.Actions}}{{if ge $i 2}}
+        <form method="post" action="/t/{{$key}}/action"><input type="hidden" name="action" value="{{$a}}">
+          <button class="ghost">{{icon (actionIcon $a)}} {{t (print "action." $a)}}</button></form>
+        {{end}}{{end}}
+      </div>
+    </details>
+    {{end}}
+  </div>
+  {{end}}
+</section>
+
+<aside class="tchat" id="comments" data-pane="task-chat" data-pane-side="left">
+  <div class="chathead">
+    <span class="chatico">{{icon "message-circle"}}</span>
+    <div style="flex:1"><b>{{t "chat.title"}}</b><div class="muted small">{{t "chat.people" .Data.People}}</div></div>
+    {{if .Data.Messenger}}<a href="/t/{{$key}}/messenger" class="button" title="{{t "chat.open_messenger_hint"}}">{{icon "message-circle"}} {{t "chat.open_messenger"}}</a>{{end}}
+    {{if .Data.Calls}}<a href="/call?task={{$key}}&announce=1" class="button" target="_blank" rel="noopener" title="{{t "call.call"}}">📞 {{t "call.call"}}</a>{{end}}
+    {{template "callext" (dict "Q" (printf "task=%s" $key))}}
+  </div>
+  <div class="msgs" data-msgs>
+    {{range .Data.Chat}}{{template "chatmsg" .}}{{else}}
+    <div class="chat-empty muted"><p>{{icon "message-circle"}}</p><p>{{t "chat.empty"}}</p></div>
+    {{end}}
+  </div>
+  {{if $c.Frozen}}<div class="chatform muted small">{{icon "history"}} {{t "collab.archived_task"}}</div>{{else}}
+  <form method="post" action="/t/{{$key}}/comments" class="chatform" data-chat data-failed="{{t "chat.failed"}}">
+    <textarea name="body" rows="1" placeholder="{{t "chat.placeholder"}}" required data-mention></textarea>
+    <button class="primary send" title="{{t "comments.send"}}">{{icon "send"}}</button>
+  </form>{{end}}
+</aside>
+</div>
+<script src="{{asset "js/task.js"}}"></script>
+{{end}}
+
+{{define "chatmsg"}}
+{{if .NewDay}}<div class="chatday"><span>{{day .At}}</span></div>{{end}}
+{{with .Comment}}
+<div class="msg{{if $.Mine}} mine{{end}}" data-id="{{.ID}}">
+  {{if not $.Mine}}{{ava .AuthorName}}{{end}}
+  <div class="bubble">{{if not $.Mine}}<b class="who">{{.AuthorName}}</b>{{guestMark .AuthorID}}{{end}}
+    <div class="text">{{nl2br .Body}}</div><span class="time">{{clock .CreatedAt}}</span>
+    <div class="reacts">{{range .Reactions}}<button type="button" class="react{{if .Mine}} mine{{end}}" data-react="{{.Key}}" title="{{.Names}}">{{.Key}} <b>{{.Count}}</b></button>{{end}}
+      <form method="post" action="/t/{{$.Key}}/comments/{{.ID}}/result" class="resform"><input type="hidden" name="on" value="{{if $.IsResult}}0{{else}}1{{end}}">
+        <button class="ghost react-res{{if $.IsResult}} on{{end}}" title="{{if $.IsResult}}{{t "results.remove"}}{{else}}{{t "results.add"}}{{end}}">📌</button></form>
+      <details class="react-add"><summary title="{{t "chat.react"}}">☺</summary>
+        <div class="react-pick">{{range quickReactions}}<button type="button" data-react="{{.}}">{{.}}</button>{{end}}</div></details></div></div>
+</div>
+{{end}}
+{{with .Event}}
+<div class="sysmsg"><span><b>{{.ActorName}}</b>{{with .ActingName}} ({{t "acting.sign" .}}){{end}}: {{t (print "field." .Field)}}{{if and .Old (not .New)}} — {{t "history.removed"}} {{hv .Field .Old}}{{else if or .Old .New}} — {{if .Old}}{{hv .Field .Old}} → {{end}}{{hv .Field .New}}{{end}} · {{clock .CreatedAt}}</span></div>
+{{end}}
+{{end}}
+

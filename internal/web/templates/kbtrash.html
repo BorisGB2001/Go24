@@ -1,0 +1,28 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/kb">{{t "kb.title"}}</a> {{icon "chevron-right"}} {{t "trash.title"}}</div>
+<div class="pagehead"><h1>{{t "trash.title"}}</h1></div>
+<p class="muted">{{t "kb.trash_hint"}}</p>
+{{if $d.Items}}
+<div class="card flush tlist-wrap">
+<table class="tlist trash">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "kb.trash_space"}}</th><th>{{t "trash.deleted_by"}}</th><th>{{t "trash.deleted_at"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Items}}
+  <tr>
+    <td>{{if .PageID}}{{icon "file-text"}} <b>{{.Title}}</b>{{if .Pages}} <span class="badge">{{t "kb.trash_sub" .Pages}}</span>{{end}}{{else}}{{icon "files"}} <b>{{.Title}}</b> <span class="badge">{{t "kb.pages" .Pages}}</span>{{end}}</td>
+    <td>{{if .PageID}}<a href="/kb/{{.SpaceID}}">{{.SpaceName}}</a>{{else}}<span class="muted">{{t "kb.trash_whole"}}</span>{{end}}</td>
+    <td>{{if .DeletedBy}}{{person .DeletedBy}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{datetime .DeletedAt}}{{with .PurgeAt}}<div class="muted small">{{t "trash.days_left" (day .)}}</div>{{end}}</td>
+    <td class="row tpl-actions">
+      <form method="post" action="/kb/{{.SpaceID}}/trash"><input type="hidden" name="page" value="{{.PageID}}"><button class="ghost" name="act" value="restore">{{icon "history"}} {{t "trash.restore"}}</button></form>
+      <form method="post" action="/kb/{{.SpaceID}}/trash" data-confirm="{{if .PageID}}{{t "kb.purge_page_confirm"}}{{else}}{{t "kb.purge_space_confirm"}}{{end}}"><input type="hidden" name="page" value="{{.PageID}}"><button class="ghost danger" name="act" value="purge" title="{{t "trash.purge"}}">{{icon "trash"}}</button></form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "trash"}} {{t "trash.empty"}}</div>
+{{end}}
+{{end}}

@@ -1,0 +1,17 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "users"}} {{t "collab.creators.title"}}</h1>
+<form method="post" action="/settings/collabs" class="card stack">
+  <label><input type="checkbox" name="enabled" value="1" {{if not $d.Set.Off}}checked{{end}}> {{t "collab.creators.enable"}}</label>
+  <p class="muted small">{{t "collab.creators.enable_hint"}}</p>
+  <fieldset class="stack">
+    <legend>{{t "collab.creators.who"}}</legend>
+    <label><input type="radio" name="who" value="all" {{if eq $d.Set.Who "all"}}checked{{end}}> {{t "collab.creators.all"}}</label>
+    <label><input type="radio" name="who" value="some" {{if eq $d.Set.Who "some"}}checked{{end}}> {{t "collab.creators.some"}}</label>
+    <div>{{template "upick" (upick "creators" $d.Sel $d.Users "multi" "depts" "ph" (t "collab.creators.some_ph"))}}</div>
+    <label><input type="radio" name="who" value="admins" {{if eq $d.Set.Who "admins"}}checked{{end}}> {{t "collab.creators.admins"}}</label>
+  </fieldset>
+  <p class="muted small">{{t "collab.creators.hint"}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}

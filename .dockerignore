@@ -1,0 +1,6 @@
+# boris.gb 2026-10-11 13:32 - в образ не тащим секреты, git и deploy
+.git
+deploy
+docs
+*.md
+test

@@ -1,0 +1,25 @@
+{{define "content"}}{{$d := .Data}}
+<h1>{{t "rooms.title"}}</h1>
+<div class="sub">{{t "rooms.subtitle"}}</div>
+<div class="card" style="max-width:860px">
+  {{range $d.Rooms}}
+  <div class="room-row">
+    <form method="post" action="/settings/rooms/{{.ID}}" class="row evwhen">
+      <input type="text" name="name" value="{{.Name}}" required maxlength="200" placeholder="{{t "rooms.name"}}" style="flex:2">
+      <input type="number" name="capacity" min="0" value="{{if .Capacity}}{{.Capacity}}{{end}}" placeholder="{{t "rooms.capacity"}}" class="num">
+      <input type="text" name="location" value="{{.Location}}" placeholder="{{t "rooms.location"}}" style="flex:2">
+      <button class="ghost">{{t "common.save"}}</button>
+    </form>
+    <form method="post" action="/settings/rooms/{{.ID}}/delete" data-confirm="{{t "rooms.delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+    {{with .Slots}}<div class="small muted room-busy">{{range .}}<span class="pill">{{day .Start}} {{clock .Start}}–{{clock .End}}{{with .Title}} · {{.}}{{end}}</span> {{end}}</div>{{end}}
+  </div>
+  {{else}}<p class="muted">{{t "rooms.empty"}}</p>{{end}}
+  <h2>{{t "rooms.add"}}</h2>
+  <form method="post" action="/settings/rooms" class="row evwhen">
+    <input type="text" name="name" required maxlength="200" placeholder="{{t "rooms.name"}}" style="flex:2">
+    <input type="number" name="capacity" min="0" placeholder="{{t "rooms.capacity"}}" class="num">
+    <input type="text" name="location" placeholder="{{t "rooms.location"}}" style="flex:2">
+    <button class="primary">{{icon "plus"}} {{t "rooms.add"}}</button>
+  </form>
+</div>
+{{end}}

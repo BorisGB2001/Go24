@@ -1,0 +1,34 @@
+# boris.gb 2026-10-12 07:30 - HTTPS для мессенджера на dev-сервере: Element работает только в защищённом контексте (https).
+# Сертификаты выпускает собственный центр сертификации Caddy (local_certs); его корневой сертификат
+# пользователь один раз добавляет в доверенные (make dev-ca). В продакшене — Traefik/Caddy с настоящими сертификатами.
+{
+	local_certs
+	skip_install_trust
+	default_sni {$BIND_IP}
+	admin off
+}
+
+# Synapse (клиентский API Matrix)
+https://{$BIND_IP}:8448 {
+	tls internal
+	reverse_proxy synapse:8008
+}
+
+# Element Web (клиент мессенджера)
+https://{$BIND_IP}:8443 {
+	tls internal
+	reverse_proxy element:80
+}
+
+# boris.gb 2026-10-13 10:17 - звонки (GO24DEV-68/69): go24 по https — камера и микрофон доступны браузеру только в защищённом
+# контексте; сессия общая с http://…:8080 (cookie привязана к хосту, не к порту)
+https://{$BIND_IP}:8444 {
+	tls internal
+	reverse_proxy go24:8080
+}
+
+# сигналинг LiveKit (wss); медиа идут напрямую по UDP
+https://{$BIND_IP}:7443 {
+	tls internal
+	reverse_proxy livekit:7880
+}

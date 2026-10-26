@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="go24">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2e7cf6"/>
+      <stop offset="1" stop-color="#7a4cf0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" fill="url(#g)"/>
+  <circle cx="64" cy="50" r="22" fill="#ffffff" fill-opacity=".22"/>
+  <path d="M24 118c4-24 20-36 40-36s36 12 40 36" fill="#ffffff" fill-opacity=".22"/>
+  <text x="64" y="74" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="800" fill="#ffffff">Go24</text>
+</svg>

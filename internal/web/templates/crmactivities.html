@@ -1,0 +1,7 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<div class="row presets">{{range list "overdue" "today" "planned" "all"}}<a class="chip{{if eq . $d.Filter}} on{{end}}" href="/crm/activities?f={{.}}">{{t (print "crm.act_filter." .)}}</a>{{end}}</div>
+<div class="card">{{range $d.Items}}{{template "crmact" (dict "A" . "CanAct" true "ShowCard" true "Back" (print "/crm/activities?f=" $d.Filter))}}{{else}}<div class="empty">{{t "crm.no_activities"}}</div>{{end}}</div>
+{{end}}

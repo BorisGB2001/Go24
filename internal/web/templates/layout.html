@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="{{.Lang}}" data-failed="{{t "common.save_failed"}}" data-copied="{{t "task.copied"}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{if .TitleKey}}{{t .TitleKey}}{{else}}{{.Title}}{{end}} · {{.Portal.Title}}</title>
+<link rel="stylesheet" href="{{asset "css/tokens.css"}}">
+<link rel="stylesheet" href="{{asset "css/icons.css"}}">
+<link rel="stylesheet" href="{{asset "css/app.css"}}">
+<link rel="stylesheet" href="{{asset "css/maillinks.css"}}">
+<link rel="stylesheet" href="{{asset "css/bi.css"}}">
+{{if .Theme}}<link rel="stylesheet" href="/theme/theme.css">{{end}}
+</head>
+<body{{if .Guest}} data-guest{{end}}{{if eq .Presence "dnd"}} data-dnd{{end}}>
+{{if and .User (not .Bare)}}
+<div class="app">
+  <aside class="side">
+    <a class="logo" href="{{if .Guest}}/collabs{{else}}/{{end}}">{{template "portal-logo" .}}</a>
+    {{$n := .Nav}}
+    <nav class="menu" data-menu>
+      {{if .Guest}}
+      {{if .Messenger}}
+      <div class="navitem" data-im-unread><a href="/im" {{if eq $n "im"}}class="on"{{end}}>{{icon "message-circle"}}<span class="lbl">{{t "nav.messenger"}}</span></a>
+        <a href="/im" class="cnt green" data-counter="im" title="{{t "im.unread"}}" hidden></a></div>
+      {{end}}
+      <div class="navitem"><a href="/collabs" {{if eq $n "collabs"}}class="on"{{end}}>{{icon "users-group"}}<span class="lbl">{{t "collab.title"}}</span></a>
+        {{template "collab-counter" .}}</div>
+      <div class="navitem"><a href="/my" {{if eq $n "my"}}class="on"{{end}}>{{icon "checkbox"}}<span class="lbl">{{t "nav.my_tasks"}}</span></a>
+        <a href="/my?view=overdue" class="cnt red" data-counter="overdue" title="{{t "counter.overdue"}}" {{if not .Counters.Overdue}}hidden{{end}}>{{.Counters.Overdue}}</a><a href="/my?view=comments" class="cnt green" data-counter="comments" title="{{t "counter.comments"}}" {{if not .Counters.Comments}}hidden{{end}}>{{.Counters.Comments}}</a></div>
+      <div class="navitem"><a href="/calendar" {{if eq $n "calendar"}}class="on"{{end}}>{{icon "calendar-event"}}<span class="lbl">{{t "calendar.title"}}</span></a></div>
+      {{else}}
+      {{range .Menu}}{{template "menu-entry" .}}{{end}}
+      <details class="msec mhidden" data-sec="hidden" data-menu-hidden{{if not .MenuHidden}} hidden{{end}}>
+        <summary>{{icon "eye-off"}}<span class="lbl">{{t "menu.hidden"}}</span><span class="n">{{len .MenuHidden}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">{{range .MenuHidden}}{{template "menu-entry" .}}{{end}}</div>
+      </details>
+      <div class="menu-tools" data-menu-tools hidden>
+        <div class="menu-edit-tools">
+          <button type="button" class="menu-tool" data-menu-act="add">{{icon "plus"}}<span class="lbl">{{t "menu.add"}}</span></button>
+          {{if .MenuOwn}}<button type="button" class="menu-tool" data-menu-act="reset">{{icon "refresh"}}<span class="lbl">{{t "menu.reset"}}</span></button>{{end}}
+          {{if .User.Admin}}<button type="button" class="menu-tool" data-menu-act="apply-all">{{icon "users"}}<span class="lbl">{{t "menu.apply_all"}}</span></button>
+          <button type="button" class="menu-tool" data-menu-act="reset-all">{{icon "refresh"}}<span class="lbl">{{t "menu.reset_all"}}</span></button>{{end}}
+          <button type="button" class="menu-tool on" data-menu-act="done">{{icon "check"}}<span class="lbl">{{t "menu.done"}}</span></button>
+        </div>
+      </div>
+      <template data-menu-labels>{{range $k := menuLabels}}<span data-l="{{$k}}">{{t (print "menu." $k)}}</span>{{end}}</template>
+      {{end}}
+    </nav>
+    <div class="grow"></div>
+    <div class="sep"></div>
+    <nav class="menu" data-menu>
+      <details class="msec" data-sec="settings" {{if or (eq $n "keys") (eq $n "worktime") (eq $n "notify_settings") (eq $n "notify_bots") (eq $n "disklimits") (eq $n "settings") (eq $n "portal") (eq $n "callsettings") (eq $n "calllinks") (eq $n "telephony")}}open{{end}}>
+        <summary>{{icon "settings"}}<span class="lbl">{{t "nav.sec.settings"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">
+          {{if not .Guest}}<a href="/settings" {{if eq $n "settings"}}class="on"{{end}}><span class="lbl">{{t "settings.all"}}</span></a>
+          <a href="/settings" data-menu-act="edit"><span class="lbl">{{t "menu.edit"}}</span></a>{{end}}
+          <a href="/u/me" {{if eq $n "me"}}class="on"{{end}}><span class="lbl">{{t "nav.my_profile"}}</span></a>
+          <a href="/settings/notifications" {{if eq $n "notify_settings"}}class="on"{{end}}><span class="lbl">{{t "notify.title"}}</span></a>
+          {{if not .Guest}}<a href="/settings/keys" {{if eq $n "keys"}}class="on"{{end}}><span class="lbl">{{t "nav.api_keys"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/portal" {{if eq $n "portal"}}class="on"{{end}}><span class="lbl">{{t "portal.title"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/worktime" {{if eq $n "worktime"}}class="on"{{end}}><span class="lbl">{{t "nav.worktime"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/rooms" {{if eq $n "rooms"}}class="on"{{end}}><span class="lbl">{{t "nav.rooms"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/task-fields" {{if eq $n "task_fields"}}class="on"{{end}}><span class="lbl">{{t "nav.task_fields"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/user-fields" {{if eq $n "user_fields"}}class="on"{{end}}><span class="lbl">{{t "nav.user_fields"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/notify-bots" {{if eq $n "notify_bots"}}class="on"{{end}}><span class="lbl">{{t "notifyout.bots"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/calls" {{if eq $n "callsettings"}}class="on"{{end}}><span class="lbl">{{t "call.settings"}}</span></a>{{end}}
+          {{if not .Guest}}<a href="/settings/call-links" {{if eq $n "calllinks"}}class="on"{{end}}><span class="lbl">{{t "call.ext_my"}}</span></a>{{end}}
+          {{if and .User.Admin .Telephony}}<a href="/settings/telephony" {{if eq $n "telephony"}}class="on"{{end}}><span class="lbl">{{t "tel.title"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/disk" {{if eq $n "disklimits"}}class="on"{{end}}><span class="lbl">{{t "disk.limits"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/webhooks" {{if eq $n "webhooks"}}class="on"{{end}}><span class="lbl">{{t "hooks.title"}}</span></a>{{end}}
+          {{if .User.Admin}}<a href="/settings/events" {{if eq $n "audit"}}class="on"{{end}}><span class="lbl">{{t "audit.title"}}</span></a>{{end}}
+        </div>
+      </details>
+    </nav>
+    {{template "langs" .}}
+  </aside>
+  <div class="main">
+    <header class="top">
+      <form class="search" action="/search">{{icon "search"}}<input type="search" name="q" value="{{.Query}}" placeholder="{{t "search.placeholder"}}"></form>
+      <div class="me">
+        {{with .Timer}}
+        <span class="timer-chip"><a href="/t/{{.TaskKey}}#time" title="{{.TaskTitle}}">{{icon "clock"}} {{.TaskKey}} <b data-timer-since="{{.StartedAt.Unix}}">0:00:00</b></a>
+          <form method="post" action="/timer/stop"><button class="ghost" title="{{t "time.stop"}}">{{icon "player-pause"}}</button></form></span>
+        {{end}}
+        {{if .User.Admin}}
+        <form method="post" action="/admin/mode"><button class="admin-toggle{{if .User.AdminMode}} on{{end}}" title="{{t "admin.hint"}}">{{icon "shield-lock"}} {{t "admin.mode"}}</button></form>
+        {{end}}
+        {{if .WorkdayOn}}{{$w := .Workday}}<details class="workday tsettings"><summary class="wd-{{if $w}}{{$w.State}}{{else}}none{{end}}{{if .Forgotten}} wd-forgotten{{end}}{{if .ReportDue}} wd-report-due{{end}}" title="{{t "workday.title"}}">{{icon "clock"}}
+            <span class="small">{{if not $w}}{{t "workday.none"}}{{else if eq $w.State "running"}}{{dur ($w.Worked now)}}{{else}}{{t (print "workday." $w.State)}}{{end}}</span></summary>
+          <div class="pop"><b>{{t "workday.title"}}</b>
+            {{with $.Forgotten}}<form method="post" action="/worktime/d/{{.UserID}}/{{.Day.Format "2006-01-02"}}" class="wd-forgot">
+              <input type="hidden" name="back" value="{{$.Path}}">
+              <p class="small"><b>{{icon "alert-triangle"}} {{t "workday.forgotten" (day .Day)}}</b> {{t "workday.started"}} {{clock .Started}}</p>
+              <label class="small">{{t "workday.forgotten_end"}}</label><input type="time" name="end" required>
+              <input name="reason" maxlength="1000" required placeholder="{{t "workday.reason"}}">
+              <button>{{icon "circle-check"}} {{t "workday.forgotten_close"}}</button></form>{{end}}
+            {{with $w}}<p class="small muted">{{t "workday.started"}} {{clock .Started}} · {{t "workday.worked"}} {{dur (.Worked now)}}{{if .PauseSecs}} · {{t "workday.pauses"}} {{dur .PauseSecs}}{{end}}</p>{{end}}
+            <form method="post" action="/worktime/day"><input type="hidden" name="back" value="{{.Path}}">
+              {{if not $w}}<button class="primary" name="action" value="start">{{icon "player-play"}} {{t "workday.start"}}</button>
+              {{else if eq $w.State "running"}}<button name="action" value="pause">{{icon "player-pause"}} {{t "workday.pause"}}</button>
+              {{else if eq $w.State "paused"}}<button class="primary" name="action" value="resume">{{icon "player-play"}} {{t "workday.resume"}}</button>
+              {{else}}<button name="action" value="reopen">{{icon "player-play"}} {{t "workday.reopen"}}</button>{{end}}
+            </form>
+            {{if and $w (ne $w.State "done")}}<form method="post" action="/worktime/day"><input type="hidden" name="back" value="{{.Path}}">
+              <textarea name="report" rows="3" maxlength="5000" placeholder="{{t "workday.report"}}"></textarea>
+              <button name="action" value="finish">{{icon "circle-check"}} {{t "workday.finish"}}</button></form>{{end}}
+            {{with $.ReportDue}}<p class="small wd-report"><b>{{icon "file-text"}} {{t "wreport.due" (day .From) (day .To)}}</b> <a href="/worktime/reports/new">{{t "wreport.write"}} →</a></p>{{end}}
+            <p><a href="/worktime">{{t "workday.all"}}</a> · <a href="/worktime/reports">{{t "wreport.title"}}</a></p>
+          </div></details>{{end}}
+        <div hidden data-ring-texts data-calling="{{t "call.ringing" "%s"}}" data-video="{{t "call.video_call"}}" data-audio="{{t "call.audio_call"}}"
+          data-in-chat="{{t "call.in_chat" "%s"}}" data-accept="{{t "call.accept"}}" data-audio-only="{{t "call.accept_audio"}}" data-decline="{{t "call.decline"}}"></div>
+        {{if .Phone}}<div hidden data-phone-texts data-url="{{.PhoneURL}}" data-open="{{t "phone.open"}}" data-calling="{{t "phone.incoming" "%s"}}"
+          data-answer="{{t "phone.answer"}}" data-decline="{{t "phone.decline"}}" data-talking="{{t "phone.talking" "%s"}}" data-hangup="{{t "phone.hangup"}}"></div>
+        <button type="button" class="ghost phonebtn" data-phone-open title="{{t "phone.open"}} · {{.Phone}}" aria-label="{{t "phone.open"}}">{{icon "phone"}}</button>{{end}}
+        <div class="bell"><button type="button" class="ghost" data-bell title="{{t "notify.title"}}" aria-label="{{t "notify.title"}}">{{icon "bell"}}<span class="bcnt" data-counter="notify" {{if not .Unread}}hidden{{end}}>{{.Unread}}</span></button>
+          <div class="bellpop card" data-bellpop hidden></div></div>
+        <button type="button" class="me-btn" data-user="{{.User.UserID}}" title="{{t "profile.my"}}"><span class="pr-ava pr-{{if .Presence}}{{.Presence}}{{else}}online{{end}}">{{ava .User.Name}}</span><span class="small">{{.User.Name}}</span>{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}</button>
+      </div>
+    </header>
+    <main class="content">
+      {{if .User.AdminActive}}<div class="admin-banner">{{icon "shield-lock"}} {{t "admin.banner"}}</div>{{end}}
+      {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+      {{if .VacationRemind}}<div class="flash vacremind">{{icon "plane-departure"}} <span style="flex:1">{{t "vacation.remind"}}</span>
+        <a class="button primary" href="/company/absences?user={{.User.UserID}}&day={{now.Format "2006-01-02"}}#absform">{{t "vacation.remind_add"}}</a>
+        <form method="post" action="/company/vacation-remind-off"><input type="hidden" name="back" value="{{.Path}}"><button class="ghost">{{t "vacation.remind_off"}}</button></form></div>{{end}}
+      {{template "content" .}}
+    </main>
+  </div>
+</div>
+{{else}}
+{{template "content" .}}
+{{end}}
+{{if not .Bare}}
+<script src="{{asset "js/pop.js"}}"></script>
+<script src="{{asset "js/list.js"}}"></script>
+<script src="{{asset "js/menu.js"}}"></script>
+<script src="{{asset "js/ring.js"}}"></script>
+<script src="{{asset "js/callext.js"}}"></script>
+<script src="{{asset "js/mention.js"}}"></script>
+<script src="{{asset "js/forms.js"}}"></script>
+<script src="{{asset "js/widths.js"}}"></script>
+<script src="{{asset "js/people.js"}}"></script>
+<script src="{{asset "js/phone.js"}}"></script>
+<script>
+// live counters for running timers: elements with data-timer-since="<unix seconds>"
+(() => {
+  const els = document.querySelectorAll('[data-timer-since]');
+  if (!els.length) return;
+  const tick = () => els.forEach(el => {
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - Number(el.dataset.timerSince));
+    el.textContent = Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  });
+  tick(); setInterval(tick, 1000);
+})();
+</script>
+{{end}}
+</body>
+</html>
+
+{{/* «Коллабы» in the menu: the person's tasks of their collabs needing attention (red when some are
+overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
+{{define "collab-counter"}}{{$c := .CollabCounters}}{{$n := add $c.Overdue $c.Comments}}<a href="/collabs" class="cnt {{if $c.Overdue}}red{{else}}green{{end}}" data-counter="collabs" data-base="{{$n}}" data-rooms="{{.CollabRooms}}" title="{{t "collab.counter"}}" {{if not $n}}hidden{{end}}>{{$n}}</a>{{end}}
+
+{{define "menu-entry"}}{{$n := .P.Nav}}
+{{if .Custom}}<div class="navitem" data-mid="{{.ID}}" data-title="{{.Custom.Title}}" data-url="{{.Custom.URL}}"{{if .Custom.NewTab}} data-newtab{{end}} draggable="true"><a href="{{.Custom.URL}}"{{if .Custom.NewTab}} target="_blank" rel="noopener"{{end}}{{if eq .P.Path .Custom.URL}} class="on"{{end}}>{{if .Custom.IsLocal}}{{icon "link"}}{{else}}{{icon "external-link"}}{{end}}<span class="lbl">{{.Custom.Title}}</span></a></div>
+{{else}}{{if eq .ID "im"}}
+      <div class="navitem" data-mid="im" draggable="true" data-im-unread><a href="/im" {{if eq $n "im"}}class="on"{{end}}>{{icon "message-circle"}}<span class="lbl">{{t "nav.messenger"}}</span></a>
+        <a href="/im" class="cnt green" data-counter="im" title="{{t "im.unread"}}" hidden></a></div>
+{{else if eq .ID "collabs"}}
+      <div class="navitem" data-mid="collabs" draggable="true"><a href="/collabs" {{if eq $n "collabs"}}class="on"{{end}}>{{icon "users-group"}}<span class="lbl">{{t "collab.title"}}</span></a>
+        {{template "collab-counter" .P}}</div>
+{{else if eq .ID "feed"}}
+      <div class="navitem" data-mid="feed" draggable="true"><a href="/feed" {{if eq $n "feed"}}class="on"{{end}}>{{icon "news"}}<span class="lbl">{{t "nav.feed"}}</span></a>
+        <a href="/feed?view=important" class="cnt red" data-counter="feed" title="{{t "feed.unread"}}" {{if not .P.FeedUnread}}hidden{{end}}>{{.P.FeedUnread}}</a></div>
+{{else if eq .ID "calendar"}}
+      <div class="navitem" data-mid="calendar" draggable="true"><a href="/calendar" {{if eq $n "calendar"}}class="on"{{end}}>{{icon "calendar-event"}}<span class="lbl">{{t "calendar.title"}}</span></a></div>
+{{else if eq .ID "crm"}}
+      <div class="navitem" data-mid="crm" draggable="true"><a href="/crm/deals" {{if hasPrefix $n "crm_"}}class="on"{{end}}>{{icon "users"}}<span class="lbl">{{t "crm.title"}}</span></a></div>
+{{else if eq .ID "marketing"}}
+      <div class="navitem" data-mid="marketing" draggable="true"><a href="/marketing" {{if eq $n "marketing"}}class="on"{{end}}>{{icon "speakerphone"}}<span class="lbl">{{t "mkt.title"}}</span></a></div>
+{{else if eq .ID "store"}}
+      <div class="navitem" data-mid="store" draggable="true"><a href="/store/docs" {{if hasPrefix $n "store_"}}class="on"{{end}}>{{icon "building-warehouse"}}<span class="lbl">{{t "stock.title"}}</span></a></div>
+{{else if eq .ID "mail"}}
+      <div class="navitem" data-mid="mail" draggable="true" data-mail-unread><a href="/mail" {{if eq $n "mail"}}class="on"{{end}}>{{icon "send"}}<span class="lbl">{{t "mail.title"}}</span></a>
+        <a href="/mail" class="cnt" data-counter="mail" title="{{t "mail.unread_n"}}" {{if not .P.MailUnread}}hidden{{end}}>{{.P.MailUnread}}</a>
+        <template data-mail-labels><span data-l="new">{{t "mail.n.new"}}</span><span data-l="open">{{t "mail.n.open"}}</span><span data-l="read">{{t "mail.a.read"}}</span><span data-l="delete">{{t "mail.a.delete"}}</span><span data-l="flag">{{t "mail.flag"}}</span><span data-l="close">{{t "mail.n.close"}}</span><span data-l="no_subject">{{t "mail.no_subject"}}</span></template></div>
+{{else if eq .ID "openlines"}}
+      <div class="navitem" data-mid="openlines" draggable="true"><a href="/openlines" {{if eq $n "openlines"}}class="on"{{end}}>{{icon "message-circle"}}<span class="lbl">{{t "ol.title"}}</span></a></div>
+{{else if eq .ID "bp"}}
+      <div class="navitem" data-mid="bp" draggable="true"><a href="/bp" {{if eq $n "bp"}}class="on"{{end}}>{{icon "hierarchy-2"}}<span class="lbl">{{t "bp.title"}}</span></a></div>
+{{else if eq .ID "kb"}}
+      <div class="navitem" data-mid="kb" draggable="true"><a href="/kb" {{if eq $n "kb"}}class="on"{{end}}>{{icon "files"}}<span class="lbl">{{t "kb.title"}}</span></a></div>
+{{else if eq .ID "sites"}}
+      <div class="navitem" data-mid="sites" draggable="true"><a href="/sites" {{if eq $n "sites"}}class="on"{{end}}>{{icon "world"}}<span class="lbl">{{t "site.title"}}</span></a></div>
+{{else if eq .ID "booking"}}
+      <div class="navitem" data-mid="booking" draggable="true"><a href="/booking" {{if eq $n "booking"}}class="on"{{end}}>{{icon "clock"}}<span class="lbl">{{t "booking.title"}}</span></a></div>
+{{else if eq .ID "bi"}}
+      <div class="navitem" data-mid="bi" draggable="true"><a href="/bi" {{if eq $n "bi"}}class="on"{{end}}>{{icon "chart-bar"}}<span class="lbl">{{t "bi.title"}}</span></a></div>
+{{else if eq .ID "sign"}}
+      <div class="navitem" data-mid="sign" draggable="true"><a href="/sign" {{if eq $n "sign"}}class="on"{{end}}>{{icon "signature"}}<span class="lbl">{{t "sign.title"}}</span></a></div>
+{{else if eq .ID "apps"}}
+      <div class="navitem" data-mid="apps" draggable="true"><a href="/apps" {{if eq $n "apps"}}class="on"{{end}}>{{icon "layout-grid"}}<span class="lbl">{{t "apps.list"}}</span></a></div>
+{{else if .App}}
+      <div class="navitem" data-mid="{{.ID}}" draggable="true"><a href="{{.App.URL}}" {{if eq .P.Path .App.URL}}class="on"{{end}}>{{icon "layout-grid"}}<span class="lbl">{{.App.Title}}</span></a></div>
+{{else if eq .ID "tasks"}}
+      <details class="msec" data-mid="tasks" draggable="true" data-sec="tasks" {{if or (eq $n "my") (eq $n "plan") (eq $n "deadlines") (eq $n "control") (eq $n "tasks") (eq $n "templates") (eq $n "trash") (eq $n "efficiency") (eq $n "flows") (eq $n "taskbi")}}open{{end}}>
+        <summary>{{icon "checkbox"}}<span class="lbl">{{t "nav.sec.tasks"}}</span>
+          <span class="cnt red" data-counter="overdue" {{if not .P.Counters.Overdue}}hidden{{end}}>{{.P.Counters.Overdue}}</span><span class="cnt green" data-counter="comments" {{if or .P.Counters.Overdue (not .P.Counters.Comments)}}hidden{{end}}>{{.P.Counters.Comments}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">
+          <div class="navitem"><a href="/my" {{if eq $n "my"}}class="on"{{end}}><span class="lbl">{{t "nav.my_tasks"}}</span></a>
+            <a href="/my?view=overdue" class="cnt red" data-counter="overdue" title="{{t "counter.overdue"}}" {{if not .P.Counters.Overdue}}hidden{{end}}>{{.P.Counters.Overdue}}</a><a href="/my?view=open" class="cnt" data-counter="open" title="{{t "counter.open"}}" {{if or .P.Counters.Overdue (not .P.Counters.Open)}}hidden{{end}}>{{.P.Counters.Open}}</a><a href="/my?view=comments" class="cnt green" data-counter="comments" title="{{t "counter.comments"}}" {{if not .P.Counters.Comments}}hidden{{end}}>{{.P.Counters.Comments}}</a></div>
+          <a href="/deadlines" {{if eq $n "deadlines"}}class="on"{{end}}><span class="lbl">{{t "nav.deadlines"}}</span></a>
+          <a href="/plan" {{if eq $n "plan"}}class="on"{{end}}><span class="lbl">{{t "nav.plan"}}</span></a>
+          <div class="navitem"><a href="/my?role=creator" {{if eq $n "control"}}class="on"{{end}}><span class="lbl">{{t "nav.assigned"}}</span></a>
+            <a href="/my?view=control" class="cnt" data-counter="to_control" title="{{t "counter.to_control"}}" {{if not .P.Counters.ToControl}}hidden{{end}}>{{.P.Counters.ToControl}}</a></div>
+          <a href="/tasks" {{if eq $n "tasks"}}class="on"{{end}}><span class="lbl">{{t "nav.all_tasks"}}</span></a>
+          <a href="/my?view=favorites"><span class="lbl">{{t "mark.favorites"}}</span></a>
+          {{range $.P.ActingFor}}<a href="/my?as={{.ID}}" {{if eq $n (print "as:" .ID)}}class="on"{{end}} title="{{t "acting.tasks_for" .Name}}"><span class="lbl">{{t "acting.tasks_for" .Name}}</span></a>{{end}}
+          <a href="/flows" {{if eq $n "flows"}}class="on"{{end}}><span class="lbl">{{t "flows.title"}}</span></a>
+          <a href="/tasks/efficiency" {{if eq $n "efficiency"}}class="on"{{end}}><span class="lbl">{{t "eff.title"}}</span></a>
+          <a href="/tasks/bi" {{if eq $n "taskbi"}}class="on"{{end}}><span class="lbl">{{t "bi.title"}}</span></a>
+          <a href="/templates" {{if eq $n "templates"}}class="on"{{end}}><span class="lbl">{{t "templates.title"}}</span></a>
+          <a href="/tasks/trash" {{if eq $n "trash"}}class="on"{{end}}><span class="lbl">{{t "trash.title"}}</span></a>
+        </div>
+      </details>
+{{else if eq .ID "projects"}}
+      <details class="msec" data-mid="projects" draggable="true" data-sec="projects" {{if eq $n "projects"}}open{{end}}>
+        <summary>{{icon "folders"}}<span class="lbl">{{t "nav.projects"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">
+          <a href="/projects" {{if and (eq $n "projects") (not $.P.NavProject)}}class="on"{{end}}><span class="lbl">{{t "nav.all_projects"}}</span></a>
+          {{range $.P.NavProjects}}<a href="/p/{{.Key}}" class="proj{{if eq .Key $.P.NavProject}} on{{end}}" title="{{.Name}}"><span class="lbl">{{.Name}}</span>{{if .OpenTasks}}<span class="n">{{.OpenTasks}}</span>{{end}}</a>{{end}}
+        </div>
+      </details>
+{{else if eq .ID "company"}}
+      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
+        <summary>{{icon "users"}}<span class="lbl">{{t "nav.sec.company"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">
+          <a href="/company" {{if eq $n "company"}}class="on"{{end}}><span class="lbl">{{t "nav.employees"}}</span></a>
+          <a href="/company/structure" {{if eq $n "structure"}}class="on"{{end}}><span class="lbl">{{t "nav.structure"}}</span></a>
+          <a href="/company/changes" {{if eq $n "staffchanges"}}class="on"{{end}}><span class="lbl">{{t "staff.title"}}</span></a>
+          <a href="/company/thanks" {{if eq $n "thanks"}}class="on"{{end}}><span class="lbl">{{t "gratitude.page"}}</span></a>
+          <a href="/company/absences" {{if eq $n "absences"}}class="on"{{end}}><span class="lbl">{{t "absence.title"}}</span></a>
+          <a href="/company/birthdays" {{if eq $n "birthdays"}}class="on"{{end}}><span class="lbl">{{t "birthdays.title"}}</span></a>
+          <a href="/worktime" {{if eq $n "timeman"}}class="on"{{end}}><span class="lbl">{{t "workday.page"}}</span></a>
+          <a href="/worktime/reports" {{if eq $n "workreports"}}class="on"{{end}}><span class="lbl">{{t "wreport.title"}}</span></a>
+          <a href="/company/bi" {{if eq $n "companybi"}}class="on"{{end}}><span class="lbl">{{t "bi.title"}}</span></a>
+          {{if .P.CanInvite}}<a href="/company/invite" {{if eq $n "invite"}}class="on"{{end}}><span class="lbl">{{t "invite.title"}}</span></a>{{end}}
+        </div>
+      </details>
+{{else if eq .ID "files"}}
+      <details class="msec" data-mid="files" draggable="true" data-sec="files" {{if or (eq $n "files") (eq $n "storages") (eq $n "disk") (eq $n "docs") (eq $n "boards")}}open{{end}}>
+        <summary>{{icon "files"}}<span class="lbl">{{t "nav.sec.files"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
+        <div class="msub">
+          <a href="/disk/my" {{if eq $n "disk"}}class="on"{{end}}><span class="lbl">{{t "disk.title"}}</span></a>
+          <a href="/docs" {{if eq $n "docs"}}class="on"{{end}}><span class="lbl">{{t "docs.title"}}</span></a>
+          <a href="/boards" {{if eq $n "boards"}}class="on"{{end}}><span class="lbl">{{t "dboard.title"}}</span></a>
+          <a href="/files" {{if eq $n "files"}}class="on"{{end}}><span class="lbl">{{t "nav.files"}}</span></a>
+          <a href="/settings/storages" {{if eq $n "storages"}}class="on"{{end}}><span class="lbl">{{t "nav.storages"}}</span></a>
+        </div>
+      </details>
+{{end}}{{end}}
+{{end}}
+
+{{define "portal-logo"}}{{if .Portal.HasLogo}}<img class="plogo" src="/portal/logo" alt="">{{else}}<b>24</b>{{end}}<span class="pname">{{.Portal.Title}}</span>{{end}}
+
+{{define "langs"}}
+{{if gt (len .Langs) 1}}
+<div class="langs" title="{{t "nav.language"}}">
+  {{range .Langs}}<a href="/lang/{{.Code}}" {{if eq .Code $.Lang}}class="on"{{end}}>{{.Name}}</a>{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "storageSelect"}}
+<select name="storage" style="width:auto" title="{{t "col.storage"}}">
+  <option value="">{{t "storages.builtin"}}</option>
+  {{range .}}<option value="{{.ID}}">{{.Name}}{{if .Shared}} ({{t "storages.shared"}}){{end}}</option>{{end}}
+</select>
+{{end}}
+
+{{define "bulkbar"}}{{$b := .}}
+<form id="bulk" method="post" action="/tasks/bulk" class="card bulkbar row" data-bulk>
+  <input type="hidden" name="back" value="{{.Back}}">
+  <b>{{t "bulk.title"}}</b> <span class="muted small" data-bulk-count></span>
+  <select name="op" data-bulk-op>{{range .Ops}}<option value="{{.}}">{{t (print "bulk.op." .)}}</option>{{end}}</select>
+  <input type="datetime-local" name="deadline" data-bulk-for="deadline">
+  <div data-bulk-for="responsible accomplice auditor">{{template "upick" (upick "user_id" "" .Users)}}</div>
+  <input type="text" name="tag" maxlength="50" placeholder="{{t "tags.add"}}" data-bulk-for="tag">
+  <button class="primary">{{t "bulk.apply"}}</button>
+</form>
+{{end}}
+
+{{define "tasklist"}}{{$l := .}}
+{{if .Tasks}}
+<div class="tlist-wrap">
+<table class="tlist" data-cols="tasks">
+  <thead><tr>
+    <th class="gearcol">{{if .Gear}}<details class="colpick"><summary title="{{t "list.columns"}}">{{icon "settings"}}</summary>
+      <div class="pop"><b>{{t "list.columns"}}</b>
+        <form method="post" action="/prefs/columns" data-colpick>
+          {{range .All}}<label class="check"><input type="checkbox" name="cols" value="{{.}}" {{if index $l.Cols .}}checked{{end}}> {{t (print "col.list." .)}}</label>{{end}}
+          <noscript><button>{{t "common.save"}}</button></noscript>
+        </form></div></details>{{end}}</th>
+    {{if .Gear}}<th class="bulkcol"><input type="checkbox" data-bulk-all title="{{t "bulk.all"}}"></th>{{end}}
+    <th data-col="id" {{if not (index .Cols "id")}}hidden{{end}}>ID</th>
+    <th data-col="title">{{t "col.list.title"}}</th>
+    {{range .All}}{{if ne . "id"}}<th data-col="{{.}}" {{if not (index $l.Cols .)}}hidden{{end}}>{{t (print "col.list." .)}}</th>{{end}}{{end}}
+  </tr></thead>
+  <tbody>
+  {{range .Tasks}}{{$t := .}}
+  <tr>
+    <td class="gearcol"></td>
+    {{if $l.Gear}}<td class="bulkcol"><input type="checkbox" name="task" value="{{.Key}}" form="bulk"></td>{{end}}
+    <td data-col="id" class="tkey" {{if not (index $l.Cols "id")}}hidden{{end}}>{{.Key}}</td>
+    <td>{{if .Pinned}}<span class="markic" title="{{t "mark.pinned"}}">{{icon "mark-pin"}}</span>{{end}}{{if .Favorite}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}<a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}</a>{{range .Tags}} <a class="tag small" href="/tasks?tag={{.}}">#{{.}}</a>{{end}}{{if .Muted}} <span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}{{if .Unread}} <a href="/t/{{.Key}}" class="newcmt" title="{{t "counter.comments_task" .Unread}}">{{icon "message-circle"}} {{.Unread}}</a>{{end}}
+      {{if .SubTotal}} <a href="/t/{{.Key}}#subtasks" class="subcnt{{if eq .SubDone .SubTotal}} done{{end}}" title="{{t "subtasks.count" .SubDone .SubTotal}}">{{icon "hierarchy-2"}} {{.SubDone}}/{{.SubTotal}}</a>{{end}}
+      {{if eq .Priority 2}} <span class="prio" title="{{t "task.high_priority"}}">{{icon "flame"}}</span>{{end}}
+      {{if .ParentKey}}<div class="small muted">{{icon "hierarchy-2"}} {{.ParentKey}} {{.ParentTitle}}</div>{{end}}</td>
+    <td data-col="status" {{if not (index $l.Cols "status")}}hidden{{end}}><span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span></td>
+    <td data-col="activity" class="small" {{if not (index $l.Cols "activity")}}hidden{{end}}>{{datetime .UpdatedAt}}</td>
+    <td data-col="deadline" {{if not (index $l.Cols "deadline")}}hidden{{end}}>{{with date .Deadline}}<span class="dl{{if $t.Overdue}} over{{end}}">{{.}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td data-col="creator" {{if not (index $l.Cols "creator")}}hidden{{end}}>{{person .CreatorName}}</td>
+    <td data-col="responsible" {{if not (index $l.Cols "responsible")}}hidden{{end}}>{{person .ResponsibleName}}{{guestMark .ResponsibleID}}</td>
+    <td data-col="project" {{if not (index $l.Cols "project")}}hidden{{end}}><a href="/p/{{.ProjectKey}}">{{.ProjectKey}}</a></td>
+    <td data-col="priority" {{if not (index $l.Cols "priority")}}hidden{{end}}>{{t (print "priority." .Priority)}}</td>
+    <td data-col="created" class="small" {{if not (index $l.Cols "created")}}hidden{{end}}>{{datetime .CreatedAt}}</td>
+    <td data-col="closed" class="small" {{if not (index $l.Cols "closed")}}hidden{{end}}>{{with date .ClosedAt}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td data-col="plan" class="small" {{if not (index $l.Cols "plan")}}hidden{{end}}>{{with .StartPlan}}{{day .}}{{end}}{{if or .StartPlan .EndPlan}} – {{end}}{{with .EndPlan}}{{day .}}{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">{{icon "circle-check"}} {{t "tasks.empty"}}</div>
+{{end}}
+{{end}}
+
+{{define "pviews"}}{{$p := .P}}{{$on := .On}}
+  <a href="/p/{{$p.Key}}" {{if eq $on "list"}}class="on"{{end}}>{{icon "list-check"}} {{t "tabs.list"}}</a>
+  {{if $p.Scrum}}
+  <a href="/p/{{$p.Key}}/scrum" {{if eq $on "scrum"}}class="on"{{end}}>{{icon "layout-kanban"}} {{t "tabs.planning"}}</a>
+  <a href="/p/{{$p.Key}}/board" {{if eq $on "board"}}class="on"{{end}}>{{icon "player-play"}} {{t "tabs.active_sprint"}}</a>
+  <a href="/p/{{$p.Key}}/sprints" {{if eq $on "sprints"}}class="on"{{end}}>{{icon "history"}} {{t "tabs.sprints_done"}}</a>
+  <a href="/p/{{$p.Key}}/dod" {{if eq $on "dod"}}class="on"{{end}}>{{icon "list-check"}} {{t "tabs.scrum_team"}}</a>
+  {{else}}
+  <a href="/p/{{$p.Key}}/board" {{if eq $on "board"}}class="on"{{end}}>{{icon "layout-kanban"}} {{t "tabs.kanban"}}</a>
+  {{end}}
+  <a href="/p/{{$p.Key}}/gantt" {{if eq $on "gantt"}}class="on"{{end}}>{{icon "calendar-event"}} {{t "tabs.gantt"}}</a>
+{{end}}
+
+{{define "pcontacts"}}{{$p := .P}}
+  {{with .Matrix}}<span class="k">Matrix</span><span>{{if $.Element}}<a href="{{$.Element}}/#/user/{{.}}" target="_blank" rel="noopener">{{.}}</a>{{else}}{{.}}{{end}}</span>{{end}}
+  {{with $p.Telegram}}<span class="k">Telegram</span><span><a href="{{$p.TelegramLink}}" target="_blank" rel="noopener">{{.}}</a></span>{{end}}
+  {{with $p.WhatsApp}}<span class="k">WhatsApp</span><span><a href="{{$p.WhatsAppLink}}" target="_blank" rel="noopener">{{.}}</a></span>{{end}}
+  {{with $p.Website}}<span class="k">{{t "profile.website"}}</span><span><a href="{{.}}" target="_blank" rel="noopener nofollow">{{.}}</a></span>{{end}}
+{{end}}
+
+{{define "pcard"}}{{$p := .P}}
+<div class="pcard">
+  <div class="pc-head">{{photo $p.Name $p.PhotoURL true}}
+    <div><b>{{$p.FullName}}</b>{{if $p.Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}<div class="muted small">{{with $p.Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</div>
+      {{range $p.Departments}}<div class="small">{{icon "hierarchy-2"}} {{.Name}}</div>{{end}}</div></div>
+  <div class="props small">
+    {{with $p.Email}}<span class="k">E-mail</span><span><a href="mailto:{{.}}">{{.}}</a></span>{{end}}
+    {{with $p.MobilePhone}}<span class="k">{{t "profile.mobile_phone"}}</span><span><a href="tel:{{.}}">{{.}}</a></span>{{end}}
+    {{with $p.WorkPhone}}<span class="k">{{t "profile.work_phone"}}</span><span><a href="tel:{{.}}">{{.}}</a></span>{{end}}
+    {{with $p.InnerPhone}}<span class="k">{{t "profile.inner_phone"}}</span><span><a href="tel:{{.}}">{{.}}</a></span>{{end}}
+    {{template "pcontacts" (dict "P" $p "Matrix" .MatrixID "Element" .ElementURL)}}
+    {{if $p.Birthday}}<span class="k">{{t "profile.birthday"}}</span><span>{{bday (deref $p.Birthday) $p.BirthdayYear}}</span>{{end}}
+    {{if not .Me}}<span class="k">{{t "presence.title"}}</span><span class="pr-line" data-presence="{{$p.ID}}" data-presence-text></span>{{end}}
+    {{with .Absent}}<span class="k">{{t "absence.now"}}</span><span><span class="pill abs-{{.Kind}}">{{t (print "absence.kind." .Kind)}}</span> {{t "absence.until"}} {{day .To}}</span>{{end}}
+  </div>
+  {{if .Me}}<form method="post" action="/presence" class="row pc-presence small"><b>{{t "presence.title"}}</b>
+    <button name="status" value="" class="ghost{{if eq .Presence ""}} on{{end}}"><i class="pr-dot pr-online"></i> {{t "presence.set_online"}}</button>
+    <button name="status" value="away" class="ghost{{if eq .Presence "away"}} on{{end}}"><i class="pr-dot pr-away"></i> {{t "presence.set_away"}}</button>
+    <button name="status" value="dnd" class="ghost{{if eq .Presence "dnd"}} on{{end}}" title="{{t "presence.dnd_hint"}}"><i class="pr-dot pr-dnd"></i> {{t "presence.set_dnd"}}</button></form>{{end}}
+  <div class="row pc-actions">
+    <a href="/u/{{$p.ID}}" class="button">{{icon "user"}} {{t "profile.open"}}</a>
+    {{if and .MatrixID (not .Me)}}<a href="/im/direct?user={{$p.ID}}" class="button">{{icon "message-circle"}} {{t "profile.write"}}</a>{{end}}
+    {{if and .MatrixID (not .Me) .Calls}}<a href="/call/user?user={{$p.ID}}&amp;video=0" class="button" target="_blank" rel="noopener" title="{{t "call.audio_call"}}">{{icon "phone"}}</a>
+    <a href="/call/user?user={{$p.ID}}&amp;video=1" class="button" target="_blank" rel="noopener" title="{{t "call.video_call"}}">{{icon "video"}}</a>{{end}}
+    {{if .Me}}<a href="/u/{{$p.ID}}#pedit" class="button">{{icon "edit"}} {{t "task.change"}}</a>
+    <form method="post" action="/logout"><button class="ghost">{{icon "logout"}} {{t "auth.logout"}}</button></form>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* «Видеовстреча через …» (callext.js): Q — the call's place (task=…, room=…), the invitation goes there; Fill — the
+   field of the form the link goes into (the place of a meeting, an activity's text); hidden until a service is there */}}
+{{define "callext"}}<details class="callpop callext" data-call-ext="{{.Q}}"{{with .Fill}} data-fill="{{.}}"{{end}} hidden><summary class="button ghost" title="{{t "call.ext_meet"}}">{{icon "video"}}<span class="lbl"> {{t "call.ext_meet_short"}}</span></summary>
+  <div class="pop"><b class="small">{{t "call.ext_meet"}}</b><div class="callext-list" data-call-ext-list></div><a class="small" href="/settings/call-links">{{t "call.ext_my"}}</a></div></details>{{end}}
+
+{{define "keep"}}{{range .}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}{{end}}
+{{/* the task parameters about subtasks and the result (tasks.Params) */}}
+{{define "params"}}<label class="check"><input type="checkbox" name="dates_from_subtasks" {{if .DatesFromSubtasks}}checked{{end}}> {{t "form.dates_from_subtasks"}}</label>
+    <label class="check"><input type="checkbox" name="auto_complete" {{if .AutoComplete}}checked{{end}}> {{t "form.auto_complete"}}</label>
+    <label class="check"><input type="checkbox" name="result_required" {{if .ResultRequired}}checked{{end}}> {{t "form.result_required"}}</label>{{end}}
+
+{{/* the one task form: a new task and «Изменить» in the card (web.taskForm) */}}
+{{define "taskform"}}{{$f := .}}
+<form method="post" action="{{.Action}}" class="taskform">
+  {{if not (or .New .Template)}}{{template "keep" (keepOf .Card "title" "description" "responsible" "priority" "deadline" "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required")}}
+  <input type="hidden" name="people" value="1">{{end}}
+  {{if and .New .TemplateID}}<input type="hidden" name="template" value="{{.TemplateID}}">{{if .TemplateSubs}}<p class="small muted">{{icon "hierarchy-2"}} {{t "templates.with_subtasks" .TemplateSubs}}</p>{{end}}{{end}}
+  {{if .TemplateParent}}<input type="hidden" name="template_parent" value="{{.TemplateParent}}">{{end}}
+  {{if and .New .CRM}}<input type="hidden" name="crm" value="{{.CRM}}">{{end}}
+  {{if and .New .Copy}}<input type="hidden" name="copy" value="{{.Copy}}"><p class="small muted">{{icon "copy"}} {{t "task.copy_of" .Copy}}</p>{{end}}
+  {{if and .New .IM}}<input type="hidden" name="im_room" value="{{.IM.Room}}"><input type="hidden" name="im_event" value="{{.IM.Event}}"><p class="small muted">{{icon "message-circle"}} {{t "task.from_message" .IM.Sender}}</p>{{end}}
+  {{if and .New .Mail}}<input type="hidden" name="mail" value="{{.Mail.ID}}"><p class="small muted">{{icon "mail"}} {{t "task.from_letter" .Mail.From}}{{if .MailFiles}} · {{icon "paperclip"}} {{t "task.from_letter_files" .MailFiles}}{{end}}</p>{{end}}
+  <input type="text" name="title" class="ntitle" required maxlength="500" value="{{.Title}}" placeholder="{{t "task.title_placeholder"}}" {{if or .New .Template}}autofocus{{end}}>
+  <textarea name="description" rows="5" placeholder="{{t "form.description"}}" data-mention>{{.Description}}</textarea>
+  <div class="tf-grid">
+    {{if or .New .Template}}
+    <label>{{t "props.project"}}</label>
+    <select name="project" required>{{range .Projects}}<option value="{{.Key}}" {{if eq .Key $f.Project}}selected{{end}}{{if .Collab}} data-collab{{end}}>{{.Name}}</option>{{end}}</select>
+    {{end}}
+    <label data-nnu {{if .ForNewUsers}}hidden{{end}}>{{t "props.responsible"}}</label>
+    <div data-nnu {{if .ForNewUsers}}hidden{{end}}>{{template "upick" (upick "responsible" $f.Responsible .Users "required" "collab" .CollabKey)}}</div>
+    <label>{{t "props.deadline_full"}}</label>
+    {{if .Template}}<div class="row tf-after"><span class="muted">{{t "templates.deadline_after"}}</span>
+      <input type="number" name="deadline_days" min="0" max="3650" value="{{if or .DeadlineDays .DeadlineHours}}{{.DeadlineDays}}{{end}}"> <span>{{t "templates.days"}}</span>
+      <input type="number" name="deadline_hours" min="0" max="23" value="{{if .DeadlineHours}}{{.DeadlineHours}}{{end}}"> <span>{{t "templates.hours"}}</span></div>
+    {{else}}<input type="datetime-local" name="deadline" value="{{dtinput .Deadline}}" {{if .Card.DatesFollow}}disabled title="{{t "task.dates_from_subtasks_hint"}}"{{end}}>{{end}}
+    <label>{{t "form.priority"}}</label>
+    <select name="priority">{{range $p := list "0" "1" "2"}}<option value="{{$p}}" {{if eq $p (printf "%d" $f.Priority)}}selected{{end}}>{{t (print "priority." $p)}}</option>{{end}}</select>
+    <label>{{t "props.accomplices"}}</label>{{template "upick" (upick "accomplices" .Accomplices .Users "multi" "collab" .CollabKey)}}
+    <label>{{t "props.auditors"}}</label>{{template "upick" (upick "auditors" .Auditors .Users "multi" "collab" .CollabKey)}}
+    {{if or .New .Template}}
+    <label>{{t "checklist.title"}}</label>
+    <textarea name="checklist" rows="3" placeholder="{{t "form.checklist_hint"}}">{{.Checklist}}</textarea>
+    {{end}}
+    {{if .New}}
+    <label>{{t "form.parent"}}</label>
+    <input type="text" name="parent" value="{{.Parent}}" placeholder="{{t "form.parent_hint"}}">
+    {{end}}
+  </div>
+  <div class="tf-checks">
+    <label class="check"><input type="checkbox" name="requires_control" {{if .Control}}checked{{end}}> {{t "form.requires_control"}}</label>
+    <label class="check"><input type="checkbox" name="allow_change_deadline" {{if .AllowDeadline}}checked{{end}}> {{t "form.allow_change_deadline"}}</label>
+    <label class="check"><input type="checkbox" name="match_work_time" {{if .MatchWorkTime}}checked{{end}}> {{t "form.match_work_time"}}</label>
+    {{template "params" .Params}}
+    {{if not .Template}}<label class="check"><input type="checkbox" name="no_efficiency" {{if .NoEfficiency}}checked{{end}}> {{t "form.no_efficiency"}}</label>
+    {{if not .New}}<input type="hidden" name="efficiency_form" value="1">{{end}}{{end}}
+  </div>
+  {{if and .Template (not .TemplateParent)}}<label class="check" title="{{t "templates.for_new_users_hint"}}"><input type="checkbox" name="for_new_users" data-new-users {{if .ForNewUsers}}checked{{end}}> {{icon "user-plus"}} {{t "templates.for_new_users"}}</label>
+  <p class="muted small" data-nnu-hint {{if not .ForNewUsers}}hidden{{end}}>{{t "templates.for_new_users_hint"}}</p>{{end}}
+  {{if and (or .New .Template) (not .TemplateParent)}}<div data-nnu {{if .ForNewUsers}}hidden{{end}}>{{template "repeat" .}}</div>{{end}}
+  <p class="row">{{if .New}}<button class="primary">{{icon "plus"}} {{t "task.create"}}</button><a href="{{.Cancel}}" class="button">{{t "common.cancel"}}</a>
+    {{else if .Template}}<button class="primary">{{t "common.save"}}</button><a href="{{.Cancel}}" class="button">{{t "common.cancel"}}</a>
+    {{else}}<button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-hide="edit">{{t "common.cancel"}}</button>{{end}}</p>
+</form>
+{{end}}
+
+{{/* «Повторять задачу»: the schedule of a regular task (the portal REPLICATE_PARAMS) */}}
+{{define "repeat"}}{{$r := .Repeat}}
+<fieldset class="repeat" data-repeat>
+  <label class="check"><input type="checkbox" name="repeat" data-repeat-on {{if $r.On}}checked{{end}}> {{t "repeat.on"}}</label>
+  <div class="tf-grid" data-repeat-body {{if not $r.On}}hidden{{end}}>
+    {{if .New}}<p class="muted small tf-wide">{{t "repeat.new_hint"}}</p>{{end}}
+    <label>{{t "repeat.period"}}</label>
+    <div class="row"><select name="period" data-period>{{range list "daily" "weekly" "monthly" "yearly"}}<option value="{{.}}" {{if eq . $r.Period}}selected{{end}}>{{t (print "repeat.period." .)}}</option>{{end}}</select>
+      <span class="muted">{{t "repeat.every"}}</span><input type="number" name="every" min="1" max="365" value="{{$r.Every}}" class="num"></div>
+    <label data-for="daily"></label><label class="check" data-for="daily"><input type="checkbox" name="workdays_only" {{if $r.WorkdaysOnly}}checked{{end}}> {{t "repeat.workdays_only"}}</label>
+    <label data-for="weekly">{{t "repeat.week_days"}}</label>
+    <div class="row wdays" data-for="weekly">{{range $d := list "1" "2" "3" "4" "5" "6" "7"}}<label class="check"><input type="checkbox" name="week_days" value="{{$d}}" {{if hasInt $r.WeekDays $d}}checked{{end}}> {{t (print "wd." $d)}}</label>{{end}}</div>
+    <label data-for="yearly">{{t "repeat.month"}}</label>
+    <select name="year_month" data-for="yearly">{{range $m := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12"}}<option value="{{$m}}" {{if eq $m (printf "%d" $r.YearMonth)}}selected{{end}}>{{t (print "month." $m)}}</option>{{end}}</select>
+    <label data-for="monthly yearly">{{t "repeat.month_day"}}</label>
+    <input type="number" name="month_day" min="1" max="31" value="{{$r.MonthDay}}" class="num" data-for="monthly yearly">
+    <label>{{t "repeat.at"}}</label><input type="time" name="at" value="{{$r.At}}" class="num">
+    <label>{{t "repeat.starts_on"}}</label><input type="date" name="starts_on" value="{{$r.StartsOn.Format "2006-01-02"}}">
+    <label>{{t "repeat.until"}}</label>
+    <div class="row"><input type="date" name="ends_on" value="{{with $r.EndsOn}}{{.Format "2006-01-02"}}{{end}}">
+      <span class="muted">{{t "repeat.or_times"}}</span><input type="number" name="times" min="1" value="{{with $r.Times}}{{.}}{{end}}" class="num"></div>
+  </div>
+</fieldset>
+{{end}}
+
+{{/* the people picker of every form (web.userPick, static/js/people.js) entity-selector: chips of
+   the chosen people and a field to search by typing; the list opens with «Последние», «Отделы», «Все» */}}
+{{define "upick"}}
+<div class="upick{{if .Multiple}} multi{{end}}" data-upick data-name="{{.Name}}"{{if .Multiple}} data-multiple{{end}}{{if .Required}} data-required{{end}}{{if .Submit}} data-submit{{end}}{{if .Self}} data-self{{end}}{{if .Messenger}} data-im{{end}}{{if .Collab}} data-collab="{{.Collab}}"{{end}}{{if .Missing}} data-missing{{end}}{{if .Depts}} data-dept-chip{{end}}
+  data-rm-title="{{t "common.remove"}}" data-tabs="{{t "upick.recent"}}|{{t "upick.depts"}}|{{t "upick.all"}}" data-empty="{{t "upick.empty"}}" data-more="{{t "upick.more"}}" data-dept-all="{{t "upick.dept_all"}}"
+  data-in-dept="{{t "upick.in_dept"}}" data-everywhere="{{t "upick.everywhere"}}" data-guest-mark="{{t "collab.guest"}}">
+  {{range .Extra}}<span hidden data-extra="{{.ID}}">{{.Name}}</span>{{end}}
+  {{range .Sel}}<span class="upick-chip" data-id="{{.ID}}"><span class="upick-name">{{.Name}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}</span><input type="hidden" name="{{$.Name}}" value="{{.ID}}">{{if not $.Required}}<button type="button" class="ghost" data-rm title="{{t "common.remove"}}">{{icon "x"}}</button>{{end}}</span>{{end}}
+  <input type="text" class="upick-q" autocomplete="off" spellcheck="false" aria-label="{{t "upick.placeholder"}}" placeholder="{{if .Placeholder}}{{.Placeholder}}{{else if .Multiple}}{{t "form.pick_person"}}{{else}}{{t "upick.placeholder"}}{{end}}">
+</div>
+{{end}}
+

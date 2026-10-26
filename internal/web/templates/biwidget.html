@@ -1,0 +1,56 @@
+{{define "content"}}
+{{$d := .Data}}{{$db := $d.D}}{{$w := $d.W}}{{$v := $d.V}}{{$ds := $d.DS}}
+<a class="small muted" href="/bi/{{$db.ID}}?edit=1">{{icon "chevron-left"}} {{$db.Title}}</a>
+<h1>{{if $w.ID}}{{t "bi.edit_widget"}}{{else}}{{t "bi.add_widget"}}{{end}}</h1>
+<div class="bi-editor">
+<form class="card bi-form" method="get" action="/bi/{{$db.ID}}/widget" onchange="this.submit()" data-bi-form>
+  {{if $w.ID}}<input type="hidden" name="w" value="{{$w.ID}}">{{end}}
+  <div class="bi-kinds" role="radiogroup">{{range $d.Kinds}}<label class="bi-kindopt{{if eq . $w.Kind}} on{{end}}"><input type="radio" name="kind" value="{{.}}" {{if eq . $w.Kind}}checked{{end}}>{{template "bi-kind-icon" .}}<span>{{t (print "bi.kind." .)}}</span></label>{{end}}</div>
+  <div class="row"><label class="grow">{{t "bi.w.title"}}<input type="text" name="title" value="{{$w.Title}}" maxlength="200" placeholder="{{$d.Panel.Title}}"></label>
+    <label>{{t "bi.w.width"}}<select name="width">{{range $d.Widths}}<option value="{{.}}" {{if eq . $w.Width}}selected{{end}}>{{t (print "bi.width." .)}}</option>{{end}}</select></label></div>
+  <label>{{t "bi.w.dataset"}}<select name="dataset">{{range $sec := $d.SetSections}}<optgroup label="{{t (print "bi.setsec." $sec)}}">{{range $d.Datasets}}{{if eq .Section $sec}}<option value="{{.Code}}" {{if eq .Code $ds.Code}}selected{{end}}>{{t (print "bi.ds." .Code)}}</option>{{end}}{{end}}</optgroup>{{end}}
+    {{if $d.HasFiles}}<optgroup label="{{t "bi.files.title"}}">{{range $d.Datasets}}{{if .Name}}<option value="{{.Code}}" {{if eq .Code $ds.Code}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</optgroup>{{end}}</select></label>
+
+  {{if ne $w.Kind "kpi"}}<fieldset><legend>{{if eq $w.Kind "table"}}{{t "bi.w.rows"}}{{else}}{{t "bi.w.dim"}}{{end}}</legend>
+    <div class="row"><select name="dim" class="grow"><option value="">{{t "bi.w.no_dim"}}</option>{{range $ds.Fields}}{{if .Dim}}<option value="{{.Code}}" {{if eq .Code $v.Dim}}selected{{end}}>{{or .Name (t (print "bi.f." .Code))}}</option>{{end}}{{end}}</select>
+      {{if $d.DimDate}}<select name="grain">{{range $d.Grains}}<option value="{{.}}" {{if eq . $v.Grain}}selected{{end}}>{{t (print "bi.grain." .)}}</option>{{end}}</select>{{end}}</div>
+    {{if and $v.Dim (ne $w.Kind "pie")}}<label>{{if eq $w.Kind "table"}}{{t "bi.w.dim2_table"}}{{else}}{{t "bi.w.dim2"}}{{end}}</label>
+    <div class="row"><select name="dim2" class="grow"><option value="">{{t "bi.w.no_dim2"}}</option>{{range $ds.Fields}}{{if and .Dim (ne .Code $v.Dim)}}<option value="{{.Code}}" {{if eq .Code $v.Dim2}}selected{{end}}>{{or .Name (t (print "bi.f." .Code))}}</option>{{end}}{{end}}</select>
+      {{if $d.Dim2Date}}<select name="grain2">{{range $d.Grains}}<option value="{{.}}" {{if eq . $v.Grain2}}selected{{end}}>{{t (print "bi.grain." .)}}</option>{{end}}</select>{{end}}</div>{{end}}
+  </fieldset>{{end}}
+
+  <fieldset><legend>{{t "bi.w.measures"}}</legend>
+  {{range $i, $m := $v.Measures}}{{if or (eq $i 0) (and (ne $w.Kind "pie") (not $v.Dim2))}}
+    <div class="row bi-mrow"><select name="agg{{$i}}">{{if $i}}<option value="">—</option>{{end}}{{range $d.Aggs}}<option value="{{.}}" {{if eq . $m.Agg}}selected{{end}}>{{t (print "bi.agg." .)}}</option>{{end}}</select>
+      {{if and $m.Agg (ne $m.Agg "count")}}<select name="mfield{{$i}}" class="grow">{{range $ds.Fields}}{{if or (eq .Type "number") (eq $m.Agg "count_distinct")}}<option value="{{.Code}}" {{if eq .Code $m.Field}}selected{{end}}>{{or .Name (t (print "bi.f." .Code))}}</option>{{end}}{{end}}</select>{{end}}</div>
+  {{end}}{{end}}
+  </fieldset>
+
+  <fieldset><legend>{{t "bi.w.filters"}}</legend>
+  {{range $i, $f := $v.Filters}}<div class="row bi-frow"><select name="ffield{{$i}}" class="grow"><option value="">{{t "bi.w.no_filter"}}</option>{{range $ds.Fields}}<option value="{{.Code}}" {{if eq .Code $f.Field}}selected{{end}}>{{or .Name (t (print "bi.f." .Code))}}</option>{{end}}</select>
+    {{if $f.Field}}<select name="fop{{$i}}">{{range $d.Ops}}<option value="{{.}}" {{if eq . $f.Op}}selected{{end}}>{{t (print "bi.op." .)}}</option>{{end}}</select>
+    {{if not (has (list "set" "empty" "yes" "no") $f.Op)}}<input type="{{if and (eq $f.Type "date") (ne $f.Op "in")}}date{{else}}text{{end}}" name="fvalue{{$i}}" value="{{$f.Text}}" class="grow"{{if eq $f.Op "in"}} placeholder="{{t "bi.w.in_hint"}}"{{end}}>{{end}}{{else}}<input type="hidden" name="fop{{$i}}" value="eq">{{end}}</div>
+  {{end}}
+  <p class="small muted">{{t "bi.w.filter_hint"}}</p>
+  </fieldset>
+
+  <fieldset><legend>{{t "bi.w.period"}}</legend>
+    <label>{{t "bi.w.date_field"}}<select name="date_field">{{range $ds.Fields}}{{if eq .Type "date"}}<option value="{{.Code}}" {{if or (eq .Code $v.DateField) (and (not $v.DateField) (eq .Code $ds.Period))}}selected{{end}}>{{or .Name (t (print "bi.f." .Code))}}</option>{{end}}{{end}}</select></label>
+    <label class="check"><input type="checkbox" name="no_period" value="1" {{if $w.NoPeriod}}checked{{end}}> {{t "bi.w.no_period"}}</label>
+  </fieldset>
+
+  {{if and $v.Dim (ne $w.Kind "kpi")}}<div class="row"><label class="grow">{{t "bi.w.sort"}}<select name="sort"><option value="">{{t "bi.sort.auto"}}</option>{{range (list "m_desc" "m_asc" "d_asc" "d_desc")}}<option value="{{.}}" {{if eq . $v.Sort}}selected{{end}}>{{t (print "bi.sort." .)}}</option>{{end}}</select></label>
+    <label>{{t "bi.w.limit"}}<input type="number" name="limit" min="1" max="5000" value="{{if $v.Limit}}{{$v.Limit}}{{end}}" placeholder="{{t "bi.w.limit_all"}}" style="width:8em"></label></div>{{end}}
+
+  <div class="row bi-actions">
+    <button class="primary" formmethod="post" formaction="/bi/{{$db.ID}}/widget{{if $w.ID}}?w={{$w.ID}}{{end}}">{{t "common.save"}}</button>
+    <a class="button ghost" href="/bi/{{$db.ID}}?edit=1">{{t "common.cancel"}}</a>
+    <noscript><button>{{t "bi.apply"}}</button></noscript>
+  </div>
+</form>
+<div class="bi-preview">
+  <p class="small muted">{{t "bi.preview"}} · {{t (print "bi.p." $d.Period)}}</p>
+  <section class="card bi-w"><header class="bi-wh"><h3>{{$d.Panel.Title}}</h3></header>{{template "bi-chart" $d.Panel}}</section>
+</div>
+</div>
+{{end}}

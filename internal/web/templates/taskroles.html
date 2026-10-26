@@ -1,0 +1,30 @@
+{{define "taskroleform"}}{{$d := .D}}{{$r := .R}}
+<table class="tlist roletable"><tbody>{{range $p := $d.Perms}}<tr><td>{{t (print "taskroles.perm." $p.Key)}}</td>
+  <td><select name="{{$p.Key}}">{{range $p.Levels}}<option value="{{.}}" {{if $r}}{{if eq (index $r.Perms $p.Key) .}}selected{{end}}{{end}}>{{t (print "taskroles.level." $p.Key "." .)}}</option>{{end}}</select></td></tr>{{end}}</tbody></table>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/tasks">{{t "title.all_tasks"}}</a></div>
+<h1>{{t "taskroles.title"}}</h1>
+<div class="sub">{{t "taskroles.subtitle"}}</div>
+{{range $r := $d.Roles}}<div class="card">
+  <form method="post" action="/tasks/roles/{{$r.ID}}">
+    <div class="row"><h2 style="flex:1">{{if $r.Code}}{{t (print "taskroles.role." $r.Code)}}{{else}}{{$r.Name}}{{end}}{{if $r.Default}} <span class="pill st-in_progress">{{t "crmroles.default"}}</span>{{end}}</h2>
+      {{if not $r.Code}}<input type="text" name="name" value="{{$r.Name}}" maxlength="100" style="width:220px">{{end}}</div>
+    {{template "taskroleform" (dict "D" $d "R" $r)}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+  {{if $r.Default}}<p class="small muted">{{t "taskroles.default_hint"}}</p>{{else}}
+  <div class="row" style="flex-wrap:wrap;gap:6px"><b>{{t "crmroles.members"}}:</b>
+    {{range $r.Members}}<span class="tag">{{.Name}}<form method="post" action="/tasks/roles/{{$r.ID}}/members"><input type="hidden" name="op" value="remove"><input type="hidden" name="user_id" value="{{.ID}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
+    <form method="post" action="/tasks/roles/{{$r.ID}}/members" class="row">{{template "upick" (upick "user_id" "" $d.Users "required")}}<button>{{icon "plus"}}</button></form></div>
+  <form method="post" action="/tasks/roles/{{$r.ID}}/delete" data-confirm="{{t "crmroles.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "crmroles.delete"}}</button></form>{{end}}
+</div>{{end}}
+<details class="card"><summary><b>{{icon "plus"}} {{t "crmroles.new"}}</b></summary>
+  <form method="post" action="/tasks/roles/new">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "crmroles.name_hint"}}">
+    {{template "taskroleform" (dict "D" $d "R" nil)}}
+    <p><button class="primary">{{t "common.create"}}</button></p>
+  </form></details>
+{{end}}

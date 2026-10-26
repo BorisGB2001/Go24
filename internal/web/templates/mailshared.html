@@ -1,0 +1,100 @@
+{{define "content"}}{{$d := .Data}}
+{{with $d.Share}}{{$sh := .}}
+<div class="crumbs"><a href="/mail">{{t "mail.title"}}</a> {{icon "chevron-right"}} <a href="/mail/shared">{{t "mail.shared.title"}}</a></div>
+<div class="pagehead"><h1>{{icon "users-group"}} {{.Title}}</h1><span class="muted">{{.Email}}{{with .DepartmentName}} · {{.}}{{end}} · {{t (print "mail.shared.level." .Level)}}</span>
+  <span style="flex:1"></span>
+  <a class="button ghost{{if ne $d.Tab "access"}} on{{end}}" href="/mail/shared/{{.MailboxID}}">{{icon "inbox"}} {{t "mail.shared.requests"}}</a>
+  {{if $d.CanManage}}<a class="button ghost{{if eq $d.Tab "access"}} on{{end}}" href="/mail/shared/{{.MailboxID}}?tab=access">{{icon "lock"}} {{t "mail.shared.access"}}</a>{{end}}</div>
+{{with .Error}}<div class="flash">{{icon "alert-triangle"}} {{t "mail.sync_error"}}</div>{{end}}
+
+{{if eq $d.Tab "access"}}{{if $d.CanManage}}
+<div class="layout2">
+<div class="card"><h2>{{t "mail.shared.settings"}}</h2>
+  <form method="post" action="/mail/shared" class="msettings-form"><input type="hidden" name="box" value="{{.MailboxID}}"><input type="hidden" name="back" value="box">
+    <label>{{t "mail.shared.name"}}</label><input type="text" name="name" maxlength="200" value="{{.Name}}" placeholder="{{t "mail.shared.name_hint"}}">
+    <label>{{t "mail.shared.department"}}</label><select name="department"><option value="">—</option>{{range $d.Depts}}<option value="{{.ID}}"{{if eq .ID $sh.DepartmentID}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <label>{{t "mail.shared.dept_level"}}</label><select name="dept_level"><option value="none"{{if eq .DeptLevel "none"}} selected{{end}}>{{t "mail.shared.level.none"}}</option>
+      {{range $d.Levels}}<option value="{{.}}"{{if eq . $sh.DeptLevel}} selected{{end}}>{{t (print "mail.shared.level." .)}}</option>{{end}}</select>
+    <p class="small muted">{{t "mail.shared.levels_hint"}}</p>
+    <p><button class="primary">{{t "common.save"}}</button></p></form>
+  {{if $d.Owner}}<form method="post" action="/mail/shared/{{.MailboxID}}/unshare" data-confirm="{{t "mail.shared.unshare_confirm"}}"><button class="ghost">{{icon "x"}} {{t "mail.shared.unshare"}}</button></form>{{end}}
+</div>
+<div class="card"><h2>{{t "mail.shared.people"}}</h2>
+  <div class="row"><span>{{person .OwnerName}}</span><span class="pill">{{t "mail.shared.owner"}}</span></div>
+  {{range $p := .People}}<form method="post" action="/mail/shared/{{$sh.MailboxID}}/people" class="row"><input type="hidden" name="user" value="{{.UserID}}">
+    <span style="flex:1">{{person .Name}}</span><select name="level" style="width:auto">{{range $d.Levels}}<option value="{{.}}"{{if eq . $p.Level}} selected{{end}}>{{t (print "mail.shared.level." .)}}</option>{{end}}<option value="">{{t "mail.shared.remove"}}</option></select>
+    <button class="ghost small">{{t "common.save"}}</button></form>{{end}}
+  <form method="post" action="/mail/shared/{{.MailboxID}}/people" class="row msig-box">
+    <div style="flex:1">{{template "upick" (upick "user" "" $d.Users "required")}}</div>
+    <select name="level" style="width:auto">{{range $d.Levels}}<option value="{{.}}">{{t (print "mail.shared.level." .)}}</option>{{end}}</select>
+    <button class="small">{{icon "plus"}} {{t "mail.shared.add"}}</button></form>
+</div>
+</div>
+{{end}}{{else}}
+<div class="mshare">
+  <section class="card mshare-list">
+    <form method="get" action="/mail/shared/{{.MailboxID}}" class="row mshare-bar">
+      <select name="status" style="width:auto" onchange="this.form.submit()"><option value="">{{t "mail.shared.open"}}</option>
+        {{range $d.Statuses}}<option value="{{.}}"{{if eq . $d.Status}} selected{{end}}>{{t (print "mail.shared.st." .)}}</option>{{end}}<option value="all"{{if eq $d.Status "all"}} selected{{end}}>{{t "mail.shared.all"}}</option></select>
+      <select name="who" style="width:auto" onchange="this.form.submit()"><option value="">{{t "mail.shared.who.all"}}</option>
+        <option value="me"{{if eq $d.Who "me"}} selected{{end}}>{{t "mail.shared.who.me"}}</option><option value="nobody"{{if eq $d.Who "nobody"}} selected{{end}}>{{t "mail.shared.who.nobody"}}</option></select>
+      <input type="search" name="q" value="{{$d.Q.Get "q"}}" placeholder="{{t "mail.search"}}" style="flex:1;min-width:120px">
+    </form>
+    {{range $d.Tickets}}<a class="mticket{{if .Unread}} unread{{end}}{{if and $d.Ticket (eq .Thread $d.Ticket.Thread)}} on{{end}}" href="{{call $d.URL "letter" .LetterID}}">
+      <span class="row"><b style="flex:1">{{.From}}</b>{{if gt .Count 1}}<span class="mcount">{{.Count}}</span>{{end}}<span class="small muted">{{datetime .LastAt}}</span></span>
+      <span class="msubj">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</span>
+      <span class="row small"><span class="pill tst-{{.Status}}">{{t (print "mail.shared.st." .Status)}}{{if .Reopened}} · {{t "mail.shared.reopened"}}{{end}}</span>
+        <span class="muted">{{if .AssigneeName}}{{icon "user"}} {{.AssigneeName}}{{else}}{{t "mail.shared.nobody"}}{{end}}</span></span></a>
+    {{else}}<div class="empty">{{t "mail.shared.none"}}</div>{{end}}
+  </section>
+  <section class="card mshare-read">
+  {{with $d.Ticket}}{{$tk := .}}
+    <h2>{{if $d.Answer.Subject}}{{$d.Answer.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</h2>
+    <div class="row mshare-tools">
+      <span class="pill tst-{{.Status}}">{{t (print "mail.shared.st." .Status)}}</span>
+      {{if $d.CanSend}}
+      <form method="post" action="/mail/shared/{{$sh.MailboxID}}/letters/{{$d.Answer.ID}}/assign" class="row"><input type="hidden" name="back" value="{{call $d.URL "letter" $d.Answer.ID}}">
+        <label class="small muted">{{t "mail.shared.assignee"}}</label>
+        <select name="user" style="width:auto"><option value="">{{t "mail.shared.nobody"}}</option>{{range $d.People}}<option value="{{.UserID}}"{{if eq .UserID $tk.AssigneeID}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+        <button class="ghost small">{{t "mail.shared.assign"}}</button>
+        {{if ne $tk.AssigneeID $d.Me}}<button class="ghost small" name="user" value="{{$d.Me}}">{{t "mail.shared.take"}}</button>{{end}}</form>
+      <form method="post" action="/mail/shared/{{$sh.MailboxID}}/letters/{{$d.Answer.ID}}/status" class="row"><input type="hidden" name="back" value="{{call $d.URL "letter" $d.Answer.ID}}">
+        {{range $d.Statuses}}{{if ne . $tk.Status}}<button class="ghost small" name="status" value="{{.}}">{{t (print "mail.shared.to." .)}}</button>{{end}}{{end}}</form>
+      {{else}}<span class="muted small">{{if .AssigneeName}}{{t "mail.shared.assignee"}}: {{.AssigneeName}}{{else}}{{t "mail.shared.nobody"}}{{end}}</span>{{end}}
+    </div>
+    {{range $m := $d.Thread}}<div class="mmsg">
+      <div class="row mread-head">{{ava $m.From}}<div class="mmsg-who"><b>{{$m.From}}</b> <span class="muted small">&lt;{{$m.FromAddr}}&gt;</span> <span class="small muted">{{datetime $m.SentAt}}</span></div></div>
+      <div class="small muted mmsg-to">{{t "mail.to"}}: {{$m.To}}{{with $m.CC}} · {{t "mail.cc"}}: {{.}}{{end}}</div>
+      {{with index $d.Files $m.ID}}<div class="ffiles">{{range .}}<a href="/files/{{.ID}}" class="ffile">{{icon "paperclip"}} {{.Name}} <span class="muted small">{{size .Size}}</span></a>{{end}}</div>{{end}}
+      {{with index $d.Docs $m.ID}}<iframe class="mailhtml" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="{{.}}" title="{{$m.Subject}}"></iframe>
+      {{else}}<div class="mailbody">{{nl2br $m.Body}}</div>{{end}}
+    </div>{{end}}
+    {{if $d.CanSend}}<form method="post" action="/mail/shared/{{$sh.MailboxID}}/letters/{{$d.Answer.ID}}/reply" class="mshare-reply msettings-form">
+      <input type="hidden" name="back" value="{{call $d.URL "letter" $d.Answer.ID}}">
+      <h3>{{icon "arrow-back-up"}} {{t "mail.shared.reply_as" $sh.Title}}</h3>
+      <label>{{t "mail.to"}}</label><input type="text" name="to" required value="{{$d.Answer.FromAddr}}">
+      <label>{{t "mail.cc"}}</label><input type="text" name="cc">
+      <label>{{t "mail.subject"}}</label><input type="text" name="subject" value="{{$d.ReplySubject}}" maxlength="1000">
+      <textarea name="body" rows="8" required></textarea>
+      <p><button class="primary">{{icon "send"}} {{t "mail.send"}}</button></p></form>{{end}}
+  {{else}}<div class="empty">{{icon "mail"}}<p>{{t "mail.pick_letter"}}</p></div>{{end}}
+  </section>
+</div>
+{{end}}
+
+{{else}}
+<div class="crumbs"><a href="/mail">{{t "mail.title"}}</a></div>
+<div class="pagehead"><h1>{{icon "users-group"}} {{t "mail.shared.title"}}</h1></div>
+<p class="muted">{{t "mail.shared.hint"}}</p>
+<div class="card">{{range $d.Shares}}<div class="row"><a href="/mail/shared/{{.MailboxID}}" style="flex:1"><b>{{.Title}}</b> <span class="muted small">{{.Email}}{{with .DepartmentName}} · {{.}}{{end}}</span></a>
+    {{if .Open}}<span class="pill tst-progress">{{t "mail.shared.open_n" .Open}}</span>{{end}}<span class="small muted">{{t (print "mail.shared.level." .Level)}}</span></div>
+  {{else}}<p class="muted">{{t "mail.shared.no_shares"}}</p>{{end}}</div>
+{{with $d.Own}}<div class="card"><h2>{{t "mail.shared.make"}}</h2><p class="small muted">{{t "mail.shared.make_hint"}}</p>
+  {{range .}}<form method="post" action="/mail/shared" class="row msig-box"><input type="hidden" name="box" value="{{.ID}}">
+    <b style="min-width:180px">{{.Email}}</b>
+    <input type="text" name="name" maxlength="200" placeholder="{{t "mail.shared.name"}}" style="flex:1">
+    <select name="department" style="width:auto" required><option value="">{{t "mail.shared.department"}}</option>{{range $d.Depts}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+    <select name="dept_level" style="width:auto">{{range $d.Levels}}<option value="{{.}}">{{t (print "mail.shared.level." .)}}</option>{{end}}</select>
+    <button class="small">{{icon "users-group"}} {{t "mail.shared.share"}}</button></form>{{end}}</div>{{end}}
+{{end}}
+{{end}}

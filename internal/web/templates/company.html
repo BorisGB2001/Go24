@@ -1,0 +1,59 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<div class="pagehead"><h1 style="flex:1">{{t "title.employees"}}</h1>
+  <a class="button" href="/company?{{$d.Keep.With "format" "csv"}}">{{icon "download"}} {{t "company.export"}}</a></div>
+<div class="tabs">
+  <a href="/company"{{if not $f.Guests}} class="on"{{end}}>{{icon "users"}} {{t "nav.employees"}}</a>
+  {{if $d.Admin}}<a href="/company?guests=1"{{if $f.Guests}} class="on"{{end}}>{{icon "users-group"}} {{t "company.guests"}}</a>{{end}}
+  <a href="/company/structure">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a>
+  <a href="/company/changes">{{icon "history"}} {{t "staff.title"}}</a>
+  <a href="/company/thanks">{{icon "star"}} {{t "gratitude.page"}}</a>
+</div>
+<form class="row filters" method="get" action="/company">
+  <input type="search" name="q" value="{{$f.Query}}" placeholder="{{t "company.search"}}" style="flex:1;min-width:220px">
+  {{if $f.Guests}}<input type="hidden" name="guests" value="1">{{else}}<select name="dept" style="width:auto"><option value="">{{t "company.all_departments"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>{{end}}
+  {{if $d.Admin}}<label class="check"><input type="checkbox" name="fired" value="1" {{if $f.Fired}}checked{{end}}> {{t "company.fired"}}</label>{{end}}
+  {{with $f.Preset}}<input type="hidden" name="preset" value="{{.}}">{{end}}
+  <button>{{icon "search"}} {{t "common.find"}}</button>
+</form>
+<div class="row presets emppresets">
+  {{if $f.Guests}}<span class="muted small">{{t "company.guests_hint"}}</span>{{else}}<a class="chip{{if not $f.Preset}} on{{end}}" href="/company?{{$d.Keep.With "preset" ""}}">{{t "company.preset.all"}}</a>
+  {{range $d.Presets}}<a class="chip{{if eq . $f.Preset}} on{{end}}" href="/company?{{$d.Keep.With "preset" .}}">{{t (print "company.preset." .)}}</a>{{end}}{{end}}
+  <span style="flex:1"></span>
+  <span class="muted small">{{t "company.count" (len $d.Employees)}}</span>
+  <span class="viewswitch">
+    <a href="/company?{{$d.Keep.With "view" "list"}}" {{if not $d.Tiles}}class="on"{{end}} title="{{t "company.view.list"}}">{{icon "list"}}</a>
+    <a href="/company?{{$d.Keep.With "view" "tiles"}}" {{if $d.Tiles}}class="on"{{end}} title="{{t "company.view.tiles"}}">{{icon "layout-grid"}}</a>
+  </span>
+</div>
+{{if not $d.Employees}}<div class="card"><div class="empty">{{icon "users"}} {{t "company.empty"}}</div></div>
+{{else if $d.Tiles}}
+<div class="emptiles">{{range $d.Employees}}{{$a := index $d.Absent .ID}}
+  <a class="card emptile" href="/u/{{.ID}}" data-user="{{.ID}}">
+    {{photo .Name .PhotoURL true}}
+    <b>{{.FullName}}</b>
+    <span class="muted small">{{with .Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</span>
+    {{range .Departments}}<span class="small">{{.Name}}</span>{{end}}
+    {{range .Collabs}}<span class="small">{{.Name}}</span>{{end}}
+    {{if $a.ID}}<span class="pill abs-{{$a.Kind}}">{{t (print "absence.kind." $a.Kind)}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}
+  </a>{{end}}
+</div>
+{{else}}
+<div class="card flush">
+<div class="tlist-wrap"><table class="tlist">
+  <thead><tr><th>{{t "company.col.name"}}</th><th>{{t "company.col.position"}}</th><th>{{if $f.Guests}}{{t "company.col.collabs"}}{{else}}{{t "company.col.department"}}{{end}}</th>
+    <th>{{t "company.col.email"}}</th><th>{{t "company.col.phone"}}</th><th>{{if $f.Guests}}{{t "company.col.last_login"}}{{else}}{{t "profile.inner_phone"}}{{end}}</th></tr></thead>
+  <tbody>{{range $d.Employees}}{{$a := index $d.Absent .ID}}
+  <tr><td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span><b>{{.FullName}}</b></span></a>
+      {{if $a.ID}}<span class="pill abs-{{$a.Kind}}" title="{{day $a.From}} — {{day $a.To}}">{{t (print "absence.kind." $a.Kind)}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}</td>
+    <td>{{.Position}}</td>
+    <td>{{range $i, $x := .Departments}}{{if $i}}, {{end}}<a href="/company?dept={{$x.ID}}">{{$x.Name}}</a>{{end}}{{range $i, $x := .Collabs}}{{if $i}}, {{end}}<a href="/p/{{$x.ID}}">{{$x.Name}}</a>{{end}}</td>
+    <td>{{with .Email}}<a href="mailto:{{.}}">{{.}}</a>{{end}}</td>
+    <td>{{with .WorkPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}{{if and .WorkPhone .MobilePhone}}<br>{{end}}{{with .MobilePhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}</td>
+    <td>{{if $f.Guests}}<span class="small muted">{{datetime .LastLogin}}</span>{{else}}{{with .InnerPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}{{end}}</td></tr>
+  {{end}}</tbody>
+</table></div>
+</div>
+{{end}}
+{{end}}

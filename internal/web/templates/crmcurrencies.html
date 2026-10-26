@@ -1,0 +1,33 @@
+{{define "content"}}
+{{$d := .Data}}{{$base := $d.Base}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  {{if $.User.Admin}}<form method="post" action="/crm/currencies"><input type="hidden" name="op" value="fetch"><button class="ghost" title="{{$d.CBR}}">{{icon "refresh"}} {{t "crm.cur_fetch"}}</button></form>
+  <details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.cur_new"}}</summary>
+    <div class="pop">{{template "crmcurform" (dict "C" nil "Base" $base)}}</div></details>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.cur_hint" $base}}</p>
+<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "crm.cur_code"}}</th><th>{{t "crm.f.title"}}</th><th>{{t "crm.cur_rate"}}</th><th>{{t "crm.cur_updated"}}</th>{{if $.User.Admin}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Currencies}}<tr>
+    <td><b>{{.Code}}</b>{{if .Base}} <span class="pill">{{t "crm.cur_base"}}</span>{{end}}</td>
+    <td>{{.Name}}</td>
+    <td class="nowrap">{{if .Base}}1{{else}}1 {{.Code}} = <b>{{.RateText}}</b> {{$base}}{{end}}{{if and .Auto (not .Base)}} <span class="small muted" title="{{t "crm.cur_auto"}}">{{t "crm.cur_auto_short"}}</span>{{end}}</td>
+    <td class="small muted nowrap">{{datetime .UpdatedAt}}</td>
+    {{if $.User.Admin}}<td class="nowrap"><details class="tsettings"><summary class="button ghost" title="{{t "crm.cur_edit"}}">{{icon "edit"}}</summary>
+      <div class="pop">{{template "crmcurform" (dict "C" . "Base" $base)}}
+        {{if not .Base}}<form method="post" action="/crm/currencies"><input type="hidden" name="op" value="base"><input type="hidden" name="code" value="{{.Code}}">
+          <button class="ghost">{{t "crm.cur_make_base"}}</button></form>
+        <form method="post" action="/crm/currencies" data-confirm="{{t "crm.cur_delete_confirm"}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="code" value="{{.Code}}">
+          <button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form>{{end}}</div></details></td>{{end}}
+  </tr>{{end}}</tbody></table></div>
+{{end}}
+
+{{define "crmcurform"}}{{$c := .C}}
+<form method="post" action="/crm/currencies"><input type="hidden" name="op" value="save">
+  <label>{{t "crm.cur_code"}}</label>{{if $c}}<input type="hidden" name="code" value="{{$c.Code}}"><b>{{$c.Code}}</b>{{else}}<input type="text" name="code" required maxlength="3" pattern="[A-Za-z]{3}" placeholder="USD" style="text-transform:uppercase">{{end}}
+  <label>{{t "crm.f.title"}}</label><input type="text" name="name" maxlength="100" value="{{with $c}}{{.Name}}{{end}}">
+  {{if and $c $c.Base}}<input type="hidden" name="rate" value="1">{{else}}
+  <label>{{t "crm.cur_rate_of" .Base}}</label><input type="text" name="rate" inputmode="decimal" required value="{{with $c}}{{.RateText}}{{end}}">
+  <label class="small"><input type="checkbox" name="auto" value="1" {{if or (not $c) $c.Auto}}checked{{end}}> {{t "crm.cur_auto"}}</label>{{end}}
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

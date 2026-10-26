@@ -1,0 +1,44 @@
+{{/* «Обязательное поле» of a CRM field: no, always, or at the checked stages of deals or leads */}}
+{{define "fieldreq"}}{{$f := .F}}{{$d := .D}}
+<label class="check"><input type="checkbox" name="required" value="1"{{if $f.Required}} checked{{end}}> {{t "fields.required"}}</label>
+{{if $d.Pipelines}}<div class="fieldreq">
+  <label class="check"><input type="radio" name="required_at" value="all"{{if not $f.Stages}} checked{{end}}> {{t "fields.required_all"}}</label>
+  <label class="check"><input type="radio" name="required_at" value="stages"{{if $f.Stages}} checked{{end}}> {{t "fields.required_stages"}}</label>
+  {{range $d.Pipelines}}<div class="small">{{if .ID}}<b>{{template "crmpipeline" .}}</b>{{end}}
+    {{range .Stages}}<label class="check"><input type="checkbox" name="stages" value="{{.ID}}"{{if has $f.Stages .ID}} checked{{end}}> {{template "crmstage" .}}</label>{{end}}</div>{{end}}
+</div>{{end}}{{end}}
+{{define "crmstage"}}{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}{{end}}
+{{define "crmpipeline"}}{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t $d.Title}}</h1>
+<div class="sub">{{t $d.Sub}}</div>
+<div class="card" style="max-width:720px">
+  {{if $d.Fields}}<table class="tlist">
+    <tr><th>{{t "fields.name"}}</th><th>{{t "fields.kind"}}</th><th>{{t "fields.sort"}}</th>{{if $d.CRM}}<th>{{t "fields.required"}}</th>{{end}}<th></th></tr>
+    {{range $d.Fields}}{{$f := .}}<tr><td>{{.Name}}{{if .Options}}<div class="muted small">{{range $i, $o := .Options}}{{if $i}}, {{end}}{{$o}}{{end}}</div>{{end}}</td>
+      <td>{{t (print "fields.kind." .Kind)}}</td><td>{{.Sort}}</td>
+      {{if $d.CRM}}<td class="small">{{if ne .Kind "bool"}}<details class="tsettings"><summary class="ghost">{{if not .Required}}{{t "fields.required_no"}}{{else if not .Stages}}{{t "fields.required_all"}}{{else}}{{t "fields.required_at"}}
+        {{$n := 0}}{{range $d.Pipelines}}{{range .Stages}}{{if has $f.Stages .ID}}{{if $n}}, {{end}}{{$n = add $n 1}}{{template "crmstage" .}}{{end}}{{end}}{{end}}{{end}}</summary>
+        <div class="pop"><form method="post" action="{{$d.Base}}/{{.ID}}/required">{{template "fieldreq" (dict "F" . "D" $d)}}
+          <p><button class="primary">{{t "common.save"}}</button></p></form></div></details>{{end}}</td>{{end}}
+      <td><form method="post" action="{{$d.Base}}/{{.ID}}/delete" data-confirm="{{t "fields.delete_confirm"}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></td></tr>{{end}}
+  </table>{{else}}<p class="muted">{{t "fields.none"}}</p>{{end}}
+</div>
+<div class="card" style="max-width:720px">
+  <h2>{{t "fields.add"}}</h2>
+  <form method="post" action="{{$d.Base}}">
+    <div class="grid">
+      <div><label>{{t "fields.name"}}</label><input type="text" name="name" maxlength="100" required></div>
+      <div><label>{{t "fields.kind"}}</label><select name="kind">{{range $d.Kinds}}<option value="{{.}}">{{t (print "fields.kind." .)}}</option>{{end}}</select></div>
+      <div><label>{{t "fields.sort"}}</label><input type="number" name="sort" value="100"></div>
+    </div>
+    <label>{{t "fields.options"}}</label>
+    <textarea name="options" rows="4"></textarea>
+    <p class="small muted">{{t "fields.options_hint"}}</p>
+    {{if $d.CRM}}{{template "fieldreq" (dict "F" (dict "Required" false "Stages" (list)) "D" $d)}}{{end}}
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+{{end}}

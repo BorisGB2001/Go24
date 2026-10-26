@@ -1,0 +1,37 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "stock.title"}}</h1></div>
+<div class="tabs">{{template "stocktabs" $d}}</div>
+<p class="sub">{{t "stockroles.subtitle"}}</p>
+{{range $r := $d.Roles}}<div class="card">
+  <form method="post" action="/store/rights/{{$r.ID}}">
+    <div class="row"><h2 style="flex:1">{{if $r.Code}}{{t (print "stockroles.role." $r.Code)}}{{else}}{{$r.Name}}{{end}}{{if $r.Default}} <span class="pill st-in_progress">{{t "crmroles.default"}}</span>{{end}}</h2>
+      {{if not $r.Code}}<input type="text" name="name" value="{{$r.Name}}" maxlength="100" style="width:220px">{{end}}</div>
+    {{template "stockroleform" (dict "D" $d "R" $r)}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+  {{if $r.Default}}<p class="small muted">{{t "crmroles.default_hint"}}</p>{{else}}
+  <div class="row" style="flex-wrap:wrap;gap:6px"><b>{{t "crmroles.members"}}:</b>
+    {{range $r.Members}}<span class="tag">{{.Name}}<form method="post" action="/store/rights/{{$r.ID}}"><input type="hidden" name="op" value="remove"><input type="hidden" name="user_id" value="{{.ID}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
+    <form method="post" action="/store/rights/{{$r.ID}}" class="row"><input type="hidden" name="op" value="add">{{template "upick" (upick "user_id" "" $d.Users "required")}}<button>{{icon "plus"}}</button></form></div>
+  <form method="post" action="/store/rights/{{$r.ID}}" data-confirm="{{t "crmroles.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost small">{{icon "trash"}} {{t "crmroles.delete"}}</button></form>{{end}}
+</div>{{end}}
+<details class="card"><summary><b>{{icon "plus"}} {{t "crmroles.new"}}</b></summary>
+  <form method="post" action="/store/rights/new">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "stockroles.name_hint"}}">
+    {{template "stockroleform" (dict "D" $d "R" nil)}}
+    <p><button class="primary">{{t "common.create"}}</button></p>
+  </form></details>
+{{end}}
+
+{{/* a role's rights: the actions on each kind of document, the warehouses, the purchase prices, the settings */}}
+{{define "stockroleform"}}{{$d := .D}}{{$r := .R}}
+<div class="tablewrap"><table class="tlist roletable"><thead><tr><th>{{t "stock.docs"}}</th>{{range $d.Actions}}<th>{{t (print "stockroles.action." .)}}</th>{{end}}</tr></thead>
+  <tbody>{{range $k := $d.Kinds}}<tr><td>{{t (print "stock.kinds." $k)}}</td>
+    {{range $a := $d.Actions}}<td><input type="checkbox" name="{{$k}}.{{$a}}" value="1" {{if $r}}{{if $r.Perms.Has $k $a}}checked{{end}}{{end}} aria-label="{{t (print "stockroles.action." $a)}}"></td>{{end}}</tr>{{end}}</tbody></table></div>
+<label>{{t "stockroles.warehouses"}}</label>
+<div class="row" style="flex-wrap:wrap;gap:12px">{{range $d.Warehouses}}<label class="small"><input type="checkbox" name="warehouse" value="{{.ID}}" {{if $r}}{{if and $r.Perms.Warehouses ($r.Perms.HasWarehouse .ID)}}checked{{end}}{{end}}> {{.Name}}</label>{{end}}</div>
+<p class="small muted">{{t "stockroles.warehouses_hint"}}</p>
+<label class="small"><input type="checkbox" name="purchase_price" value="1" {{if $r}}{{if $r.Perms.PurchasePrice}}checked{{end}}{{end}}> {{t "stockroles.purchase_price"}}</label>
+<label class="small"><input type="checkbox" name="settings" value="1" {{if $r}}{{if $r.Perms.Settings}}checked{{end}}{{end}}> {{t "stockroles.settings"}}</label>
+{{end}}

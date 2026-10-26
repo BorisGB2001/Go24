@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<h1>{{t "staff.title"}}</h1>
+<div class="tabs">
+  <a href="/company">{{icon "users"}} {{t "nav.employees"}}</a>
+  <a href="/company/structure">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a>
+  <a href="/company/changes" class="on">{{icon "history"}} {{t "staff.title"}}</a>
+  <a href="/company/thanks">{{icon "star"}} {{t "gratitude.page"}}</a>
+</div>
+<form class="row filters" method="get" action="/company/changes">
+  <select name="dept" style="width:auto" onchange="this.form.submit()"><option value="">{{t "company.all_departments"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <select name="kind" style="width:auto" onchange="this.form.submit()"><option value="">{{t "staff.kind.all"}}</option>
+    {{range $d.Kinds}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "staff.kind." .)}}</option>{{end}}</select>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $f.From.IsZero}}{{$f.From.Format "2006-01-02"}}{{end}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{if not $f.To.IsZero}}{{$f.To.Format "2006-01-02"}}{{end}}"></span></span>
+  <button>{{icon "search"}} {{t "common.find"}}</button>
+  {{if or $f.DepartmentID $f.Kind (not $f.From.IsZero) (not $f.To.IsZero)}}<a class="button ghost" href="/company/changes">{{t "filter.reset"}}</a>{{end}}
+</form>
+{{if $d.Days}}
+<div class="staffchanges">
+{{range $d.Days}}
+  <h3 class="staffday">{{day .Day}}</h3>
+  <div class="card flush"><table class="tlist">{{range .List}}
+    <tr><td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}} {{.Name}}</a>{{if .Position}}<div class="muted small">{{.Position}}</div>{{end}}</td>
+      <td><span class="pill staff-{{.Kind}}">{{t (print "staff.kind." .Kind)}}</span></td>
+      <td>{{if eq .Kind "moved"}}<span class="muted">{{range $i, $x := .Was}}{{if $i}}, {{end}}{{$x}}{{else}}—{{end}}</span> → {{end}}{{range $i, $x := .Departments}}{{if $i}}, {{end}}{{$x}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="muted small">{{if .ActorID}}<a href="/u/{{.ActorID}}" data-user="{{.ActorID}}">{{.ActorName}}</a>{{end}}</td></tr>
+  {{end}}</table></div>
+{{end}}
+</div>
+{{else}}<p class="muted">{{t "staff.empty"}}</p>{{end}}
+{{end}}

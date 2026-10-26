@@ -1,0 +1,43 @@
+{{define "content"}}{{$d := .Data}}{{$e := $d.E}}
+<div class="pagehead"><h1>{{t "eff.title"}}{{if not $d.Mine}}: {{$e.Name}}{{end}}</h1></div>
+<form method="get" action="/tasks/efficiency" class="row eff-period">
+  <a href="{{$d.Prev}}" class="button ghost" title="{{t "eff.prev"}}">{{icon "chevron-left"}}</a>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}"></span></span>
+  {{if not $d.Mine}}<input type="hidden" name="user" value="{{$e.UserID}}">{{end}}
+  <button>{{t "eff.show"}}</button>
+  <a href="{{$d.Next}}" class="button ghost" title="{{t "eff.next"}}">{{icon "chevron-right"}}</a>
+  {{if not $d.Mine}}<a href="/tasks/efficiency?from={{$d.From}}&to={{$d.To}}" class="button ghost">{{t "eff.mine"}}</a>{{end}}
+</form>
+<div class="eff-top">
+  <div class="card eff-big"><div class="eff-pct {{if lt $e.Percent 70}}low{{else if lt $e.Percent 90}}mid{{end}}">{{$e.Percent}}%</div>
+    <div class="muted small">{{t "eff.summary" $e.Total $e.Violated}}</div></div>
+  <div class="card eff-chart">{{with $d.Chart}}{{$ch := .}}{{if .Empty}}<p class="muted small">{{t "eff.no_chart"}}</p>{{else}}
+    <div class="burn"><svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-label="{{t "eff.chart"}}">
+      <line class="axis" x1="36" y1="10" x2="36" y2="{{add .H -24}}"/><line class="axis" x1="36" y1="{{add .H -24}}" x2="{{add .W -10}}" y2="{{add .H -24}}"/>
+      <text class="lbl" x="30" y="16" text-anchor="end">100%</text><text class="lbl" x="30" y="{{add .H -24}}" text-anchor="end">0</text>
+      {{range .Labels}}<text class="lbl" x="{{.X}}" y="{{add $ch.H -8}}" text-anchor="middle">{{.Text}}</text>{{end}}
+      <polyline class="real" points="{{.Real}}"/>
+    </svg></div>{{end}}{{end}}</div>
+</div>
+<p class="muted small">{{t "eff.hint"}}</p>
+
+<h2>{{t "eff.violations"}}</h2>
+{{if $e.Violations}}
+<div class="card flush tlist-wrap"><table class="tlist">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "eff.kind"}}</th><th>{{t "eff.when"}}</th></tr></thead>
+  <tbody>{{range $e.Violations}}
+  <tr><td><a href="/t/{{.Key}}"><span class="muted">{{.Key}}</span> {{.Title}}</a></td>
+    <td><span class="badge {{if eq .Kind "overdue"}}red{{end}}">{{t (print "eff.kind." .Kind)}}</span></td><td>{{datetime .At}}</td></tr>
+  {{end}}</tbody></table></div>
+{{else}}<div class="card empty">{{icon "checkbox"}} {{t "eff.no_violations"}}</div>{{end}}
+
+{{if $d.Team}}
+<h2>{{t "eff.team"}}</h2>
+<div class="card flush tlist-wrap"><table class="tlist">
+  <thead><tr><th>{{t "eff.employee"}}</th><th>{{t "eff.tasks"}}</th><th>{{t "eff.violated"}}</th><th>{{t "eff.title"}}</th></tr></thead>
+  <tbody>{{range $d.Team}}
+  <tr><td><a href="/tasks/efficiency?from={{$d.From}}&to={{$d.To}}&user={{.UserID}}">{{person .Name}}</a></td><td>{{.Total}}</td><td>{{.Violated}}</td>
+    <td><b class="eff-pct sm {{if lt .Percent 70}}low{{else if lt .Percent 90}}mid{{end}}">{{.Percent}}%</b></td></tr>
+  {{end}}</tbody></table></div>
+{{end}}
+{{end}}

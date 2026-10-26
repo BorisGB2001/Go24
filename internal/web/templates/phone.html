@@ -1,0 +1,29 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="softphone" data-softphone data-id="{{$d.ID}}" data-login="{{$d.Login}}" data-password="{{$d.Password}}" data-host="{{$d.SIPHost}}" data-dial="{{$d.Dial}}"
+  data-connecting="{{t "phone.connecting"}}" data-ready="{{t "phone.ready"}}" data-offline="{{t "phone.offline"}}" data-mic-denied="{{t "phone.mic_denied"}}"
+  data-dialing="{{t "phone.dialing"}}" data-ringing="{{t "phone.ringing"}}" data-on-hold="{{t "phone.on_hold"}}" data-ended="{{t "phone.ended"}}" data-busy="{{t "phone.busy"}}"
+  data-failed="{{t "phone.failed" "%s"}}" data-incoming="{{t "phone.incoming" "%s"}}" data-busy-line="{{t "phone.busy_line"}}" data-bad-number="{{t "phone.bad_number"}}"
+  data-mute="{{t "phone.mute"}}" data-unmute="{{t "phone.unmute"}}" data-hold="{{t "phone.hold"}}" data-unhold="{{t "phone.unhold"}}">
+  <div class="sp-top"><span class="sp-dot" data-sp-dot></span><b>{{icon "phone"}} {{$d.Number}}</b><span class="muted small" data-sp-status>{{t "phone.connecting"}}</span></div>
+  <div class="sp-who" data-sp-who hidden>
+    <img alt="" data-sp-photo hidden>
+    <div><a data-sp-link target="_blank" rel="noopener"><b data-sp-name></b></a><span class="muted small" data-sp-num></span></div>
+    <span class="sp-timer" data-sp-timer></span>
+  </div>
+  <div class="sp-entry"><input type="tel" data-sp-input placeholder="{{t "phone.number"}}" aria-label="{{t "phone.number"}}" autocomplete="off" maxlength="24" value="{{$d.Dial}}">
+    <button type="button" class="ghost" data-sp-back title="{{t "phone.backspace"}}" aria-label="{{t "phone.backspace"}}">{{icon "backspace"}}</button></div>
+  <div class="sp-keys" data-sp-keys>{{range $k := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "*" "0" "#"}}<button type="button" data-key="{{$k}}">{{$k}}</button>{{end}}</div>
+  <div class="sp-acts">
+    <button type="button" class="sp-mute ghost" data-sp-mute title="{{t "phone.mute"}}" aria-label="{{t "phone.mute"}}" hidden>{{icon "microphone"}}</button>
+    <button type="button" class="sp-call" data-sp-call title="{{t "phone.call"}}">{{icon "phone"}} <span data-sp-call-text data-call="{{t "phone.call"}}" data-answer="{{t "phone.answer"}}">{{t "phone.call"}}</span></button>
+    <button type="button" class="sp-hang" data-sp-hang title="{{t "phone.hangup"}}" hidden>{{icon "phone-off"}} <span data-sp-hang-text data-hangup="{{t "phone.hangup"}}" data-decline="{{t "phone.decline"}}">{{t "phone.hangup"}}</span></button>
+    <button type="button" class="sp-hold ghost" data-sp-hold title="{{t "phone.hold"}}" aria-label="{{t "phone.hold"}}" hidden>{{icon "player-pause"}}</button>
+  </div>
+  <p class="muted small sp-hint">{{t "phone.keep_open"}}</p>
+  <p class="small sp-links"><a href="/telephony/calls" target="_blank" rel="noopener">{{icon "list"}} {{t "tel.calls"}}</a></p>
+  <audio data-sp-audio autoplay></audio>
+</div>
+<script src="{{asset "js/vendor/jssip-3.10.1.min.js"}}"></script>
+<script src="{{asset "js/softphone.js"}}"></script>
+{{end}}

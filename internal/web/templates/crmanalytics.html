@@ -1,0 +1,41 @@
+{{define "content"}}
+{{$d := .Data}}{{$r := $d.Report}}{{$max := $r.MaxCount}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<form method="get" action="/crm/analytics" class="row crmtools">
+  {{if gt (len $d.Pipelines) 1}}<select name="pipeline">{{range $d.Pipelines}}<option value="{{.ID}}" {{if eq .ID $d.Pipeline.ID}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}</option>{{end}}</select>{{end}}
+  <label class="small">{{t "crm.period"}}</label><span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput $d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput $d.To}}"></span></span>
+  <button>{{t "crm.find"}}</button>
+</form>
+
+<div class="crmkpi">
+  <div class="card"><div class="muted small">{{t "crm.an.won"}}</div><b>{{$r.Won}}</b><div>{{money $r.WonSum}} {{$r.Currency}}</div></div>
+  <div class="card"><div class="muted small">{{t "crm.an.lost"}}</div><b>{{$r.Lost}}</b><div>{{money $r.LostSum}} {{$r.Currency}}</div></div>
+  <div class="card"><div class="muted small">{{t "crm.an.winrate"}}</div><b>{{$r.WinRate}}%</b></div>
+  <div class="card"><div class="muted small">{{t "crm.an.average"}}</div><b>{{money $r.AverageWon}} {{$r.Currency}}</b></div>
+  <div class="card"><div class="muted small">{{t "crm.an.cycle"}}</div><b>{{fnum $r.CycleDays}}</b> <span class="muted small">{{t "crm.an.days"}}</span></div>
+  <div class="card"><div class="muted small">{{t "crm.an.conversion"}}</div><b>{{$r.Conversion}}%</b><div class="small muted">{{$r.Converted}} / {{$r.LeadsNew}}</div></div>
+</div>
+
+<div class="layout2">
+<div>
+  <div class="card"><h2>{{t "crm.an.funnel"}}</h2><p class="muted small">{{t "crm.an.funnel_hint"}}</p>
+    {{range $r.Funnel}}<div class="crmbar"><span class="lbl">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</span>
+      <span class="bar"><i style="width:{{share .Count $max}}%;background:#{{.Color}}"></i></span><b>{{.Count}}</b><span class="small muted nowrap">{{money .Sum}} {{$r.Currency}}</span></div>{{end}}</div>
+  <div class="card flush"><h2 style="padding:12px 16px 0">{{t "crm.an.managers"}}</h2>{{if $r.Managers}}<table class="tlist">
+    <thead><tr><th>{{t "crm.f.responsible"}}</th><th>{{t "crm.an.in_work"}}</th><th>{{t "crm.an.won"}}</th><th>{{t "crm.an.lost"}}</th><th>{{t "crm.an.winrate"}}</th><th>{{t "crm.an.overdue"}}</th></tr></thead>
+    <tbody>{{range $r.Managers}}<tr><td>{{.Name}}</td><td>{{.InWork}} <span class="small muted">{{money .InWorkSum}} {{$r.Currency}}</span></td><td><b>{{.Won}}</b> <span class="small muted">{{money .WonSum}} {{$r.Currency}}</span></td>
+      <td>{{.Lost}}</td><td>{{.WinRate}}%</td><td>{{if .OverdueActivities}}<span class="overdue">{{.OverdueActivities}}</span>{{else}}0{{end}}</td></tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">{{t "crm.empty"}}</div>{{end}}</div>
+</div>
+<div>
+  <div class="card"><h2>{{t "crm.an.leads"}}</h2>
+    {{range $r.Leads}}<div class="crmbar"><span class="lbl">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</span>
+      <span class="bar"><i style="width:{{share .Count $max}}%;background:#{{.Color}}"></i></span><b>{{.Count}}</b></div>{{end}}</div>
+  <div class="card"><h2>{{t "crm.an.sources"}}</h2>{{if $r.Sources}}<table class="tlist">
+    <thead><tr><th>{{t "crm.f.origin"}}</th><th>{{t "crm.leads"}}</th><th>{{t "crm.an.converted"}}</th></tr></thead>
+    <tbody>{{range $r.Sources}}<tr><td>{{if or .Name .Code}}{{if .ID}}<a href="/crm/leads?view=list&source={{.ID}}">{{template "crmdict" .Dict}}</a>{{else}}{{.Name}}{{end}}{{else}}<span class="muted">{{t "crm.an.no_source"}}</span>{{end}}</td><td>{{.Count}}</td><td>{{.Converted}} <span class="small muted">{{share .Converted .Count}}%</span></td></tr>{{end}}</tbody>
+  </table>{{else}}<p class="muted small">{{t "crm.empty"}}</p>{{end}}</div>
+</div>
+</div>
+{{end}}

@@ -1,0 +1,106 @@
+# boris.gb 2026-10-11 14:37 - приложение go24 в Authentik как код: OIDC-провайдер + приложение создаются автоматически при старте worker
+# Значения берутся из переменных окружения authentik-worker (см. deploy/docker-compose.yml и deploy/.env)
+version: 1
+metadata:
+  name: go24 - OIDC application
+  labels:
+    blueprints.goauthentik.io/description: "OAuth2/OpenID провайдер и приложение для go24"
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: go24-provider
+    identifiers:
+      name: go24
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      # boris.gb 2026-10-11 15:10 - в Authentik 2026.x список разрешённых grant по умолчанию пуст → без него token endpoint отвечает invalid_grant
+      grant_types: [authorization_code, refresh_token]
+      client_id: !Env GO24_OIDC_CLIENT_ID
+      client_secret: !Env GO24_OIDC_CLIENT_SECRET
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["%s/auth/callback", !Env GO24_BASE_URL]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: go24
+    attrs:
+      name: go24
+      provider: !KeyOf go24-provider
+      meta_launch_url: !Env GO24_BASE_URL
+      policy_engine_mode: any
+
+  # boris.gb 2026-10-11 16:21 - группа администраторов go24 (GO24_ADMIN_GROUPS): кнопка «Режим администратора»; akadmin входит в неё
+  - model: authentik_core.group
+    identifiers:
+      name: go24-admins
+    attrs:
+      users:
+        - !Find [authentik_core.user, [username, akadmin]]
+
+  # boris.gb 2026-10-12 06:57 - служебная учётка go24-sync: go24 дописывает в Authentik недостающие данные из карточки сотрудника
+  # Права только глобальные view/change пользователей (не суперпользователь); токен берётся из GO24_AUTHENTIK_TOKEN
+  - model: authentik_core.user
+    identifiers:
+      username: go24-sync
+    attrs:
+      name: go24 profile sync
+      type: service_account
+      path: go24
+      # boris.gb 2026-10-13 10:02 - и только приглашения + просмотр потоков (GO24DEV-83): ссылка регистрации, захватить чужую учётку ею нельзя
+      permissions:
+        - authentik_core.view_user
+        - authentik_core.change_user
+        - authentik_stages_invitation.add_invitation
+        - authentik_stages_invitation.view_invitation
+        - authentik_flows.view_flow
+
+  - model: authentik_core.token
+    identifiers:
+      identifier: go24-sync-api
+    attrs:
+      user: !Find [authentik_core.user, [username, go24-sync]]
+      intent: api
+      expiring: false
+      key: !Env GO24_AUTHENTIK_TOKEN
+      description: go24 → Authentik profile sync
+
+  # boris.gb 2026-10-12 07:16 - OIDC-провайдер и приложение для Synapse (мессенджер go24 на Matrix)
+  - model: authentik_providers_oauth2.oauth2provider
+    id: matrix-provider
+    identifiers:
+      name: matrix
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      grant_types: [authorization_code, refresh_token]
+      client_id: !Env MATRIX_OIDC_CLIENT_ID
+      client_secret: !Env MATRIX_OIDC_CLIENT_SECRET
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["%s/_synapse/client/oidc/callback", !Env MATRIX_PUBLIC_URL]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: matrix
+    attrs:
+      name: Мессенджер go24
+      provider: !KeyOf matrix-provider
+      policy_engine_mode: any
+

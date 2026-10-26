@@ -1,0 +1,34 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "docs.title"}}</h1>
+<div class="tabs">{{range $d.Scopes}}<a href="/docs{{with .}}?scope={{.}}{{end}}" {{if eq . $d.Scope}}class="on"{{end}}>{{t (print "docs.scope_" (or . "all"))}}</a>{{end}}
+  <span class="spacer"></span><a href="/disk/my">{{icon "folders"}} {{t "disk.title"}}</a></div>
+<div class="row diskhead"><span style="flex:1"></span>
+  <form method="get" action="/docs" class="row disk-search">{{with $d.Scope}}<input type="hidden" name="scope" value="{{.}}">{{end}}
+    <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "docs.search"}}" maxlength="200">
+    <select name="type" onchange="this.form.submit()"><option value="">{{t "docs.type_all"}}</option>{{range $d.Types}}<option value="{{.}}" {{if eq . $d.Type}}selected{{end}}>{{t (print "disk.type_" .)}}</option>{{end}}</select>
+    <button class="ghost" title="{{t "docs.search"}}">{{icon "search"}}</button>
+    {{if or $d.Q $d.Type}}<a class="button ghost" href="/docs{{with $d.Scope}}?scope={{.}}{{end}}" title="{{t "disk.search_reset"}}">{{icon "x"}}</a>{{end}}</form></div>
+{{if $d.Office}}<div class="card row diskbar"><b>{{t "office.create"}}</b>
+  <form method="post" action="/disk/my/new-doc" class="row officenew" style="flex:1" data-docs-new><input type="hidden" name="from" value="docs">
+    <input type="text" name="name" maxlength="200" placeholder="{{t "office.name"}}" style="flex:1">
+    <button name="kind" value="docx" class="ghost">{{icon "file-text"}} {{t "office.new_docx"}}</button>
+    <button name="kind" value="xlsx" class="ghost">{{icon "table"}} {{t "office.new_xlsx"}}</button>
+    <button name="kind" value="pptx" class="ghost">{{icon "presentation"}} {{t "office.new_pptx"}}</button></form>
+  <span class="small muted">{{t "docs.new_hint"}}</span></div>{{end}}
+<div class="card flush disk" data-docs>
+  {{if $d.Docs}}<table class="disk-list">
+    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "docs.changed_by"}}</th><th>{{t "docs.changed"}}</th><th>{{t "col.size"}}</th></tr></thead>
+    <tbody>{{range $d.Docs}}{{$k := docKind .Name}}{{$ic := "file-text"}}{{if eq $k "sheet"}}{{$ic = "table"}}{{else if eq $k "slides"}}{{$ic = "presentation"}}{{end}}
+    {{$open := print .Base "/edit/" .ID "?folder=" .FolderID "&from=docs"}}{{if not $d.Office}}{{$open = print "/files/" .ID}}{{end}}
+    <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">
+      <td class="thumb"><a href="{{$open}}" tabindex="-1"><span class="ticon">{{icon $ic}}<small>{{ext .Name}}</small></span></a></td>
+      <td><a href="{{$open}}" title="{{t "office.open"}}" class="ttitle">{{icon $ic}} {{.Name}}</a>{{if .LockerID}} <span class="dlock" title="{{t "disk.locked_by" .Locker (datetime .LockedAt)}}" data-locked>{{icon "lock"}}</span>{{end}}{{with .Editors}} <span class="pill dediting" title="{{t "disk.editing_by" .}}" data-editing>{{icon "file-pencil"}} {{t "disk.editing"}}</span>{{end}}{{if $d.Snippets}}{{with index $d.Snippets .ID}}<div class="dsnip small" title="{{t "disk.found_in_text"}}">{{icon "search"}} {{.}}</div>{{end}}{{end}}</td>
+      <td class="small"><a href="{{if .Single}}/disk/shared{{else}}{{.Base}}{{with .FolderID}}?folder={{.}}{{end}}{{end}}">{{if .Owner}}{{t "docs.disk_of" .Owner}}{{else if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
+      <td class="small">{{.Changer}}</td>
+      <td class="small meta">{{datetime .CreatedAt}}</td>
+      <td class="small meta">{{size .Size}}<a class="button ghost" href="/files/{{.ID}}" title="{{t "disk.download"}}" download>{{icon "download"}}</a></td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{if or $d.Q $d.Type}}{{t "docs.not_found"}}{{else}}{{t "docs.empty"}}{{end}}</div>{{end}}
+</div>
+{{end}}

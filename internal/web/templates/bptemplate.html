@@ -1,0 +1,66 @@
+{{define "content"}}
+{{$d := .Data}}{{$t := $d.T}}{{$id := or $t.ID "new"}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a> {{icon "chevron-right"}} <a href="/bp/templates">{{t "bp.templates"}}</a></div>
+<h1>⚙ {{if $t.Name}}{{$t.Name}}{{else}}{{t "bp.new_template"}}{{end}}</h1>
+<div class="layout2"><div>
+<div class="card">
+  <form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="meta">
+    <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$t.Name}}" required maxlength="200">
+    <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$t.Description}}</textarea>
+    <label>{{t "bp.for"}}</label><select name="entity"><option value="none">{{t "bp.standalone"}}</option>{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}" {{if and (eq . $t.Entity) (not $t.TypeID)}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}
+      {{range $d.Types}}<option value="deal:{{.ID}}" {{if eq .ID $t.TypeID}}selected{{end}}>{{t "bp.smart"}}: {{.Name}}</option>{{end}}</select>
+    <label>{{t "bp.autostart"}}</label>
+    <label class="check"><input type="checkbox" name="auto_create" {{if $t.AutoCreate}}checked{{end}}> {{t "bp.auto_create"}}</label>
+    <label class="check"><input type="checkbox" name="auto_change" {{if $t.AutoChange}}checked{{end}}> {{t "bp.auto_change"}}</label>
+    <p class="small muted">{{t "bp.autostart_hint"}}</p>
+    <label>{{t "bp.fields"}}</label><textarea name="fields" rows="4" placeholder="from | С какого числа | date | *">{{$d.FieldsText}}</textarea>
+    <p class="small muted">{{t "bp.fields_hint"}}</p>
+    <label class="check"><input type="checkbox" name="active" {{if $t.Active}}checked{{end}}> {{t "bp.active"}}</label>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+</div><div>
+{{if $t.ID}}<div class="card">
+  <h2>{{t "bp.steps"}}</h2>
+  <ol class="bpsteps">{{range $i, $s := $t.Steps}}<li>{{template "bpstep" (dict "S" $s "Users" $d.Users)}}
+    <span class="row" style="display:inline-flex">{{if $i}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="up"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "bp.up"}}">↑</button></form>{{end}}
+    <form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span></li>{{end}}</ol>
+  <details><summary class="button ghost">{{icon "plus"}} {{t "bp.add_step"}}</summary>
+    <form method="post" action="/bp/templates/{{$id}}" class="bpaddstep" data-robot><input type="hidden" name="op" value="add">
+      <select name="kind">{{range $d.Kinds}}<option value="{{.}}">{{t (print "bp.kind." .)}}</option>{{end}}</select>
+      <div data-for="create"><label>{{t "bp.step_card_entity"}}</label><select name="card_entity">{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}">{{t (print "crm." .)}}</option>{{end}}</select></div>
+      <div data-for="approve review request task notify chat create absence"><input type="text" name="text" maxlength="1000" placeholder="{{t "bp.step_text"}}"></div>
+      <div data-for="chat mail"><label>{{t "bp.step_from"}}</label>{{template "upick" (upick "from" "starter" $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible"))}}</div>
+      <div data-for="approve review request task notify chat create"><label>{{t "bp.step_to"}}</label>{{template "upick" (upick "to" "starter" $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible"))}}</div>
+      <div data-for="approve review request chat"><label>{{t "bp.step_users"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible"))}}</div>
+      <div data-for="mail"><label>{{t "bp.step_mail_to"}}</label>{{template "upick" (upick "mail_to" (or (and (ne $t.Entity "none") "client") "") $d.Users "+client" (t "bp.to.client") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible"))}}
+        <label>{{t "bp.step_email"}}</label><input type="text" name="email" maxlength="1000" placeholder="buh@example.com, {email}">
+        <label>{{t "bp.step_subject"}}</label><input type="text" name="subject" maxlength="300">
+        <label>{{t "bp.step_body"}}</label><textarea name="text" rows="5" maxlength="1000"></textarea></div>
+      <div data-for="approve"><label>{{t "bp.step_mode"}}</label><select name="mode">{{range $d.Modes}}<option value="{{.}}">{{t (print "bp.mode." .)}}</option>{{end}}</select></div>
+      {{if $d.AllFields}}<div data-for="if set"><label>{{t "bp.step_field"}}</label><div class="row"><select name="field">{{range $d.AllFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select>
+        <span data-for="if"><select name="op">{{range $d.Ops}}<option value="{{.}}">{{t (print "bp.op." .)}}</option>{{end}}</select></span>
+        <input type="text" name="value" maxlength="1000" placeholder="{{t "bp.step_value"}}" style="flex:1"></div></div>{{end}}
+      <div data-for="update create"><label>{{t "bp.step_sets"}}</label><textarea name="sets" rows="4" placeholder="amount = {sum}&#10;responsible = manager"></textarea>
+        <p class="small muted">{{t "bp.step_sets_hint"}}</p>
+        <div class="small muted">{{range list "deal" "lead" "contact" "company"}}<div><b>{{t (print "crm." .)}}:</b>{{range $i, $f := index $d.CardFields .}}{{if $i}},{{end}} <code>{{$f}}</code> {{t (print "crm.f." $f)}}{{end}}{{range index $d.OwnFields .}}, «{{.}}»{{end}}</div>{{end}}</div></div>
+      <div data-for="request"><label>{{t "bp.step_request_fields"}}</label><textarea name="request_fields" rows="3" placeholder="sum | Сумма | number | *"></textarea>
+        <label class="check"><input type="checkbox" name="reject"> {{t "bp.step_reject"}}</label></div>
+      <div data-for="parallel"><label>{{t "bp.step_branches"}}</label><input type="text" name="branches" maxlength="100" placeholder="4, 7">
+        <p class="small muted">{{t "bp.step_branches_hint"}}</p></div>
+      <div data-for="if goto approve request parallel"><label>{{t "bp.step_goto"}}</label><input type="number" name="goto" min="0" max="200" value="0"></div>
+      <div data-for="task"><label>{{t "bp.step_project"}}</label><select name="project"><option value=""></option>{{range $d.Projects}}<option value="{{.Key}}">{{.Name}}</option>{{end}}</select></div>
+      <div data-for="task wait"><label>{{t "bp.step_days"}}</label><input type="number" name="days" min="0" max="365" value="0"></div>
+      <div data-for="absence"><label>{{t "absence.kind"}}</label><select name="absence">{{range $d.AbsenceKinds}}<option value="{{.}}">{{t (print "absence.kind." .)}}</option>{{end}}</select>
+        <label>{{t "bp.step_absence_dates"}}</label><div class="row"><select name="start"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select> —
+        <select name="end"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select></div>
+        <div class="small muted">{{t "bp.step_absence_hint"}}</div></div>
+      <div data-for="webhook"><label>{{t "bp.step_url"}}</label><input type="url" name="url" placeholder="https://n8n.example.com/webhook/…"></div>
+      {{with $d.Stages}}<div data-for="stage"><label>{{t "bp.step_stage"}}</label><select name="stage"><option value=""></option>{{range .}}<option value="{{.ID}}">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}</select></div>{{end}}
+      <label>{{t "bp.step_at"}}</label><input type="number" name="at" min="1" max="200">
+      <p class="small muted">{{t "bp.step_hint"}}</p>
+      <button class="primary">{{t "common.add"}}</button></form></details>
+</div>{{else}}<div class="card muted">{{t "bp.save_first"}}</div>{{end}}
+</div></div>
+<script src="{{asset "js/robots.js"}}"></script>
+{{end}}

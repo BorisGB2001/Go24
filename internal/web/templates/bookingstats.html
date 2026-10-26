@@ -1,0 +1,22 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/booking">{{t "booking.title"}}</a> {{icon "chevron-right"}}</div>
+<div class="pagehead"><h1>{{t "booking.stats"}}</h1></div>
+<form method="get" action="/booking/stats" class="row crmtools">
+  <select name="type" style="width:auto"><option value="">{{t "booking.all_resources"}}</option>{{range $d.Types}}<option value="{{.ID}}" {{if eq .ID $d.Type}}selected{{end}}>{{if .Code}}{{t (print "booking.type." .Code)}}{{else}}{{.Name}}{{end}}</option>{{end}}</select>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}"></span></span>
+  <button>{{t "booking.stats_show"}}</button>
+</form>
+<p class="muted small">{{t "booking.stats_hint"}}</p>
+<div class="card flush bk-stats-wrap">
+  <table class="list bk-stats"><thead><tr><th>{{t "booking.resource"}}</th><th>{{t "booking.stats_work"}}</th><th>{{t "booking.stats_busy"}}</th><th>{{t "booking.stats_load"}}</th><th>{{t "booking.stats_no_show"}}</th>
+    <th>{{t "booking.stats_bookings"}}</th>{{range $d.Statuses}}<th>{{t (print "booking.st." .)}}</th>{{end}}</tr></thead><tbody>
+  {{range $d.Rows}}{{template "bkstat" (dict "x" . "d" $d "total" false)}}{{end}}{{if $d.Rows}}{{template "bkstat" (dict "x" $d.Total "d" $d "total" true)}}{{end}}</tbody></table>
+  {{if not $d.Rows}}<p class="empty">{{t "booking.no_resources"}}</p>{{end}}
+</div>
+{{end}}
+{{define "bkstat"}}{{$x := .x}}{{$d := .d}}{{$total := .total}}<tr{{if $total}} class="bk-total"{{end}}>
+    <td>{{if $total}}<b>{{t "booking.stats_total"}}</b>{{else}}<a href="/booking?type={{$x.Resource.TypeID}}">{{$x.Resource.Name}}</a>{{with $x.Resource.UserName}} <span class="small muted">· {{.}}</span>{{end}}{{end}}</td>
+    <td>{{call $d.Hours $x.Work}}</td><td>{{call $d.Hours $x.Busy}}</td>
+    <td><div class="bk-load"><span style="width:{{if gt $x.Load 100}}100{{else}}{{$x.Load}}{{end}}%"></span></div> {{$x.Load}}%</td>
+    <td>{{if ge $x.NoShowShare 0}}{{$x.NoShowShare}}%{{else}}—{{end}}</td>
+    <td>{{$x.Bookings}}</td>{{range $d.Statuses}}<td>{{or (index $x.Statuses .) "—"}}</td>{{end}}</tr>{{end}}

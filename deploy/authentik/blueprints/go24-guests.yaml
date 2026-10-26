@@ -1,0 +1,138 @@
+# boris.gb 2026-10-19 21:15 - гости коллабов (GO24DEV-181): группа go24-guests и поток регистрации гостя по приглашению.
+# go24 создаёт одноразовое приглашение в этот поток, когда человек открывает ссылку-приглашение в коллаб; он вводит имя,
+# e-mail (по личному приглашению они уже заполнены), логин и пароль, попадает в группу go24-guests (по ней go24 знает,
+# что это гость: видит только свои коллабы) и возвращается в go24. Отдельный файл, чтобы ошибка здесь не мешала
+# применению go24.yaml и go24-enrollment.yaml. Прав учётке go24-sync не добавляет: приглашения она уже создаёт.
+version: 1
+metadata:
+  name: go24 - guests of collabs
+  labels:
+    blueprints.goauthentik.io/description: "Гости коллабов go24: группа и регистрация по приглашению"
+entries:
+  - model: authentik_core.group
+    id: guests
+    identifiers:
+      name: go24-guests
+    attrs:
+      is_superuser: false
+
+  - model: authentik_flows.flow
+    id: flow
+    identifiers:
+      slug: go24-guest-enrollment
+    attrs:
+      name: go24 — регистрация гостя коллаба
+      title: Регистрация гостя в go24
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - model: authentik_stages_invitation.invitationstage
+    id: invitation
+    identifiers:
+      name: go24-guest-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_prompt.prompt
+    id: prompt-name
+    identifiers:
+      name: go24-guest-name
+    attrs:
+      field_key: name
+      label: Имя и фамилия
+      type: text
+      required: true
+      placeholder: Имя и фамилия
+      order: 0
+  - model: authentik_stages_prompt.prompt
+    id: prompt-email
+    identifiers:
+      name: go24-guest-email
+    attrs:
+      field_key: email
+      label: E-mail
+      type: email
+      required: true
+      placeholder: E-mail
+      order: 1
+  - model: authentik_stages_prompt.prompt
+    id: prompt-username
+    identifiers:
+      name: go24-guest-username
+    attrs:
+      field_key: username
+      label: Логин
+      type: username
+      required: true
+      placeholder: Логин для входа
+      order: 5
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password
+    identifiers:
+      name: go24-guest-password
+    attrs:
+      field_key: password
+      label: Пароль
+      type: password
+      required: true
+      placeholder: Пароль
+      order: 10
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password-repeat
+    identifiers:
+      name: go24-guest-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Пароль ещё раз
+      type: password
+      required: true
+      placeholder: Пароль ещё раз
+      order: 11
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt
+    identifiers:
+      name: go24-guest-prompt
+    attrs:
+      fields:
+        - !KeyOf prompt-name
+        - !KeyOf prompt-email
+        - !KeyOf prompt-username
+        - !KeyOf prompt-password
+        - !KeyOf prompt-password-repeat
+
+  - model: authentik_stages_user_write.userwritestage
+    id: write
+    identifiers:
+      name: go24-guest-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: false
+      create_users_group: !KeyOf guests
+      user_path_template: go24/guests
+
+  - model: authentik_stages_user_login.userloginstage
+    id: login
+    identifiers:
+      name: go24-guest-login
+
+  # обратно в go24: вход проходит сам (сессия Authentik уже есть), и go24 по ссылке-приглашению добавляет гостя в коллаб
+  - model: authentik_stages_redirect.redirectstage
+    id: back
+    identifiers:
+      name: go24-guest-back
+    attrs:
+      mode: static
+      target_static: !Format ["%s/login", !Env GO24_BASE_URL]
+      keep_context: false
+
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf invitation, order: 0}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf prompt, order: 10}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf write, order: 20}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf login, order: 30}
+  - model: authentik_flows.flowstagebinding
+    identifiers: {target: !KeyOf flow, stage: !KeyOf back, order: 40}

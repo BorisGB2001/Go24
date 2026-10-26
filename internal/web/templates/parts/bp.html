@@ -1,0 +1,43 @@
+{{/* bpfield is an input of a process's field: of the start form or of a request */}}
+{{define "bpfield"}}{{$f := .}}<label>{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
+{{if eq .Kind "text"}}<textarea name="f_{{.Key}}" rows="4" {{if .Required}}required{{end}}></textarea>
+{{else if eq .Kind "date"}}<input type="date" name="f_{{.Key}}" {{if .Required}}required{{end}}>
+{{else if eq .Kind "number"}}<input type="text" inputmode="decimal" name="f_{{.Key}}" {{if .Required}}required{{end}}>
+{{else}}<input type="text" name="f_{{.Key}}" maxlength="1000" {{if .Required}}required{{end}}>{{end}}{{end}}
+
+{{/* bpanswer is the form of a person's part in a process: approve or reject, «Ознакомлен», or a request's fields
+     (with «Отклонить» when the step allows): (dict "A" approval "Back" url) */}}
+{{define "bpanswer"}}{{$a := .A}}<form method="post" action="/bp/approvals/{{$a.ID}}" class="{{if eq $a.Kind "request"}}bprequest{{else}}row{{end}}"><input type="hidden" name="back" value="{{.Back}}">
+    {{if eq $a.Kind "request"}}{{range $a.Fields}}{{template "bpfield" .}}{{end}}<label>{{t "bp.comment"}}</label>{{end}}
+    <div class="row"><input type="text" name="comment" maxlength="5000" placeholder="{{t "bp.comment"}}" style="flex:1">
+    {{if eq $a.Kind "review"}}<button class="primary" name="decision" value="seen">{{icon "check"}} {{t "bp.seen"}}</button>
+    {{else if eq $a.Kind "request"}}<button class="primary" name="decision" value="answer">{{icon "send"}} {{t "bp.answer"}}</button>
+    {{if $a.CanReject}}<button class="ghost" name="decision" value="reject" formnovalidate>{{icon "x"}} {{t "bp.reject"}}</button>{{end}}
+    {{else}}<button class="primary" name="decision" value="approve">{{icon "check"}} {{t "bp.approve"}}</button>
+    <button class="ghost" name="decision" value="reject">{{icon "x"}} {{t "bp.reject"}}</button>{{end}}</div></form>{{end}}
+
+{{/* bpstep describes a step of a business process: (dict "S" step "Users" users) */}}
+{{define "bpstep"}}{{$s := .S}}{{$users := .Users}}<b>{{t (print "bp.kind." $s.Kind)}}</b>{{with $s.Text}}{{if ne $s.Kind "mail"}}: {{.}}{{end}}{{end}}
+{{- if eq $s.Kind "if"}}: <code>{{$s.Field}}</code> {{t (print "bp.op." $s.Op)}}{{if and (ne $s.Op "empty") (ne $s.Op "filled")}} «{{$s.Value}}»{{end}}{{end}}
+{{- if eq $s.Kind "request"}}{{range $i, $f := $s.Fields}}{{if $i}},{{else}}:{{end}} <code>{{$f.Key}}</code>{{end}}{{end}}
+{{- if eq $s.Kind "set"}}: <code>{{$s.Field}}</code> = «{{$s.Value}}»{{end}}
+{{- if eq $s.Kind "create"}} ({{t (print "crm." $s.Entity)}}){{end}}{{if eq $s.Kind "absence"}} ({{t (print "absence.kind." $s.Absence)}}: <code>{{$s.Start}}</code> — <code>{{$s.End}}</code>){{end}}{{if eq $s.Kind "mail"}}: {{$s.Subject}}{{end}}
+{{- range $i, $a := $s.Sets}}{{if $i}},{{else}}:{{end}} <code>{{$a.Field}}</code> = «{{$a.Value}}»{{end}}
+<span class="small muted">
+{{- if or (eq $s.Kind "chat") (eq $s.Kind "mail")}} · {{t "bp.from"}} {{template "bpwho" (dict "To" (or $s.From "starter") "Users" $users)}} →{{end}}
+{{- if and (eq $s.Kind "mail") $s.To}} {{template "bpwho" (dict "To" $s.To "Users" $users)}}{{end}}{{with $s.Email}} {{.}}{{end}}
+{{- if or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request") (eq $s.Kind "notify") (eq $s.Kind "task") (eq $s.Kind "chat") (eq $s.Kind "create")}}{{range $i, $to := $s.People}}{{if $i}},{{else}} ·{{end}} {{if or (eq $to "starter") (eq $to "manager") (eq $to "responsible")}}{{t (print "bp.to." $to)}}{{else}}{{range $users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}{{end}}
+{{- if and (eq $s.Kind "approve") $s.Users}} · {{t (print "bp.mode." (or $s.Mode "any"))}}{{end}}
+{{- with $s.Project}} · {{.}}{{end}}{{with $s.URL}} · <code>{{.}}</code>{{end}}{{if $s.Days}} · {{t "bp.days" $s.Days}}{{end}}
+{{- if eq $s.Kind "if"}} · {{t "bp.else"}}{{end}}{{if or (eq $s.Kind "approve") (eq $s.Kind "request")}}{{if $s.Goto}} · {{t "bp.if_rejected"}}{{else if $s.Reject}} · {{t "bp.can_reject"}}{{end}}{{end}}
+{{- if eq $s.Kind "parallel"}} · {{t "bp.branches_from"}}{{range $s.Branches}}, {{.}}{{end}}{{end}}
+{{- if or (eq $s.Kind "if") (eq $s.Kind "goto") (eq $s.Kind "parallel") (and (eq $s.Kind "approve") $s.Goto) (and (eq $s.Kind "request") $s.Goto)}} → {{if $s.Goto}}{{t "bp.to_step" $s.Goto}}{{else}}{{t "bp.to_end"}}{{end}}{{end}}</span>
+{{- end}}
+
+{{define "bpwho"}}{{if or (eq .To "starter") (eq .To "manager") (eq .To "responsible") (eq .To "client")}}{{t (print "bp.to." .To)}}{{else}}{{$to := .To}}{{range .Users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}
+
+{{/* bpfeed is a process in its post of the feed: (dict "C" bpFeedCard "Post" post id) */}}
+{{define "bpfeed"}}{{$c := .C}}{{$back := print "/feed?post=" .Post}}<div class="fbp">
+  <div class="row"><span class="pill bp-{{$c.X.Status}}">{{t (print "bp.status." $c.X.Status)}}</span><a class="small" href="/bp/i/{{$c.X.ID}}">{{icon "external-link"}} {{t "feed.bp_open"}}</a></div>
+  {{range $c.Mine}}<div class="bpapproval"><div>{{.Text}}</div>{{template "bpanswer" (dict "A" . "Back" $back)}}</div>{{end}}
+</div>{{end}}

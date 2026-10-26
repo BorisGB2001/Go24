@@ -1,0 +1,49 @@
+/* «Сайты»: the blocks of a site's page — on the published page, in the preview and in the editor (.lp). */
+body.lp { margin: 0; }
+.lp { --lp-accent: #1f6feb; --lp-text: #1d2330; --lp-muted: #5b6474; --lp-soft: #f4f6fa;
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--lp-text); background: #fff; }
+.lp .lp-wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+.lp section, .lp header, .lp footer { padding: 48px 0; }
+.lp h1 { font-size: 44px; line-height: 1.15; margin: 0 0 16px; }
+.lp h2 { font-size: 30px; line-height: 1.2; margin: 0 0 12px; }
+.lp h3 { font-size: 19px; margin: 0 0 6px; }
+.lp p { margin: 0 0 12px; }
+.lp a { color: var(--lp-accent); }
+.lp img { max-width: 100%; height: auto; border-radius: 8px; display: block; }
+.lp .lp-btn { display: inline-block; margin-top: 12px; padding: 12px 28px; border-radius: 8px; background: var(--lp-accent);
+  color: #fff; text-decoration: none; font-weight: 600; }
+.lp .lp-menu { padding: 16px 0; border-bottom: 1px solid #e6e9ef; }
+.lp .lp-menu .lp-wrap { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.lp .lp-logo { font-size: 20px; flex: 1; }
+.lp .lp-menu nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.lp .lp-menu nav a { color: inherit; text-decoration: none; }
+.lp .lp-cover { padding: 96px 0; background: var(--lp-soft) center / cover no-repeat; }
+.lp .lp-cover.lp-pic { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .5); background-color: #333; }
+.lp .lp-cover p { font-size: 20px; max-width: 720px; }
+.lp .lp-title { text-align: center; padding-bottom: 16px; }
+.lp .lp-image { text-align: center; }
+.lp .lp-image img { margin: 0 auto; }
+.lp .lp-image p { color: var(--lp-muted); margin-top: 8px; }
+.lp .lp-textimage .lp-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+.lp .lp-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; margin-top: 24px; }
+.lp .lp-cols > div { background: var(--lp-soft); border-radius: 10px; padding: 20px; }
+.lp .lp-button { text-align: center; padding: 24px 0; }
+.lp .lp-contacts { background: var(--lp-soft); }
+.lp .lp-footer { padding: 28px 0; background: #1d2330; color: #c9ced8; font-size: 15px; }
+.lp .lp-noimg { aspect-ratio: 16 / 9; background: var(--lp-soft) url("../icons/photo.svg") center / 48px no-repeat; border-radius: 8px; opacity: .6; }
+.lp-preview { background: #fff6d6; padding: 6px 16px; font: 14px system-ui, sans-serif; text-align: center; }
+@media (max-width: 720px) {
+  .lp h1 { font-size: 32px; }
+  .lp .lp-textimage .lp-wrap { grid-template-columns: 1fr; }
+  .lp .lp-cover { padding: 64px 0; }
+}
+.lp .lp-form { background: var(--lp-soft); }
+.lp .lp-fields { max-width: 560px; margin-top: 20px; display: grid; gap: 14px; }
+.lp .lp-fields label { display: grid; gap: 4px; font-size: 15px; color: var(--lp-muted); }
+.lp .lp-fields input, .lp .lp-fields textarea { font: inherit; color: var(--lp-text); padding: 10px 12px; border: 1px solid #cfd5df;
+  border-radius: 8px; background: #fff; box-sizing: border-box; width: 100%; }
+.lp .lp-fields button { justify-self: start; border: 0; cursor: pointer; font: inherit; font-weight: 600; }
+.lp .lp-fields button:disabled { opacity: .6; cursor: default; }
+.lp .lp-trap { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
+.lp .lp-req, .lp .lp-err { color: #c62828; }
+.lp .lp-thanks { margin-top: 20px; padding: 20px; border-radius: 10px; background: #e6f4ea; color: #1e5631; max-width: 560px; }

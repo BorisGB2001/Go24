@@ -1,0 +1,30 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row bi-head">
+  <div><a class="small muted" href="{{if $d.G}}/bi/groups{{else}}/bi{{end}}">{{icon "chevron-left"}} {{if $d.G}}{{t "bi.groups"}}{{else}}{{t "bi.title"}}{{end}}</a>
+    <h1>{{with $d.G}}{{.Title}}{{else}}{{t "bi.groups"}}{{end}}</h1></div>
+  {{if not $d.G}}<details class="bi-menu"><summary class="button primary">{{icon "plus"}} {{t "bi.group_new"}}</summary>
+    <form class="card pop" method="post" action="/bi/groups">
+      <label>{{t "bi.d.title"}}<input type="text" name="title" required maxlength="200" autofocus></label>
+      <button class="primary">{{t "common.create"}}</button>
+    </form></details>{{end}}
+</div>
+{{with $d.G}}{{$g := .}}
+<form class="card bi-settings" method="post" action="/bi/groups/{{$g.ID}}/rename">
+  <label>{{t "bi.d.title"}}<input type="text" name="title" value="{{$g.Title}}" required maxlength="200"></label>
+  <p class="small muted"><a href="/bi?group={{$g.ID}}">{{t "bi.group_dashboards"}}: {{$g.Dashboards}}</a></p>
+  <div class="row"><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{template "bi-rights" (dict "A" (print "/bi/groups/" $g.ID "/rights") "D" $d)}}
+<form method="post" action="/bi/groups/{{$g.ID}}/delete" onsubmit="return confirm(this.dataset.q)" data-q="{{t "bi.group_delete_q"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>
+{{else}}
+<div class="sub">{{t "bi.groups_hint"}}</div>
+{{if $d.Groups}}<div class="card flush"><table class="tlist bi-list">
+  <thead><tr><th>{{t "bi.d.title"}}</th><th>{{t "bi.group_dashboards"}}</th><th></th></tr></thead>
+  {{range $d.Groups}}<tr>
+    <td><a href="/bi?group={{.ID}}">{{icon "folder"}} {{.Title}}</a></td><td>{{.Dashboards}}</td>
+    <td>{{if or $d.Admin (eq .CreatedBy $d.UserID)}}<a class="button ghost" href="/bi/groups?id={{.ID}}">{{icon "settings"}} {{t "bi.group_settings"}}</a>{{end}}</td></tr>{{end}}
+</table></div>
+{{else}}<div class="card bi-empty">{{icon "folder"}}<p>{{t "bi.groups_empty"}}</p></div>{{end}}
+{{end}}
+{{end}}

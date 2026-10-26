@@ -1,0 +1,12 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "video"}} {{t "call.ext_my"}}</h1>
+<form method="post" action="/settings/call-links" class="card stack">
+  <p class="muted small">{{t "call.ext_my_hint"}}</p>
+  {{range $d.Rows}}<label>{{t (printf "call.svc.%s" .Service)}}
+    <input type="url" name="{{.Service}}" value="{{.Link}}" placeholder="{{t (printf "call.ext_ph.%s" .Service)}}"></label>
+    {{if .API}}<p class="muted small">{{t "call.ext_api_note"}}</p>{{end}}
+  {{else}}<p class="empty">{{t "call.ext_none"}}</p>{{end}}
+  {{if $d.Rows}}<div><button class="primary">{{t "common.save"}}</button></div>{{end}}
+</form>
+{{end}}

@@ -1,0 +1,32 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{t "flows.title"}}</h1><a href="/flows/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<p class="muted">{{t "flows.hint"}}</p>
+{{if $d.Flows}}
+<div class="card flush tlist-wrap">
+<table class="tlist flows">
+  <thead><tr><th>{{t "flows.flow"}}</th><th>{{t "flows.distribution"}}</th><th>{{t "flows.queue"}}</th><th>{{t "flows.in_work"}}</th>
+    <th>{{t "flows.done"}}</th><th>{{t "flows.avg"}}</th><th>{{t "eff.title"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Flows}}{{$st := .Stats}}
+  <tr{{if not .Active}} class="muted"{{end}}>
+    <td><a href="/flows/{{.ID}}"><b>{{.Name}}</b></a>{{if not .Active}} <span class="badge">{{t "flows.off"}}</span>{{end}}
+      <div class="muted small"><a href="/p/{{.ProjectKey}}">{{.ProjectName}}</a> · {{t "flows.owner"}}: {{.OwnerName}}</div></td>
+    <td>{{t (print "flows.dist." .Distribution)}}</td>
+    <td>{{$st.Queue}}</td><td>{{$st.InWork}}</td><td>{{$st.Done}}</td>
+    <td class="small">{{t "flows.avg_queue"}} {{if $st.AvgQueue}}{{dur (secs $st.AvgQueue)}}{{else}}—{{end}}<br>{{t "flows.avg_work"}} {{if $st.AvgWork}}{{dur (secs $st.AvgWork)}}{{else}}—{{end}}</td>
+    <td><b class="eff-pct sm {{if lt $st.Efficiency 70}}low{{else if lt $st.Efficiency 90}}mid{{end}}">{{$st.Efficiency}}%</b></td>
+    <td class="tpl-actions"><div class="acts">
+      {{if .CanCreate}}<a href="/flows/{{.ID}}#newtask" class="button ghost">{{icon "plus"}} {{t "flows.put_task"}}</a>{{end}}
+      {{if .CanManage}}<form method="post" action="/flows/{{.ID}}/active"><input type="hidden" name="on" value="{{if .Active}}0{{else}}1{{end}}">
+        <button class="ghost" title="{{if .Active}}{{t "flows.turn_off"}}{{else}}{{t "flows.turn_on"}}{{end}}">{{if .Active}}{{icon "player-pause"}}{{else}}{{icon "player-play"}}{{end}}</button></form>
+      <a href="/flows/{{.ID}}/edit" class="button ghost" title="{{t "flows.edit"}}">{{icon "settings"}}</a>{{end}}
+    </div></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "send"}} {{t "flows.empty"}}</div>
+{{end}}
+{{end}}

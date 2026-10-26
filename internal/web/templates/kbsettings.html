@@ -1,0 +1,48 @@
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.Space}}
+<div class="crumbs"><a href="/kb">{{t "kb.title"}}</a> {{icon "chevron-right"}} <a href="/kb/{{$s.ID}}">{{$s.Name}}</a> {{icon "chevron-right"}} {{t "kb.settings"}}</div>
+<h1>{{icon "settings"}} {{t "kb.settings"}}</h1>
+<div class="card" style="max-width:720px">
+  <form method="post" action="/kb/{{$s.ID}}/settings">
+    <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$s.Name}}" maxlength="200" required>
+    <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$s.Description}}</textarea>
+    <p class="small muted">{{if $s.ProjectKey}}{{icon "folders"}} {{$s.ProjectName}}{{else}}{{t "kb.for_all"}}{{end}}</p>
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+<div class="card" style="max-width:720px" id="rights">
+  <h2>{{icon "shield-lock"}} {{t "kb.rights"}}</h2>
+  <form method="post" action="/kb/{{$s.ID}}/rights">
+    {{with $d.Rights}}{{range .}}<div class="row small kbright"><span style="flex:1">{{if eq .Kind "department"}}{{icon "hierarchy-2"}} {{.Whom}}{{else if eq .Kind "all"}}{{icon "users"}} {{t "kb.rights_all"}}{{else}}{{icon "user"}} {{.Whom}}{{end}}</span><span class="muted">{{t (print "kb.access_" .Access)}}</span>
+      <button class="ghost" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></div>{{end}}
+    {{else}}<p class="muted small">{{if $s.ProjectKey}}{{t "kb.rights_default_project"}}{{else}}{{t "kb.rights_default"}}{{end}}</p>{{end}}
+    <div class="row"><select name="whom" required><option value="">{{t "disk.share_whom"}}</option><option value="all">{{t "kb.rights_all"}}</option>
+      <optgroup label="{{t "disk.share_people"}}">{{range $d.Users}}<option value="user:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>
+      {{if $d.Departments}}<optgroup label="{{t "disk.share_departments"}}">{{range $d.Departments}}<option value="department:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+    <select name="access">{{range $d.Accesses}}<option value="{{.}}">{{t (print "kb.access_" .)}}</option>{{end}}</select>
+    <button>{{t "disk.share_give"}}</button></div>
+    <p class="muted small">{{t "kb.rights_hint"}}</p>
+    {{if $d.Rights}}<p><button class="ghost" name="clear" value="1" formnovalidate data-confirm="{{t "kb.rights_clear_confirm"}}">{{t "kb.rights_clear"}}</button></p>{{end}}
+  </form>
+</div>
+<div class="card" style="max-width:720px" id="template">
+  <h2>{{icon "copy"}} {{t "kb.template_save"}}</h2>
+  <p class="muted small">{{t "kb.template_save_hint"}}</p>
+  <form method="post" action="/kb/{{$s.ID}}/template">
+    <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$s.Name}}" maxlength="200" required>
+    <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$s.Description}}</textarea>
+    <p><button>{{icon "copy"}} {{t "kb.template_save"}}</button> <a class="small" href="/kb?template=#new">{{t "kb.templates_all"}}</a></p>
+  </form>
+</div>
+<div class="card" style="max-width:720px" id="publish">
+  <h2>{{icon "world"}} {{t "kb.publication"}}</h2>
+  <p class="muted small">{{t "kb.publication_hint"}}</p>
+  {{range $d.Links}}<form method="post" action="/kb/{{$s.ID}}/publish" class="row small kbright"><input type="hidden" name="page" value="{{.PageID}}">
+    <span>{{if .PageID}}{{icon "file-text"}} <a href="/kb/{{$s.ID}}/{{.PageID}}">{{.Title}}</a>{{else}}{{icon "notebook"}} {{t "kb.publication_all"}}{{end}}</span>
+    <input type="text" readonly value="{{$d.Base}}/kbp/{{.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Base}}/kbp/{{.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button>
+    <button class="ghost" name="off" value="1" title="{{t "kb.unpublish"}}" data-confirm="{{t "kb.unpublish_confirm"}}">{{icon "x"}}</button></form>
+  {{else}}<p class="muted small">{{t "kb.publication_none"}}</p>{{end}}
+  {{$all := false}}{{range $d.Links}}{{if not .PageID}}{{$all = true}}{{end}}{{end}}
+  {{if not $all}}<form method="post" action="/kb/{{$s.ID}}/publish"><button>{{icon "world"}} {{t "kb.publish_base"}}</button></form>{{end}}
+</div>
+{{end}}

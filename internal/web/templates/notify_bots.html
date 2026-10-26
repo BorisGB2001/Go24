@@ -1,0 +1,16 @@
+{{define "content"}}{{$d := .Data}}
+<h1>{{icon "bell"}} {{t "notifyout.bots"}}</h1>
+<p class="muted small">{{t "notifyout.bots_hint"}}</p>
+<div class="settings-grid">
+{{range $d.Bots}}<form method="post" action="/settings/notify-bots/{{.Channel}}" class="card stack" id="bot-{{.Channel}}">
+  <h3>{{t (print "notifyout.ch." .Channel)}}</h3>
+  <label><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> {{t "notifyout.bot_enable"}}</label>
+  {{if .NeedsServer}}<label class="small">{{t "notifyout.bot_server"}} <input type="url" name="server" value="{{.Server}}" placeholder="https://" autocomplete="off"></label>{{end}}
+  <label class="small">{{t "notifyout.bot_token"}} <input type="password" name="token" autocomplete="new-password" placeholder="{{if .HasToken}}{{t "call.ext_secret_set"}}{{end}}"></label>
+  <p class="muted small">{{t (print "notifyout.bot_hint." .Channel)}}</p>
+  {{if .HasToken}}<label class="small"><input type="checkbox" name="clear" value="1"> {{t "notifyout.bot_clear"}}</label>{{end}}
+  {{if .Name}}<p class="small">{{if .Ready}}✓ {{end}}{{t "notifyout.bot_name" .Name}}</p>{{end}}
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
+</div>
+{{end}}

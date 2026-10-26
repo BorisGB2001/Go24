@@ -1,0 +1,138 @@
+{{define "content"}}{{$d := .Data}}{{$e := $d.E}}
+<div class="crumbs"><a href="/calendar?month={{$e.Start.Format "2006-01"}}">{{t "calendar.title"}}</a> {{icon "chevron-right"}} {{if $e.Hidden}}{{t "calendar.private_busy"}}{{else if $e.ID}}{{$e.Title}}{{else}}{{t "calendar.new"}}{{end}}</div>
+<h1>{{if $e.Hidden}}{{icon "lock"}} {{t "calendar.private_busy"}}{{else if $e.ID}}{{if $e.Important}}<span class="evimportant" title="{{t "calendar.important"}}">{{icon "exclamation-mark"}}</span> {{end}}{{$e.Title}}{{else}}{{t "calendar.new"}}{{end}}</h1>
+{{if and $e.ID (not $e.Hidden)}}<div class="row evtools">
+  <a class="button ghost" href="/calendar/new?copy={{$e.ID}}">{{icon "copy"}} {{t "calendar.copy"}}</a>
+  <a class="button ghost" href="/calendar/ics/{{$e.ID}}" title="{{t "calendar.ics_hint"}}">{{icon "download"}} {{t "calendar.ics"}}</a></div>{{end}}
+{{with $e.SeriesID}}<div class="flash">{{icon "history"}} {{t "calendar.series_changed"}}</div>{{end}}
+{{with $d.IM}}<div class="flash">{{icon "message-circle"}} {{t "calendar.from_message" .Sender}}</div>{{end}}
+{{with $d.FromLetter}}<div class="flash">{{icon "mail"}} {{t "calendar.from_letter"}} <a href="/mail?letter={{.ID}}">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</a> · {{.From}}</div>{{end}}
+{{if and $e.ID $e.Video (not $e.Hidden)}}<div class="card row evanswer">{{icon "video"}} <b>{{t "calendar.video"}}</b><span style="flex:1"></span>
+  <a class="button primary" href="/call?event={{$e.ID}}">{{t "calendar.video_join"}}</a></div>{{end}}
+{{if and $e.ID $e.MyStatus}}
+<div class="card row evanswer">
+  <span>{{t "calendar.your_answer"}}: <b>{{t (print "calendar.status." $e.MyStatus)}}</b></span><span style="flex:1"></span>
+  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="accepted"><button class="primary">{{icon "check"}} {{t "calendar.accept"}}</button></form>
+  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="tentative"><button class="ghost">{{icon "circle-dashed"}} {{t "calendar.tentative"}}</button></form>
+  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="declined"><button class="ghost">{{icon "x"}} {{t "calendar.decline"}}</button></form>
+</div>
+{{end}}
+{{if $d.CanEdit}}
+<div class="card newtask">
+<form method="post" action="{{if $e.ID}}/calendar/{{$e.ID}}{{else}}/calendar/new{{end}}" class="taskform">
+  {{with $d.IM}}<input type="hidden" name="im_room" value="{{.Room}}"><input type="hidden" name="im_event" value="{{.Event}}">{{end}}
+  <input type="text" name="title" class="ntitle" required maxlength="300" value="{{$e.Title}}" placeholder="{{t "calendar.title_placeholder"}}" {{if not $e.ID}}autofocus{{end}}>
+  <textarea name="description" rows="3" placeholder="{{t "form.description"}}" data-mention>{{$e.Description}}</textarea>
+  <div class="tf-grid">
+    <label>{{t "calendar.when"}}</label>
+    <div class="row evwhen"><input type="datetime-local" name="start" value="{{$e.Start.Format "2006-01-02T15:04"}}" required> —
+      <input type="datetime-local" name="end" value="{{$e.End.Format "2006-01-02T15:04"}}" required>
+      <label class="check"><input type="checkbox" name="all_day" {{if $e.AllDay}}checked{{end}}> {{t "calendar.all_day"}}</label></div>
+    <label>{{t "calendar.repeat"}}</label>
+    <div class="row evwhen"><select name="repeat" style="width:auto"><option value="">{{t "calendar.repeat.none"}}</option>
+        {{range list "daily" "weekly" "monthly" "yearly"}}<option value="{{.}}" {{if eq . $e.Repeat}}selected{{end}}>{{t (print "repeat.period." .)}}</option>{{end}}</select>
+      <span class="muted">{{t "repeat.every"}}</span><input type="number" name="every" min="1" max="365" value="{{if $e.Every}}{{$e.Every}}{{else}}1{{end}}" class="num">
+      <span class="muted">{{t "calendar.until"}}</span><input type="date" name="until" value="{{with $e.Until}}{{.Format "2006-01-02"}}{{end}}" style="width:auto"></div>
+    <label>{{t "calendar.remind"}}</label>
+    <div class="reminds" data-reminds>
+      {{range $m := $e.Reminds}}<span class="remind"><select name="remind">{{range $d.Presets}}<option value="{{.M}}" {{if eq .M $m}}selected{{end}}>{{if eq .Key "calendar.remind.n"}}{{t .Key .M}}{{else}}{{t .Key}}{{end}}</option>{{end}}</select>
+        <button type="button" class="ghost small" data-remind-del title="{{t "common.remove"}}">{{icon "x"}}</button></span>{{end}}
+      <template data-remind-row><span class="remind"><select name="remind">{{range $d.Presets}}<option value="{{.M}}" {{if eq .M 15}}selected{{end}}>{{if eq .Key "calendar.remind.n"}}{{t .Key .M}}{{else}}{{t .Key}}{{end}}</option>{{end}}</select>
+        <button type="button" class="ghost small" data-remind-del title="{{t "common.remove"}}">{{icon "x"}}</button></span></template>
+      <button type="button" class="ghost small" data-remind-add>+ {{t "calendar.remind.add"}}</button></div>
+    <label>{{t "calendar.where"}}</label><div class="row"><input type="text" name="where" value="{{$e.Where}}" placeholder="{{t "calendar.where_placeholder"}}" style="flex:1">
+      {{template "callext" (dict "Fill" "where")}}</div>
+    <label>{{t "calendar.video"}}</label>
+    <label class="check"><input type="checkbox" name="video" {{if $e.Video}}checked{{end}}> {{icon "video"}} {{t "calendar.video_hint"}}</label>
+    {{if $d.Rooms}}<label>{{t "calendar.room"}}</label>
+    <select name="room" style="width:auto"><option value="">{{t "calendar.room.none"}}</option>
+      {{range $d.Rooms}}<option value="{{.ID}}" {{if eq .ID $e.RoomID}}selected{{end}}>{{.Name}}{{with .Capacity}} · {{t "calendar.room.seats" .}}{{end}}{{with .Location}} · {{.}}{{end}}</option>{{end}}</select>{{end}}
+    <label>{{t "calendar.calendar"}}</label>
+    <select name="cal"><option value="personal">{{t "calendar.cals.personal"}}</option>
+      {{range $d.Sections}}<option value="c:{{.ID}}" {{if eq .ID $e.CalendarID}}selected{{end}}>{{.Name}}</option>{{end}}
+      <option value="company" {{if $e.Company}}selected{{end}}>{{t "calendar.company"}}</option>
+      {{range $d.Projects}}<option value="{{.ID}}" {{if eq .ID $e.ProjectID}}selected{{end}}>{{t "calendar.project"}}: {{.Name}}</option>{{end}}</select>
+    <label>{{t "calendar.color"}}</label>
+    <div class="row evwhen"><div class="swatches evcolors"><label class="nocolor" title="{{t "calendar.color_none"}}"><input type="radio" name="color" value="" {{if not $e.Color}}checked{{end}}></label>
+      {{range $d.Colors}}<label style="--sw:{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $e.Color}}checked{{end}}></label>{{end}}
+      {{if and $e.Color (not (has $d.Colors $e.Color))}}<label style="--sw:{{$e.Color}}"><input type="radio" name="color" value="{{$e.Color}}" checked></label>{{end}}</div>
+      <label class="check"><input type="checkbox" name="important" {{if $e.Important}}checked{{end}}> {{icon "exclamation-mark"}} {{t "calendar.important"}}</label></div>
+    <label>{{t "calendar.attendees"}}</label>{{template "upick" (upick "invite" $d.Invited $d.Users "multi")}}
+    <label>{{t "calendar.planner"}}</label>
+    <div class="planner" data-planner data-owner="{{if $e.OwnerID}}{{$e.OwnerID}}{{else}}{{$d.Me}}{{end}}" data-except="{{$e.ID}}"
+      data-t-free="{{t "calendar.planner_free"}}" data-t-busy="{{t "calendar.planner_busy"}}" data-t-none="{{t "calendar.planner_none"}}"
+      data-t-take="{{t "calendar.planner_take"}}">
+      <div class="pl-head row"><span class="pl-state small"></span><span style="flex:1"></span><button type="button" class="ghost small pl-take" hidden></button></div>
+      <div class="pl-grid"></div>
+      <p class="small muted pl-legend"><span class="pl-key busy"></span> {{t "calendar.acc.busy"}} <span class="pl-key tentative"></span> {{t "calendar.acc.tentative"}}
+        <span class="pl-key absent"></span> {{t "calendar.acc.absent"}} <span class="pl-key here"></span> {{t "calendar.planner_here"}}</p>
+    </div>
+    <label>{{t "calendar.accessibility"}}</label>
+    <div class="row evwhen"><select name="accessibility" style="width:auto">{{range list "busy" "tentative" "absent" "free"}}<option value="{{.}}" {{if eq . $e.Accessibility}}selected{{end}}>{{t (print "calendar.acc." .)}}</option>{{end}}</select>
+      <label class="check" title="{{t "calendar.private_hint"}}"><input type="checkbox" name="private" {{if $e.Private}}checked{{end}}> {{icon "lock"}} {{t "calendar.private"}}</label></div>
+    {{with $d.MailBoxes}}<label>{{t "calendar.externals"}}</label>
+    <div><input type="text" name="external" value="{{$d.ExternalText}}" placeholder="{{t "calendar.externals_placeholder"}}" autocomplete="off">
+      <div class="row evwhen small muted"><span>{{t "calendar.externals_from"}}</span><select name="mailbox" style="width:auto">{{range .}}<option value="{{.ID}}"{{if eq .ID $d.MailboxID}} selected{{end}}>{{.Email}}</option>{{end}}</select></div>
+      <p class="small muted">{{t "calendar.externals_hint"}}</p></div>{{end}}
+  </div>
+  {{with $d.ReplyTo}}<input type="hidden" name="reply_to" value="{{.}}">{{end}}
+  {{with $d.At}}<input type="hidden" name="at" value="{{.}}">
+  <div class="row evwhen evscope"><span>{{icon "history"}} {{t "calendar.scope.save"}}</span>
+    {{range list "one" "following" "all"}}<label class="check"><input type="radio" name="scope" value="{{.}}" {{if eq . "one"}}checked{{end}}> {{t (print "calendar.scope." .)}}</label>{{end}}</div>{{end}}
+  <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button" href="/calendar?month={{$e.Start.Format "2006-01"}}">{{t "common.cancel"}}</a></p>
+</form>
+{{if $e.ID}}<form method="post" action="/calendar/{{$e.ID}}/delete" data-confirm="{{t "calendar.delete_confirm"}}" class="row evwhen">
+  {{with $d.At}}<input type="hidden" name="at" value="{{.}}"><select name="scope" style="width:auto">{{range list "one" "following" "all"}}<option value="{{.}}">{{t (print "calendar.scope_delete." .)}}</option>{{end}}</select>{{end}}
+  <button class="ghost">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+</div>
+{{else}}
+<div class="card props">
+  <span class="k">{{t "calendar.when"}}</span><span>{{if $e.AllDay}}{{day $e.Start}}{{if not (eq (day $e.Start) (day $e.End))}} — {{day $e.End}}{{end}}{{else}}{{datetime $e.Start}} — {{clock $e.End}}{{end}}</span>
+  {{with $e.Where}}<span class="k">{{t "calendar.where"}}</span><span>{{.}}</span>{{end}}
+  {{with $e.RoomName}}<span class="k">{{t "calendar.room"}}</span><span>🚪 {{.}}</span>{{end}}
+  {{if and (not $e.Hidden) (ne $e.Accessibility "busy")}}<span class="k">{{t "calendar.accessibility"}}</span><span>{{t (print "calendar.acc." $e.Accessibility)}}</span>{{end}}
+  {{if $e.Private}}<span class="k">{{icon "lock"}}</span><span>{{t "calendar.private"}}</span>{{end}}
+  {{if $e.Repeat}}<span class="k">{{t "calendar.repeat"}}</span><span>{{t (print "repeat.period." $e.Repeat)}}{{if gt $e.Every 1}}, {{t "repeat.every"}} {{$e.Every}}{{end}}{{with $e.Until}} — {{t "calendar.until"}} {{day .}}{{end}}</span>{{end}}
+  <span class="k">{{t "calendar.organizer"}}</span><span>{{person $e.OwnerName}}</span>
+  {{with $e.Description}}<span class="k">{{t "form.description"}}</span><span>{{nl2br .}}</span>{{end}}
+</div>
+{{end}}
+{{if or $e.Attendees $d.Externals}}
+<div class="card"><h2>{{icon "users"}} {{t "calendar.attendees"}}</h2>
+  {{range $e.Attendees}}<div class="row evatt">{{person .Name}}{{guestMark .ID}}<span class="pill ev-{{.Status}}">{{t (print "calendar.status." .Status)}}</span></div>{{end}}
+  {{range $d.Externals}}<div class="row evatt"><span>{{icon "mail"}} {{if .Name}}{{.Name}} <span class="muted small">&lt;{{.Email}}&gt;</span>{{else}}{{.Email}}{{end}}</span><span class="pill ev-{{.Status}}">{{t (print "calendar.status." .Status)}}</span></div>{{end}}
+</div>
+{{end}}
+{{with $d.Disc}}{{$own := or (eq $e.OwnerID $d.Me) $d.Admin}}
+{{if or .Files $own}}<div class="card" id="files"><h2>{{icon "paperclip"}} {{t "calendar.files"}}{{with len .Files}} <span class="muted small">{{.}}</span>{{end}}</h2>
+  {{range .Files}}<div class="row evatt"><a href="/files/{{.ID}}">{{icon "download"}} {{.Name}}</a>
+    <span class="small muted">{{size .Size}} · {{.Uploader}} · {{datetime .CreatedAt}}</span><span class="spacer"></span>
+    <form method="post" action="/files/{{.ID}}/drive" class="inline"><input type="hidden" name="back" value="/calendar/{{$e.ID}}#files">
+      <button class="ghost small" title="{{t "disk.save_to"}}">{{icon "device-floppy"}}</button></form>
+    {{if or $own (eq .UploaderID $d.Me)}}<form method="post" action="/calendar/{{$e.ID}}/files/{{.ID}}/remove" class="inline" data-confirm="{{t "calendar.file_remove_confirm"}}">
+      <button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</div>
+  {{else}}<p class="muted small">{{t "calendar.files_empty"}}</p>{{end}}
+  {{if $own}}<form method="post" action="/calendar/{{$e.ID}}/files" enctype="multipart/form-data" class="row" style="margin-top:10px">
+    <input type="file" name="file" multiple required> <button>{{icon "cloud-upload"}} {{t "files.attach"}}</button>
+    {{if not $.Guest}}<button type="button" class="ghost" data-disk-pick data-to="/calendar/{{$e.ID}}/files" {{template "diskPickL"}}>{{icon "folders"}} {{t "disk.pick"}}</button>{{end}}
+  </form>{{end}}
+</div>{{end}}
+<div class="card stack" id="comments">
+  <h2>{{icon "messages"}} {{t "calendar.comments"}}{{with len .Comments}} <span class="muted small">{{.}}</span>{{end}}</h2>
+  {{range .Comments}}<div class="dcomment" id="c-{{.ID}}">
+    <div class="row small"><b>{{if .Author}}{{.Author}}{{else}}—{{end}}</b><span class="muted">{{datetime .CreatedAt}}</span><span class="spacer"></span>
+      {{if or (eq .AuthorID $d.Me) $d.Admin}}<form method="post" action="/calendar/{{$e.ID}}/comments" data-confirm="{{t "calendar.comment_delete_confirm"}}"><input type="hidden" name="delete" value="{{.ID}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "trash"}}</button></form>{{end}}</div>
+    {{with .Body}}<div class="dcomment-body">{{.}}</div>{{end}}
+    {{range .Files}}<div class="small"><a href="/files/{{.ID}}">{{icon "paperclip"}} {{.Name}}</a> <span class="muted">{{size .Size}}</span></div>{{end}}</div>
+  {{else}}<p class="muted small">{{t "calendar.comments_empty"}}</p>{{end}}
+  <form method="post" action="/calendar/{{$e.ID}}/comments" enctype="multipart/form-data" class="stack">
+    <textarea name="body" rows="3" maxlength="10000" placeholder="{{t "calendar.comment_placeholder"}}" data-mention></textarea>
+    <div class="row"><button class="primary">{{icon "send"}} {{t "calendar.comment_send"}}</button>
+      <label class="button ghost" title="{{t "files.attach"}}">{{icon "paperclip"}}<input type="file" name="file" multiple hidden></label>
+      {{if not $.Guest}}<button type="button" class="ghost" data-disk-pick data-input="drive_file" {{template "diskPickL"}} title="{{t "disk.pick"}}">{{icon "folders"}}</button>{{end}}
+      <span class="row" data-disk-picked></span></div>
+  </form>
+</div>
+<script src="{{asset "js/drivepick.js"}}"></script>{{end}}
+<script src="{{asset "js/calendar.js"}}"></script>
+{{end}}

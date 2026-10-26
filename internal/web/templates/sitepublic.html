@@ -1,0 +1,15 @@
+{{/* A page of a site as a visitor sees it (and «Предпросмотр»): a page of its own, not inside the go24 layout. */}}
+{{define "layout.html"}}{{$d := .Data}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{$d.Page.Title}} · {{$d.Site.Name}}</title>
+{{with $d.Site.Description}}<meta name="description" content="{{.}}">{{end}}
+<link rel="stylesheet" href="{{asset "css/site.css"}}">
+</head>
+<body class="lp">
+{{if $d.Preview}}<div class="lp-preview">{{t "site.preview_bar"}} · <a href="/sites/{{$d.Site.ID}}/p/{{$d.Page.ID}}">{{t "site.back_to_editor"}}</a></div>{{end}}
+{{range $d.Page.Blocks}}{{template "siteblock" .}}{{else}}<section class="lp-text"><div class="lp-wrap"><p>{{$d.Page.Title}}</p></div></section>{{end}}
+</body>
+</html>{{end}}

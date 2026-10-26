@@ -1,0 +1,31 @@
+{{define "content"}}
+{{$d := .Data}}
+{{/* «Доски»: the boards of every drive the user works with, as the menu item */}}
+<h1>{{t "dboard.title"}}</h1>
+<div class="tabs">{{range $d.Scopes}}<a href="/boards{{with .}}?scope={{.}}{{end}}" {{if eq . $d.Scope}}class="on"{{end}}>{{t (print "docs.scope_" (or . "all"))}}</a>{{end}}
+  <span class="spacer"></span><a href="/disk/my">{{icon "folders"}} {{t "disk.title"}}</a></div>
+<div class="row diskhead"><span style="flex:1"></span>
+  <form method="get" action="/boards" class="row disk-search">{{with $d.Scope}}<input type="hidden" name="scope" value="{{.}}">{{end}}
+    <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "dboard.search"}}" maxlength="200">
+    <button class="ghost" title="{{t "dboard.search"}}">{{icon "search"}}</button>
+    {{if $d.Q}}<a class="button ghost" href="/boards{{with $d.Scope}}?scope={{.}}{{end}}" title="{{t "disk.search_reset"}}">{{icon "x"}}</a>{{end}}</form></div>
+<div class="card row diskbar"><b>{{t "dboard.create"}}</b>
+  <form method="post" action="/disk/my/new-board" class="row" style="flex:1" data-boards-new><input type="hidden" name="from" value="boards">
+    <input type="text" name="name" maxlength="200" placeholder="{{t "dboard.name"}}" style="flex:1">
+    <button class="primary">{{icon "brush"}} {{t "common.create"}}</button></form>
+  <span class="small muted">{{t "docs.new_hint"}}</span></div>
+<div class="card flush disk" data-boards>
+  {{if $d.Boards}}<table class="disk-list">
+    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "docs.changed_by"}}</th><th>{{t "docs.changed"}}</th><th>{{t "col.size"}}</th></tr></thead>
+    <tbody>{{range $d.Boards}}{{$open := print .Base "/board/" .ID "?folder=" .FolderID "&from=boards"}}
+    <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">
+      <td class="thumb"><a href="{{$open}}" tabindex="-1"><span class="ticon">{{icon "brush"}}<small>{{ext .Name}}</small></span></a></td>
+      <td><a href="{{$open}}" title="{{t "dboard.open"}}" class="ttitle">{{icon "brush"}} {{.Name}}</a></td>
+      <td class="small"><a href="{{if .Single}}/disk/shared{{else}}{{.Base}}{{with .FolderID}}?folder={{.}}{{end}}{{end}}">{{if .Owner}}{{t "docs.disk_of" .Owner}}{{else if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
+      <td class="small">{{.Changer}}</td>
+      <td class="small meta">{{datetime .CreatedAt}}</td>
+      <td class="small meta">{{size .Size}}</td></tr>{{end}}
+    </tbody></table>
+  {{else}}<div class="empty">{{if $d.Q}}{{t "docs.not_found"}}{{else}}{{t "dboard.empty"}}{{end}}</div>{{end}}
+</div>
+{{end}}

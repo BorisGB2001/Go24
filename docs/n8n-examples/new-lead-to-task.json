@@ -1,0 +1,31 @@
+{
+  "name": "go24: новый лид → задача ответственному",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "go24-lead", "options": {}},
+      "name": "go24: новый лид",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "go24-lead"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://go24:8080/api/v1/projects/КЛЮЧ_ПРОЕКТА/tasks",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer КЛЮЧ_API_GO24"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: 'Связаться с лидом: ' + $json.body.data.title, description: 'Телефон: ' + ($json.body.data.phone || '—') + '\\nE-mail: ' + ($json.body.data.email || '—'), responsible_id: $json.body.data.responsible_id }) }}",
+        "options": {}
+      },
+      "name": "go24: создать задачу",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    }
+  ],
+  "connections": {"go24: новый лид": {"main": [[{"node": "go24: создать задачу", "type": "main", "index": 0}]]}},
+  "settings": {"executionOrder": "v1"}
+}

@@ -1,0 +1,30 @@
+# boris.gb 2026-10-11 13:32 - пример rclone.conf; скопировать в rclone.conf (он в .gitignore) и настроить нужное хранилище
+# boris.gb 2026-10-11 13:41 - self-hosted: только собственные хранилища, облачные провайдеры не используем
+# Remote выбирается в .env через RCLONE_REMOTE, например RCLONE_REMOTE=fileserver:/srv/go24-files
+
+# Локальный диск (том Docker) — по умолчанию: RCLONE_REMOTE=local:/data
+[local]
+type = local
+
+# Свой файловый сервер по SFTP
+# [fileserver]
+# type = sftp
+# host = 10.0.0.10            # лучше адрес во внутренней сети
+# user = go24
+# key_file = /config/rclone/id_ed25519
+
+# Своё S3-хранилище (Garage, SeaweedFS)
+# [s3local]
+# type = s3
+# provider = Other
+# endpoint = http://garage.internal:3900
+# access_key_id = ...
+# secret_access_key = ...
+
+# Свой Nextcloud по WebDAV
+# [nextcloud]
+# type = webdav
+# vendor = nextcloud
+# url = https://nextcloud.example.ru/remote.php/dav/files/go24/
+# user = go24
+# pass = ...                  # rclone obscure <пароль>

@@ -1,0 +1,27 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{t "title.files"}}</h1>
+<div class="sub">{{t "files.subtitle"}} <a href="/settings/storages">{{icon "database"}} {{t "nav.storages"}}</a></div>
+<div class="card">
+  <form method="post" action="/files" enctype="multipart/form-data" class="row">
+    {{icon "paperclip"}} <input type="file" name="file" required>
+    {{template "storageSelect" $d.Storages}}
+    <button class="primary">{{icon "cloud-upload"}} {{t "files.upload"}}</button>
+  </form>
+</div>
+<div class="card flush">
+  {{if $d.Files}}
+  <table data-cols="files">
+    <thead><tr><th>{{t "col.file_name"}}</th><th>{{t "col.size"}}</th><th>{{t "col.storage"}}</th><th>{{t "col.task"}}</th><th>{{t "col.uploaded"}}</th></tr></thead>
+    <tbody>
+    {{range $d.Files}}
+    <tr><td><a href="/files/{{.ID}}">{{icon "download"}} {{.Name}}</a></td><td>{{.Size}}</td>
+      <td class="small">{{if .StorageName}}{{.StorageName}}{{else}}{{t "storages.builtin"}}{{end}}</td>
+      <td class="small">{{with .TaskKey}}<a href="/t/{{.}}">{{.}}</a>{{else}}—{{end}}</td>
+      <td class="small">{{datetime .CreatedAt}}<div class="muted">{{.Uploader}}</div></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<div class="empty">{{t "files.empty"}}</div>{{end}}
+</div>
+{{end}}

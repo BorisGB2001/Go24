@@ -1,0 +1,14 @@
+/* boris.gb 2026-10-11 15:52 - пример темы go24: переименуйте в theme.css, изменения видны после обновления страницы (без пересборки).
+ * Переопределяйте переменные из internal/web/static/css/tokens.css и иконки из icons.css. Подробно: docs/theming.md */
+
+:root {
+  --accent: #7c3aed;          /* фирменный цвет: кнопки, ссылки, активные вкладки */
+  --accent-soft: #efe7fe;
+  --side-bg: #2b1a47;         /* левое меню */
+  --side-bg-hover: #3b2760;
+  --radius: 6px;              /* скругления карточек */
+  --font: "PT Sans", system-ui, sans-serif;
+}
+
+/* Заменить иконку своей (любой монохромный SVG, например из Font Awesome): файл кладётся рядом, в deploy/theme/icons/ */
+/* .i-checkbox { --icon: url("/theme/icons/my-tasks.svg"); } */

@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="login">
+  <div class="card">
+    <div class="logo">{{template "portal-logo" .}}</div>
+    <p class="muted">{{t "app.tagline"}}</p>
+    <p><a class="btn primary" href="/login">{{icon "lock"}} {{t "auth.login_authentik"}}</a></p>
+    {{template "langs" .}}
+  </div>
+</div>
+{{end}}

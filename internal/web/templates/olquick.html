@@ -1,0 +1,23 @@
+{{define "content"}}
+{{$d := .Data}}{{$admin := .User.Admin}}
+<div class="crumbs"><a href="/openlines">{{t "ol.title"}}</a></div>
+<h1>{{t "ol.quick"}}</h1>
+<div class="sub">{{t "ol.quick_sub"}}</div>
+{{range $q := $d.Quick}}<div class="card">
+  <h2>{{$q.Title}} <span class="pill">{{if $q.Common}}{{t "ol.quick_common"}}{{else}}{{t "ol.quick_own"}}{{end}}</span></h2>
+  <div>{{nl2br $q.Body}}</div>
+  {{if or (not $q.Common) $admin}}<details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
+    <form method="post" action="/openlines/quick/{{$q.ID}}">
+      <label>{{t "ol.quick_title"}}</label><input type="text" name="title" value="{{$q.Title}}" required maxlength="100">
+      <label>{{t "ol.quick_body"}}</label><textarea name="body" rows="4" required maxlength="5000">{{$q.Body}}</textarea>
+      {{if $admin}}<label class="check"><input type="checkbox" name="common" {{if $q.Common}}checked{{end}}> {{t "ol.quick_for_all"}}</label>{{end}}
+      <p class="row"><button class="primary">{{t "common.save"}}</button></p></form>
+    <form method="post" action="/openlines/quick/{{$q.ID}}/delete" data-confirm="{{t "ol.quick_delete"}}"><button class="ghost small">{{icon "trash"}} {{t "crm.delete"}}</button></form></details>{{end}}
+</div>{{end}}
+<details class="card"{{if not $d.Quick}} open{{end}}><summary><b>{{icon "plus"}} {{t "ol.quick_new"}}</b></summary>
+  <form method="post" action="/openlines/quick/new">
+    <label>{{t "ol.quick_title"}}</label><input type="text" name="title" required maxlength="100" placeholder="{{t "ol.quick_title_hint"}}">
+    <label>{{t "ol.quick_body"}}</label><textarea name="body" rows="4" required maxlength="5000"></textarea>
+    {{if $admin}}<label class="check"><input type="checkbox" name="common"> {{t "ol.quick_for_all"}}</label>{{end}}
+    <p><button class="primary">{{t "common.create"}}</button></p></form></details>
+{{end}}
