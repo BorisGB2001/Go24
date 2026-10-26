@@ -150,11 +150,12 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
 {
   const store = new Map();
   const d2 = new JSDOM(`<!doctype html><body><div class="seg" data-disk-view><button data-view-mode="list"></button><button data-view-mode="tiles"></button></div>
-    <div data-disk="/disk/company" data-folder="" data-write="false" data-l-none="Не открывается"><table><tbody>
+    <div data-disk="/disk/company" data-folder="" data-write="false" data-l-none="Не открывается" data-base="https://go24.example"><table><tbody>
     <tr data-item="folder" data-id="f1"><td><input type="checkbox" data-sel></td></tr>
     <tr data-item="file" data-id="p"><td><input type="checkbox" data-sel></td><td class="thumb"><a href="/files/p" data-view="p" data-kind="image" data-name="p.png"></a></td><td><a href="/files/p" data-view="p" data-kind="image" data-name="p.png">p.png</a></td></tr>
     <tr data-item="file" data-id="v"><td><input type="checkbox" data-sel></td><td><a href="/files/v" data-view="v" data-kind="video" data-name="v.mp4">v.mp4</a></td></tr>
     <tr data-item="file" data-id="z"><td><input type="checkbox" data-sel></td><td><a href="/files/z" data-view="z" data-kind="" data-name="z.exe">z.exe</a></td></tr>
+    <tr data-item="file" data-id="x"><td><input type="checkbox" data-sel></td><td class="thumb"><a href="/files/x" data-view="x" data-kind="html" data-name="план.docx" data-edit="/disk/company/edit/x?folder=" data-edit-label="Редактировать"></a></td><td><a href="/disk/company/edit/x?folder=">план.docx</a></td></tr>
     </tbody></table><div data-disk-bulk hidden><b data-disk-count></b></div><div data-disk-drop hidden></div><div data-disk-progress hidden></div></div></body>`,
     { runScripts: 'outside-only', url: 'http://go24.test/disk/company' });
   const w2 = d2.window;
@@ -171,9 +172,35 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   v.querySelector('.mv-next').click();
   assert.equal(d.querySelector('.mviewer-none').textContent, 'Не открывается');
   d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.ok(d.querySelector('.mviewer img'), 'the last file wraps to the first');
+  // a picture zooms by the buttons and the keys, turns by 90°; «Копировать внутреннюю ссылку» is the file's card
+  v = d.querySelector('.mviewer');
+  v.querySelector('.mv-zoom-in').click();
+  assert.equal(v.dataset.zoom, '1.25');
+  d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: '+', bubbles: true }));
+  assert.equal(Number(v.dataset.zoom).toFixed(4), '1.5625');
+  d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: '0', bubbles: true }));
+  assert.equal(v.dataset.zoom, '1');
+  v.querySelector('.mv-zoom-out').click();
+  assert.equal(v.dataset.zoom, '0.8');
+  v.querySelector('.mv-rotate').click();
+  v.querySelector('.mv-rotate').click();
+  assert.equal(v.dataset.turn, '180');
+  assert.equal(v.querySelector('.mv-link').dataset.copy, 'https://go24.example/files/p/about');
+  assert.ok(v.querySelector('.mv-print') && v.querySelector('.mv-full'));
+  assert.equal(v.querySelector('a.button[href^="/disk"]'), null, 'a picture has no editor');
   d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(d.querySelector('.mviewer'), null);
+  // a document opens from its thumbnail as itself, with «Редактировать»
+  d.querySelector('tr[data-id=x] .thumb a').dispatchEvent(new w2.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  v = d.querySelector('.mviewer');
+  assert.equal(v.querySelector('.mviewer-name').textContent, 'план.docx');
+  const ed = v.querySelector('a.button[href^="/disk"]');
+  assert.equal(ed.getAttribute('href'), '/disk/company/edit/x?folder=');
+  assert.equal(ed.textContent, 'Редактировать');
+  assert.equal(v.querySelector('.mv-zoom-in'), null, 'only pictures zoom');
+  d.dispatchEvent(new w2.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   d.querySelector('[data-view-mode=tiles]').click();
   assert.ok(d.querySelector('[data-disk]').classList.contains('tiles'));
   assert.equal(store.get('go24.disk.view'), 'tiles');
@@ -208,5 +235,56 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   sel.value = 'pdf';
   sel.dispatchEvent(new w3.Event('change', { bubbles: true }));
   assert.deepEqual(submitted, ['q=план', 'type=pdf']);
+}
+// a file the folder already has: the server names the clashes; each is asked about — a new version, another name or
+// skip (the version is not offered for a file the user may not change), «Для всех таких файлов» answers the rest
+{
+  const dom4 = new JSDOM(`<!doctype html><body><div data-disk="/disk/company" data-folder="d1" data-write="true" data-l-skipped="Пропущен">
+    <div data-disk-progress hidden></div></div>
+    <dialog data-disk-clash data-l-text="В папке уже есть файл «{name}».">
+      <p data-disk-clash-text></p><p data-disk-clash-ro hidden></p><label data-disk-clash-many><input type="checkbox" data-disk-clash-all></label>
+      <button value="version" data-disk-clash-version></button></dialog></body>`, { runScripts: 'outside-only', url: 'http://go24.test/disk/company' });
+  const w4 = dom4.window, d4 = w4.document;
+  let asked = [];
+  w4.HTMLDialogElement.prototype.showModal = function () { this.open = true; asked.push(this); };
+  w4.HTMLDialogElement.prototype.close = function (v) { this.open = false; this.returnValue = v ?? ''; this.dispatchEvent(new w4.Event('close')); };
+  let probe = null;
+  w4.fetch = async (u, o) => { probe = [u, String(o.body)]; return { ok: true, json: async () => ({ clashes: [{ i: 0, version: true }, { i: 1, version: false }, { i: 3, version: true }] }) }; };
+  const up = [];
+  w4.XMLHttpRequest = class {
+    constructor() { this.upload = {}; }
+    open() {} setRequestHeader() {}
+    send(body) { up.push(body.get('file').name + ':' + body.get('conflict')); this.status = 200; setTimeout(() => this.onload(), 0); }
+  };
+  w4.eval('location.reload = () => {}');
+  w4.eval(js);
+  const dlg = d4.querySelector('[data-disk-clash]');
+  const answer = async (v, all) => {
+    for (let i = 0; i < 5 && !dlg.open; i++) await tick();
+    assert.equal(dlg.open, true, 'asked');
+    d4.querySelector('[data-disk-clash-all]').checked = !!all;
+    dlg.close(v);
+  };
+  const files = ['a.docx', 'b.xlsx', 'c.txt', 'd.pdf'].map(n => new w4.File(['1'], n));
+  const done = w4.go24DiskUpload(files, 'd1');
+  await answer('version');
+  assert.equal(probe[0], '/disk/company/clash');
+  assert.equal(probe[1], 'folder=d1&name=a.docx&path=&name=b.xlsx&path=&name=c.txt&path=&name=d.pdf&path=');
+  assert.equal(d4.querySelector('[data-disk-clash-text]').textContent, 'В папке уже есть файл «a.docx».');
+  await answer('rename', true);
+  assert.equal(d4.querySelector('[data-disk-clash-version]').hidden, true, 'no version of a file the user may not change');
+  assert.equal(d4.querySelector('[data-disk-clash-ro]').hidden, false);
+  await done;
+  assert.equal(asked.length, 2, 'd.pdf took the answer for all');
+  assert.deepEqual(up, ['a.docx:version', 'b.xlsx:rename', 'c.txt:', 'd.pdf:rename']);
+
+  // «Пропустить» does not upload; «Отменить загрузку» (Esc) stops the rest
+  up.length = 0; asked = [];
+  const again = w4.go24DiskUpload(files, 'd1');
+  await answer('skip');
+  await answer('');
+  await again;
+  assert.deepEqual(up, []);
+  assert.match(d4.querySelector('[data-disk-progress]').textContent, /Пропущен/);
 }
 console.log('disk.test.mjs ok');

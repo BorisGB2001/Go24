@@ -51,3 +51,21 @@ func TestSortTasks(t *testing.T) {
 		}
 	}
 }
+
+func TestPaginate(t *testing.T) {
+	list := make([]Task, 23)
+	for i := range list {
+		list[i].Number = i + 1
+	}
+	for _, c := range []struct{ n, size, first, len, page, pages int }{
+		{1, 10, 1, 10, 1, 3}, {3, 10, 21, 3, 3, 3}, {9, 10, 21, 3, 3, 3}, {0, 10, 1, 10, 1, 3}, {2, 50, 1, 23, 1, 1}, {1, 0, 1, 23, 1, 1},
+	} {
+		got, page, pages := Paginate(list, c.n, c.size)
+		if len(got) != c.len || got[0].Number != c.first || page != c.page || pages != c.pages {
+			t.Errorf("page %d of %d: %d tasks from %d, page %d of %d", c.n, c.size, len(got), got[0].Number, page, pages)
+		}
+	}
+	if got, page, pages := Paginate(nil, 2, 10); len(got) != 0 || page != 1 || pages != 1 {
+		t.Errorf("an empty list: %d %d %d", len(got), page, pages)
+	}
+}

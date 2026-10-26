@@ -5,6 +5,7 @@
   <a class="button ghost" href="/calendar/new?copy={{$e.ID}}">{{icon "copy"}} {{t "calendar.copy"}}</a>
   <a class="button ghost" href="/calendar/ics/{{$e.ID}}" title="{{t "calendar.ics_hint"}}">{{icon "download"}} {{t "calendar.ics"}}</a>
   {{if $d.ChatOn}}<form method="post" action="/calendar/{{$e.ID}}/chat" class="inline"><button class="ghost" title="{{t "calendar.chat_hint"}}">{{icon "messages"}} {{t "calendar.chat"}}</button></form>{{end}}</div>{{end}}
+{{with $d.AsName}}<div class="flash">{{icon "key"}} {{t "calendar.managing" .}}</div>{{end}}
 {{if $e.ReadOnly}}<div class="flash">{{icon "link"}} {{t "calendar.linked_readonly"}}</div>{{end}}
 {{with $e.SeriesID}}<div class="flash">{{icon "history"}} {{t "calendar.series_changed"}}</div>{{end}}
 {{with $d.IM}}<div class="flash">{{icon "message-circle"}} {{t "calendar.from_message" .Sender}}</div>{{end}}
@@ -18,14 +19,14 @@
 {{if and $e.ID $e.MyStatus}}
 <div class="card row evanswer">
   <span>{{t "calendar.your_answer"}}: <b>{{t (print "calendar.status." $e.MyStatus)}}</b></span><span style="flex:1"></span>
-  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="accepted"><button class="primary">{{icon "check"}} {{t "calendar.accept"}}</button></form>
-  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="tentative"><button class="ghost">{{icon "circle-dashed"}} {{t "calendar.tentative"}}</button></form>
-  <form method="post" action="/calendar/{{$e.ID}}/respond"><input type="hidden" name="status" value="declined"><button class="ghost">{{icon "x"}} {{t "calendar.decline"}}</button></form>
+  <form method="post" action="/calendar/{{$e.ID}}/respond{{$d.AsQ}}"><input type="hidden" name="status" value="accepted"><button class="primary">{{icon "check"}} {{t "calendar.accept"}}</button></form>
+  <form method="post" action="/calendar/{{$e.ID}}/respond{{$d.AsQ}}"><input type="hidden" name="status" value="tentative"><button class="ghost">{{icon "circle-dashed"}} {{t "calendar.tentative"}}</button></form>
+  <form method="post" action="/calendar/{{$e.ID}}/respond{{$d.AsQ}}"><input type="hidden" name="status" value="declined"><button class="ghost">{{icon "x"}} {{t "calendar.decline"}}</button></form>
 </div>
 {{end}}
 {{if $d.CanEdit}}
 <div class="card newtask">
-<form method="post" action="{{if $e.ID}}/calendar/{{$e.ID}}{{else}}/calendar/new{{end}}" class="taskform">
+<form method="post" action="{{if $e.ID}}/calendar/{{$e.ID}}{{else}}/calendar/new{{end}}{{$d.AsQ}}" class="taskform">
   {{with $d.IM}}<input type="hidden" name="im_room" value="{{.Room}}"><input type="hidden" name="im_event" value="{{.Event}}">{{end}}
   <input type="text" name="title" class="ntitle" required maxlength="300" value="{{$e.Title}}" placeholder="{{t "calendar.title_placeholder"}}" {{if not $e.ID}}autofocus{{end}}>
   <textarea name="description" rows="3" placeholder="{{t "form.description"}}" data-mention>{{$e.Description}}</textarea>
@@ -107,7 +108,7 @@
     {{range list "one" "following" "all"}}<label class="check"><input type="radio" name="scope" value="{{.}}" {{if eq . "one"}}checked{{end}}> {{t (print "calendar.scope." .)}}</label>{{end}}</div>{{end}}
   <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button" href="/calendar?month={{$e.Start.Format "2006-01"}}">{{t "common.cancel"}}</a></p>
 </form>
-{{if $e.ID}}<form method="post" action="/calendar/{{$e.ID}}/delete" data-confirm="{{t "calendar.delete_confirm"}}" class="row evwhen">
+{{if $e.ID}}<form method="post" action="/calendar/{{$e.ID}}/delete{{$d.AsQ}}" data-confirm="{{t "calendar.delete_confirm"}}" class="row evwhen">
   {{with $d.At}}<input type="hidden" name="at" value="{{.}}"><select name="scope" style="width:auto">{{range list "one" "following" "all"}}<option value="{{.}}">{{t (print "calendar.scope_delete." .)}}</option>{{end}}</select>{{end}}
   <button class="ghost">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
 </div>

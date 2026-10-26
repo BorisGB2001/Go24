@@ -343,6 +343,19 @@ func (s *Service) AddToGroup(ctx context.Context, userID, room string, ids []str
 	if err != nil {
 		return err
 	}
+	if pid := s.CollabOf(ctx, room); pid != "" { // a collab's chat: its people join the collab first
+		p, err := s.collabFor(ctx, userID, pid)
+		if err != nil {
+			return err
+		}
+		var people []string
+		for id := range who {
+			people = append(people, id)
+		}
+		if err := s.intoCollab(ctx, p, people); err != nil {
+			return err
+		}
+	}
 	mem, err := s.M.Members(ctx, room, tok)
 	if err != nil {
 		return forbidden(err)

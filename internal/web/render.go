@@ -271,6 +271,7 @@ var baseFuncs = template.FuncMap{
 				l.Tasks = slices.Clone(list)
 				tasks.SortTasks(l.Tasks, l.Sort)
 			}
+			l.paginate(p[0])
 		}
 		return l
 	},
@@ -656,6 +657,64 @@ type taskList struct {
 	Gear  bool
 	Sort  string // the user's sort (tasks.SortColumns, "" — the usual order)
 	Back  string // the page the list is on: the sort and the row menus return to it
+	// the footer grids: all the tasks, the page shown (?page=, from 1) of Pages, «На странице»
+	Total, Page, Pages, Size int
+	Sizes                    []int
+	PageLinks                []pageLink
+	Prev, Next               string // the previous and the next page ("" — none)
+	// Info: the checklist and file counters of the rows shown (by task id)
+	Info map[string]tasks.CardInfo
+}
+
+// pageLink is a page number under a list; Gap is «…» between the numbers.
+type pageLink struct {
+	N       int
+	URL     string
+	On, Gap bool
+}
+
+// paginate leaves the page of the list the address asks for, with the user's page size, and the links to the others:
+// the first, the last and two around the current one.
+func (l *taskList) paginate(p page) {
+	l.Total, l.Size, l.Sizes = len(l.Tasks), p.PageSize, tasks.PageSizes
+	u, err := url.Parse(l.Back)
+	if err != nil {
+		u = &url.URL{}
+	}
+	q := u.Query()
+	n, _ := strconv.Atoi(q.Get("page"))
+	l.Tasks, l.Page, l.Pages = tasks.Paginate(l.Tasks, n, l.Size)
+	at := func(n int) string {
+		q.Set("page", strconv.Itoa(n))
+		if n == 1 {
+			q.Del("page")
+		}
+		u.RawQuery = q.Encode()
+		return u.RequestURI()
+	}
+	if l.Pages > 1 {
+		for i := 1; i <= l.Pages; i++ {
+			switch {
+			case i == 1 || i == l.Pages || (i >= l.Page-2 && i <= l.Page+2):
+				l.PageLinks = append(l.PageLinks, pageLink{N: i, URL: at(i), On: i == l.Page})
+			case len(l.PageLinks) > 0 && !l.PageLinks[len(l.PageLinks)-1].Gap:
+				l.PageLinks = append(l.PageLinks, pageLink{Gap: true})
+			}
+		}
+		if l.Page > 1 {
+			l.Prev = at(l.Page - 1)
+		}
+		if l.Page < l.Pages {
+			l.Next = at(l.Page + 1)
+		}
+	}
+	if p.CardInfo != nil && len(l.Tasks) > 0 {
+		ids := make([]string, len(l.Tasks))
+		for i, t := range l.Tasks {
+			ids[i] = t.ID
+		}
+		l.Info = p.CardInfo(ids)
+	}
 }
 
 type keptField struct{ Name, Value string }
@@ -780,6 +839,9 @@ type page struct {
 	Timer    *tasks.Timer    // the user's running timer, shown in the top bar
 	Cols     map[string]bool // the user's task list columns (the gear in list headers)
 	Sort     string          // the user's sort of task lists (a click on a column header)
+	PageSize int             // the user's «На странице» of task lists
+	// CardInfo counts the checklists and files of the tasks a list shows
+	CardInfo func(ids []string) map[string]tasks.CardInfo
 	// left menu: the user's projects under «Проекты», and the project of the current page
 	NavProjects    []tasks.Project
 	NavProject     string
@@ -853,6 +915,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 				p.Cols = c
 			}
 			p.Sort, _ = s.Tasks.Sort(r.Context(), sess.UserID)
+			p.PageSize, _ = s.Tasks.PageSize(r.Context(), sess.UserID)
+			p.CardInfo = func(ids []string) map[string]tasks.CardInfo {
+				m, _ := s.Tasks.CardInfo(r.Context(), ids)
+				return m
+			}
 			if s.Feed != nil && !p.Guest {
 				p.FeedUnread, _ = s.Feed.Unread(r.Context(), sess.UserID)
 				p.FeedNews, _ = s.Feed.News(r.Context(), sess.UserID)

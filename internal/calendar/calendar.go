@@ -75,6 +75,7 @@ type Event struct {
 	CalendarID, CalendarName string
 	CalColor                 string // the colour of the calendar it is in for the viewer ("" — that of its kind)
 	Of                       string // shown from a colleague's calendar: whose (see PersonRange)
+	As                       string // the viewer keeps the calendar of this colleague and changes or answers the meeting for them
 	UID                      string // the UID a calendar program or file gave it ("" — its own, ID@go24); CalDAV only
 	// the time zone its time is entered in and its repetitions go by (an IANA name, "" — the portal's)
 	TZ string
@@ -381,8 +382,9 @@ func (s *Store) scan(ctx context.Context, viewer string, rows pgx.Rows) ([]Event
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	for i := range list { // a private meeting: others (but admin mode) see only that its people are busy
-		if e := &list[i]; e.Private && e.OwnerID != viewer && e.MyStatus == "" && !tasks.IsAdmin(ctx) {
+	delegate := delegateOf(ctx)
+	for i := range list { // a private meeting: others (but admin mode) and the one who keeps the calendar see only that its people are busy
+		if e := &list[i]; e.Private && (e.OwnerID != viewer && e.MyStatus == "" || e.hiddenFrom(delegate)) && !tasks.IsAdmin(ctx) {
 			e.Hidden, e.Title, e.Description, e.Where, e.Attendees, e.ChatRoom = true, "", "", "", nil, ""
 		}
 		// one's own calendars are one's own: for others the meeting is in their main calendar
@@ -762,6 +764,16 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 			if owner != viewer && !tasks.IsAdmin(ctx) || linked != syncing(ctx) {
 				return ErrForbidden
 			}
+			if d := delegateOf(ctx); d != "" { // the one who keeps the calendar does not change a private meeting they are not in
+				var hidden bool
+				if err := tx.QueryRow(ctx, `SELECT private AND owner_id::text <> $2 AND NOT EXISTS (SELECT 1 FROM event_attendees a
+					WHERE a.event_id = events.id AND a.user_id::text = $2) FROM events WHERE id::text = $1`, e.ID, d).Scan(&hidden); err != nil {
+					return err
+				}
+				if hidden {
+					return ErrForbidden
+				}
+			}
 			moved = !start.Equal(e.Start) || !end.Equal(e.End)
 			opened = was == "" && category != nil
 			id = e.ID
@@ -831,7 +843,7 @@ func (s *Store) series(ctx context.Context, viewer, id string, at time.Time) (Ev
 	if err != nil {
 		return e, err
 	}
-	if e.OwnerID != viewer && !tasks.IsAdmin(ctx) {
+	if e.OwnerID != viewer && !tasks.IsAdmin(ctx) || e.Hidden {
 		return e, ErrForbidden
 	}
 	if e.Occurrence(at) == nil {
@@ -940,7 +952,10 @@ func (s *Store) DeleteOccurrence(ctx context.Context, viewer, id string, at time
 
 // Delete removes the viewer's event.
 func (s *Store) Delete(ctx context.Context, viewer, id string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM events WHERE id::text = $1 AND (owner_id = $2 OR $3)`, id, viewer, tasks.IsAdmin(ctx))
+	// the one who keeps the calendar does not delete a private meeting they are not in
+	tag, err := s.db.Exec(ctx, `DELETE FROM events e WHERE e.id::text = $1 AND (e.owner_id = $2 OR $3)
+		AND NOT (e.private AND $4 <> '' AND e.owner_id::text <> $4
+			AND NOT EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id = e.id AND a.user_id::text = $4))`, id, viewer, tasks.IsAdmin(ctx), delegateOf(ctx))
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
@@ -953,7 +968,9 @@ func (s *Store) Respond(ctx context.Context, viewer, id, status string) error {
 		return i18n.E("err.bad_form")
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE event_attendees SET status = $3 WHERE event_id::text = $1 AND user_id = $2`, id, viewer, status)
+		tag, err := tx.Exec(ctx, `UPDATE event_attendees SET status = $3 WHERE event_id::text = $1 AND user_id = $2
+			AND NOT ($4 <> '' AND EXISTS (SELECT 1 FROM events e WHERE e.id = event_attendees.event_id AND e.private AND e.owner_id::text <> $4
+				AND NOT EXISTS (SELECT 1 FROM event_attendees d WHERE d.event_id = e.id AND d.user_id::text = $4)))`, id, viewer, status, delegateOf(ctx))
 		if err != nil {
 			return err
 		}

@@ -22,6 +22,7 @@ import (
 // timeman.schedule.get              — /api/v1/worktime/schedules, /api/v1/users/{id}/schedule
 // «График отсутствий»               — /api/v1/absences (with the rights of the page)
 // user.add (an invitation by e-mail) — /api/v1/users/invite, /api/v1/users/invites (who may invite)
+// «Доска почёта»                    — /api/v1/honors (kept by administrators and HR officers with the right)
 
 func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users", s.api("company:read", s.apiUsers))
@@ -48,6 +49,9 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/absences", s.api("company:read", s.apiAbsences))
 	mux.HandleFunc("POST /api/v1/absences", s.api("company:write", s.apiAbsenceAdd))
 	mux.HandleFunc("DELETE /api/v1/absences/{id}", s.api("company:write", s.apiAbsenceDelete))
+	mux.HandleFunc("GET /api/v1/honors", s.api("company:read", s.apiHonors))
+	mux.HandleFunc("POST /api/v1/honors", s.api("company:write", s.apiHonorAdd))
+	mux.HandleFunc("DELETE /api/v1/honors/{id}", s.api("company:write", s.apiHonorDelete))
 }
 
 type apiDeptRef struct {
@@ -311,11 +315,25 @@ type apiWorkdayOut struct {
 	WorkedSecs int        `json:"worked_secs"`
 	Report     string     `json:"report,omitempty"`
 	Violations []string   `json:"violations,omitempty"` // late | open | early | short — by the person's schedule
+	Start      apiPlace   `json:"start"`
+	End        *apiPlace  `json:"end,omitempty"`
+}
+
+// apiPlace is where the day was started or finished: "office" — the office network, "" outside the offices, absent
+// when no office networks are set.
+type apiPlace struct {
+	IP     string  `json:"ip,omitempty"`
+	Office *string `json:"office,omitempty"`
 }
 
 func apiWorkdayOf(d company.Workday, n company.Norm, now time.Time) apiWorkdayOut {
-	return apiWorkdayOut{UserID: d.UserID, Day: d.Day.Format(time.DateOnly), State: d.State(), Started: d.Started, Ended: d.Ended,
-		PausedAt: d.PausedAt, PauseSecs: d.PauseSecs, WorkedSecs: d.Worked(now), Report: d.Report, Violations: n.Violations(d, now)}
+	out := apiWorkdayOut{UserID: d.UserID, Day: d.Day.Format(time.DateOnly), State: d.State(), Started: d.Started, Ended: d.Ended,
+		PausedAt: d.PausedAt, PauseSecs: d.PauseSecs, WorkedSecs: d.Worked(now), Report: d.Report, Violations: n.Violations(d, now),
+		Start: apiPlace(d.Start)}
+	if d.Ended != nil {
+		out.End = &apiPlace{d.End.IP, d.End.Office}
+	}
+	return out
 }
 
 type apiDayPlanOut struct {
@@ -372,7 +390,11 @@ func (s *Server) apiWorkAction(w http.ResponseWriter, r *http.Request, p apikeys
 		}
 	}
 	action := r.PathValue("action")
-	if err := s.Company.WorkAction(r.Context(), p.UserID, action, in.Report, time.Now()); err != nil {
+	at, err := s.workPlace(r, action)
+	if err != nil {
+		return err
+	}
+	if err := s.Company.WorkAction(r.Context(), p.UserID, action, in.Report, time.Now(), at); err != nil {
 		return err
 	}
 	s.Log.Info("api workday", "user_id", p.UserID, "action", action)
@@ -911,6 +933,115 @@ func (s *Server) apiTeamDelete(w http.ResponseWriter, r *http.Request, p apikeys
 		return err
 	}
 	s.Log.Info("api team deleted", "user_id", p.UserID, "id", r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+type apiHonorOut struct {
+	ID          int64      `json:"id"`
+	UserID      string     `json:"user_id"`
+	Name        string     `json:"name"`
+	Position    string     `json:"position"`
+	Departments []string   `json:"departments"`
+	Reason      string     `json:"reason"`
+	From        string     `json:"from"`
+	To          string     `json:"to,omitempty"` // none — until taken off
+	By          apiDeptRef `json:"by"`
+	Created     time.Time  `json:"created"`
+}
+
+func apiHonorOf(h company.Honor) apiHonorOut {
+	o := apiHonorOut{ID: h.ID, UserID: h.Person.ID, Name: h.Person.Name, Position: h.Person.Position, Departments: h.Departments,
+		Reason: h.Reason, From: h.From.Format(time.DateOnly), By: apiDeptRef{h.ByID, h.ByName}, Created: h.Created}
+	if h.To != nil {
+		o.To = h.To.Format(time.DateOnly)
+	}
+	return o
+}
+
+// GET /api/v1/honors?department_id=&user_id=&archive=1 — the honor board today (and those to come), or its archive.
+func (s *Server) apiHonors(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	q := r.URL.Query()
+	f := company.HonorFilter{DepartmentID: q.Get("department_id"), UserID: q.Get("user_id"), Archive: q.Get("archive") == "1"}
+	if f.UserID == "me" {
+		f.UserID = p.UserID
+	}
+	now := time.Now()
+	list, err := s.Company.Honors(r.Context(), time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local), f)
+	if err != nil {
+		return err
+	}
+	out := make([]apiHonorOut, 0, len(list))
+	for _, h := range list {
+		out = append(out, apiHonorOf(h))
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiHonorKeeper: the key owner keeps the honor board.
+func (s *Server) apiHonorKeeper(r *http.Request, p apikeys.Principal) error {
+	ok, err := s.Company.CanHonor(r.Context(), p.UserID, s.apiAdmin(r.Context(), p.UserID))
+	if err == nil && !ok {
+		err = i18n.E("err.forbidden")
+	}
+	return err
+}
+
+// POST /api/v1/honors {"user_id","reason","from","to"} — puts an employee on the board (from — today by default, no
+// to — until taken off).
+func (s *Server) apiHonorAdd(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.apiHonorKeeper(r, p); err != nil {
+		return err
+	}
+	var in struct {
+		UserID string `json:"user_id"`
+		Reason string `json:"reason"`
+		From   string `json:"from"`
+		To     string `json:"to"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	now := time.Now()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	if in.From != "" {
+		var err error
+		if from, err = time.ParseInLocation(time.DateOnly, in.From, time.Local); err != nil {
+			return i18n.E("err.bad_form")
+		}
+	}
+	var to *time.Time
+	if in.To != "" {
+		t, err := time.ParseInLocation(time.DateOnly, in.To, time.Local)
+		if err != nil {
+			return i18n.E("err.bad_form")
+		}
+		to = &t
+	}
+	id, err := s.Company.AddHonor(r.Context(), p.UserID, in.UserID, in.Reason, from, to)
+	if err != nil {
+		return err
+	}
+	h, err := s.Company.Honor(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	s.Log.Info("api honor added", "user_id", p.UserID, "id", id, "for", in.UserID)
+	writeJSON(w, http.StatusCreated, apiHonorOf(h))
+	return nil
+}
+
+// DELETE /api/v1/honors/{id} — takes the person off the board.
+func (s *Server) apiHonorDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.apiHonorKeeper(r, p); err != nil {
+		return err
+	}
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.Company.DeleteHonor(r.Context(), id); err != nil {
+		return err
+	}
+	s.Log.Info("api honor deleted", "user_id", p.UserID, "id", id)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

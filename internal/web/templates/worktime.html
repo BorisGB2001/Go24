@@ -22,6 +22,12 @@
     </div>
     <label class="check"><input type="checkbox" name="free_edit" {{if $s.FreeEdit}}checked{{end}}> {{t "worktime.free_edit"}}</label>
     <p class="small muted">{{t "worktime.free_edit_hint"}}</p>
+    <h2 id="offices">{{icon "world"}} {{t "worktime.offices"}}</h2>
+    <p class="small muted">{{t "worktime.offices_hint"}}</p>
+    <textarea name="offices" rows="4" placeholder="192.168.1.0/24 {{t "worktime.offices_example"}}">{{$s.OfficesText}}</textarea>
+    <p class="small muted">{{t "worktime.your_ip"}}: <code>{{$d.IP}}</code></p>
+    <label class="check"><input type="checkbox" name="office_only" {{if $s.OfficeOnly}}checked{{end}}> {{t "worktime.office_only"}}</label>
+    <p class="small muted">{{t "worktime.office_only_hint"}}</p>
     <p><button class="primary">{{t "common.save"}}</button></p>
   </form>
 </div>

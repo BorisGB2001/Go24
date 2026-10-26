@@ -14,6 +14,7 @@
   <a href="/booking/stats" class="button ghost">{{icon "chart-bar"}} {{t "booking.stats"}}</a>
   <a href="/booking/links" class="button ghost">{{icon "link"}} {{t "booking.links"}}</a>
   <a href="/booking/resources" class="button ghost">{{icon "settings"}} {{t "booking.resources"}}</a>
+  {{if $d.Rights}}<a href="/booking/rights" class="button ghost" title="{{t "booking.rights"}}">{{icon "shield-lock"}}</a>{{end}}
   {{if $d.Cols}}<button type="button" class="button create" data-booking-new>{{icon "plus"}} {{t "booking.add"}}</button>{{end}}
 </div>
 {{with $d.Preset}}<div class="flash bk-for">{{icon "calendar-event"}} <span style="flex:1">{{t "booking.for_card"}} <a href="{{.path}}">{{.title}}</a></span><a class="button ghost small" href="{{.path}}">{{t "common.cancel"}}</a></div>{{end}}

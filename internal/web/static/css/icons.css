@@ -48,6 +48,7 @@
 .i-trash { --icon: url("../icons/trash.svg"); }
 .i-user { --icon: url("../icons/user.svg"); }
 .i-user-plus { --icon: url("../icons/user-plus.svg"); }
+.i-message-plus { --icon: url("../icons/message-plus.svg"); }
 .i-video { --icon: url("../icons/video.svg"); }
 .i-world { --icon: url("../icons/world.svg"); }
 .i-chart-bar { --icon: url("../icons/chart-bar.svg"); }

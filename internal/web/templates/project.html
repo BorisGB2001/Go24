@@ -81,6 +81,12 @@
       {{if or (eq $p.MyRole "owner") (eq $p.MyRole "admin")}}<label>{{t "collab.edit_perm"}}</label>
       <select name="edit_perm">{{$v = .EditPerm}}{{range list "owner" "managers"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
       <p class="small muted">{{t "collab.edit_perm_hint"}}</p>{{end}}
+      <div class="small muted" style="margin-top:8px">{{t "collab.events"}}</div>
+      <label class="check"><input type="checkbox" name="events_members" {{if .EventsMembers}}checked{{end}}> {{t "collab.events.members"}}</label>
+      <label class="check"><input type="checkbox" name="events_guests" {{if .EventsGuests}}checked{{end}}> {{t "collab.events.guests"}}</label>
+      <label class="check"><input type="checkbox" name="events_invites" {{if .EventsInvites}}checked{{end}}> {{t "collab.events.invites"}}</label>
+      <label class="check"><input type="checkbox" name="events_collab" {{if .EventsCollab}}checked{{end}}> {{t "collab.events.collab"}}</label>
+      <p class="small muted">{{t "collab.events_hint"}}</p>
       <p><button class="primary">{{t "common.save"}}</button></p>
       </fieldset>
     </form>

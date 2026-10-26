@@ -335,7 +335,38 @@ func TestCollabRoom(t *testing.T) {
 		t.Fatalf("the log of auto-delete: %v", c)
 	}
 
+	// «Уведомления в коллабе»: the bot tells the log in the chat, each line once, the collab's making never; a kind
+	// turned off is not told (and not later either)
+	s.CollabLogText = func(e tasks.CollabLogEntry) string { return e.Actor + ": " + e.Action + " " + e.Target }
+	told := func(action string) (n int) {
+		for _, e := range fake.sent {
+			if e.Room == room && e.Content["go24.collab_log"] == action {
+				if e.Sender != "@go24:t.lan" || e.Content["msgtype"] != "m.notice" {
+					t.Fatalf("the log's line in the chat: %+v", e)
+				}
+				n++
+			}
+		}
+		return n
+	}
+	must(s.TellCollabLogs(ctx))
+	added, settings := told("member_added"), told("settings")
+	if added == 0 || settings == 0 || told("archived") != 1 || told("restored") != 1 || told("created") != 0 {
+		t.Fatalf("the log in the chat: added %d, settings %d, archived %d, created %d", added, settings, told("archived"), told("created"))
+	}
+	must(s.TellCollabLogs(ctx))
+	if told("member_added") != added {
+		t.Fatal("a line of the log told twice")
+	}
+	set.EventsMembers = false
+	must(ts.SetCollabSettings(ctx, co, owner, set))
 	must(ts.RemoveMember(ctx, co, other))
+	must(s.TellCollabLogs(ctx))
+	var pending int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM collab_log WHERE chat_event IS NULL`).Scan(&pending))
+	if told("member_removed") != 0 || told("settings") != settings+1 || pending != 0 {
+		t.Fatalf("members' events off: removed %d, settings %d, pending %d", told("member_removed"), told("settings"), pending)
+	}
 	must(s.Reconcile(ctx))
 	if fake.rooms[room]["@other:t.lan"] {
 		t.Fatal("the removed member stayed in the chat")

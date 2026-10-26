@@ -317,7 +317,7 @@ func (s *Server) diskUpload(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	var ids []string
 	for _, hdr := range hdrs {
-		id, err := s.diskPut(r, sess, d, folder, storageID, hdr)
+		id, err := s.diskPut(r, sess, d, folder, storageID, hdr, r.FormValue("conflict") == "rename")
 		if err != nil {
 			s.diskErr(w, r, err, back)
 			return
@@ -331,7 +331,16 @@ func (s *Server) diskUpload(w http.ResponseWriter, r *http.Request, sess auth.Se
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-func (s *Server) diskPut(r *http.Request, sess auth.Session, d drive.Drive, folder, storageID string, hdr *multipart.FileHeader) (string, error) {
+// diskPut stores an uploaded file; a file of the folder with its name gets a new version, or, with rename, the upload
+// is named «name (2)» beside it («Сохранить под другим именем»).
+func (s *Server) diskPut(r *http.Request, sess auth.Session, d drive.Drive, folder, storageID string, hdr *multipart.FileHeader, rename bool) (string, error) {
+	name := path.Base(strings.ReplaceAll(hdr.Filename, "\\", "/"))
+	if rename {
+		var err error
+		if name, err = s.Drive.FreeFileName(r.Context(), d, folder, name); err != nil {
+			return "", err
+		}
+	}
 	f, err := hdr.Open()
 	if err != nil {
 		return "", err
@@ -341,7 +350,48 @@ func (s *Server) diskPut(r *http.Request, sess auth.Session, d drive.Drive, fold
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	return s.diskStore(r, sess, d, folder, storageID, path.Base(strings.ReplaceAll(hdr.Filename, "\\", "/")), ct, f, hdr.Size)
+	return s.diskStore(r, sess, d, folder, storageID, name, ct, f, hdr.Size)
+}
+
+// diskClash answers the page's script before an upload which of the files (name, with path for those of an uploaded
+// folder) the folder already has, and whether the user may upload each of them again, to ask: a new
+// version, another name or skip.
+func (s *Server) diskClash(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	d, err := s.openDrive(r, sess)
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	_ = r.ParseForm()
+	folder := r.FormValue("folder")
+	if err := s.Drive.CheckFolder(r.Context(), d, folder); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	type clash struct {
+		I       int  `json:"i"`
+		Version bool `json:"version"`
+	}
+	names, paths := r.Form["name"], r.Form["path"]
+	out := []clash{}
+	for i, name := range names {
+		if i >= 1000 {
+			break
+		}
+		dir := ""
+		if i < len(paths) {
+			dir = paths[i]
+		}
+		c, ok, err := s.Drive.Clash(r.Context(), sess.UserID, d, folder, dir, path.Base(strings.ReplaceAll(name, "\\", "/")))
+		if err != nil {
+			s.jsonErr(w, r, err)
+			return
+		}
+		if ok {
+			out = append(out, clash{I: i, Version: c.MayVersion})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clashes": out})
 }
 
 // diskStore keeps the bytes as a file of the folder; the same name in the folder — a new version of that file.
@@ -766,7 +816,7 @@ func (s *Server) diskRecent(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	projects = slices.DeleteFunc(projects, tasks.Project.Collab)
 	s.render(w, r, "disk", page{TitleKey: "disk.title", Nav: "disk", Data: map[string]any{
-		"RecentPage": true, "Recent": list, "Drive": drive.Drive{}, "Projects": projects, "Me": sess.UserID}})
+		"RecentPage": true, "Recent": list, "Drive": drive.Drive{}, "Projects": projects, "Me": sess.UserID, "Office": s.Office != nil, "Base": s.BaseURL}})
 }
 
 // diskShare opens a folder of one's «Мой диск» (folder_id) to an employee or a department (whom: user:ID |

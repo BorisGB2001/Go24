@@ -3,6 +3,7 @@ package drive
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -163,4 +164,56 @@ func (s *Store) FileOn(ctx context.Context, d Drive, id string) (File, error) {
 	err = s.db.QueryRow(ctx, `SELECT name, content_type, size, created_at FROM files WHERE id::text = $1`, id).
 		Scan(&f.Name, &f.ContentType, &f.Size, &f.CreatedAt)
 	return f, err
+}
+
+// Clash is a file an upload into a folder would get the name of: its id and whether the user may upload it again
+// (a new version) asks when a file of the same name is uploaded.
+type Clash struct {
+	ID         string
+	MayVersion bool
+}
+
+// Clash finds the file named name in the folder dir ("a/b", the path of a file of an uploaded folder) under the
+// folder; the folders of the path are not made — a folder not there yet holds no file. ok is false when none.
+func (s *Store) Clash(ctx context.Context, userID string, d Drive, folderID, dir, name string) (c Clash, ok bool, err error) {
+	folderID = d.At(folderID)
+	for _, part := range strings.Split(strings.ReplaceAll(dir, `\`, "/"), "/") {
+		if part = strings.TrimSpace(part); part == "" || part == "." {
+			continue
+		}
+		if folderID, err = s.childFolder(ctx, d, folderID, part); errors.Is(err, pgx.ErrNoRows) {
+			return c, false, nil
+		} else if err != nil {
+			return c, false, err
+		}
+	}
+	var by string
+	err = s.db.QueryRow(ctx, `SELECT id::text, coalesce(uploaded_by::text, '') FROM files
+		WHERE drive = $1 AND drive_owner IS NOT DISTINCT FROM $2 AND folder_id IS NOT DISTINCT FROM $3 AND name = $4
+			AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`, d.Kind, d.owner(), nullable(folderID), name).Scan(&c.ID, &by)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, false, nil
+	}
+	c.MayVersion = err == nil && d.mayChange(userID, by)
+	return c, err == nil, err
+}
+
+// FreeFileName is the name for a file put into the folder beside those there: the name itself, or «name (2)»… when a
+// file of the folder has it («Сохранить под другим именем» of an upload).
+func (s *Store) FreeFileName(ctx context.Context, d Drive, folderID, name string) (string, error) {
+	taken, err := s.fileNames(ctx, d, d.At(folderID))
+	if err != nil {
+		return "", err
+	}
+	return freeName(name, taken, true), nil
+}
+
+// fileNames are the names (lower case) of the files of the folder.
+func (s *Store) fileNames(ctx context.Context, d Drive, folderID string) ([]string, error) {
+	rows, err := s.db.Query(ctx, `SELECT lower(name) FROM files WHERE drive = $1 AND drive_owner IS NOT DISTINCT FROM $2
+		AND folder_id IS NOT DISTINCT FROM $3 AND deleted_at IS NULL`, d.Kind, d.owner(), nullable(folderID))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }

@@ -184,7 +184,43 @@ func TestSign(t *testing.T) {
 	if list, err := s.List(ctx, carol, "", false); err != nil || len(list) != 0 {
 		t.Fatalf("another employee: %v %v", list, err)
 	}
-	if list, err := s.List(ctx, carol, "", true); err != nil || len(list) != 3 {
+
+	// a reviewer approves before the signer, with no code; an observer sees the document, signs nothing
+	if _, err := s.Create(ctx, Doc{Title: "Акт", FileID: file, AuthorID: anna}, []Party{{Name: "Иван", Email: "ivan@t", Role: "reviewer"}}); !errors.Is(err, ErrParties) {
+		t.Fatalf("a client reviewer: %v", err)
+	}
+	id4, err := s.Create(ctx, Doc{Title: "Договор поставки", FileID: file, AuthorID: anna, Observers: []Observer{{UserID: carol}}},
+		[]Party{{UserID: bob, Name: "Боб", Role: "reviewer"}, {UserID: anna, Name: "Анна"}})
+	must(err)
+	d4, err := s.Get(ctx, id4)
+	must(err)
+	if !d4.Parties[0].Reviewer() || d4.Parties[1].Reviewer() || len(d4.Observers) != 1 || d4.Observers[0].Name != "Кэрол" ||
+		!d4.Sees(carol) || d4.Current().UserID != bob {
+		t.Fatalf("with a reviewer: %+v", d4)
+	}
+	if list, err := s.List(ctx, carol, "", false); err != nil || len(list) != 1 || list[0].ID != id4 || len(list[0].Observers) != 1 {
+		t.Fatalf("the observer's list: %v %v", list, err)
+	}
+	if list, err := s.List(ctx, carol, "me", false); err != nil || len(list) != 0 {
+		t.Fatalf("the observer signs nothing: %v %v", list, err)
+	}
+	if next, done, err := s.Sign(ctx, id4, d4.Parties[0].ID, "", "10.0.0.2", ""); err != nil || done || next.UserID != anna {
+		t.Fatalf("approved: %v %v %v", next, done, err)
+	}
+	id5, err := s.Create(ctx, Doc{Title: "Договор аренды", FileID: file, AuthorID: anna},
+		[]Party{{UserID: bob, Name: "Боб", Role: "reviewer"}, {UserID: anna, Name: "Анна"}})
+	must(err)
+	d5, _ := s.Get(ctx, id5)
+	must(s.Refuse(ctx, id5, d5.Parties[0].ID, "цена", "", ""))
+	if d5, _ = s.Get(ctx, id5); d5.Status != "refused" || d5.Parties[1].Status != "wait" {
+		t.Fatalf("rejected: %+v", d5)
+	}
+	evs4, _ := s.Events(ctx, id4)
+	evs5, _ := s.Events(ctx, id5)
+	if len(evs4) != 2 || evs4[1].Kind != EvApproved || len(evs5) != 2 || evs5[1].Kind != EvRejected || evs5[1].Note != "цена" {
+		t.Fatalf("reviewer history: %+v %+v", evs4, evs5)
+	}
+	if list, err := s.List(ctx, carol, "", true); err != nil || len(list) != 5 {
 		t.Fatalf("admin: %v %v", list, err)
 	}
 	if m, err := s.OfCard(ctx, "deal", anna); err != nil || len(m) != 0 {

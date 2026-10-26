@@ -55,9 +55,9 @@
       {{template "boardTemplate"}}<button formaction="{{$dr.Path}}/new-board" class="ghost" data-new-board>{{icon "brush"}} {{t "dboard.new_board"}}</button></form></div></details>
 </div>{{end}}
 <div class="card flush disk" data-disk="{{$dr.Path}}" data-folder="{{$d.Folder}}" data-write="{{$dr.CanWrite}}"
-  data-l-upload="{{t "disk.uploading"}}" data-l-failed="{{t "disk.upload_failed"}}" data-l-move="{{t "disk.move_here"}}" data-l-copy="{{t "disk.copy_here"}}"
+  data-l-upload="{{t "disk.uploading"}}" data-l-failed="{{t "disk.upload_failed"}}" data-l-skipped="{{t "disk.skipped"}}" data-l-move="{{t "disk.move_here"}}" data-l-copy="{{t "disk.copy_here"}}"
   data-l-move-title="{{t "disk.move_title"}}" data-l-copy-title="{{t "disk.copy_title"}}" data-l-top="{{t "disk.top"}}" data-l-no-write="{{t "disk.no_write"}}"
-  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}">
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-base="{{$d.Base}}">
   <div class="disk-bulk row" data-disk-bulk hidden>
     <b data-disk-count></b>
     <button type="button" class="ghost" data-disk-act="zip">{{icon "file-zip"}} {{t "disk.download"}}</button>
@@ -131,8 +131,8 @@
       </div></details></td></tr>{{end}}
     {{range $d.Files}}{{$f := .}}{{$may := or $dr.CanManage (and $dr.CanWrite (eq .UploaderID $d.Me))}}{{$theirs := and .LockerID (ne .LockerID $d.Me)}}{{$mine := and $may (not $theirs)}}<tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}" {{if $mine}}draggable="true"{{end}}>
       {{$kind := fileKind .Name .ContentType}}<td class="selcol"><input type="checkbox" data-sel></td>
-      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}" tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
       {{$ok := and $d.Office (officeKind .Name)}}{{if eq $kind "pdf"}}{{$ok = false}}{{end}}
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}"{{else if $ok}} data-edit="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{if $mine}}{{t "office.edit"}}{{else}}{{t "office.open"}}{{end}}"{{end}} tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
       <td>{{if isBoard .Name}}<a href="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}" title="{{t "dboard.open"}}">{{icon "brush"}} {{.Name}}</a>{{else if $ok}}<a href="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}" title="{{t "office.open"}}">{{icon "file-pencil"}} {{.Name}}</a>{{else}}<a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a>{{end}}{{if .LockerID}} <span class="dlock" title="{{t "disk.locked_by" .Locker (datetime .LockedAt)}}" data-locked>{{icon "lock"}}</span>{{end}}{{with .Editors}} <span class="pill dediting" title="{{t "disk.editing_by" .}}" data-editing>{{icon "file-pencil"}} {{t "disk.editing"}}</span>{{end}}{{if $d.Searching}}{{template "diskWhere" (dict "dr" $dr "f" .)}}{{if $d.Snippets}}{{with index $d.Snippets .ID}}<div class="dsnip small" title="{{t "disk.found_in_text"}}">{{icon "search"}} {{.}}</div>{{end}}{{end}}{{end}}
         {{$sh := false}}{{if $d.Shares}}{{$sh = index $d.Shares .ID}}{{end}}{{if $sh}}<span class="dlink" title="{{t "disk.share_on" (len $sh)}}">{{icon "users"}}</span>{{end}}{{with index $d.Comments .ID}}<a class="dlink" href="/files/{{$f.ID}}/about#comments" title="{{t "disk.comments_n" .}}">{{icon "message-circle"}} <small>{{.}}</small></a>{{end}}
         {{if $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="linkform" id="sh-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}">
@@ -197,6 +197,18 @@
   <form method="post" action="{{$dr.Path}}/version-restore" data-disk-ver-form data-confirm="{{t "disk.version_restore_confirm"}}">
     <input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file"><input type="hidden" name="version"></form>
   <div class="row"><span class="spacer"></span><button type="button" class="ghost" data-disk-close>{{t "disk.close"}}</button></div>
+</dialog>
+{{/* an upload of a file the folder already has: a new version, another name or skip asks */}}
+<dialog class="disk-dlg disk-clash" data-disk-clash data-l-text="{{t "disk.clash_text"}}">
+  <form method="dialog">
+    <h3>{{t "disk.clash_title"}}</h3>
+    <p data-disk-clash-text></p>
+    <p class="muted small" data-disk-clash-ro hidden>{{t "disk.clash_no_version"}}</p>
+    <label class="small" data-disk-clash-many><input type="checkbox" data-disk-clash-all> {{t "disk.clash_all"}}</label>
+    <div class="row wrap"><button class="primary" value="version" data-disk-clash-version>{{t "disk.clash_version"}}</button>
+      <button class="ghost" value="rename" data-disk-clash-rename>{{t "disk.clash_rename"}}</button><button class="ghost" value="skip">{{t "disk.clash_skip"}}</button>
+      <span class="spacer"></span><button class="ghost" value="cancel">{{t "disk.clash_cancel"}}</button></div>
+  </form>
 </dialog>
 <script src="{{asset "js/disk.js"}}"></script>
 {{end}}{{end}}{{end}}
@@ -266,12 +278,12 @@
 {{/* «Последние»: the files the user uploaded or changed lately, on every drive, each opening in the viewer */}}
 {{define "diskRecent"}}{{$d := .Data}}
 <div class="card flush disk" data-disk="/disk/my" data-folder="" data-write="false"
-  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}">
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-base="{{$d.Base}}">
   {{if $d.Recent}}<table class="disk-list">
     <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "col.size"}}</th><th>{{t "col.uploaded"}}</th></tr></thead>
     <tbody>{{range $d.Recent}}{{$kind := fileKind .Name .ContentType}}{{$p := print "/disk/p/" .ProjectKey}}{{if eq .Drive "user"}}{{$p = "/disk/my"}}{{else if eq .Drive "company"}}{{$p = "/disk/company"}}{{end}}
-    <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">
-      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}" tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
+    <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">{{$ok := and $d.Office (officeKind .Name)}}{{if eq $kind "pdf"}}{{$ok = false}}{{end}}
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$p}}/board/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{else if $ok}} data-edit="{{$p}}/edit/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{t "office.open"}}"{{end}} tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
       <td><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a></td>
       <td class="small"><a href="{{$p}}{{with .FolderID}}?folder={{.}}{{end}}">{{if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
       <td class="small meta">{{size .Size}}</td>

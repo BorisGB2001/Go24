@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -59,7 +60,14 @@ type RobotParams struct {
 	Set     []RobotSet `json:"set,omitempty"`     // fields robot: what it sets
 	URL     string     `json:"url,omitempty"`     // webhook robot: where it posts the card
 	Link    string     `json:"link,omitempty"`    // booking: the booking link's id
+	Users   []string   `json:"users,omitempty"`   // responsible robot: the people it gives cards to (one — To of old robots)
+	Mode    string     `json:"mode,omitempty"`    // responsible robot among several: queue | even | random
+	Skip    bool       `json:"skip,omitempty"`    // responsible robot: passes over the absent («Пропускать отсутствующих»)
 }
+
+// ShareModes are how the responsible robot shares cards among several people: in turn, to whom has the fewest open
+// cards, at random.
+var ShareModes = []string{"queue", "even", "random"}
 
 // Wait is how long the robot waits before it runs.
 func (p RobotParams) Wait() time.Duration { return time.Duration(p.Delay) * robotUnits[p.Unit] }
@@ -110,9 +118,22 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 			p.Act = "todo"
 		}
 	case "responsible":
+		if len(p.Users) == 0 && p.To != "" {
+			p.Users = []string{p.To}
+		}
+		var users []string
+		for _, u := range p.Users {
+			if u = strings.TrimSpace(u); u != "" && !slices.Contains(users, u) {
+				users = append(users, u)
+			}
+		}
 		var n int
-		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE id::text = $1`, p.To).Scan(&n); err != nil || n == 0 {
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE id::text = ANY($1)`, users).Scan(&n); err != nil || n == 0 ||
+			n != len(users) || len(users) > 100 {
 			return i18n.E("err.robot_user")
+		}
+		if p.Users, p.To = users, users[0]; !slices.Contains(ShareModes, p.Mode) {
+			p.Mode = "queue"
 		}
 	case "stage":
 		var same bool
@@ -247,8 +268,8 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 	case "webhook":
 		err = s.robotWebhook(ctx, actorID, c, p.URL)
 	case "responsible":
-		if to == c.responsible {
-			return
+		if to, err = s.shareTo(ctx, r, c); err != nil || to == c.responsible {
+			break
 		}
 		if err = s.SetResponsible(ctx, actorID, c.entity, c.id, to); err == nil {
 			var name string
@@ -270,6 +291,84 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 	if err != nil {
 		_ = s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "fail:"+r.Kind+":"+errKey(err))
 	}
+}
+
+// shareTo is whom the responsible robot gives the card: its only person, or one of its people by its mode — of those
+// at work today when it passes over the absent (all absent — any of them). In turn: the one after whom it gave a card
+// last time; evenly: the one with the fewest open cards of the kind (in turn among equals).
+func (s *Store) shareTo(ctx context.Context, r Robot, c card) (string, error) {
+	all := r.Params.Users
+	if len(all) == 0 {
+		all = []string{r.Params.To}
+	}
+	free := all
+	if r.Params.Skip && len(all) > 1 {
+		rows, err := s.db.Query(ctx, `SELECT DISTINCT user_id::text FROM absences WHERE user_id::text = ANY($1)
+			AND starts_on <= $2::date AND ends_on >= $2::date`, all, time.Now())
+		if err != nil {
+			return "", err
+		}
+		absent, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return "", err
+		}
+		if free = slices.DeleteFunc(slices.Clone(all), func(u string) bool { return slices.Contains(absent, u) }); len(free) == 0 {
+			free = all
+		}
+	}
+	if len(free) == 1 {
+		return free[0], nil
+	}
+	switch r.Params.Mode {
+	case "random":
+		return free[rand.IntN(len(free))], nil
+	case "even":
+		rows, err := s.db.Query(ctx, `SELECT c.responsible_id::text, count(*) FROM crm_`+plural[c.entity]+` c JOIN crm_stages st ON st.id = c.stage_id
+			WHERE st.semantic = 'process' AND c.responsible_id::text = ANY($1) GROUP BY 1`, free)
+		if err != nil {
+			return "", err
+		}
+		load := map[string]int{}
+		for rows.Next() {
+			var u string
+			var n int
+			if err := rows.Scan(&u, &n); err != nil {
+				rows.Close()
+				return "", err
+			}
+			load[u] = n
+		}
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		least := slices.MinFunc(free, func(a, b string) int { return load[a] - load[b] })
+		free = slices.DeleteFunc(slices.Clone(free), func(u string) bool { return load[u] > load[least] })
+		if len(free) == 1 {
+			return free[0], nil
+		}
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var last string
+	err = tx.QueryRow(ctx, `SELECT user_id::text FROM crm_robot_picks WHERE robot_id::text = $1 FOR UPDATE`, r.ID).Scan(&last)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	user, after := free[0], slices.Index(all, last)
+	for _, u := range free {
+		if slices.Index(all, u) > after {
+			user = u
+			break
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO crm_robot_picks (robot_id, user_id) VALUES ($1, $2)
+		ON CONFLICT (robot_id) DO UPDATE SET user_id = excluded.user_id`, r.ID, user); err != nil {
+		return "", err
+	}
+	return user, tx.Commit(ctx)
 }
 
 // errKey is how a robot's failure is kept in the history: a known error by its locale key, another by its text.

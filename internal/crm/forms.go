@@ -79,6 +79,7 @@ type FormResult struct {
 	LeadTitle, ContactName string
 	DealTitle              string
 	CreatedAt              time.Time
+	Session                string // the open line's dialogue the form was filled in ("" — on a site)
 }
 
 var (
@@ -295,10 +296,12 @@ func (f Form) Answer(get func(key string) string, consent bool) ([]FormAnswer, e
 }
 
 // FormFilling is what the web layer adds to the answers: the cards' title and comment in the portal's language, the
-// client's address and the page where the form was filled.
+// client's address and the page where the form was filled; a form sent in an open line's dialogue — the dialogue and
+// its lead (filled in instead of a new one).
 type FormFilling struct {
 	Title, Comment, Source string
 	IP, Page               string
+	Session, LeadID        string
 }
 
 // SubmitForm makes the cards of a filling — a lead, or a contact (a known one with the phone or e-mail; the company
@@ -335,6 +338,12 @@ func (s *Store) SubmitForm(ctx context.Context, f Form, ans []FormAnswer, x Form
 	origin := Dict{Code: "WEBFORM"}
 	var entity, id string
 	var err error
+	var dl *Lead
+	if x.LeadID != "" && f.Scheme != "deal" {
+		if l, err := s.Lead(ctx, x.LeadID); err == nil {
+			dl = &l
+		}
+	}
 	if f.Scheme == "deal" {
 		if res.ContactID, err = s.formContact(ctx, resp, get, name, comment, origin); err != nil {
 			return res, err
@@ -350,6 +359,23 @@ func (s *Store) SubmitForm(ctx context.Context, f Form, ans []FormAnswer, x Form
 		res.DealID, err = s.SaveDeal(ctx, resp, Deal{Title: x.Title, PipelineID: pipe, Comment: comment, Origin: origin,
 			Company: Ref{ID: company}, Contacts: []Ref{{ID: res.ContactID}}, Responsible: Ref{ID: resp}})
 		entity, id = "deal", res.DealID
+	} else if dl != nil {
+		// the dialogue's lead: what it has no value of, and the answers in its comment
+		l := *dl
+		for _, v := range []struct {
+			to *string
+			v  string
+		}{{&l.Name, name}, {&l.CompanyTitle, get["company"]}, {&l.Phone, get["phone"]}, {&l.Email, get["email"]}} {
+			if *v.to == "" {
+				*v.to = v.v
+			}
+		}
+		l.Comment = strings.TrimSpace(l.Comment + "\n\n" + x.Title + "\n" + formText(ans) + "\n" + x.Comment) // the answers have the comment
+		if r := []rune(l.Comment); len(r) > 10000 {
+			l.Comment = string(r[len(r)-10000:])
+		}
+		res.LeadID, err = s.SaveLead(ctx, resp, l)
+		entity, id = "lead", res.LeadID
 	} else {
 		res.LeadID, err = s.SaveLead(ctx, resp, Lead{Title: x.Title, Name: name, CompanyTitle: get["company"], Phone: get["phone"],
 			Email: get["email"], Comment: comment, Source: x.Source, Origin: origin, Responsible: Ref{ID: resp}})
@@ -367,9 +393,10 @@ func (s *Store) SubmitForm(ctx context.Context, f Form, ans []FormAnswer, x Form
 	if err != nil {
 		return res, err
 	}
-	if err := s.db.QueryRow(ctx, `INSERT INTO crm_form_results (form_id, answers, lead_id, contact_id, deal_id, ip, page)
-		VALUES ($1, $2, nullif($3, '')::uuid, nullif($4, '')::uuid, nullif($5, '')::uuid, $6, left($7, 2000)) RETURNING id::text, created_at`,
-		f.ID, answers, res.LeadID, res.ContactID, res.DealID, x.IP, x.Page).Scan(&res.ID, &res.CreatedAt); err != nil {
+	res.Session = x.Session
+	if err := s.db.QueryRow(ctx, `INSERT INTO crm_form_results (form_id, answers, lead_id, contact_id, deal_id, ip, page, ol_session_id)
+		VALUES ($1, $2, nullif($3, '')::uuid, nullif($4, '')::uuid, nullif($5, '')::uuid, $6, left($7, 2000), nullif($8, '')::uuid) RETURNING id::text, created_at`,
+		f.ID, answers, res.LeadID, res.ContactID, res.DealID, x.IP, x.Page, x.Session).Scan(&res.ID, &res.CreatedAt); err != nil {
 		return res, err
 	}
 	if err := s.Fire(ctx, entity, id, "form"); err != nil {
@@ -378,6 +405,17 @@ func (s *Store) SubmitForm(ctx context.Context, f Form, ans []FormAnswer, x Form
 	_, err = s.db.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url) VALUES ($1, 'crm_form', left($2, 300), $3)`,
 		resp, x.Title, "/crm/"+plural[entity]+"/"+id)
 	return res, err
+}
+
+// formText is the answers as lines «Поле: значение».
+func formText(ans []FormAnswer) string {
+	var b strings.Builder
+	for _, a := range ans {
+		if a.Value != "" {
+			b.WriteString(a.Label + ": " + a.Value + "\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // formContact is the contact of a filling: the one with its phone or e-mail, else a new one (with the company it
@@ -417,7 +455,8 @@ func (s *Store) formContact(ctx context.Context, resp string, get map[string]str
 // FormResults are the fillings of a form, newest first, with the cards they made (those still there).
 func (s *Store) FormResults(ctx context.Context, formID string, limit int) ([]FormResult, error) {
 	rows, err := s.db.Query(ctx, `SELECT r.id::text, r.answers, coalesce(r.lead_id::text, ''), coalesce(r.contact_id::text, ''),
-		coalesce(r.deal_id::text, ''), r.ip, r.page, coalesce(l.title, ''), coalesce(c.name, ''), coalesce(d.title, ''), r.created_at
+		coalesce(r.deal_id::text, ''), r.ip, r.page, coalesce(l.title, ''), coalesce(c.name, ''), coalesce(d.title, ''), r.created_at,
+		coalesce(r.ol_session_id::text, '')
 		FROM crm_form_results r LEFT JOIN crm_leads l ON l.id = r.lead_id LEFT JOIN crm_contacts c ON c.id = r.contact_id
 			LEFT JOIN crm_deals d ON d.id = r.deal_id
 		WHERE r.form_id::text = $1 ORDER BY r.created_at DESC LIMIT $2`, formID, limit)
@@ -428,7 +467,7 @@ func (s *Store) FormResults(ctx context.Context, formID string, limit int) ([]Fo
 		var r FormResult
 		var answers []byte
 		err := row.Scan(&r.ID, &answers, &r.LeadID, &r.ContactID, &r.DealID, &r.IP, &r.Page, &r.LeadTitle, &r.ContactName,
-			&r.DealTitle, &r.CreatedAt)
+			&r.DealTitle, &r.CreatedAt, &r.Session)
 		if err == nil {
 			err = json.Unmarshal(answers, &r.Answers)
 		}

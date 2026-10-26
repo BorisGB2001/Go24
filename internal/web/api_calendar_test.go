@@ -327,6 +327,65 @@ func TestCalendarAPI(t *testing.T) {
 	call("DELETE", "/api/v1/calendar/people/"+boss, annaKey, nil, http.StatusNoContent, nil)
 	call("DELETE", "/api/v1/calendar/people/"+boss, annaKey, nil, http.StatusNotFound, nil)
 
+	// access to the calendar by name (GO24DEV-710): «Просмотр» shows Boris's meetings to Anna in full, though he shows
+	// colleagues the busy time only; with «Управление» she keeps his calendar — makes a meeting of his, changes and
+	// deletes his meetings, answers his invitations; his private meeting stays only busy to her and out of her reach
+	call("PUT", "/api/v1/calendar/share", bossKey, map[string]any{"share": "busy"}, http.StatusOK, nil)
+	theirs(map[string]string{open.ID: "", closed.ID: "", both.ID: "Вместе"})
+	var acc map[string][]apiGrant
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": anna, "level": "all"}, http.StatusUnprocessableEntity, nil)
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": guest, "level": "view"}, http.StatusNotFound, nil)
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": boss, "level": "view"}, http.StatusNotFound, nil)
+	call("PUT", "/api/v1/calendar/access", readOnly, map[string]any{"user": boss, "level": "view"}, http.StatusForbidden, nil)
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": anna, "level": "view"}, http.StatusOK, &acc)
+	if len(acc["given"]) != 1 || acc["given"][0].User.ID != anna || acc["given"][0].Level != "view" || len(acc["granted"]) != 0 {
+		t.Fatalf("Boris's access = %+v", acc)
+	}
+	call("GET", "/api/v1/calendar/access", annaKey, nil, http.StatusOK, &acc)
+	if len(acc["granted"]) != 1 || acc["granted"][0].User.ID != boss || acc["granted"][0].User.Name != "Борис" || len(acc["given"]) != 0 {
+		t.Fatalf("Anna's access = %+v", acc)
+	}
+	theirs(map[string]string{open.ID: "Бюджет", closed.ID: "", both.ID: "Вместе"})
+	call("GET", "/api/v1/calendar/events/"+open.ID, annaKey, nil, http.StatusOK, nil)
+	call("PATCH", "/api/v1/calendar/events/"+open.ID+"?as="+boss, annaKey, map[string]any{"title": "x"}, http.StatusForbidden, nil)
+
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": anna, "level": "edit"}, http.StatusOK, nil)
+	var made apiEvent
+	call("POST", "/api/v1/calendar/events?as="+boss, annaKey, map[string]any{"title": "Совет", "start": day.Add(8 * time.Hour),
+		"attendees": []string{anna}}, http.StatusCreated, &made)
+	if made.Owner.ID != boss || len(made.Attendees) != 1 || made.Attendees[0].ID != anna {
+		t.Fatalf("the meeting Anna made for Boris = %+v", made)
+	}
+	call("PATCH", "/api/v1/calendar/events/"+open.ID+"?as="+boss, annaKey, map[string]any{"title": "Бюджет 2"}, http.StatusOK, &seen)
+	if seen.Title != "Бюджет 2" || seen.Owner.ID != boss {
+		t.Fatalf("Boris's meeting changed by Anna = %+v", seen)
+	}
+	call("GET", "/api/v1/calendar/events/"+closed.ID+"?as="+boss, annaKey, nil, http.StatusOK, &seen)
+	if !seen.Hidden || seen.Title != "" {
+		t.Fatalf("Boris's private meeting for Anna = %+v", seen)
+	}
+	call("PATCH", "/api/v1/calendar/events/"+closed.ID+"?as="+boss, annaKey, map[string]any{"title": "x"}, http.StatusForbidden, nil)
+	call("DELETE", "/api/v1/calendar/events/"+closed.ID+"?as="+boss, annaKey, nil, http.StatusNotFound, nil)
+	call("GET", "/api/v1/calendar/events/"+closed.ID, bossKey, nil, http.StatusOK, &seen)
+	if seen.Title != "Врач" {
+		t.Fatalf("Boris's private meeting = %+v", seen)
+	}
+	var inv apiEvent
+	call("POST", "/api/v1/calendar/events", annaKey, map[string]any{"title": "Обед", "start": day.Add(3 * time.Hour), "attendees": []string{boss}}, http.StatusCreated, &inv)
+	call("POST", "/api/v1/calendar/events/"+inv.ID+"/respond?as="+boss, annaKey, map[string]any{"status": "accepted"}, http.StatusOK, &seen)
+	if len(seen.Attendees) != 1 || seen.Attendees[0].ID != boss || seen.Attendees[0].Status != "accepted" {
+		t.Fatalf("Boris's answer given by Anna = %+v", seen)
+	}
+	call("DELETE", "/api/v1/calendar/events/"+made.ID+"?as="+boss, annaKey, nil, http.StatusNoContent, nil)
+	call("GET", "/api/v1/calendar/events/"+made.ID, bossKey, nil, http.StatusNotFound, nil)
+
+	call("PUT", "/api/v1/calendar/access", bossKey, map[string]any{"user": anna, "level": ""}, http.StatusOK, &acc)
+	if len(acc["given"]) != 0 {
+		t.Fatalf("access taken away = %+v", acc)
+	}
+	call("POST", "/api/v1/calendar/events?as="+boss, annaKey, map[string]any{"title": "x", "start": day}, http.StatusForbidden, nil)
+	theirs(map[string]string{open.ID: "", closed.ID: "", both.ID: "Вместе"})
+
 	// «Настройки календаря»: the defaults, PUT changes the given ones, wrong hours are refused
 	var cs calendar.Settings
 	call("GET", "/api/v1/calendar/settings", annaKey, nil, http.StatusOK, &cs)

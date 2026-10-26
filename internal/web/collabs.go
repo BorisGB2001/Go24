@@ -90,7 +90,8 @@ func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess aut
 			InvitePerm: r.FormValue("invite_perm"), GuestInvitePerm: r.FormValue("guest_invite_perm"),
 			ChatHistory: r.FormValue("chat_history") == "on", GuestTasks: r.FormValue("guests_tasks") == "on",
 			GuestFiles: r.FormValue("guests_files") == "on", EditPerm: r.FormValue("edit_perm"), ChatPerm: r.FormValue("chat_perm"),
-			MsgTTL: msgTTL,
+			MsgTTL: msgTTL, EventsMembers: r.FormValue("events_members") == "on", EventsGuests: r.FormValue("events_guests") == "on",
+			EventsInvites: r.FormValue("events_invites") == "on", EventsCollab: r.FormValue("events_collab") == "on",
 		})
 	}
 	if err != nil {
@@ -230,4 +231,41 @@ func (s *Server) frozenBack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "err.collab_archived")), http.StatusSeeOther)
+}
+
+// CollabLogLine is a line of the collab's log as the go24 bot tells it in the collab's chat («Уведомления в
+// коллабе»), worded as the log on the collab's page; an invitation's address stays out of the chat.
+func CollabLogLine(b *i18n.Bundle, lang string, e tasks.CollabLogEntry) string {
+	line := ""
+	if e.Actor != "" {
+		line = e.Actor + ": "
+	}
+	line += b.T(lang, "collab.log."+e.Action)
+	if e.Target != "" {
+		line += " " + e.Target
+	}
+	if e.TargetGuest {
+		line += " (" + b.T(lang, "collab.guest") + ")"
+	}
+	switch e.Action {
+	case "member_added", "role_changed":
+		line += " — " + b.T(lang, "collab.role."+e.Detail)
+	case "joined":
+		line += " — " + b.T(lang, "collab.log.by."+e.Detail)
+	case "settings":
+		for i, c := range e.Changes() {
+			if i == 0 {
+				line += ":"
+			} else {
+				line += ";"
+			}
+			line += " " + b.T(lang, "collab.log.set."+c)
+		}
+	case "invite_created", "invite_resent", "invite_revoked":
+	default:
+		if e.Detail != "" {
+			line += " — " + e.Detail
+		}
+	}
+	return line
 }

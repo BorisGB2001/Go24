@@ -200,6 +200,8 @@ func TestCompanyAPI(t *testing.T) {
 		Workday struct {
 			State  string
 			Report string
+			Start  struct{ IP string }
+			End    *struct{ IP string }
 		}
 	}
 	decode(do(annaKey, "GET", "/api/v1/worktime/status", "", 200), &st)
@@ -217,7 +219,7 @@ func TestCompanyAPI(t *testing.T) {
 		t.Fatalf("paused: %+v", st)
 	}
 	decode(do(annaKey, "POST", "/api/v1/worktime/finish", `{"report":"Звонки клиентам"}`, 200), &st)
-	if st.State != "done" || st.Workday.Report != "Звонки клиентам" {
+	if st.State != "done" || st.Workday.Report != "Звонки клиентам" || st.Workday.Start.IP == "" || st.Workday.End == nil {
 		t.Fatalf("finished: %+v", st)
 	}
 	do(annaKey, "POST", "/api/v1/worktime/fly", "", 422)

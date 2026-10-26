@@ -11,8 +11,9 @@ import (
 
 // «Сотрудник кадров» (an HR officer) and vacations: the plan of the year, the reminder, the report by departments.
 
-// HRRights are what an administrator lets an HR officer do: enter and change anyone's absences, invite employees.
-var HRRights = []string{"absences", "invite"}
+// HRRights are what an administrator lets an HR officer do: enter and change anyone's absences, invite employees,
+// keep «Доска почёта».
+var HRRights = []string{"absences", "invite", "honor"}
 
 // HR is a person's HR role.
 type HR struct {

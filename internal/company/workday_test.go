@@ -57,24 +57,28 @@ func TestWorkday(t *testing.T) {
 	t0 := time.Date(2026, 10, 13, 9, 0, 0, 0, time.Local)
 	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
 	var ve *i18n.Error
-	if err := s.WorkAction(ctx, anna, "pause", "", at(0)); err == nil {
+	if err := s.WorkAction(ctx, anna, "pause", "", at(0), Place{}); err == nil {
 		t.Fatal("a break before the day started")
 	}
-	must(s.WorkAction(ctx, anna, "start", "", at(0)))
-	must(s.WorkAction(ctx, anna, "pause", "", at(60)))
-	must(s.WorkAction(ctx, anna, "resume", "", at(90)))
-	must(s.WorkAction(ctx, anna, "finish", " сделала отчёт ", at(480)))
+	office, away := "Главный офис", ""
+	must(s.WorkAction(ctx, anna, "start", "", at(0), Place{IP: "10.0.0.7", Office: &office}))
+	must(s.WorkAction(ctx, anna, "pause", "", at(60), Place{IP: "1.2.3.4", Office: &away})) // a break is not remembered
+	must(s.WorkAction(ctx, anna, "resume", "", at(90), Place{}))
+	must(s.WorkAction(ctx, anna, "finish", " сделала отчёт ", at(480), Place{IP: "1.2.3.4", Office: &away}))
 	d, err := s.Today(ctx, anna, at(500))
 	must(err)
 	if d == nil || d.State() != "done" || d.PauseSecs != 1800 || d.Worked(at(600)) != 450*60 || d.Report != "сделала отчёт" {
 		t.Fatalf("day = %+v", d)
 	}
-	if err := s.WorkAction(ctx, anna, "finish", "", at(490)); !errors.As(err, &ve) {
+	if d.Start.IP != "10.0.0.7" || d.Start.Away() || *d.Start.Office != office || d.End.IP != "1.2.3.4" || !d.End.Away() {
+		t.Fatalf("places = %+v %+v", d.Start, d.End)
+	}
+	if err := s.WorkAction(ctx, anna, "finish", "", at(490), Place{}); !errors.As(err, &ve) {
 		t.Fatalf("finished twice: %v", err)
 	}
-	must(s.WorkAction(ctx, anna, "reopen", "", at(540))) // the hour between counts as a break
+	must(s.WorkAction(ctx, anna, "reopen", "", at(540), Place{})) // the hour between counts as a break
 	d, _ = s.Today(ctx, anna, at(541))
-	if d.State() != "running" || d.PauseSecs != 1800+3600 {
+	if d.State() != "running" || d.PauseSecs != 1800+3600 || d.End.IP != "" || d.End.Office != nil {
 		t.Fatalf("reopened = %+v", d)
 	}
 	days, err := s.Workdays(ctx, anna, t0.AddDate(0, 0, -t0.Day()+1), t0.AddDate(0, 1, 0))

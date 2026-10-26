@@ -15,6 +15,8 @@ type Sheet struct {
 	Lines  []string
 	Header []string
 	Rows   [][]string
+	// Images are the rows' pictures (the signers' handwritten signatures), by the row's index: in its last cell.
+	Images map[int]Image
 }
 
 func para(text string, bold bool, size int) string {
@@ -37,11 +39,15 @@ func cell(text string, bold bool) string {
 	for _, line := range strings.Split(text, "\n") {
 		ps.WriteString(para(line, bold, 18))
 	}
-	return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>` + ps.String() + `</w:tc>`
+	return tc(ps.String())
 }
 
-// xml is the sheet as WordprocessingML, from a new page.
-func (s Sheet) xml() string {
+func tc(ps string) string {
+	return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>` + ps + `</w:tc>`
+}
+
+// xml is the sheet as WordprocessingML, from a new page; pics — the rows' pictures, with their relationship ids.
+func (s Sheet) xml(pics map[int]*picture) string {
 	var b strings.Builder
 	b.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
 	b.WriteString(para(s.Title, true, 28))
@@ -61,9 +67,13 @@ func (s Sheet) xml() string {
 			b.WriteString(cell(h, true))
 		}
 		b.WriteString(`</w:tr>`)
-		for _, row := range s.Rows {
+		for i, row := range s.Rows {
 			b.WriteString(`<w:tr>`)
-			for _, c := range row {
+			for j, c := range row {
+				if p := pics[i]; p != nil && j == len(row)-1 {
+					b.WriteString(tc(`<w:p><w:r><w:t>` + drawing(p, 91000+i) + `</w:t></w:r></w:p>`))
+					continue
+				}
 				b.WriteString(cell(c, false))
 			}
 			b.WriteString(`</w:tr>`)
@@ -73,15 +83,34 @@ func (s Sheet) xml() string {
 	return b.String()
 }
 
-// AppendSheet puts the sheet at the end of the document's body (before its last section's settings).
+// AppendSheet puts the sheet at the end of the document's body (before its last section's settings), its pictures
+// in word/media.
 func AppendSheet(doc []byte, s Sheet) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(doc), int64(len(doc)))
 	if err != nil {
 		return nil, ErrNotDocx
 	}
-	found := false
+	pics := map[int]*picture{}
+	var list []*picture
+	exts := map[string]bool{}
+	for i, img := range s.Images {
+		if p := pictureOf(img); p != nil && i >= 0 && i < len(s.Rows) {
+			p.rel = "rIdGo24Sig" + strconv.Itoa(i+1)
+			pics[i], exts[p.ext] = p, true
+			list = append(list, p)
+		}
+	}
+	const docPart, docRels = "word/document.xml", "word/_rels/document.xml.rels"
+	found, rels := false, false
 	var out bytes.Buffer
 	zw := zip.NewWriter(&out)
+	put := func(hdr zip.FileHeader, data []byte) error {
+		w, err := zw.CreateHeader(&hdr)
+		if err == nil {
+			_, err = w.Write(data)
+		}
+		return err
+	}
 	for _, f := range zr.File {
 		rc, err := f.Open()
 		if err != nil {
@@ -92,7 +121,8 @@ func AppendSheet(doc []byte, s Sheet) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if f.Name == "word/document.xml" {
+		switch f.Name {
+		case docPart:
 			x := string(data)
 			end := strings.LastIndex(x, "</w:body>")
 			if end < 0 {
@@ -103,20 +133,33 @@ func AppendSheet(doc []byte, s Sheet) ([]byte, error) {
 			if i := strings.LastIndex(x[:end], "<w:sectPr"); i >= 0 && !strings.Contains(x[i:end], "</w:p>") {
 				at = i
 			}
-			data = []byte(x[:at] + s.xml() + x[at:])
+			data = []byte(x[:at] + s.xml(pics) + x[at:])
 			found = true
+		case docRels:
+			if len(list) > 0 {
+				data, rels = []byte(addRels(string(data), list)), true
+			}
+		case "[Content_Types].xml":
+			if len(list) > 0 {
+				data = []byte(addTypes(string(data), exts))
+			}
 		}
-		hdr := f.FileHeader
-		w, err := zw.CreateHeader(&hdr)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := w.Write(data); err != nil {
+		if err := put(f.FileHeader, data); err != nil {
 			return nil, err
 		}
 	}
 	if !found {
 		return nil, ErrNotDocx
+	}
+	if len(list) > 0 && !rels {
+		if err := put(zip.FileHeader{Name: docRels, Method: zip.Deflate}, []byte(addRels("", list))); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range list {
+		if err := put(zip.FileHeader{Name: "word/media/" + p.rel + "." + p.ext, Method: zip.Deflate}, p.img.Data); err != nil {
+			return nil, err
+		}
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err

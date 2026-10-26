@@ -49,6 +49,12 @@
       <div data-for="post"><label>{{t "bp.step_post_to"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "ph" (t "bp.step_post_all") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
         <label>{{t "bp.step_post_title"}}</label><input type="text" name="subject" maxlength="300">
         <label>{{t "bp.step_post_text"}}</label><textarea name="text" rows="5" maxlength="1000"></textarea></div>
+      <div data-for="pick"><label>{{t "bp.step_pick_users"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_pick_mode"}}</label><select name="pick_mode">{{range $d.PickModes}}<option value="{{.}}">{{t (print "bp.pick." .)}}</option>{{end}}</select>
+        <label class="check"><input type="checkbox" name="skip" checked> {{t "bp.step_pick_skip"}}</label>
+        <label>{{t "bp.step_pick_reserve"}}</label>{{template "upick" (upick "reserve" "" $d.Users "ph" (t "bp.pick.no_reserve") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_pick_field"}}</label><select name="pick_field">{{range $d.AllFields}}{{if and (eq .Kind "user") (ne .Scope "const")}}<option value="{{.Key}}">{{.Label}}</option>{{end}}{{end}}</select>
+        <p class="small muted">{{t "bp.step_pick_hint"}}</p></div>
       <div data-for="userinfo"><p class="small muted">{{t "bp.step_userinfo_hint"}}</p></div>
       <div data-for="log"><label>{{t "bp.step_log_text"}}</label><textarea name="text" rows="3" maxlength="1000"></textarea>
         <p class="small muted">{{t "bp.step_log_hint"}}</p></div>

@@ -4,7 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -254,9 +257,15 @@ func TestDocsAPI(t *testing.T) {
 		t.Fatalf("file sent: %+v", sd)
 	}
 	call("POST", "/api/v1/sign/"+sd.ID+"/sign", bobKey, map[string]bool{}, http.StatusUnprocessableEntity, nil) // has not confirmed reading
-	call("POST", "/api/v1/sign/"+sd.ID+"/sign", bobKey, map[string]bool{"agree": true}, http.StatusOK, &sd)
-	if sd.Status != "done" || sd.Parties[0].Status != "signed" || sd.Files["result"] == "" {
+	call("POST", "/api/v1/sign/"+sd.ID+"/sign", bobKey, map[string]any{"agree": true, "signature": "not a picture"}, http.StatusUnprocessableEntity, nil)
+	var pic bytes.Buffer
+	png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 90, 30)))
+	call("POST", "/api/v1/sign/"+sd.ID+"/sign", bobKey, map[string]any{"agree": true, "signature": base64.StdEncoding.EncodeToString(pic.Bytes())}, http.StatusOK, &sd)
+	if sd.Status != "done" || sd.Parties[0].Status != "signed" || sd.Files["result"] == "" || sd.Parties[0].Signature == "" {
 		t.Fatalf("signed: %+v", sd)
+	}
+	if raw := do("GET", sd.Parties[0].Signature, bobRead, "", nil, http.StatusOK); !strings.HasPrefix(string(raw), "\x89PNG") {
+		t.Fatal("the signature by REST")
 	}
 	if raw := do("GET", "/api/v1/sign/"+sd.ID+"/file/docx", bobRead, "", nil, http.StatusOK); !strings.Contains(text(raw), "Акт") {
 		t.Fatal("signed docx")

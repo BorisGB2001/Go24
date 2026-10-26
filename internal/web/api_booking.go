@@ -18,38 +18,39 @@ import (
 // booking.v1.resource.*      — /api/v1/booking/resources (resource.slots.list — /resources/{id}/slots)
 // booking.v1.booking.*       — /api/v1/booking/bookings (client.set, externalData.set — the client and CRM fields)
 // booking.v1.waitlist.*      — /api/v1/booking/waitlist (waitlist.createfrombooking — /bookings/{id}/wait)
-// The types and resources are changed by administrators; bookings and the waiting list — by any employee, as on the page.
+// The types and resources are changed by those who manage «Онлайн-запись»; bookings and the waiting list — by those who
+// work with it, as on the page («Права доступа»).
 
 func (s *Server) apiBookingRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/booking/types", s.api("booking:read", s.apiBkTypes))
-	mux.HandleFunc("POST /api/v1/booking/types", s.api("booking:write", s.apiBkTypeSave))
-	mux.HandleFunc("PUT /api/v1/booking/types/{id}", s.api("booking:write", s.apiBkTypeSave))
-	mux.HandleFunc("DELETE /api/v1/booking/types/{id}", s.api("booking:write", s.apiBkTypeDelete))
-	mux.HandleFunc("GET /api/v1/booking/resources", s.api("booking:read", s.apiBkResources))
-	mux.HandleFunc("GET /api/v1/booking/resources/{id}", s.api("booking:read", s.apiBkResource))
-	mux.HandleFunc("GET /api/v1/booking/resources/{id}/slots", s.api("booking:read", s.apiBkSlots))
-	mux.HandleFunc("POST /api/v1/booking/resources", s.api("booking:write", s.apiBkResourceSave))
-	mux.HandleFunc("PUT /api/v1/booking/resources/{id}", s.api("booking:write", s.apiBkResourceSave))
-	mux.HandleFunc("DELETE /api/v1/booking/resources/{id}", s.api("booking:write", s.apiBkResourceDelete))
-	mux.HandleFunc("GET /api/v1/booking/bookings", s.api("booking:read", s.apiBkBookings))
-	mux.HandleFunc("GET /api/v1/booking/bookings/{id}", s.api("booking:read", s.apiBkBooking))
-	mux.HandleFunc("POST /api/v1/booking/bookings", s.api("booking:write", s.apiBkBookingSave))
-	mux.HandleFunc("PUT /api/v1/booking/bookings/{id}", s.api("booking:write", s.apiBkBookingSave))
-	mux.HandleFunc("POST /api/v1/booking/bookings/{id}/status", s.api("booking:write", s.apiBkStatus))
-	mux.HandleFunc("POST /api/v1/booking/bookings/{id}/wait", s.api("booking:write", s.apiBkToWait))
-	mux.HandleFunc("DELETE /api/v1/booking/bookings/{id}", s.api("booking:write", s.apiBkBookingDelete))
-	mux.HandleFunc("GET /api/v1/booking/waitlist", s.api("booking:read", s.apiBkWaitlist))
-	mux.HandleFunc("GET /api/v1/booking/waitlist/{id}", s.api("booking:read", s.apiBkWait))
-	mux.HandleFunc("POST /api/v1/booking/waitlist", s.api("booking:write", s.apiBkWaitSave))
-	mux.HandleFunc("PUT /api/v1/booking/waitlist/{id}", s.api("booking:write", s.apiBkWaitSave))
-	mux.HandleFunc("POST /api/v1/booking/waitlist/{id}/book", s.api("booking:write", s.apiBkWaitBook))
-	mux.HandleFunc("DELETE /api/v1/booking/waitlist/{id}", s.api("booking:write", s.apiBkWaitDelete))
-	mux.HandleFunc("GET /api/v1/booking/stats", s.api("booking:read", s.apiBkStats))
+	mux.HandleFunc("GET /api/v1/booking/types", s.api("booking:read", s.apiBkUse(s.apiBkTypes)))
+	mux.HandleFunc("POST /api/v1/booking/types", s.api("booking:write", s.apiBkUse(s.apiBkTypeSave)))
+	mux.HandleFunc("PUT /api/v1/booking/types/{id}", s.api("booking:write", s.apiBkUse(s.apiBkTypeSave)))
+	mux.HandleFunc("DELETE /api/v1/booking/types/{id}", s.api("booking:write", s.apiBkUse(s.apiBkTypeDelete)))
+	mux.HandleFunc("GET /api/v1/booking/resources", s.api("booking:read", s.apiBkUse(s.apiBkResources)))
+	mux.HandleFunc("GET /api/v1/booking/resources/{id}", s.api("booking:read", s.apiBkUse(s.apiBkResource)))
+	mux.HandleFunc("GET /api/v1/booking/resources/{id}/slots", s.api("booking:read", s.apiBkUse(s.apiBkSlots)))
+	mux.HandleFunc("POST /api/v1/booking/resources", s.api("booking:write", s.apiBkUse(s.apiBkResourceSave)))
+	mux.HandleFunc("PUT /api/v1/booking/resources/{id}", s.api("booking:write", s.apiBkUse(s.apiBkResourceSave)))
+	mux.HandleFunc("DELETE /api/v1/booking/resources/{id}", s.api("booking:write", s.apiBkUse(s.apiBkResourceDelete)))
+	mux.HandleFunc("GET /api/v1/booking/bookings", s.api("booking:read", s.apiBkUse(s.apiBkBookings)))
+	mux.HandleFunc("GET /api/v1/booking/bookings/{id}", s.api("booking:read", s.apiBkUse(s.apiBkBooking)))
+	mux.HandleFunc("POST /api/v1/booking/bookings", s.api("booking:write", s.apiBkUse(s.apiBkBookingSave)))
+	mux.HandleFunc("PUT /api/v1/booking/bookings/{id}", s.api("booking:write", s.apiBkUse(s.apiBkBookingSave)))
+	mux.HandleFunc("POST /api/v1/booking/bookings/{id}/status", s.api("booking:write", s.apiBkUse(s.apiBkStatus)))
+	mux.HandleFunc("POST /api/v1/booking/bookings/{id}/wait", s.api("booking:write", s.apiBkUse(s.apiBkToWait)))
+	mux.HandleFunc("DELETE /api/v1/booking/bookings/{id}", s.api("booking:write", s.apiBkUse(s.apiBkBookingDelete)))
+	mux.HandleFunc("GET /api/v1/booking/waitlist", s.api("booking:read", s.apiBkUse(s.apiBkWaitlist)))
+	mux.HandleFunc("GET /api/v1/booking/waitlist/{id}", s.api("booking:read", s.apiBkUse(s.apiBkWait)))
+	mux.HandleFunc("POST /api/v1/booking/waitlist", s.api("booking:write", s.apiBkUse(s.apiBkWaitSave)))
+	mux.HandleFunc("PUT /api/v1/booking/waitlist/{id}", s.api("booking:write", s.apiBkUse(s.apiBkWaitSave)))
+	mux.HandleFunc("POST /api/v1/booking/waitlist/{id}/book", s.api("booking:write", s.apiBkUse(s.apiBkWaitBook)))
+	mux.HandleFunc("DELETE /api/v1/booking/waitlist/{id}", s.api("booking:write", s.apiBkUse(s.apiBkWaitDelete)))
+	mux.HandleFunc("GET /api/v1/booking/stats", s.api("booking:read", s.apiBkUse(s.apiBkStats)))
 }
 
-// apiBkAdmin: the key's owner is an administrator.
+// apiBkAdmin: the key's owner manages «Онлайн-запись» (an administrator or chosen in «Права доступа»).
 func (s *Server) apiBkAdmin(r *http.Request, p apikeys.Principal) error {
-	if !s.apiAdmin(r.Context(), p.UserID) {
+	if _, manage := s.bookingMay(r.Context(), p.UserID, s.apiAdmin(r.Context(), p.UserID)); !manage {
 		return i18n.E("err.forbidden")
 	}
 	return nil

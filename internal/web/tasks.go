@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go24/internal/audit"
 	"go24/internal/auth"
 	"go24/internal/company"
 	"go24/internal/i18n"
@@ -1309,7 +1310,7 @@ func (s *Server) worktimePage(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	s.render(w, r, "worktime", page{TitleKey: "title.worktime", Nav: "worktime", Data: map[string]any{
 		"Schedule": sched, "Off": off, "Days": []int{1, 2, 3, 4, 5, 6, 0},
-		"Rules": rules, "Periods": company.ReportPeriods, "Departments": depts,
+		"Rules": rules, "Periods": company.ReportPeriods, "Departments": depts, "IP": audit.ClientIP(r),
 	}})
 }
 
@@ -1325,7 +1326,13 @@ func (s *Server) saveWorktime(w http.ResponseWriter, r *http.Request, sess auth.
 	sched := worktime.Schedule{Start: r.FormValue("start"), End: r.FormValue("end"), Weekend: []int{},
 		Holidays: strings.Fields(strings.NewReplacer(",", " ", ";", " ").Replace(r.FormValue("holidays"))),
 		LateAfter: r.FormValue("late_after"), LeaveBefore: r.FormValue("leave_before"), MinDuration: r.FormValue("min_duration"),
-		FreeEdit: r.FormValue("free_edit") != ""}
+		FreeEdit: r.FormValue("free_edit") != "", OfficeOnly: r.FormValue("office_only") != ""}
+	offices, err := worktime.ParseOffices(r.FormValue("offices"))
+	if err != nil {
+		s.taskErr(w, r, i18n.E("err.worktime_offices"), "/settings/worktime")
+		return
+	}
+	sched.Offices = offices
 	for _, v := range r.Form["weekend"] {
 		d, err := strconv.Atoi(v)
 		if err != nil {
@@ -1577,6 +1584,26 @@ func (s *Server) setListSort(w http.ResponseWriter, r *http.Request, sess auth.S
 		back = b
 	}
 	if err := s.Tasks.SetSort(r.Context(), sess.UserID, r.FormValue("sort")); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// setPageSize keeps the user's «На странице» of task lists; the list starts again from its first page.
+func (s *Server) setPageSize(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/tasks"
+	if b := r.FormValue("back"); localPath(b) {
+		back = b
+	}
+	if u, err := url.Parse(back); err == nil {
+		q := u.Query()
+		q.Del("page")
+		u.RawQuery = q.Encode()
+		back = u.RequestURI()
+	}
+	n, _ := strconv.Atoi(r.FormValue("size"))
+	if err := s.Tasks.SetPageSize(r.Context(), sess.UserID, n); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}

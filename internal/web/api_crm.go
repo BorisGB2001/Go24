@@ -39,6 +39,7 @@ type apiCRMCard struct {
 	CompanyID   string     `json:"company_id,omitempty"`
 	ContactID   string     `json:"contact_id,omitempty"`
 	ContactIDs  []string   `json:"contact_ids,omitempty"` // a deal's contacts, the main one first (a single card)
+	ParentIDs   []string   `json:"parent_ids,omitempty"`  // «Связи»: the parents of a smart process's element (a single card)
 	Responsible apiUser    `json:"responsible"`
 	Observers   []apiUser  `json:"observers,omitempty"` // a deal's or a lead's «Наблюдатели» (a single card)
 	Comment     string     `json:"comment,omitempty"`
@@ -227,6 +228,7 @@ type apiCRMInput struct {
 	UTM           *apiUTM    `json:"utm"`    // a deal's or a lead's UTM tags
 	Phones        []crm.Comm `json:"phones"` // several phones and e-mails {value, type}, the main one first (instead of phone, email)
 	Emails        []crm.Comm `json:"emails"`
+	ParentIDs     []string   `json:"parent_ids"` // «Связи»: the parents of a smart process's element
 }
 
 // comms are the input's phones and e-mails; nil — none given (only phone and email).
@@ -295,7 +297,14 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 		for _, c := range in.ContactIDs {
 			d.Contacts = append(d.Contacts, crm.Ref{ID: c})
 		}
-		id, err = s.CRM.SaveDeal(r.Context(), p.UserID, d)
+		for _, pid := range in.ParentIDs {
+			if err = s.apiCRMReadable(r, p, pid); err != nil {
+				return err
+			}
+		}
+		if id, err = s.CRM.SaveDeal(r.Context(), p.UserID, d); err == nil && len(in.ParentIDs) > 0 {
+			err = s.CRM.SetParents(r.Context(), p.UserID, id, in.ParentIDs)
+		}
 	case "lead":
 		id, err = s.CRM.SaveLead(r.Context(), p.UserID, crm.Lead{Title: in.Title, Name: in.Name, CompanyTitle: in.CompanyTitle, Phone: phone,
 			Email: email, Comms: in.comms(), Source: in.Source, Amount: in.Amount, Currency: in.Currency, Responsible: ref, Comment: in.Comment, Origin: dictIn(in.Origin),
@@ -350,6 +359,60 @@ func (s *Server) apiCRMObservers(w http.ResponseWriter, r *http.Request, p apike
 		return err
 	}
 	writeJSON(w, http.StatusOK, s.crmCardJSON(r.PathValue("kind"), item))
+	return nil
+}
+
+// apiCRMReadable: the key's user may read the deal or element.
+func (s *Server) apiCRMReadable(r *http.Request, p apikeys.Principal, id string) error {
+	d, err := s.CRM.Deal(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	return s.CRM.CheckCard(r.Context(), p.UserID, "deal", "read", id, d.Responsible.ID)
+}
+
+// PUT /api/v1/crm/deals/{id}/parents {"parent_ids": [...]} — «Связи»: all the parents of an element ([] unbinds it).
+func (s *Server) apiCRMParents(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	r.SetPathValue("kind", "deals")
+	if _, err := s.apiCRMItem(r, p, "write"); err != nil {
+		return err
+	}
+	var in struct {
+		ParentIDs []string `json:"parent_ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	for _, pid := range in.ParentIDs {
+		if err := s.apiCRMReadable(r, p, pid); err != nil {
+			return err
+		}
+	}
+	if err := s.CRM.SetParents(r.Context(), p.UserID, r.PathValue("id"), in.ParentIDs); err != nil {
+		return err
+	}
+	item, err := s.apiCRMItem(r, p, "read")
+	if err != nil {
+		return err
+	}
+	return s.writeCRMCard(w, r, http.StatusOK, item)
+}
+
+// GET /api/v1/crm/deals/{id}/children — «Связи»: the elements bound to a deal or an element.
+func (s *Server) apiCRMChildren(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	r.SetPathValue("kind", "deals")
+	if _, err := s.apiCRMItem(r, p, "read"); err != nil {
+		return err
+	}
+	list, err := s.CRM.Children(r.Context(), p.UserID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	out := []apiCRMCard{}
+	for _, d := range list {
+		out = append(out, s.crmCardJSON("deals", d))
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 

@@ -319,6 +319,26 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/company")
 		return
 	}
+	// «Доска почёта»: the person's current place on it, and whether the viewer keeps the board
+	now := time.Now()
+	honors, err := s.Company.Honors(r.Context(), time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local),
+		company.HonorFilter{UserID: id})
+	if err != nil {
+		s.taskErr(w, r, err, "/company")
+		return
+	}
+	var honor *company.Honor
+	for i := range honors {
+		if !honors[i].From.After(now) {
+			honor = &honors[i]
+			break
+		}
+	}
+	canHonor, err := s.Company.CanHonor(r.Context(), sess.UserID, sess.Admin)
+	if err != nil {
+		s.taskErr(w, r, err, "/company")
+		return
+	}
 	tab := r.URL.Query().Get("tab") // the profile's tabs: "" (general), tasks, thanks, security (the person and administrators)
 	security := sess.UserID == id || sess.Admin
 	if tab != "tasks" && tab != "thanks" && (tab != "security" || !security) {
@@ -337,7 +357,7 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		"P": p, "Managers": managers, "Subordinates": subs, "Departments": depts, "InDept": inDept,
 		"Tasks": open, "CanEdit": sess.UserID == id || sess.Admin, "Admin": sess.Admin, "Me": sess.UserID == id,
 		"Phone": s.telephonyOf(r.Context(), sess, id), "NumberLocked": s.Telephony != nil && !sess.Admin,
-		"HR": hr, "HRRights": company.HRRights,
+		"HR": hr, "HRRights": company.HRRights, "Honor": honor, "CanHonor": canHonor,
 	}})
 }
 

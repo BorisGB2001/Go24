@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
@@ -48,11 +49,17 @@ func (s *Server) phoneCDR(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("telephony record", "err", err)
 		}
 	}
+	if err := s.Telephony.TakeNote(r.Context(), id); err != nil { // the comment written while talking
+		s.Log.Error("telephony note", "err", err, "call", id)
+	}
 	if err := s.phoneToCRM(r.Context(), id); err != nil { // the client's card gets the call
 		s.Log.Error("telephony crm", "err", err, "call", id)
 	}
 	if err := s.phoneMissed(r.Context(), id); err != nil {
 		s.Log.Error("telephony notify", "err", err, "call", id)
+	}
+	if err := s.phoneEvents(r.Context(), id); err != nil {
+		s.Log.Error("telephony events", "err", err, "call", id)
 	}
 	if st := c.Status(); id != "" && c.Record != "" && (st == telephony.StatusAnswered || st == telephony.StatusVoicemail) && s.Speech != nil {
 		if on, err := s.Telephony.Transcribing(r.Context()); err != nil {
@@ -98,6 +105,67 @@ func (s *Server) phoneMissed(ctx context.Context, id string) error {
 	}
 	_, err = s.DB.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url) VALUES ($1, 'phone', left($2, 300), $3)`,
 		emp, s.portalTr(key, who, c.Line), "/telephony/calls?kind=missed&q="+url.QueryEscape(number))
+	return err
+}
+
+// phoneEvents tells the applications (ONVOXIMPLANTCALLEND sends it) and the webhooks ("call.ended")
+// about a call that ended, once its comment and client card are known.
+func (s *Server) phoneEvents(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	list, err := s.Telephony.Calls(ctx, telephony.CallFilter{ID: id, Limit: 1})
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	c := s.apiTelCallOf(list[0], "", false)
+	// CALL_TYPE: 1 — outgoing, 2 — incoming; CALL_FAILED_CODE: 200 — answered, 304 — missed, 486 — busy
+	typ, code := 1, "200"
+	if c.Direction == "in" {
+		typ = 2
+	}
+	switch c.Status {
+	case telephony.StatusAnswered:
+	case telephony.StatusBusy:
+		code = "486"
+	case telephony.StatusFailed:
+		code = "603"
+	default:
+		code = "304"
+	}
+	emp := ""
+	switch c.Direction {
+	case "in":
+		if c.ToUser != nil {
+			emp = c.ToUser.ID
+		}
+	default:
+		if c.FromUser != nil {
+			emp = c.FromUser.ID
+		}
+	}
+	number := c.PhoneNumber
+	if number == "" {
+		number = c.To
+	}
+	data := map[string]any{"CALL_ID": c.ID, "CALL_TYPE": typ, "PHONE_NUMBER": number, "PORTAL_NUMBER": c.Line,
+		"PORTAL_USER_ID": emp, "CALL_DURATION": c.Seconds, "CALL_START_DATE": c.StartedAt.Format(time.RFC3339),
+		"CALL_FAILED_CODE": code, "CALL_STATUS": c.Status}
+	if c.CRM != nil {
+		data["CRM_ENTITY_TYPE"], data["CRM_ENTITY_ID"] = strings.ToUpper(c.CRM.Entity), c.CRM.ID
+	}
+	ev, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	hook, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	if _, err := s.DB.Exec(ctx, `SELECT go24_app_event('ONVOXIMPLANTCALLEND', $1::jsonb)`, string(ev)); err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(ctx, `SELECT go24_webhook('call.ended', $1::jsonb)`, string(hook))
 	return err
 }
 

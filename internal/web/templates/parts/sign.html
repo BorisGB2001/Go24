@@ -13,3 +13,15 @@
 {{define "sgclient"}}<div class="sgclient" data-row><input type="text" name="client_name" maxlength="200" value="{{index . 0}}" placeholder="{{t "sign.client_name"}}" aria-label="{{t "sign.client_name"}}">
   <input type="email" name="client_email" value="{{index . 1}}" placeholder="{{t "sign.client_email"}}" aria-label="{{t "sign.client_email"}}">
   <button type="button" class="ghost" data-rm-row title="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}
+
+{{/* sgpad is «Ваша подпись»: drawn, written by the name or uploaded — (list saved name); saved is the
+signature kept to sign with (a data URL, "" — none), name — the signer's, to write it */}}
+{{define "sgpad"}}<div class="sgpad" data-sgpad data-need="{{t "sign.pad.need"}}">
+  <div class="row"><b style="flex:1">{{t "sign.pad.title"}}</b>
+    <button type="button" class="ghost small" data-pad-clear>{{t "sign.pad.clear"}}</button></div>
+  <canvas width="600" height="200" data-pad data-name="{{index . 1}}" aria-label="{{t "sign.pad.hint"}}"></canvas>
+  <input type="hidden" name="signature" value="{{index . 0}}">
+  <div class="row small muted"><span style="flex:1">{{t "sign.pad.hint"}}</span>
+    <button type="button" class="ghost small" data-pad-write>{{icon "edit"}} {{t "sign.pad.write"}}</button>
+    <label class="button ghost small">{{icon "cloud-upload"}} {{t "sign.pad.upload"}}<input type="file" accept="image/png,image/jpeg" hidden data-pad-file></label></div>
+</div>{{end}}

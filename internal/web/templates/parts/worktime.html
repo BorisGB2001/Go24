@@ -7,3 +7,5 @@
 
 {{/* the mark of a work report: good | bad | none | "" (not checked yet) */}}
 {{define "wrmark"}}{{if eq . "good"}}<span class="pill wr-good">👍 {{t "wreport.mark.good"}}</span>{{else if eq . "bad"}}<span class="pill wr-bad">👎 {{t "wreport.mark.bad"}}</span>{{else if eq . "none"}}<span class="pill">{{t "wreport.mark.none"}}</span>{{else}}<span class="pill wr-wait">{{t "wreport.mark.wait"}}</span>{{end}}{{end}}
+{{/* wdplace: where a day was started or finished — the address and the office network or «вне офиса» */}}
+{{define "wdplace"}}{{if .IP}}<span class="small muted">IP {{.IP}}</span>{{end}}{{if .Away}} <span class="dl over">{{t "workday.away"}}</span>{{else if .OfficeName}} <span class="pill">{{icon "world"}} {{.OfficeName}}</span>{{end}}{{end}}

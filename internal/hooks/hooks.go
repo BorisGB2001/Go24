@@ -23,7 +23,7 @@ import (
 )
 
 // Events a webhook may subscribe to.
-var Events = []string{"deal.created", "deal.stage", "lead.created", "lead.stage", "task.created", "task.completed", "task.deleted", "openline.started", "openline.message", "openline.closed"}
+var Events = []string{"deal.created", "deal.stage", "lead.created", "lead.stage", "task.created", "task.completed", "task.deleted", "openline.started", "openline.message", "openline.closed", "call.ended"}
 
 type Store struct {
 	db     *pgxpool.Pool

@@ -1,9 +1,10 @@
 // «Диск»: files and folders are selected with checkboxes for the actions of the bar above the list
 // (download as ZIP, move, copy, delete); «Переместить» / «Копировать» pick the drive and the folder in a dialog;
 // files dragged from the computer upload into the folder shown (or into the folder row they are dropped on), with
-// the progress of each; rows dragged onto a folder or onto the path above move there, onto «Корзина» — go to the trash.
+// the progress of each (a file the folder already has — «Загрузить новой версией», «Сохранить под другим именем» or
+// «Пропустить» asks); rows dragged onto a folder or onto the path above move there, onto «Корзина» — go to the trash.
 // A click on a file opens the viewer (pictures, PDF, video, sound, documents as HTML) with ‹ › through the files of
-// the folder; «Список» / «Плитка» is remembered in this browser.
+// the folder, zoom and turn of pictures, full screen and print; «Список» / «Плитка» is remembered in this browser.
 (() => {
   const root = document.querySelector('[data-disk]');
   if (!root) return;
@@ -142,20 +143,30 @@
   // list: files, or {file, path} for the files of an uploaded folder — the server makes the folders of the path
   const upload = async (list, into) => {
     if (!list.length) return;
+    list = list.map(it => it.file ? { path: '', ...it } : { file: it, path: '' });
+    const clashes = await clashing(list, into);
     progress.hidden = false;
     const storage = document.querySelector('[data-disk-upload] [name=storage]')?.value || '';
-    let failed = false;
-    for (const it of list) {
-      const { file: f, path: dir = '' } = it.file ? it : { file: it };
+    let failed = false, all = '';
+    for (const [i, { file: f, path: dir }] of list.entries()) {
       const line = document.createElement('div');
       line.className = 'disk-up';
       line.innerHTML = '<span></span><progress max="100" value="0"></progress><small></small>';
       line.firstChild.textContent = dir ? dir + '/' + f.name : f.name;
       progress.append(line);
+      let conflict = '';
+      if (clashes.has(i)) {
+        const may = clashes.get(i);
+        conflict = all && (may || all !== 'version') ? all : await ask(f.name, may, [...clashes.keys()].some(k => k > i));
+        if (conflict === 'cancel') { line.remove(); break; }
+        if (conflict.endsWith('!')) all = conflict = conflict.slice(0, -1);
+        if (conflict === 'skip') { line.querySelector('small').textContent = l('skipped'); continue; }
+      }
       const body = new FormData();
       body.append('folder', into);
       body.append('path', dir);
       body.append('storage', storage);
+      body.append('conflict', conflict);
       body.append('file', f, f.name);
       const ok = await new Promise(resolve => {
         const x = new XMLHttpRequest();
@@ -177,6 +188,34 @@
     if (!failed) location.reload();
   };
   window.go24DiskUpload = upload; // for tests
+
+  // the files of the list the folder already has: index → whether the user may upload it as a new version
+  const clashing = async (list, into) => {
+    const body = new URLSearchParams([['folder', into]]);
+    for (const { file: f, path: dir } of list) { body.append('name', f.name); body.append('path', dir); }
+    try {
+      const res = await fetch(base + '/clash', { method: 'POST', headers: { Accept: 'application/json', 'X-Go24-Form': '1' }, body });
+      const data = res.ok ? await res.json() : { clashes: [] };
+      return new Map(data.clashes.map(c => [c.i, c.version]));
+    } catch { return new Map(); }
+  };
+  // the question of a file already there: version, rename, skip or cancel; «!» — the answer for all such files
+  const clashDlg = document.querySelector('[data-disk-clash]');
+  const ask = (name, may, more) => new Promise(resolve => {
+    clashDlg.querySelector('[data-disk-clash-text]').textContent = clashDlg.dataset.lText.replace('{name}', name);
+    clashDlg.querySelector('[data-disk-clash-version]').hidden = !may;
+    clashDlg.querySelector('[data-disk-clash-ro]').hidden = may;
+    const box = clashDlg.querySelector('[data-disk-clash-all]');
+    box.checked = false;
+    clashDlg.querySelector('[data-disk-clash-many]').hidden = !more;
+    clashDlg.returnValue = '';
+    clashDlg.addEventListener('close', () => {
+      const v = clashDlg.returnValue || 'cancel';
+      resolve(box.checked && v !== 'cancel' ? v + '!' : v);
+    }, { once: true });
+    clashDlg.showModal();
+    clashDlg.querySelector(may ? '[data-disk-clash-version]' : '[data-disk-clash-rename]')?.focus();
+  });
 
   // a dropped folder: all its files with their paths, read through the entries of the drop
   const readEntry = async (entry, dir, out) => {
@@ -266,10 +305,19 @@
   });
 
   // ---- the viewer ----
+  // Pictures zoom (the buttons, Ctrl + the wheel, + − 0) and turn by 90°; any file goes full screen, pictures, PDF and
+  // documents print; documents and boards open in their editor; «Копировать внутреннюю ссылку» — the file's card.
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   let viewer = null;
-  const closeViewer = () => { viewer?.remove(); viewer = null; };
-  const fileLinks = () => rows().filter(r => r.dataset.item === 'file').map(r => r.querySelector('td:not(.thumb) a[data-view]')).filter(Boolean);
+  const closeViewer = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); viewer?.remove(); viewer = null; };
+  const fileLinks = () => rows().filter(r => r.dataset.item === 'file').map(r => r.querySelector('td.thumb a[data-view]') || r.querySelector('a[data-view]')).filter(Boolean);
+  // printed prints the HTML in a hidden frame of the page, which goes away after the print dialog
+  const printed = html => {
+    const f = el('iframe', 'mviewer-print');
+    f.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{margin:0}img{max-width:100%}table{border-collapse:collapse}td{border:1px solid #999;padding:2px 6px}</style>' + html;
+    f.addEventListener('load', () => { f.contentWindow.print(); setTimeout(() => f.remove(), 1000); });
+    document.body.append(f);
+  };
   const showFile = async i => {
     const links = fileLinks();
     if (!links.length) return;
@@ -290,17 +338,64 @@
     dl.href = '/files/' + encodeURIComponent(id);
     const about = el('a', 'button ghost small', l('about')); // «Подробнее»: the file's card with «Обсуждение»
     about.href = '/files/' + encodeURIComponent(id) + '/about';
+    const tools = el('span', 'row mviewer-tools');
     const bar = el('div', 'row mviewer-bar');
-    bar.append(prev, el('b', 'mviewer-name', name), el('span', 'small muted', `${i + 1} / ${links.length}`), next, el('span', 'grow'), about, dl,
-      btn('×', l('close'), closeViewer, 'mviewer-x'));
+    const link = btn('🔗', l('link'), null, 'mv-link');
+    link.dataset.copy = (root.dataset.base || location.origin) + '/files/' + encodeURIComponent(id) + '/about'; // forms.js copies it
+    const full = btn('⛶', l('fullscreen'), () => document.fullscreenElement ? document.exitFullscreen() : viewer.requestFullscreen?.(), 'mv-full');
+    bar.append(prev, el('b', 'mviewer-name', name), el('span', 'small muted', `${i + 1} / ${links.length}`), next, el('span', 'grow'), tools);
+    if (a.dataset.edit) {
+      const ed = el('a', 'button small', a.dataset.editLabel);
+      ed.href = a.dataset.edit;
+      bar.append(ed);
+    }
+    bar.append(about, dl, link, full, btn('×', l('close'), closeViewer, 'mviewer-x'));
     const body = el('div', 'mviewer-body');
     viewer.append(bar, body);
     viewer.addEventListener('click', e => { if (e.target === viewer || e.target === body) closeViewer(); });
     document.body.append(viewer);
-    const media = (tag, cls) => { const m = el(tag, cls); m.src = raw; if (tag !== 'img') { m.controls = true; } else m.alt = name; if (tag === 'iframe') m.title = name; body.append(m); };
-    if (kind === 'image') media('img');
-    else if (kind === 'pdf') media('iframe', 'mviewer-pdf');
-    else if (kind === 'video') media('video', 'mviewer-media');
+    const media = (tag, cls) => { const m = el(tag, cls); m.src = raw; if (tag !== 'img') { m.controls = true; } else m.alt = name; if (tag === 'iframe') m.title = name; body.append(m); return m; };
+    const printBtn = fn => tools.append(btn('🖶', l('print'), fn, 'mv-print'));
+    if (kind === 'image') {
+      // the picture sits in a box of its turned size: zoom 1 is «по размеру окна», never larger than the picture itself
+      const box = el('div', 'mviewer-fit');
+      const img = el('img');
+      img.src = raw; img.alt = name;
+      box.append(img);
+      body.append(box);
+      let zoom = 1, turn = 0;
+      const lay = () => {
+        viewer.dataset.zoom = zoom;
+        viewer.dataset.turn = turn;
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) return;
+        const side = turn % 180 !== 0;
+        const bw = side ? h : w, bh = side ? w : h;
+        const fit = Math.max(Math.min((body.clientWidth - 32) / bw, (body.clientHeight - 32) / bh, 1), 0.01);
+        const k = fit * zoom;
+        img.style.width = w * k + 'px';
+        img.style.height = h * k + 'px';
+        img.style.transform = `translate(-50%, -50%) rotate(${turn}deg)`;
+        box.style.width = bw * k + 'px';
+        box.style.height = bh * k + 'px';
+      };
+      img.addEventListener('load', lay);
+      const setZoom = z => { zoom = Math.min(8, Math.max(0.1, z)); lay(); };
+      viewer.zoom = d => setZoom(d === 0 ? 1 : zoom * (d > 0 ? 1.25 : 0.8));
+      tools.append(btn('−', l('zoom-out'), () => viewer.zoom(-1), 'mv-zoom-out'), btn('⤢', l('zoom-fit'), () => viewer.zoom(0), 'mv-zoom-fit'),
+        btn('+', l('zoom-in'), () => viewer.zoom(1), 'mv-zoom-in'), btn('↻', l('rotate'), () => { turn = (turn + 90) % 360; lay(); }, 'mv-rotate'));
+      body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); viewer.zoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
+      if (window.ResizeObserver) new ResizeObserver(lay).observe(body);
+      printBtn(() => {
+        const im = el('img');
+        im.src = raw;
+        if (turn) im.style.transform = `rotate(${turn}deg)`;
+        printed(im.outerHTML);
+      });
+    } else if (kind === 'pdf') {
+      const f = media('iframe', 'mviewer-pdf');
+      printBtn(() => f.contentWindow.print());
+    } else if (kind === 'video') media('video', 'mviewer-media');
     else if (kind === 'audio') media('audio', 'mviewer-audio');
     else if (kind === 'html') {
       body.append(el('p', 'muted', l('loading')));
@@ -311,6 +406,7 @@
           const doc = el('div', 'mviewer-doc');
           doc.innerHTML = d.html; // built and escaped by the server (mail.Preview)
           body.append(doc);
+          printBtn(() => printed(doc.outerHTML));
         } else body.append(el('p', 'muted', l('none')));
       } catch { body.textContent = l('none'); }
     } else body.append(el('p', 'mviewer-none', l('none')));
@@ -323,10 +419,14 @@
     showFile(fileLinks().findIndex(x => x.closest('tr') === row));
   });
   document.addEventListener('keydown', e => {
-    if (!viewer) return;
-    if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
+    if (!viewer || e.target.closest?.('input, textarea')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeViewer(); return; }
     if (e.key === 'ArrowLeft') viewer.querySelector('.mv-prev')?.click();
     if (e.key === 'ArrowRight') viewer.querySelector('.mv-next')?.click();
+    if (viewer.zoom && (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '0')) {
+      e.preventDefault();
+      viewer.zoom(e.key === '0' ? 0 : e.key === '-' ? -1 : 1);
+    }
   }, true);
 
   // ---- «История версий»: the file's versions, each to download; a former one comes back with «Восстановить» ----

@@ -100,7 +100,7 @@ func (s *Store) transfer(ctx context.Context, by, id, to string) error {
 	if !ok || status != "open" || (from != nil && *from == to) {
 		return i18n.E("err.ol_transfer")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = $2::uuid, assigned_at = now(), tried = '{}' WHERE id::text = $1`, id, to); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = $2::uuid, assigned_at = now(), tried = '{}', bot_node = NULL WHERE id::text = $1`, id, to); err != nil {
 		return err
 	}
 	// the earlier notifications of the dialogue are read: the new operator gets one of the transfer, the former one —
@@ -298,7 +298,7 @@ func (s *Store) TransferLine(ctx context.Context, by, id, lineID string) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET queue_id = CASE WHEN $2 = widget_id::text THEN NULL ELSE $2::uuid END,
-		operator_id = NULL, assigned_at = now(), tried = '{}', pinned = false WHERE id::text = $1`, id, w.ID); err != nil {
+		operator_id = NULL, assigned_at = now(), tried = '{}', pinned = false, bot_node = NULL WHERE id::text = $1`, id, w.ID); err != nil {
 		return err
 	}
 	if err := s.note(ctx, tx, id, "ol.note_transferred_line", userName(ctx, tx, by), w.Name); err != nil {

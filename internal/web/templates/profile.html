@@ -14,7 +14,9 @@
       <h1>{{$p.FullName}}{{if $p.Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}</h1>
       <div class="muted">{{with $p.Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</div>
       {{if not $p.Active}}<span class="pill st-deferred">{{t "profile.dismissed"}}</span>{{end}}
+      {{with $d.Honor}}<a class="pill honorpill" href="/company/honor" title="{{.Reason}}">{{icon "trophy"}} {{t "honor.on_board"}}</a>{{end}}
     </div>
+    {{if and $d.CanHonor $p.Active (not $p.Guest) (not $d.Honor)}}<a class="button ghost small" href="/company/honor?add={{$p.ID}}" title="{{t "honor.add"}}">{{icon "trophy"}} {{t "honor.put_short"}}</a>{{end}}
     <a class="button ghost small" href="/u/{{$p.ID}}/vcard" title="{{t "vcard.download_hint"}}">{{icon "address-book"}} {{t "vcard.download"}}</a>
     {{if $d.CanEdit}}<button type="button" class="link" data-show="pedit">{{icon "edit"}} {{t "task.change"}}</button>{{end}}
   </div>

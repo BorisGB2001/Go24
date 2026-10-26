@@ -121,7 +121,7 @@ func TestDayChanges(t *testing.T) {
 		v := day.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 		return &v
 	}
-	must(s.WorkAction(ctx, anna, "start", "", *at(9, 40)))
+	must(s.WorkAction(ctx, anna, "start", "", *at(9, 40), Place{}))
 	if d, _ := s.ForgottenDay(ctx, anna, now); d == nil || d.Day.Format(time.DateOnly) != "2026-10-13" {
 		t.Fatalf("forgotten day: %v", d)
 	}

@@ -535,6 +535,9 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			}
 			data["OtherPipes"] = others
 			data["Item"], title = d, d.Title
+			if err == nil { // «Связи»: the card's parents and its child elements
+				err = s.crmRelations(r, sess, d, data)
+			}
 			if d.TypeID == "" && err == nil { // «Регулярная сделка»
 				data["Recurrence"], err = s.CRM.Recurrence(r.Context(), d.ID)
 				data["RecurUnits"], data["Today"] = crm.RecurUnits, time.Now().Format(time.DateOnly)
@@ -674,7 +677,7 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if err == nil && (entity == "deal" || entity == "lead") {
 		data["Invoices"], err = s.CRM.Invoices(r.Context(), "", id, "", "")
 	}
-	if err == nil && s.Booking != nil && entity != "lead" { // «Онлайн-запись»: the client's bookings and «Записать»
+	if use, _ := s.bookingMay(r.Context(), sess.UserID, sess.Admin); err == nil && use && entity != "lead" { // «Онлайн-запись»: the client's bookings and «Записать»
 		data["Bookings"], err = s.Booking.OfCard(r.Context(), entity, id)
 	}
 	if err == nil && s.Calendar != nil && !tasks.IsGuestCtx(r.Context()) { // «Встречи» of the card and «Запланировать встречу»
@@ -775,10 +778,17 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			err = s.CRM.CheckRequired(r.Context(), crmEntities[kind], id, stage, values)
 		}
 	}
+	parent := "" // «+ Создать» among the child elements of a card («Связи»): the new one is bound to it
+	if id == "" && kind == "deals" && f("parent") != "" && err == nil {
+		parent = f("parent")
+		err = s.crmCheck(r, sess, kind, parent, "read")
+	}
 	if err != nil {
 		back := "/crm/" + kind
 		if id != "" {
 			back += "/" + id + "?edit=1"
+		} else if parent != "" {
+			back += "/" + parent
 		}
 		s.crmErr(w, r, err, back)
 		return
@@ -825,6 +835,12 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			Stage: crm.Stage{ID: f("stage")}, Amount: amount(), Currency: f("currency"), Company: crm.Ref{ID: company},
 			Contacts: contacts, Responsible: resp, CloseDate: close, Comment: f("comment"), DealType: crm.Dict{ID: f("deal_type")},
 			Origin: crm.Dict{ID: f("origin")}, Observers: observers})
+		if err == nil && parent != "" {
+			var p crm.Deal
+			if p, err = s.CRM.Deal(r.Context(), parent); err == nil {
+				err = s.CRM.SetParent(r.Context(), sess.UserID, id, p.TypeID, p.ID)
+			}
+		}
 	case "lead":
 		id, err = s.CRM.SaveLead(r.Context(), sess.UserID, crm.Lead{ID: id, Title: f("title"), Stage: crm.Stage{ID: f("stage")}, Name: f("name"), CompanyTitle: f("company_title"),
 			Phone: phone, Email: email, Comms: comms, Source: f("source"), Amount: amount(), Currency: f("currency"), Responsible: resp, Comment: f("comment"),
@@ -844,6 +860,8 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	back := "/crm/" + kind
 	if r.PathValue("id") != "new" {
 		back += "/" + r.PathValue("id")
+	} else if parent != "" {
+		back += "/" + parent
 	}
 	if err == nil && len(values) > 0 {
 		err = s.CRM.SetFields(r.Context(), sess.UserID, crmEntities[kind], id, values)

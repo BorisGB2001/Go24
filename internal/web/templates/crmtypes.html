@@ -17,6 +17,10 @@
       <div class="pop"><form method="post" action="/crm/types"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{.ID}}">
         <input type="text" name="name" required maxlength="100" value="{{.Name}}">
         {{$cur := .Color}}<div class="swatches">{{range $d.Colors}}<label style="--sw:#{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $cur}}checked{{end}}></label>{{end}}</div>
+        <input type="hidden" name="with_relations" value="1">{{$id := .ID}}{{$rel := index $d.Relations .ID}}
+        <label>{{t "crm.relations"}}</label><small class="muted">{{t "crm.relations_hint"}}</small>
+        <label class="check"><input type="checkbox" name="parents" value="deals"{{if has $rel ""}} checked{{end}}> {{t "crm.deals"}}</label>
+        {{range $d.Types}}{{if ne .ID $id}}<label class="check"><input type="checkbox" name="parents" value="{{.ID}}"{{if has $rel .ID}} checked{{end}}> {{.Name}}</label>{{end}}{{end}}
         <p><button class="primary">{{t "common.save"}}</button></p></form>
         <a class="button ghost" href="/crm/robots?entity=deal&type={{.ID}}">🤖 {{t "robots.title"}}</a>
         <form method="post" action="/crm/types" onsubmit="return confirm('{{t "crm.type_delete_confirm"}}')"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">

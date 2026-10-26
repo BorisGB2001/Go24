@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -418,6 +419,81 @@ func TestPhone(t *testing.T) {
 	_, out2 := do(anna, "POST", "/telephony/state", url.Values{"phone": {phone.Value}, "state": {"ringing"}, "number": {"+79001112233"}, "dir": {"in"}}, nil)
 	if !strings.Contains(out2, `"from": "ООО Ромашка"`) || !strings.Contains(out2, `"url": "/crm/contacts/`+contact+`"`) {
 		t.Fatalf("a client rings: %s", out2)
+	}
+	// «Карточка звонка»: the client with open deals and the calls before, «Создать лид» for an unknown number; the
+	// comment written while talking waits for the call, then goes to it and its «Звонок» in the CRM card
+	cardOf := func(who, number string) map[string]any {
+		t.Helper()
+		res, body := do(who, "GET", "/telephony/card?number="+url.QueryEscape(number), nil, nil)
+		var m map[string]any
+		if err := json.Unmarshal([]byte(body), &m); err != nil {
+			t.Fatalf("card %s: %d %s", number, res.StatusCode, body)
+		}
+		return m
+	}
+	if res, _ := do(eve, "GET", "/telephony/card?number=89001112233", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve without a number opens a card: %d", res.StatusCode)
+	}
+	card := cardOf(anna, "89001112233")
+	cl, _ := card["client"].(map[string]any)
+	if cl["name"] != "ООО Ромашка" || cl["url"] != "/crm/contacts/"+contact || cl["kind"] != "Контакт" || len(card["calls"].([]any)) != 1 {
+		t.Fatalf("the client's card: %v", card)
+	}
+	if cl, _ := cardOf(anna, "+7 812 000-00-03")["client"].(map[string]any); cl == nil || len(cl["deals"].([]any)) != 1 {
+		t.Fatalf("the deal of the client: %v", cl)
+	}
+	if c := cardOf(anna, "+74950000077"); c["client"] != nil || len(c["create"].([]any)) != 2 {
+		t.Fatalf("an unknown number's card: %v", c)
+	}
+	if c := cardOf(anna, "102"); c["colleague"] != true || c["calls"] != nil {
+		t.Fatalf("a colleague's card: %v", c)
+	}
+	at := strconv.FormatInt(int64(card["at"].(float64)), 10)
+	note := func(text string) string {
+		t.Helper()
+		_, body := do(anna, "POST", "/telephony/note", url.Values{"number": {"+7 900 111-22-33"}, "at": {at}, "comment": {text}}, nil)
+		var m map[string]any
+		if err := json.Unmarshal([]byte(body), &m); err != nil || m["saved"] != true {
+			t.Fatalf("the note: %s", body)
+		}
+		return m["call"].(string)
+	}
+	if id := note("Перезвонить в пятницу"); id != "" {
+		t.Fatalf("a note of a call still going went to %s", id)
+	}
+	if c := cardOf(anna, "89001112233"); c["comment"] != "Перезвонить в пятницу" {
+		t.Fatalf("the card forgot the note: %v", c["comment"])
+	}
+	now := time.Now().Unix()
+	if st := cdr(url.Values{"key": {"astkey"}, "id": {"c.5"}, "from": {"89001112233"}, "to": {"101"}, "dial": {"ANSWER"}, "start": {strconv.FormatInt(now, 10)},
+		"answer": {strconv.FormatInt(now+3, 10)}, "end": {strconv.FormatInt(now+60, 10)}}); st != http.StatusNoContent {
+		t.Fatalf("cdr c.5: %d", st)
+	}
+	if tl := timeline("contact", contact); !strings.Contains(tl, `"note":"Перезвонить в пятницу"`) {
+		t.Fatalf("the note in the timeline: %q", tl)
+	}
+	if id := note("Перезвонить в понедельник"); id == "" {
+		t.Fatal("a note after the call is not the call's")
+	}
+	if tl := timeline("contact", contact); !strings.Contains(tl, "Перезвонить в понедельник") || strings.Contains(tl, "пятницу") {
+		t.Fatalf("the changed note in the timeline: %q", tl)
+	}
+	if _, p := do(anna, "GET", "/telephony/calls", nil, nil); !strings.Contains(p, "Перезвонить в понедельник") {
+		t.Fatal("the call log has no comment")
+	}
+	if c := cardOf(anna, "89001112233"); c["comment"] != "" || c["calls"].([]any)[0].(map[string]any)["comment"] != "Перезвонить в понедельник" {
+		t.Fatalf("the card after the call: %v", c)
+	}
+	note("")
+	if tl := timeline("contact", contact); strings.Contains(tl, `"note"`) {
+		t.Fatalf("a cleared note in the timeline: %q", tl)
+	}
+	res, out = do(anna, "POST", "/telephony/card", url.Values{"number": {"+74950000077"}, "what": {"contact"}}, nil)
+	if !strings.Contains(out, `"url": "/crm/contacts/`) {
+		t.Fatalf("«Создать контакт» of the card: %d %s", res.StatusCode, out)
+	}
+	if c := cardOf(anna, "+74950000077"); c["client"] == nil || c["create"] != nil {
+		t.Fatalf("the card of the contact just made: %v", c)
 	}
 
 	// external lines are the administrators'

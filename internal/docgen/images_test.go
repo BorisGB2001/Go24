@@ -80,3 +80,34 @@ func TestMakeImages(t *testing.T) {
 		t.Fatalf("plain: %v", names)
 	}
 }
+
+// TestAppendSheetImages: a row's picture goes in its last cell, its file, relationship (made when the document had
+// none) and content type with it; a row with no picture keeps its text; the document stays well-formed XML.
+func TestAppendSheetImages(t *testing.T) {
+	var pngData bytes.Buffer
+	png.Encode(&pngData, image.NewRGBA(image.Rect(0, 0, 300, 100)))
+	const w = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+	src := docx(t, map[string]string{
+		"[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`,
+		"word/document.xml":   `<w:document ` + w + `><w:body><w:p><w:r><w:t>Договор</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`,
+	})
+	out, err := AppendSheet(src, Sheet{Title: "Лист подписания", Header: []string{"Подписант", "Подпись"},
+		Rows:   [][]string{{"Анна", ""}, {"Борис", "—"}},
+		Images: map[int]Image{0: {Data: pngData.Bytes(), Width: Cm(3)}, 1: {Data: []byte("not a picture"), Width: Cm(3)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := part(t, out, "word/document.xml")
+	if strings.Count(body, "<w:drawing>") != 1 || !strings.Contains(body, `<wp:extent cx="1080000" cy="360000"/>`) ||
+		!strings.Contains(body, `r:embed="rIdGo24Sig1"`) || !strings.Contains(body, "—") {
+		t.Fatalf("body: %s", body)
+	}
+	if err := xml.Unmarshal([]byte(body), new(any)); err != nil {
+		t.Fatalf("xml: %v", err)
+	}
+	rels := part(t, out, "word/_rels/document.xml.rels")
+	if !strings.Contains(rels, `Target="media/rIdGo24Sig1.png"`) || part(t, out, "word/media/rIdGo24Sig1.png") == "" ||
+		!strings.Contains(part(t, out, "[Content_Types].xml"), `Extension="png"`) {
+		t.Fatalf("rels: %s", rels)
+	}
+}

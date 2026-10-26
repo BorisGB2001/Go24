@@ -21,6 +21,25 @@ type Workday struct {
 	PausedAt     *time.Time
 	PauseSecs    int
 	Report       string
+	Start, End   Place // where the day was started and finished
+}
+
+// Place is where a working day was started or finished: the address and the office network (nil — no office
+// networks were set; "" — outside them).
+type Place struct {
+	IP     string
+	Office *string
+}
+
+// Away: the place is outside the office networks.
+func (p Place) Away() bool { return p.Office != nil && *p.Office == "" }
+
+// OfficeName is the office network the place is in, "" — outside or not tracked.
+func (p Place) OfficeName() string {
+	if p.Office == nil {
+		return ""
+	}
+	return *p.Office
 }
 
 // State: running | paused | done.
@@ -56,7 +75,8 @@ func (d Workday) Late(start string) bool {
 	return s.Hour()*60+s.Minute() > t.Hour()*60+t.Minute()
 }
 
-const workdaySQL = `SELECT w.user_id, u.name, w.day, w.started_at, w.ended_at, w.paused_at, w.pause_secs, w.report
+const workdaySQL = `SELECT w.user_id, u.name, w.day, w.started_at, w.ended_at, w.paused_at, w.pause_secs, w.report,
+	w.start_ip, w.start_office, w.end_ip, w.end_office
 	FROM workdays w JOIN users u ON u.id = w.user_id`
 
 func scanWorkdays(rows pgx.Rows, err error) ([]Workday, error) {
@@ -65,7 +85,8 @@ func scanWorkdays(rows pgx.Rows, err error) ([]Workday, error) {
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Workday, error) {
 		var d Workday
-		err := r.Scan(&d.UserID, &d.Name, &d.Day, &d.Started, &d.Ended, &d.PausedAt, &d.PauseSecs, &d.Report)
+		err := r.Scan(&d.UserID, &d.Name, &d.Day, &d.Started, &d.Ended, &d.PausedAt, &d.PauseSecs, &d.Report,
+			&d.Start.IP, &d.Start.Office, &d.End.IP, &d.End.Office)
 		return d, err
 	})
 }
@@ -80,13 +101,14 @@ func (s *Store) Today(ctx context.Context, userID string, now time.Time) (*Workd
 }
 
 // WorkAction changes today's working day: start, pause, resume, finish (with the report), reopen (continue a
-// finished day, as «Продолжить рабочий день»).
-func (s *Store) WorkAction(ctx context.Context, userID, action, report string, now time.Time) error {
+// finished day, as «Продолжить рабочий день»); at is where it is done — start and finish remember it.
+func (s *Store) WorkAction(ctx context.Context, userID, action, report string, now time.Time, at Place) error {
 	day := now.Format(time.DateOnly)
 	var sql string
 	switch action {
 	case "start":
-		sql = `INSERT INTO workdays (user_id, day, started_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`
+		sql = `INSERT INTO workdays (user_id, day, started_at, start_ip, start_office) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT DO NOTHING`
 	case "pause":
 		sql = `UPDATE workdays SET paused_at = $3 WHERE user_id = $1 AND day = $2 AND ended_at IS NULL AND paused_at IS NULL`
 	case "resume":
@@ -97,16 +119,20 @@ func (s *Store) WorkAction(ctx context.Context, userID, action, report string, n
 			return i18n.E("err.workday_report")
 		}
 		sql = `UPDATE workdays SET pause_secs = pause_secs + coalesce(extract(epoch FROM $3 - paused_at)::int, 0),
-			paused_at = NULL, ended_at = $3, report = $4 WHERE user_id = $1 AND day = $2 AND ended_at IS NULL`
+			paused_at = NULL, ended_at = $3, report = $6, end_ip = $4, end_office = $5
+			WHERE user_id = $1 AND day = $2 AND ended_at IS NULL`
 	case "reopen":
-		sql = `UPDATE workdays SET pause_secs = pause_secs + extract(epoch FROM $3 - ended_at)::int, ended_at = NULL
-			WHERE user_id = $1 AND day = $2 AND ended_at IS NOT NULL`
+		sql = `UPDATE workdays SET pause_secs = pause_secs + extract(epoch FROM $3 - ended_at)::int, ended_at = NULL,
+			end_ip = '', end_office = NULL WHERE user_id = $1 AND day = $2 AND ended_at IS NOT NULL`
 	default:
 		return i18n.E("err.bad_form")
 	}
 	args := []any{userID, day, now}
-	if action == "finish" {
-		args = append(args, strings.TrimSpace(report))
+	switch action {
+	case "start":
+		args = append(args, at.IP, at.Office)
+	case "finish":
+		args = append(args, at.IP, at.Office, strings.TrimSpace(report))
 	}
 	tag, err := s.db.Exec(ctx, sql, args...)
 	if err != nil {

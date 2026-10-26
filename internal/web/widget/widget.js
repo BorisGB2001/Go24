@@ -43,6 +43,10 @@
     .read{align-self:flex-end;font-size:11px;color:#888;margin-top:-4px}.typing{font-size:12px;color:#888;padding:0 12px 4px;font-style:italic}
     .att{background:none!important;color:#666!important;font-size:18px;padding:0 4px!important;position:relative;overflow:hidden}
     .att input{position:absolute;inset:0;opacity:0;cursor:pointer}
+    .fb{display:block;margin-top:6px;padding:7px 10px;width:100%}.fb:disabled{opacity:.6;cursor:default}
+    .bb{display:block;margin-top:6px;padding:7px 10px;width:100%;text-align:left;background:#fff;color:#${cfg.color};border:1px solid #${cfg.color};border-radius:8px;cursor:pointer;font:inherit}.bb:disabled{opacity:.5;cursor:default}
+    .fw{position:absolute;left:0;right:0;bottom:0;top:46px;background:#fff;display:flex;flex-direction:column}
+    .fw .x{align-self:flex-end;background:none;border:0;font-size:16px;cursor:pointer;padding:4px 10px;color:#666}.fw iframe{flex:1;border:0;width:100%}
     .agree{padding:10px 12px;border-top:1px solid #e3e5e8;display:flex;flex-direction:column;gap:8px;font-size:12px}
     .agree .txt{max-height:150px;overflow:auto;white-space:pre-wrap;color:#555}.agree .send{padding:9px}
     @media (max-width:480px){.box{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border-radius:0}}
@@ -64,6 +68,7 @@
       <div class="note thanks" hidden>${esc(T.vote_thanks)}</div></div>
     <div class="agree" hidden><b>${esc(T.consent)}</b><div class="txt">${esc(cfg.consent)}</div><button type="button" class="send">${esc(T.consent_accept)}</button></div>
     <form class="say"><button type="button" class="att" title="${esc(T.attach)}">📎<input type="file"></button><textarea rows="2" placeholder="${esc(T.placeholder)}" maxlength="5000"></textarea><button>➤</button></form>
+    <div class="fw" hidden><button type="button" class="x">✕</button><iframe title="" src="about:blank"></iframe></div>
     <form class="contact" hidden>
       <div class="note">${esc(T.contact_note)}</div>
       <input name="name" placeholder="${esc(T.name)}" maxlength="200" required>
@@ -77,7 +82,8 @@
   function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   document.body.appendChild(host);
   const $ = s => root.querySelector(s);
-  const box = $('.box'), msgs = $('.msgs'), dot = $('.dot'), rate = $('.rate'), hist = $('.hist');
+  const box = $('.box'), msgs = $('.msgs'), dot = $('.dot'), rate = $('.rate'), hist = $('.hist'), fw = $('.fw');
+  fw.querySelector('.x').addEventListener('click', () => { fw.hidden = true; fw.querySelector('iframe').src = 'about:blank'; });
   let state = {};
   // «Согласие на обработку персональных данных»: asked once before the visitor's first message or contact form
   let consented = !cfg.consent, agreed = null;
@@ -114,6 +120,27 @@
         else a.textContent = '📎 ' + m.file.name;
         if (m.body) el.appendChild(document.createElement('br'));
         el.appendChild(a);
+      }
+      if (m.form) { // a CRM form the operator sent: filled inside the chat
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'send fb'; b.dataset.form = m.form.id;
+        b.textContent = m.form.done ? '✓ ' + T.form_filled : T.form_fill;
+        b.disabled = m.form.done;
+        b.addEventListener('click', () => { fw.querySelector('iframe').src = m.form.url; fw.hidden = false; });
+        el.appendChild(b);
+      }
+      if (m.buttons) { // the chat bot's menu: a button sends its item; only the last menu is live
+        root.querySelectorAll('.bb').forEach(b => { b.disabled = true; });
+        m.buttons.forEach(t => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'bb'; b.textContent = t;
+          b.addEventListener('click', () => say(t).catch(err => alert(err.message)));
+          el.appendChild(b);
+        });
+      }
+      if (m.form_done) {
+        root.querySelectorAll('.fb[data-form="' + m.form_done + '"]').forEach(b => { b.textContent = '✓ ' + T.form_filled; b.disabled = true; });
+        if (!fw.hidden) setTimeout(() => { fw.hidden = true; fw.querySelector('iframe').src = 'about:blank'; }, 1500);
       }
       msgs.appendChild(el);
     });
@@ -223,11 +250,12 @@
     fd.append('body', ta.value.trim());
     try { await consent(); if (!token) await visit(); await call('file', fd); ta.value = ''; poll(); } catch (err) { alert(err.message); }
   });
+  const say = async text => { await consent(); if (!token) await visit(); await call('say', { body: text }); poll(); };
   $('.say').addEventListener('submit', async e => {
     e.preventDefault();
     const text = ta.value.trim();
     if (!text) return;
-    try { await consent(); if (!token) await visit(); await call('say', { body: text }); ta.value = ''; poll(); } catch (err) { alert(err.message); }
+    try { await say(text); ta.value = ''; } catch (err) { alert(err.message); }
   });
   agree.querySelector('.send').addEventListener('click', async () => {
     try {

@@ -685,8 +685,8 @@ func scanTask(row pgx.Row) (Task, error) {
 	return t, err
 }
 
-// ListLimit caps every task list (pagination comes later).
-const ListLimit = 1000
+// ListLimit caps every task list; the lists show it by pages (Paginate).
+const ListLimit = 5000
 
 // Filter selects tasks for lists. Role-based filters ("my tasks") need no project membership.
 type Filter struct {

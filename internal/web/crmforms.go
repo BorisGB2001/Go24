@@ -192,6 +192,7 @@ func (s *Server) renderForm(w http.ResponseWriter, r *http.Request, status int, 
 	}
 	data["Embed"] = r.FormValue("embed") == "1"
 	data["Page"] = r.FormValue("page")
+	data["OL"] = r.FormValue("ol") // the form an operator sent in a dialogue
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
@@ -270,7 +271,14 @@ func (s *Server) crmFormSend(w http.ResponseWriter, r *http.Request) {
 	if x.Page != "" {
 		x.Comment = s.portalTr("crm.form_lead_page", x.Page)
 	}
-	if _, err := s.CRM.SubmitForm(ctx, f, ans, x); err != nil {
+	ol := r.FormValue("ol")
+	if ol != "" && s.OpenLines != nil { // sent in a dialogue: its cards are the dialogue's (an unknown key — a site's filling)
+		if l, err := s.OpenLines.FormFor(ctx, f.ID, ol); err == nil {
+			x.Session, x.LeadID = l.Session, l.LeadID
+		}
+	}
+	res, err := s.CRM.SubmitForm(ctx, f, ans, x)
+	if err != nil {
 		var ie *i18n.Error
 		if errors.As(err, &ie) {
 			refuse(err)
@@ -278,6 +286,12 @@ func (s *Server) crmFormSend(w http.ResponseWriter, r *http.Request) {
 		}
 		s.fail(w, "crm form submit", err)
 		return
+	}
+	if x.Session != "" {
+		if err := s.OpenLines.FormFilled(ctx, ol, res); err != nil {
+			s.fail(w, "crm form dialogue", err)
+			return
+		}
 	}
 	done()
 }

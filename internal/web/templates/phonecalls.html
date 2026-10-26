@@ -21,7 +21,8 @@
       <td>{{template "phone-end" (dict "W" .FromUser "N" .From "P" .FromPhoto "C" (and (not .FromUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
       <td>{{template "phone-end" (dict "W" .ToUser "N" .To "P" .ToPhoto "C" (and (not .ToUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
       <td class="nowrap">{{if .Seconds}}{{.Duration}}{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="small">{{t (print "tel.status." .Status)}}{{if .Rating}} <span class="tel-rate" title="{{t "tel.rating" .Rating}}">{{stars .Rating}}</span>{{end}}{{if .XTo}}
+      <td class="small">{{t (print "tel.status." .Status)}}{{if .Rating}} <span class="tel-rate" title="{{t "tel.rating" .Rating}}">{{stars .Rating}}</span>{{end}}{{with .Comment}}
+        <div class="tel-note" title="{{t "tel.comment"}}">{{icon "message-circle"}} {{nl2br .}}</div>{{end}}{{if .XTo}}
         <div class="muted nowrap" title="{{t "tel.transferred"}}">{{icon "arrows-exchange"}} {{or .XFromName .XFrom}} → {{or .XToName .XTo}}</div>{{end}}{{if and (not .CRMPath) $d.CRM .Mine .Outside}}
         <form method="post" action="/telephony/calls/{{.ID}}/crm" class="row nowrap" style="gap:4px;margin-top:4px"><button class="ghost small" name="what" value="lead" title="{{t "tel.make_lead"}}">{{icon "plus"}} {{t "crm.lead"}}</button><button class="ghost small" name="what" value="deal" title="{{t "tel.make_deal"}}">{{icon "plus"}} {{t "crm.deal"}}</button></form>{{end}}{{if and $d.Admin .Outside}}
         {{if .Blocked}}<div><span class="pill st-deferred" title="{{t "tel.black_hint"}}">{{icon "lock"}} {{t "tel.black.in"}}</span></div>{{else}}<form method="post" action="/telephony/blacklist" style="margin-top:4px" data-confirm="{{t "tel.black.confirm" .Outside}}">

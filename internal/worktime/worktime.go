@@ -4,6 +4,7 @@ package worktime
 
 import (
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,77 @@ type Schedule struct {
 	LeaveBefore string `json:"leave_before,omitempty"` // a day finished earlier is an early leave
 	MinDuration string `json:"min_duration,omitempty"` // a shorter day (without pauses) is short, "08:00"
 	FreeEdit    bool   `json:"free_edit,omitempty"`    // employees change their days without a manager's approval
+	// «Офисные сети» (the portal timeman): the start and the end of a day remember the address and whether it was
+	// in the office; with OfficeOnly a day is started (or continued) only from an office network
+	Offices    []Office `json:"offices,omitempty"`
+	OfficeOnly bool     `json:"office_only,omitempty"`
+}
+
+// Office is an office network: an address or a subnet (CIDR) with its name.
+type Office struct {
+	Net  string `json:"net"`
+	Name string `json:"name"`
+}
+
+// ParseOffices reads the networks one per line: «192.168.1.0/24 Главный офис» (the name may be omitted).
+func ParseOffices(text string) ([]Office, error) {
+	var out []Office
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		o := Office{Net: f[0], Name: strings.Join(f[1:], " ")}
+		if err := o.normalize(); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// OfficesText is the networks as ParseOffices reads them.
+func (s Schedule) OfficesText() string {
+	var b strings.Builder
+	for _, o := range s.Offices {
+		b.WriteString(strings.TrimSpace(o.Net + " " + o.Name))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// normalize makes the network a prefix: a single address becomes /32 (/128).
+func (o *Office) normalize() error {
+	o.Net, o.Name = strings.TrimSpace(o.Net), strings.TrimSpace(o.Name)
+	if p, err := netip.ParsePrefix(o.Net); err == nil {
+		o.Net = p.Masked().String()
+		return nil
+	}
+	a, err := netip.ParseAddr(o.Net)
+	if err != nil {
+		return fmt.Errorf("office network %q", o.Net)
+	}
+	o.Net = netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()).String()
+	return nil
+}
+
+// OfficeOf is the office network the address is in: its name (or the network when unnamed) and true; "" and false
+// outside the offices or when the address is not one.
+func (s Schedule) OfficeOf(ip string) (string, bool) {
+	a, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return "", false
+	}
+	a = a.Unmap()
+	for _, o := range s.Offices {
+		if p, err := netip.ParsePrefix(o.Net); err == nil && p.Contains(a) {
+			if o.Name != "" {
+				return o.Name, true
+			}
+			return o.Net, true
+		}
+	}
+	return "", false
 }
 
 // Default is the portal default: 9:00–18:00, Saturday and Sunday off, Russian public holidays.
@@ -64,6 +136,14 @@ func (s *Schedule) Validate() error {
 	}
 	if len(s.Weekend) == 7 {
 		return fmt.Errorf("no working days")
+	}
+	for i := range s.Offices {
+		if err := s.Offices[i].normalize(); err != nil {
+			return err
+		}
+	}
+	if s.OfficeOnly && len(s.Offices) == 0 {
+		return fmt.Errorf("office only without offices")
 	}
 	var hs []string
 	for _, h := range s.Holidays {

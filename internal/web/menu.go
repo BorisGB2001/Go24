@@ -60,7 +60,7 @@ func (s *Server) navMenu(ctx context.Context, p *page) {
 		c, p.MenuOwn, _, _ = s.Menus.Get(ctx, p.User.UserID)
 	}
 	apps, any := s.menuApps(ctx, p.User.UserID)
-	shown, hidden := menu.Arrange(c, s.availOn(ctx, menuAvail(p, any)), apps...)
+	shown, hidden := menu.Arrange(c, s.bookingMenu(ctx, p.User.UserID, p.User.Admin, s.availOn(ctx, menuAvail(p, any))), apps...)
 	for _, it := range shown {
 		p.Menu = append(p.Menu, menuEntry{it, p})
 	}
@@ -86,7 +86,7 @@ func (s *Server) menuStart(ctx context.Context, userID string) string {
 		}
 	}
 	apps, _ := s.menuApps(ctx, userID)
-	shown, _ := menu.Arrange(c, s.availOn(ctx, avail), apps...)
+	shown, _ := menu.Arrange(c, s.bookingMenu(ctx, userID, s.apiAdmin(ctx, userID), s.availOn(ctx, avail)), apps...)
 	if len(shown) == 0 || shown[0].Custom != nil && !shown[0].Custom.IsLocal() {
 		return "/my" // an outside link is not a start page of go24
 	}

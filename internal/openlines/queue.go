@@ -101,13 +101,21 @@ func userName(ctx context.Context, q dbtx, id string) string {
 // closeSession closes an open dialogue with the line's closing message and a service line (by — who closed it, or ""
 // when the visitor left it).
 func (s *Store) closeSession(ctx context.Context, id, by string) error {
+	if by != "" {
+		return s.closeAs(ctx, id, "ol.note_closed", userName(ctx, s.db, by))
+	}
+	return s.closeAs(ctx, id, "ol.note_autoclosed")
+}
+
+// closeAs closes an open dialogue with the line's closing message and the service line of the key.
+func (s *Store) closeAs(ctx context.Context, id, key string, args ...any) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	var text string
-	err = tx.QueryRow(ctx, `UPDATE ol_sessions s SET status = 'closed', closed_at = now(), waiting_since = NULL FROM ol_widgets w
+	err = tx.QueryRow(ctx, `UPDATE ol_sessions s SET status = 'closed', closed_at = now(), waiting_since = NULL, bot_node = NULL FROM ol_widgets w
 		WHERE w.id = s.widget_id AND s.id::text = $1 AND s.status = 'open' RETURNING w.close_text`, id).Scan(&text)
 	if err == pgx.ErrNoRows {
 		return nil
@@ -120,12 +128,7 @@ func (s *Store) closeSession(ctx context.Context, id, by string) error {
 			return err
 		}
 	}
-	if by != "" {
-		err = s.note(ctx, tx, id, "ol.note_closed", userName(ctx, tx, by))
-	} else {
-		err = s.note(ctx, tx, id, "ol.note_autoclosed")
-	}
-	if err != nil {
+	if err := s.note(ctx, tx, id, key, args...); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

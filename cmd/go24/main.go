@@ -322,6 +322,7 @@ func run(log *slog.Logger) error {
 				}
 				return web.HistoryLine(bundle, lang, actor, field, old, next, at)
 			},
+			CollabLogText: func(e tasks.CollabLogEntry) string { return web.CollabLogLine(bundle, bundle.Match(""), e) },
 			NotifyText: func(it notify.Item) string {
 				lang := bundle.Match("")
 				tr := func(key string, args ...any) string { return bundle.T(lang, key, args...) }

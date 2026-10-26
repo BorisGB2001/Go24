@@ -73,7 +73,7 @@ func TestCollabSettings(t *testing.T) {
 	set, err := s.CollabSettings(bg, collab(owner))
 	must(err)
 	if set != (CollabSettings{InvitePerm: "managers", GuestInvitePerm: "managers", ChatHistory: true, GuestTasks: true, GuestFiles: true,
-		EditPerm: "managers", ChatPerm: "members"}) {
+		EditPerm: "managers", ChatPerm: "members", EventsMembers: true, EventsGuests: true, EventsInvites: true, EventsCollab: true}) {
 		t.Fatalf("defaults: %+v", set)
 	}
 	// a member and a guest change nothing; a bad value is refused

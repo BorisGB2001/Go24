@@ -50,6 +50,8 @@ type Service struct {
 	NotifyRoom string                   // name of the bot's chat with notifications
 	// a task change as a log line in its thread (nil: not logged)
 	HistoryText func(actor, actingFor, field, old, next string, at time.Time) string
+	// a line of a collab's log as the bot tells it in the collab's chat (nil: not told)
+	CollabLogText func(tasks.CollabLogEntry) string
 
 	// a bot's event is queued for its application (go24 worker delivers it at once; nil: on its next round)
 	BotQueued func()
@@ -102,6 +104,7 @@ func (s *Service) Run(ctx context.Context) {
 	go s.pushLoop(ctx)
 	go s.statusLoop(ctx)
 	go s.autoDeleteLoop(ctx)
+	go s.collabLogLoop(ctx)
 	go s.botLoop(ctx)
 	go func() { // go24 web asks for a reconcile (new project, members, employees)
 		w := s.listen(ctx, "go24_matrix_wake")
@@ -545,7 +548,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.collabChats(ctx) // a collab's group chats: its people only
 }
 
 // ---------- task chat ↔ Matrix ----------

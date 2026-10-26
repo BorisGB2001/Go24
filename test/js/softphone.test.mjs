@@ -21,6 +21,11 @@ const dom = new JSDOM(`<!doctype html><body><div data-softphone data-id="0123456
   <div data-sp-xfer-panel hidden><div data-sp-xfer-ask><input data-sp-xfer-to><button data-sp-blind></button><button data-sp-consult></button>
     <button data-sp-xfer-cancel></button></div>
     <div data-sp-xfer-talk hidden><b data-sp-xfer-who></b><button data-sp-complete disabled></button><button data-sp-return></button></div></div>
+  <div data-sp-card hidden data-saved="Сохранено" data-pending="Сохранится" data-company="Компания" data-stage="Стадия" data-resp="Ответственный">
+    <button data-sp-card-close></button><div data-sp-client hidden><span data-sp-client-kind></span><b data-sp-client-name></b><div data-sp-client-extra></div></div>
+    <div data-sp-deals hidden><ul data-sp-deal-list></ul></div><div data-sp-create hidden></div>
+    <textarea data-sp-note></textarea><button data-sp-note-save></button><span data-sp-note-state></span>
+    <div data-sp-calls hidden><ul data-sp-call-list></ul></div></div>
   <audio data-sp-audio></audio><audio data-sp-audio2></audio></div></body>`, { runScripts: 'outside-only', url: 'https://go24.test/phone', pretendToBeVisual: true });
 const w = dom.window, d = w.document;
 const $ = s => d.querySelector(s);
@@ -52,7 +57,23 @@ w.JsSIP = {
   UA: class extends Em { start() { this.emit('registered'); } call(uri) { const s = new Session(uri); calls.push(s); return s; } },
   C: { causes: { BUSY: 'Busy', REJECTED: 'Rejected', UNAVAILABLE: 'Unavailable', NOT_FOUND: 'Not Found', NO_ANSWER: 'No Answer', BYE: 'Terminated', CANCELED: 'Canceled', ANSWERED_ELSEWHERE: 'Elsewhere' } },
 };
-w.fetch = async () => ({ ok: true, json: async () => null });
+// go24: the call card of a client, of an unknown number, of a colleague; the comments sent
+const notes = [];
+w.fetch = async (url, opts) => {
+  let out = null;
+  if (url.startsWith('/telephony/card?')) {
+    const n = new URLSearchParams(url.split('?')[1]).get('number');
+    out = n === '+79001234567' ? { at: 1761400000, comment: '', client: { kind: 'Контакт', name: 'ООО Ромашка', url: '/crm/contacts/1', company: 'Ромашка',
+      company_url: '/crm/companies/2', responsible: 'Анна', deals: [{ title: 'Поставка', url: '/crm/deals/3', stage: 'Новая', color: '#39f', amount: '1 000 RUB' }] },
+      calls: [{ at: '25.10.2026 10:00', dir: 'missed', kind: 'Пропущенный звонок', status: 'Не ответили', time: '0:00', who: 'Анна', comment: 'Перезвонить' }] }
+      : n === '+79007654321' ? { at: 1761400100, comment: 'Начато', calls: [], create: [{ what: 'lead', title: 'Создать лид' }] }
+      : { at: 1761400200, colleague: true };
+  } else if (url === '/telephony/note') {
+    notes.push(Object.fromEntries(opts.body));
+    out = { saved: true, call: '' };
+  }
+  return { ok: true, json: async () => out };
+};
 w.EventSource = class { addEventListener() {} };
 Object.defineProperty(w.navigator, 'mediaDevices', { value: { getUserMedia: async () => ({ getTracks: () => [] }) } });
 delete w.BroadcastChannel;
@@ -68,8 +89,25 @@ const talk = async number => {
   return s;
 };
 
-// talking: «Перевести» is there; a transfer at once — REFER to the colleague, the window says where the call went
+// the call card: the client with the company, responsible and an open deal, the calls before; the comment goes to go24
 const first = await talk('+79001234567');
+await wait(10);
+assert.equal($('[data-sp-card]').hidden, false, 'no card of a client');
+assert.equal($('[data-sp-client-name] a').getAttribute('href'), '/crm/contacts/1');
+assert.match($('[data-sp-client-extra]').textContent, /Компания: Ромашка.*Ответственный: Анна/);
+assert.equal($('[data-sp-deal-list] a').textContent, 'Поставка');
+assert.match($('[data-sp-call-list]').textContent, /Пропущенный звонок.*Перезвонить/);
+assert.equal($('[data-sp-create]').hidden, true);
+$('[data-sp-note]').value = ' Договорились о встрече ';
+click('[data-sp-note-save]');
+await wait(10);
+assert.deepEqual(notes.at(-1), { number: '+79001234567', at: '1761400000', comment: 'Договорились о встрече' });
+assert.equal($('[data-sp-note-state]').textContent, 'Сохранится');
+click('[data-sp-note-save]');
+await wait(10);
+assert.equal(notes.length, 1, 'the same comment sent twice');
+
+// talking: «Перевести» is there; a transfer at once — REFER to the colleague, the window says where the call went
 assert.equal($('[data-sp-xfer]').hidden, false, 'no «Перевести» while talking');
 click('[data-sp-xfer]');
 assert.equal($('[data-sp-xfer-panel]').hidden, false);
@@ -86,8 +124,16 @@ assert.equal($('[data-sp-status]').textContent, 'Переведён на 102');
 assert.equal($('[data-sp-xfer-panel]').hidden, true, 'the panel stays after the call');
 assert.equal($('[data-sp-xfer]').hidden, true);
 
+assert.equal($('[data-sp-card]').hidden, false, 'the card closes with the call');
+
+// an unknown number: «Создать лид», the comment begun before; a colleague has no card
 // after talking to the colleague: the client held, the colleague called; «Завершить перевод» — REFER with Replaces
 const second = await talk('+79007654321');
+await wait(10);
+assert.equal($('[data-sp-client]').hidden, true);
+assert.equal($('[data-sp-create]').textContent, '+ Создать лид');
+assert.equal($('[data-sp-note]').value, 'Начато');
+assert.equal($('[data-sp-deals]').hidden, true);
 click('[data-sp-xfer]');
 $('[data-sp-xfer-to]').value = '103';
 click('[data-sp-consult]');
@@ -127,5 +173,9 @@ const colleague3 = calls.at(-1);
 second.emit('ended', { originator: 'remote', cause: 'Terminated' });
 assert.equal(colleague3.terminated, true, 'the colleague\'s call stays after the client is gone');
 assert.equal($('[data-sp-status]').textContent, 'Звонок завершён');
+await talk('102');
+await wait(10);
+assert.equal($('[data-sp-card]').hidden, true, 'a card of a colleague');
+calls.at(-1).terminate();
 
 console.log('softphone: ok');

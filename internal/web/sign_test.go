@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -188,9 +191,33 @@ func TestSignHTTP(t *testing.T) {
 	if d, _ = srv.Sign.Get(ctx, id); d.Parties[0].Status != "ready" {
 		t.Fatalf("signed with no confirmation: %+v", d.Parties[0])
 	}
-	do(bob, "POST", "/sign/"+id+"/sign", url.Values{"agree": {"1"}})
-	if d, _ = srv.Sign.Get(ctx, id); d.Parties[0].Status != "signed" || d.Parties[1].Status != "ready" || d.Parties[0].IP == "" {
+	// «Ваша подпись»: a picture that is not one is refused; bob signs with a drawn one and keeps it
+	if code, body, _ := do(bob, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, "data-sgpad") || strings.Contains(body, "my-signature/forget") {
+		t.Fatalf("bob's pad: %d", code)
+	}
+	var pic bytes.Buffer
+	must(png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 300, 100))))
+	drawn := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pic.Bytes())
+	do(bob, "POST", "/sign/"+id+"/sign", url.Values{"agree": {"1"}, "signature": {"data:image/png;base64,AAAA"}})
+	if d, _ = srv.Sign.Get(ctx, id); d.Parties[0].Status != "ready" {
+		t.Fatalf("signed with a bad signature: %+v", d.Parties[0])
+	}
+	do(bob, "POST", "/sign/"+id+"/sign", url.Values{"agree": {"1"}, "signature": {drawn}, "keep": {"1"}})
+	if d, _ = srv.Sign.Get(ctx, id); d.Parties[0].Status != "signed" || d.Parties[1].Status != "ready" || d.Parties[0].IP == "" ||
+		!d.Parties[0].HasSignature || d.Parties[1].HasSignature {
 		t.Fatalf("bob signed: %+v", d.Parties)
+	}
+	if kept, err := srv.Sign.MySignature(ctx, bob); err != nil || kept == nil {
+		t.Fatalf("bob's signature kept: %v", err)
+	}
+	if code, body, _ := do(anna, "GET", "/sign/"+id+"/signature/"+d.Parties[0].ID, nil); code != http.StatusOK || !strings.HasPrefix(body, "\x89PNG") {
+		t.Fatalf("bob's signature: %d", code)
+	}
+	if code, _, _ := do(eve, "GET", "/sign/"+id+"/signature/"+d.Parties[0].ID, nil); code != http.StatusNotFound {
+		t.Fatalf("eve sees the signature: %d", code)
+	}
+	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, `class="sgsig"`) {
+		t.Fatalf("the signature on the page: %d", code)
 	}
 
 	// the client: the page by the link, a wrong code, the right one
@@ -208,7 +235,13 @@ func TestSignHTTP(t *testing.T) {
 	if _, _, loc := do("", "POST", "/sg/"+tok+"/sign", url.Values{"code": {"000000"}, "agree": {"1"}}); !strings.Contains(loc, "code=1") {
 		t.Fatalf("wrong code: %s", loc)
 	}
-	if _, _, loc := do("", "POST", "/sg/"+tok+"/sign", url.Values{"code": {"424242"}, "agree": {"1"}}); strings.Contains(loc, "code=1") {
+	if code, body, _ := do("", "GET", "/sg/"+tok+"?code=1", nil); code != http.StatusOK || !strings.Contains(body, "data-sgpad") || !strings.Contains(body, `data-name="Иван Петров"`) {
+		t.Fatalf("client's pad: %d", code)
+	}
+	if _, _, loc := do("", "POST", "/sg/"+tok+"/sign", url.Values{"code": {"424242"}, "agree": {"1"}, "signature": {"nope"}}); !strings.Contains(loc, "code=1") {
+		t.Fatalf("a bad signature: %s", loc)
+	}
+	if _, _, loc := do("", "POST", "/sg/"+tok+"/sign", url.Values{"code": {"424242"}, "agree": {"1"}, "signature": {drawn}}); strings.Contains(loc, "code=1") {
 		t.Fatalf("right code: %s", loc)
 	}
 	d, err = srv.Sign.Get(ctx, id)
@@ -243,10 +276,13 @@ func TestSignHTTP(t *testing.T) {
 	rc, err := zr.Open("word/document.xml")
 	must(err)
 	x, _ := io.ReadAll(rc)
-	for _, want := range []string{"Договор поставки", d.Hash, "Боб", "Иван Петров", "ivan@client.test"} {
+	for _, want := range []string{"Договор поставки", d.Hash, "Боб", "Иван Петров", "ivan@client.test", `r:embed="rIdGo24Sig1"`, `r:embed="rIdGo24Sig2"`} {
 		if !strings.Contains(string(x), want) {
 			t.Fatalf("signing sheet has no %q: %s", want, x)
 		}
+	}
+	if _, err := zr.Open("word/media/rIdGo24Sig2.png"); err != nil {
+		t.Fatalf("the client's signature: %v", err)
 	}
 	if code, _, _ := do("", "GET", "/sg/"+tok+"/file/result", nil); code != http.StatusOK {
 		t.Fatalf("client downloads: %d", code)
@@ -320,6 +356,21 @@ func TestSignHTTP(t *testing.T) {
 		if d.Title != "Договор оферты" || d.Hash != sign.Hash(src.Bytes()) || len(d.Parties) != 2 || d.Parties[1].Email != "olga@t" || d.RemindDays != 3 {
 			t.Fatalf("by the template: %+v", d)
 		}
+		// bob's kept signature: offered on the page, signed with when none is given; then forgotten
+		if code, body, _ := do(bob, "GET", "/sign/"+d.ID, nil); code != http.StatusOK || !strings.Contains(body, `value="data:image/png;base64,`) ||
+			!strings.Contains(body, "my-signature/forget") {
+			t.Fatalf("bob's kept signature: %d", code)
+		}
+		do(bob, "POST", "/sign/"+d.ID+"/sign", url.Values{"agree": {"1"}})
+		if d, _ = srv.Sign.Get(ctx, d.ID); d.Parties[0].Status != "signed" || !d.Parties[0].HasSignature {
+			t.Fatalf("signed with the kept signature: %+v", d.Parties[0])
+		}
+		if _, _, loc := do(bob, "POST", "/sign/my-signature/forget", url.Values{"back": {"//evil"}}); loc != "/sign" {
+			t.Fatalf("forget: %s", loc)
+		}
+		if kept, _ := srv.Sign.MySignature(ctx, bob); kept != nil {
+			t.Fatal("the signature is not forgotten")
+		}
 	}
 	if code, _, _ := do(bob, "POST", "/sign/templates/"+tpls[0].ID+"/delete", nil); code != http.StatusNotFound {
 		t.Fatalf("bob deletes anna's template: %d", code)
@@ -347,5 +398,51 @@ func TestSignHTTP(t *testing.T) {
 	do(bob, "POST", "/sign/"+d3.ID+"/sign", url.Values{"agree": {"1"}})
 	if d3, _ = srv.Sign.Get(ctx, d3.ID); d3.Current().Email != "ivan@t" || d3.Parties[3].Status != "wait" {
 		t.Fatalf("the clients' turn: %+v", d3.Parties)
+	}
+
+	// a reviewer approves before the signers, with no signature; an observer sees the document and is told how it ended
+	_, loc = upload("Акт.docx", src.Bytes(), "reviewer", eve, "signer", anna, "observer", bob, "save_template", "1")
+	if m = regexp.MustCompile(`^/sign/([0-9a-f-]{36})\?msg=`).FindStringSubmatch(loc); m == nil {
+		t.Fatalf("with a reviewer: %s", loc)
+	}
+	d4, _ := srv.Sign.Get(ctx, m[1])
+	if len(d4.Parties) != 2 || !d4.Parties[0].Reviewer() || d4.Parties[0].UserID != eve || len(d4.Observers) != 1 || d4.Observers[0].UserID != bob {
+		t.Fatalf("with a reviewer: %+v", d4)
+	}
+	if tpls, _ = srv.Sign.Templates(ctx); len(tpls) != 1 || len(tpls[0].Reviewers) != 1 || tpls[0].Reviewers[0] != eve || len(tpls[0].Observers) != 1 {
+		t.Fatalf("the template with a reviewer: %+v", tpls)
+	}
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'sign_review' AND url = $2`, eve, "/sign/"+d4.ID).Scan(&n))
+	if n != 1 {
+		t.Fatalf("eve asked to approve: %d", n)
+	}
+	if code, body, _ := do(eve, "GET", "/sign/"+d4.ID, nil); code != http.StatusOK || strings.Contains(body, "data-sgpad") || !strings.Contains(body, `name="refuse"`) {
+		t.Fatalf("eve's page: %d", code)
+	}
+	if code, body, _ := do(bob, "GET", "/sign/"+d4.ID, nil); code != http.StatusOK || strings.Contains(body, `action="/sign/`+d4.ID+`/sign"`) ||
+		!strings.Contains(body, `data-user="`+bob+`"`) {
+		t.Fatalf("the observer's page: %d", code)
+	}
+	if code, body, _ := do(bob, "GET", "/sign", nil); code != http.StatusOK || !strings.Contains(body, "/sign/"+d4.ID) {
+		t.Fatalf("the observer's list: %d", code)
+	}
+	do(eve, "POST", "/sign/"+d4.ID+"/sign", url.Values{"agree": {"1"}})
+	if d4, _ = srv.Sign.Get(ctx, d4.ID); d4.Parties[0].Status != "signed" || d4.Parties[0].HasSignature || d4.Current().UserID != anna {
+		t.Fatalf("approved: %+v", d4.Parties)
+	}
+	do(anna, "POST", "/sign/"+d4.ID+"/cancel", nil)
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'sign_cancelled' AND url = $2`, bob, "/sign/"+d4.ID).Scan(&n))
+	if n != 1 {
+		t.Fatalf("the observer told of the recall: %d", n)
+	}
+	code, _, loc = do(anna, "POST", "/sign", url.Values{"tpl": {tpls[0].ID}, "signer": {anna}, "reviewer": {eve}, "observer": {bob}})
+	if m = regexp.MustCompile(`^/sign/([0-9a-f-]{36})\?msg=`).FindStringSubmatch(loc); m == nil {
+		t.Fatalf("by the template with a reviewer: %d %s", code, loc)
+	}
+	do(eve, "POST", "/sign/"+m[1]+"/sign", url.Values{"refuse": {"1"}, "reason": {"не та цена"}})
+	d5, _ := srv.Sign.Get(ctx, m[1])
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id IN ($1, $2) AND kind = 'sign_refused' AND url = $3`, anna, bob, "/sign/"+d5.ID).Scan(&n))
+	if d5.Status != "refused" || d5.Parties[0].Reason != "не та цена" || n != 2 {
+		t.Fatalf("rejected: %d %+v", n, d5)
 	}
 }

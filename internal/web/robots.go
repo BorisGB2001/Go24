@@ -108,7 +108,7 @@ func (s *Server) crmRobots(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	s.render(w, r, "robots", page{TitleKey: "robots.title", Nav: "crm_deals", Data: map[string]any{
-		"Fields": fields, "Dicts": dicts, "CondOps": crm.RobotCondOps, "SetRows": []int{0, 1, 2},
+		"Fields": fields, "Dicts": dicts, "CondOps": crm.RobotCondOps, "SetRows": []int{0, 1, 2}, "ShareModes": crm.ShareModes,
 		"Entity": entity, "Pipelines": pipes, "Pipeline": pipeline, "Stages": stages, "Robots": byStage, "Tunnels": tunnels,
 		"Kinds": kinds, "Triggers": trByStage, "TriggerKinds": crm.TriggerKinds, "Acts": crm.ActivityKinds, "Projects": projects, "Users": users, "Back": r.URL.RequestURI(),
 		"Types": types, "Type": typ, "BookingLinks": links}})
@@ -209,14 +209,15 @@ func (s *Server) crmRobotAdd(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	days, _ := strconv.Atoi(r.FormValue("days"))
 	delay, _ := strconv.Atoi(r.FormValue("delay"))
-	to := r.FormValue("to")
+	to, users, mode := r.FormValue("to"), []string(nil), ""
 	if r.FormValue("kind") == "responsible" {
-		to = r.FormValue("new_responsible")
+		to, users, mode = "", r.Form["new_responsible"], r.FormValue("share")
 	}
 	err := s.CRM.AddRobot(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"), crm.RobotParams{
 		Text: r.FormValue("text"), Details: r.FormValue("details"), Project: r.FormValue("project"), To: to, Days: days,
 		Act: r.FormValue("act"), Stage: r.FormValue("to_stage"), Link: r.FormValue("link"), Delay: delay, Unit: r.FormValue("unit"),
 		Min: formNumber(r.FormValue("min")), Max: formNumber(r.FormValue("max")), URL: r.FormValue("url"), Set: robotSets(r),
+		Users: users, Mode: mode, Skip: r.FormValue("skip") == "on",
 		If: &crm.RobotCond{Field: r.FormValue("if_field"), Op: r.FormValue("if_op"), Value: r.FormValue("if_value")}})
 	if err != nil {
 		http.Redirect(w, r, back+sepFor(back)+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)

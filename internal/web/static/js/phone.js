@@ -6,7 +6,7 @@
   if (!texts) return;
   const t = texts.dataset;
   const btn = document.querySelector('[data-phone-open]');
-  const features = 'popup,width=340,height=620';
+  const features = 'popup,width=360,height=760';
   const post = data => fetch('/telephony/cmd', { method: 'POST', body: new URLSearchParams(data), headers: { Accept: 'application/json' } })
     .then(r => r.json()).catch(() => null);
 

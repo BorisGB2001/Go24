@@ -2,7 +2,9 @@
 // Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking), transfer — at once (REFER)
 // or after talking to the colleague first (a second call, then REFER with Replaces). Pages of go24 send it
 // their «Позвонить», «Ответить», «Отклонить» (/telephony/live), and it tells them what the line does
-// (/telephony/state) — they show an incoming call too. One window per browser: a second one hands its number to the
+// (/telephony/state) — they show an incoming call too. The call card (/telephony/card): the client of
+// CRM with their open deals, or «Создать лид / контакт», the calls before and «Комментарий к звонку» (/telephony/note),
+// kept after the call till the next one. One window per browser: a second one hands its number to the
 // first and closes.
 (() => {
   const root = document.querySelector('[data-softphone]');
@@ -38,6 +40,91 @@
       if (ev.photo) photo.src = ev.photo;
     });
   };
+  // ---- the call card ----
+  const card = $('[data-sp-card]'), noteBox = $('[data-sp-note]'), noteState = $('[data-sp-note-state]');
+  let cardFor = null; // {number, at, saved}: the call the card and its comment are of
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+  const anchor = (url, text) => { const a = el('a', '', text); a.href = url; a.target = '_blank'; a.rel = 'noopener'; return a; };
+  const saveNote = () => {
+    const c = cardFor;
+    if (!c || noteBox.value.trim() === c.saved) return;
+    const text = noteBox.value.trim();
+    post('/telephony/note', { number: c.number, at: c.at, comment: text }).then(r => {
+      if (!r || cardFor !== c) return;
+      c.saved = text;
+      noteState.textContent = r.call ? card.dataset.saved : card.dataset.pending;
+    });
+  };
+  const fill = (d, number, dir) => {
+    const client = $('[data-sp-client]'), deals = $('[data-sp-deals]'), create = $('[data-sp-create]'), calls = $('[data-sp-calls]');
+    const cl = d.client;
+    client.hidden = !cl;
+    if (cl) {
+      $('[data-sp-client-kind]').textContent = cl.kind;
+      const nameEl = $('[data-sp-client-name]');
+      nameEl.replaceChildren(cl.url ? anchor(cl.url, cl.name) : el('span', '', cl.name));
+      const extra = $('[data-sp-client-extra]');
+      extra.replaceChildren();
+      if (cl.company) { const c = el('div', 'small', card.dataset.company + ': '); c.append(anchor(cl.company_url, cl.company)); extra.append(c); }
+      if (cl.stage) extra.append(el('div', 'small', card.dataset.stage + ': ' + cl.stage));
+      if (cl.responsible) extra.append(el('div', 'small muted', card.dataset.resp + ': ' + cl.responsible));
+    }
+    const dl = (cl && cl.deals) || [];
+    deals.hidden = !dl.length;
+    $('[data-sp-deal-list]').replaceChildren(...dl.map(x => {
+      const li = el('li');
+      const st = el('span', 'sp-stage', x.stage);
+      if (x.color) st.style.setProperty('--c', x.color);
+      li.append(anchor(x.url, x.title), ' ', st, el('span', 'muted small', ' ' + x.amount));
+      return li;
+    }));
+    const cr = d.create || [];
+    create.hidden = !cr.length;
+    create.replaceChildren(...cr.map(x => {
+      const b = el('button', 'ghost small', '+ ' + x.title);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        b.disabled = true;
+        const win = window.open('', '_blank'); // opened on the click: not a blocked popup
+        post('/telephony/card', { number, what: x.what, dir }).then(r => {
+          if (r && r.url) { if (win) win.location = r.url; else window.open(r.url, '_blank'); load(number, dir, true); }
+          else { win?.close(); b.disabled = false; }
+        });
+      });
+      return b;
+    }));
+    const cs = d.calls || [];
+    calls.hidden = !cs.length;
+    $('[data-sp-call-list]').replaceChildren(...cs.map(x => {
+      const li = el('li', 'sp-call-' + x.dir);
+      li.append(el('span', 'small', x.at + ' · ' + x.kind), el('span', 'muted small', ' · ' + (x.who ? x.who + ' · ' : '') + x.time + ' · ' + x.status));
+      if (x.comment) li.append(el('div', 'small sp-call-note', x.comment));
+      return li;
+    }));
+  };
+  const load = (number, dir, again) => {
+    fetch('/telephony/card?number=' + encodeURIComponent(number), { headers: { Accept: 'application/json' } })
+      .then(r => r.ok ? r.json() : null).catch(() => null).then(d => {
+        if (!d || d.colleague) { if (!again) card.hidden = true; return; }
+        if (!again) {
+          cardFor = { number, at: d.at, saved: d.comment || '' };
+          noteBox.value = d.comment || '';
+          noteState.textContent = '';
+        }
+        fill(d, number, dir);
+        card.hidden = false;
+      });
+  };
+  const openCard = (number, dir) => {
+    saveNote(); // the comment of the call before
+    cardFor = null;
+    card.hidden = true;
+    load(number, dir, false);
+  };
+  $('[data-sp-note-save]').addEventListener('click', saveNote);
+  noteBox.addEventListener('blur', saveNote);
+  $('[data-sp-card-close]').addEventListener('click', () => { saveNote(); card.hidden = true; cardFor = null; });
+
   const show = (number, display) => {
     who.hidden = false;
     name.textContent = display || number; num.textContent = display ? number : ''; photo.hidden = true;
@@ -113,6 +200,7 @@
       session = null; audio.srcObject = null;
       if (consult) try { consult.terminate(); } catch { /* gone already */ }
       muteBtn.classList.remove('on'); holdBtn.classList.remove('on');
+      saveNote();
       report('idle', number, dir); buttons();
       setTimeout(() => { if (!session) { who.hidden = true; if (registered) say(t.ready, 'ok'); } }, 4000);
     };
@@ -127,6 +215,7 @@
     if (!ua || !registered) { pending = number; return; }
     input.value = number;
     show(number);
+    openCard(number, 'out');
     say(t.dialing, 'busy');
     state = 'dialing'; // buttons() before JsSIP answers
     try {
@@ -281,6 +370,7 @@
       state = 'ringing';
       wire(s, number, 'in');
       show(number, display && display !== number ? display : '');
+      openCard(number, 'in');
       say(t.ringing, 'busy');
       buttons();
       tune(true);

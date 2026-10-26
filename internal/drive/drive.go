@@ -590,13 +590,8 @@ func (s *Store) copyFile(ctx context.Context, userID, id string, dst Drive, to s
 		Scan(&key, &name, &ct, &size, &storageID); err != nil {
 		return err
 	}
-	var taken []string
-	rows, err := s.db.Query(ctx, `SELECT lower(name) FROM files WHERE drive = $1 AND drive_owner IS NOT DISTINCT FROM $2
-		AND folder_id IS NOT DISTINCT FROM $3 AND deleted_at IS NULL`, dst.Kind, dst.owner(), nullable(to))
+	taken, err := s.fileNames(ctx, dst, to)
 	if err != nil {
-		return err
-	}
-	if taken, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
 		return err
 	}
 	name = freeName(name, taken, true)

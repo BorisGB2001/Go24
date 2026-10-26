@@ -42,6 +42,7 @@
     <label>{{t "ol.operators"}}</label>{{template "upick" (upick "operators" "" $d.Users "multi")}}
     {{template "olline" (dict "W" $d.New "Days" $d.Days)}}
     <p><button class="primary">{{t "common.create"}}</button></p></form></details>
+<script src="{{asset "js/olbot.js"}}"></script>
 {{end}}
 
 {{define "olline"}}{{$w := .W}}
@@ -87,5 +88,26 @@
   <label class="check"><input type="checkbox" name="kpi_operator" {{if $w.KPIOperator}}checked{{end}}> {{t "ol.kpi_operator"}}</label>
   <label class="check"><input type="checkbox" name="kpi_heads" {{if $w.KPIHeads}}checked{{end}}> {{t "ol.kpi_heads"}}</label>
   <p class="small muted">{{t "ol.kpi_hint"}}</p>
+</details>
+<details class="olline" data-olbot><summary>🤖 {{t "ol.bot"}}</summary>
+  <label class="check"><input type="checkbox" name="bot_on" {{if $w.BotOn}}checked{{end}}> {{t "ol.bot_on"}}</label>
+  <p class="small muted">{{t "ol.bot_hint"}}</p>
+  <label>{{t "ol.bot_text"}}</label><textarea name="bot_text" rows="2" maxlength="1000" placeholder="{{t "ol.bot_text_hint"}}">{{$w.BotText}}</textarea>
+  <label>{{t "ol.bot_menu"}}</label>
+  <input type="hidden" name="bot_menu" value="{{json $w.BotMenu}}">
+  <div class="olbot-list" data-olbot-list></div>
+  <button type="button" class="ghost small" data-olbot-add>{{icon "plus"}} {{t "ol.bot_add"}}</button>
+  <template data-olbot-item><div class="olbot-item">
+    <div class="row"><input type="text" data-k="title" maxlength="100" placeholder="{{t "ol.bot_item_title"}}" style="flex:1">
+      <select data-k="action"><option value="text">{{t "ol.bot_do_text"}}</option><option value="menu">{{t "ol.bot_do_menu"}}</option>
+        <option value="queue">{{t "ol.bot_do_queue"}}</option><option value="close">{{t "ol.bot_do_close"}}</option></select>
+      <button type="button" class="ghost small" data-olbot-del title="{{t "crm.delete"}}">{{icon "trash"}}</button></div>
+    <textarea data-k="text" rows="2" maxlength="1000" data-ph-text="{{t "ol.bot_ph_text"}}" data-ph-menu="{{t "ol.bot_ph_menu"}}" data-ph-queue="{{t "ol.bot_to_queue"}}" data-ph-close="{{t "ol.bot_ph_close"}}"></textarea>
+    <div class="olbot-sub"><div class="olbot-list" data-olbot-list></div>
+      <button type="button" class="ghost small" data-olbot-add>{{icon "plus"}} {{t "ol.bot_add_sub"}}</button></div>
+  </div></template>
+  <label>{{t "ol.bot_other"}}</label><select name="bot_other">
+    <option value="menu" {{if ne $w.BotOther "queue"}}selected{{end}}>{{t "ol.bot_other_menu"}}</option>
+    <option value="queue" {{if eq $w.BotOther "queue"}}selected{{end}}>{{t "ol.bot_other_queue"}}</option></select>
 </details>
 {{end}}

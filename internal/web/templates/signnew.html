@@ -8,6 +8,8 @@
   {{else}}<label>{{t "sign.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>{{end}}
   <label>{{t "sign.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$d.Title}}" {{if $d.Doc}}required{{end}} placeholder="{{t "sign.title_hint"}}">
   <h3>{{icon "users"}} {{t "sign.side.company"}}</h3>
+  <label>{{t "sign.reviewers"}}</label>{{template "upick" (upick "reviewer" $d.Reviewers $d.Users "multi" "ph" (t "sign.reviewers_ph"))}}
+  <p class="small muted">{{t "sign.reviewers_hint"}}</p>
   <label>{{t "sign.company_signers"}}</label>{{template "upick" (upick "signer" $d.Signers $d.Users "multi")}}
   <p class="small muted">{{t "sign.company_hint"}}</p>
   <h3>{{icon "user"}} {{t "sign.side.client"}}</h3>
@@ -19,6 +21,8 @@
   <template id="sg-client">{{template "sgclient" (list "" "")}}</template>
   {{range $i, $g := $d.Guests}}<template id="sg-guest-{{$i}}">{{template "sgclient" (list $g.Name $g.Email)}}</template>{{end}}
   <p class="small muted">{{t "sign.client_hint"}}</p>
+  <label>{{icon "eye"}} {{t "sign.observers"}}</label>{{template "upick" (upick "observer" $d.Observers $d.Users "multi" "ph" (t "sign.observers_ph"))}}
+  <p class="small muted">{{t "sign.observers_hint"}}</p>
   <label for="sg-remind">{{icon "bell"}} {{t "sign.remind"}}</label>{{template "sgremind" $d.Remind}}
   <p class="small muted">{{t "sign.remind_hint"}}</p>
   {{if not (or $d.Doc $d.Tpl)}}<label class="check"><input type="checkbox" name="save_template" value="1"> {{t "sign.tpl.save"}}</label>

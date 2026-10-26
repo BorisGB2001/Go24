@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,8 @@ import (
 	"go24/internal/calendar"
 	"go24/internal/crm"
 	"go24/internal/db"
+	"go24/internal/openlines"
+	"go24/internal/sites"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -168,6 +171,79 @@ func TestCRMFormsHTTP(t *testing.T) {
 		t.Fatal("redirect inside a site")
 	}
 
+	// sent in an open line's dialogue (GO24DEV-703): the operator's «Форма», the card in the widget, the form inside it
+	// with the dialogue's key — the lead is the dialogue's, no redirect inside the chat, the result links the dialogue
+	crmFormHits = &sites.Hits{Max: 5, Per: 10 * time.Minute}
+	srv.OpenLines = openlines.NewStore(pool, srv.CRM)
+	srv.OpenLines.Tr = func(key string, args ...any) string { return key }
+	wid, err := srv.OpenLines.SaveWidget(ctx, anna, openlines.Widget{Name: "Линия", Active: true})
+	must(err)
+	sid, vtok, err := srv.OpenLines.Visit(ctx, wid, "", "")
+	must(err)
+	must(srv.OpenLines.VisitorSay(ctx, wid, vtok, "Здравствуйте"))
+	if _, page, _ := do(admin, "/openlines?s="+sid, nil); !strings.Contains(page, `name="op" value="form"`) || !strings.Contains(page, `<option value="`+id+`">Заявка</option>`) {
+		t.Fatal("no «Форма» in the dialogue")
+	}
+	if code, _, loc := do(admin, "/openlines/s/"+sid, url.Values{"op": {"form"}, "form": {id}}); code != http.StatusSeeOther || strings.Contains(loc, "msg=") {
+		t.Fatalf("send the form: %d %s", code, loc)
+	}
+	req, _ := http.NewRequest("GET", hs.URL+"/w/"+wid+"/api/messages", nil)
+	req.Header.Set("X-Go24-Visitor", vtok)
+	res, err := client.Do(req)
+	must(err)
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	var got struct {
+		Messages []struct {
+			Body string
+			Form *struct {
+				ID, URL string
+				Done    bool
+			}
+		}
+	}
+	must(json.Unmarshal(raw, &got))
+	last := got.Messages[len(got.Messages)-1]
+	if last.Form == nil || last.Form.ID != id || last.Body != "ol.form_body" || !strings.Contains(last.Form.URL, "/cf/"+f.Token+"?embed=1&ol=") {
+		t.Fatalf("the widget's form card: %s", raw)
+	}
+	inChat, _ := url.Parse(last.Form.URL)
+	if _, page, _ := do(nil, inChat.RequestURI(), nil); !strings.Contains(page, `name="ol" value="`+inChat.Query().Get("ol")+`"`) {
+		t.Fatal("the form in the chat has no dialogue's key")
+	}
+	before := leads()
+	_, page, _ = do(nil, pub, url.Values{"t": {ago}, "name": {"Ольга"}, "embed": {"1"}, "ol": {inChat.Query().Get("ol")}})
+	if strings.Contains(page, "top.location.href") || !strings.Contains(page, "cf-done") {
+		t.Fatal("the form filled in the chat")
+	}
+	var bound string
+	must(pool.QueryRow(ctx, `SELECT coalesce(lead_id::text, '') FROM ol_sessions WHERE id = $1`, sid).Scan(&bound))
+	if leads() != before+1 || bound == "" {
+		t.Fatalf("the filling's lead is not the dialogue's: %d → %d, %q", before, leads(), bound)
+	}
+	if _, page, _ := do(admin, "/crm/forms/"+id+"/results", nil); !strings.Contains(page, `href="/openlines?s=`+sid+`"`) {
+		t.Fatal("the result has no dialogue")
+	}
+	if _, page, _ := do(admin, "/openlines?s="+sid, nil); !strings.Contains(page, "ol.form_filled") && !strings.Contains(page, "ol-formdone") {
+		t.Fatal("the operator does not see the form filled")
+	}
+	wtok, err := srv.Keys.Create(ctx, anna, "ol", []string{"openlines:read", "openlines:write"}, 0)
+	must(err)
+	req, _ = http.NewRequest("POST", hs.URL+"/api/v1/openlines/dialogs/"+sid+"/form", strings.NewReader(`{"form_id": "`+id+`"}`))
+	req.Header.Set("Authorization", "Bearer "+wtok)
+	res, err = client.Do(req)
+	must(err)
+	res.Body.Close()
+	req, _ = http.NewRequest("GET", hs.URL+"/api/v1/openlines/dialogs/"+sid+"/messages", nil)
+	req.Header.Set("Authorization", "Bearer "+wtok)
+	res2, err := client.Do(req)
+	must(err)
+	raw, _ = io.ReadAll(res2.Body)
+	res2.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"kind": "form"`) || !strings.Contains(string(raw), `"done_at"`) {
+		t.Fatalf("REST form: %d %s", res.StatusCode, raw)
+	}
+
 	// REST
 	tok, err := srv.Keys.Create(ctx, anna, "crm", []string{"crm:read"}, 0)
 	must(err)
@@ -196,7 +272,7 @@ func TestCRMFormsHTTP(t *testing.T) {
 	if code, _, loc := do(admin, "/crm/forms/"+id, url.Values{"op": {"delete"}}); code != http.StatusSeeOther || !strings.HasPrefix(loc, "/crm/forms?") {
 		t.Fatalf("delete: %d %s", code, loc)
 	}
-	if leads() != 3 {
+	if leads() != 4 {
 		t.Fatal("the leads went with the form")
 	}
 }

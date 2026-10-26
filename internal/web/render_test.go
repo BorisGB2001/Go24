@@ -166,6 +166,7 @@ func TestPagesRender(t *testing.T) {
 			"All": []booking.Resource{{ID: "r1", Name: "Переговорная", Slot: 30}, {ID: "r2", Name: "Дорожка", Slot: 60}},
 			"Wait": []booking.Wait{{ID: "w1", ResourceID: "r1", ResourceName: "Переговорная", ClientName: "Мария", ClientPhone: "+7", Note: "утром"},
 				{ID: "w2", ClientPhone: "+7 2"}}}},
+		"bookingrights": {Data: map[string]any{"Users": []tasks.User{user}, "Use": []tasks.User{{ID: "dept:d1", Name: "Отдел продаж"}, user}, "Manage": nil}},
 		"bookinglinks": {Data: map[string]any{"Admin": true, "Base": "https://go24.test", "Msg": "Сохранено",
 			"Links": []booking.Link{{ID: "l1", Token: "tk", Name: "Запись", Resources: []string{"r1"}, DaysAhead: 30, Active: true, Bookings: 2},
 				{ID: "l2", Token: "tk2", Name: "Все"}},
@@ -187,9 +188,9 @@ func TestPagesRender(t *testing.T) {
 				{ID: "p1", UserID: "u1", Name: "Анна", Ord: 1, Status: "ready"}, {ID: "p2", Name: "Иван", Email: "i@t", Ord: 2, Status: "wait"}}}}}},
 		"signnew": {Data: map[string]any{"Me": "u1", "Users": []tasks.User{{ID: "u1", Name: "Анна"}}, "Kind": "deals", "ID": "d1",
 			"Doc": crm.Document{ID: "x1", FileName: "Договор.docx"}, "Title": "Договор № 7", "ClientName": "Иван", "ClientEmail": "i@t"}},
-		"signdoc": {Data: map[string]any{"Me": "u1", "Mine": true, "Author": true, "PDF": true, "Link": "https://go24/sg/", "Card": "/crm/deals/d1#documents",
+		"signdoc": {Data: map[string]any{"Me": "u1", "Mine": true, "MySig": "data:image/png;base64,AA", "MyName": "Анна", "Author": true, "PDF": true, "Link": "https://go24/sg/", "Card": "/crm/deals/d1#documents",
 			"Doc": sign.Doc{ID: "s1", Title: "Договор № 7", Status: "signing", Author: "Анна", AuthorID: "u1", CreatedAt: now, Hash: "ab", Parties: []sign.Party{
-				{ID: "p1", UserID: "u1", Name: "Анна", Ord: 1, Status: "signed", SignedAt: &now}, {ID: "p2", Name: "Иван", Email: "i@t", Token: "tk", Ord: 2, Status: "ready"}}}}},
+				{ID: "p1", UserID: "u1", Name: "Анна", Ord: 1, Status: "signed", SignedAt: &now, HasSignature: true}, {ID: "p2", Name: "Иван", Email: "i@t", Token: "tk", Ord: 2, Status: "ready"}}}}},
 		"signhr": {Data: map[string]any{"Users": []tasks.User{{ID: "u1", Name: "Анна"}}, "Fields": employeeFields, "Admin": true,
 			"Templates": []crm.DocTemplate{{ID: "t1", Name: "Приказ", Entity: "employee"}}}},
 		"signbatch": {Data: map[string]any{"Me": "u2", "Author": true, "Mine": true,
@@ -341,7 +342,8 @@ func TestPagesRender(t *testing.T) {
 				"Presets": []crm.Preset{{ID: "p1", Name: "Крупные", Query: "min=1000", Default: true}}, "PresetQuery": "min=1000"}
 		}()},
 		"crmtypes": {Data: map[string]any{"Kind": "types", "Colors": tasks.StageColors, "ActCount": 0,
-			"Types": []crm.Type{{ID: "t1", Name: "Договоры", Color: "FFA900", Items: 3}}}},
+			"Types": []crm.Type{{ID: "t1", Name: "Договоры", Color: "FFA900", Items: 3}, {ID: "t2", Name: "Поставки", Color: "39A8EF"}},
+			"Relations": map[string][]string{"t2": {"", "t1"}}}},
 		"crmcurrencies": {Data: map[string]any{"Kind": "currencies", "ActCount": 0, "Base": "RUB", "CBR": crm.CBRURL, "Currencies": []crm.Currency{
 			{Code: "RUB", Name: "Российский рубль", Rate: 1, Base: true, Auto: true, UpdatedAt: now},
 			{Code: "USD", Rate: 92.12345, Auto: true, UpdatedAt: now}, {Code: "EUR", Name: "Евро", Rate: 100, UpdatedAt: now}}}},
@@ -456,7 +458,7 @@ func TestPagesRender(t *testing.T) {
 			"Timeline": []crm.Event{{ID: 7, AuthorName: "Анна", Kind: "activity", Body: "call:Позвонить", At: now}, {ID: 8, AuthorName: "Анна", Kind: "invoice", Body: "invoice:3:paid", At: now}, {ID: 4, AuthorName: "Анна", Kind: "document", Body: "Анкета", At: now}, {ID: 12, AuthorName: "Анна", Kind: "openline", Body: "c0ffee00-0000-0000-0000-000000000001", At: now}, {ID: 13, AuthorName: "Анна", Kind: "call", Body: `{"id":"c1","dir":"missed","number":"+79001234567","status":"noanswer"}`, At: now}, {ID: 14, AuthorName: "Анна", Kind: "call", Body: `{"id":"c2","dir":"out","number":"+79001234567","sec":75,"status":"answered","rec":true}`, At: now}, {ID: 3, AuthorName: "Анна", Kind: "robot", Body: "task:GO-5", At: now}, {ID: 9, AuthorName: "Анна", Kind: "robot", Body: "fail:mail:err.robot_email", At: now}, {ID: 10, AuthorName: "Анна", Kind: "robot", Body: "activity:call:Позвонить", At: now}, {ID: 11, AuthorName: "Анна", Kind: "robot", Body: "trigger:mail", At: now}, {ID: 15, AuthorName: "Анна", Kind: "robot", Body: "webhook:n8n.test", At: now}, {ID: 16, AuthorName: "Анна", Kind: "repeat", Body: "contact:x1", At: now}, {ID: 2, AuthorName: "Анна", Kind: "stage", Body: "code:lead_new → Своя", At: now}, {ID: 1, AuthorName: "Анна", Kind: "created", At: now},
 				{ID: 12, AuthorName: "Анна", Kind: "tunnel_to", Body: "d2|Поставка", At: now}, {ID: 13, AuthorName: "Анна", Kind: "pipeline", Body: "code:default → Тендеры", At: now}},
 			"OtherPipes": []crm.Pipeline{{ID: "p2", Name: "Тендеры", Stages: []crm.Stage{{ID: "s3", Name: "Заявка"}, {ID: "s4", Code: "won"}}}}}},
-		"robots": {Data: map[string]any{"Entity": "deal", "Pipeline": "p1", "Back": "/crm/robots", "Kinds": crm.RobotKinds,
+		"robots": {Data: map[string]any{"Entity": "deal", "Pipeline": "p1", "Back": "/crm/robots", "Kinds": crm.RobotKinds, "ShareModes": crm.ShareModes,
 			"Pipelines": []crm.Pipeline{{ID: "p1", Code: "default"}, {ID: "p2", Name: "Тендеры", Stages: []crm.Stage{{ID: "s3", Name: "Заявка"}}}},
 			"Stages":    []crm.Stage{{ID: "s1", Code: "new", Color: "39A8EF"}, {ID: "s2", Name: "Своя", Color: "7BD500"}},
 			"Robots": map[string][]crm.Robot{"s1": {{ID: "r1", StageID: "s1", Kind: "task", Active: true, Params: crm.RobotParams{Text: "Позвонить {title}", Project: "GO", To: "u1", Days: 2}},
@@ -464,6 +466,7 @@ func TestPagesRender(t *testing.T) {
 				{ID: "r3", StageID: "s1", Kind: "activity", Active: true, Params: crm.RobotParams{Text: "Позвонить", Act: "call", To: "responsible"}},
 				{ID: "r4", StageID: "s1", Kind: "mail", Active: true, Params: crm.RobotParams{Text: "Предложение"}},
 				{ID: "r5", StageID: "s1", Kind: "responsible", Active: true, Params: crm.RobotParams{To: "u1"}},
+				{ID: "r5b", StageID: "s1", Kind: "responsible", Active: true, Params: crm.RobotParams{To: "u1", Users: []string{"u1", "u2"}, Mode: "even", Skip: true}},
 				{ID: "r6", StageID: "s1", Kind: "stage", Active: true, Params: crm.RobotParams{Stage: "s2", Max: 5000}},
 				{ID: "r7", StageID: "s1", Kind: "copy", Active: true, Params: crm.RobotParams{Stage: "s3"}},
 				{ID: "r8", StageID: "s1", Kind: "fields", Active: true, Params: crm.RobotParams{Set: []crm.RobotSet{{Field: "title", Value: "{title}!"}, {Field: "origin", Value: "src1"}, {Field: "uf:f1", Value: "1"}},
@@ -696,6 +699,10 @@ func TestPagesRender(t *testing.T) {
 			"Filter": company.StaffFilter{Kind: "moved", From: time.Now()}, "Days": []staffDay{{Day: time.Now(), List: []company.StaffChange{
 				{Person: company.Person{ID: "u1", Name: "Ivan"}, Kind: "moved", Was: []string{"IT"}, Departments: []string{"Sales"}, ActorID: "u2", ActorName: "Boss"},
 				{Person: company.Person{ID: "u3", Name: "Olga", Position: "HR"}, Kind: "hired"}}}}}},
+		"honor": {Data: map[string]any{"Departments": []*company.Department{dept}, "Filter": company.HonorFilter{DepartmentID: dept.ID},
+			"Can": true, "Today": now, "Add": "u1", "ReasonMax": company.HonorReasonMax, "Users": []company.Profile{{ID: "u1", Name: "Ivan", Position: "Dev"}},
+			"List": []company.Honor{{ID: 1, Person: company.Person{ID: "u1", Name: "Ivan"}, Departments: []string{"Sales"}, Reason: "Best\nseller",
+				From: now, ByID: "u2", ByName: "Boss"}, {ID: 2, Person: company.Person{ID: "u3", Name: "Olga"}, From: now.AddDate(0, 0, 3), To: &now}}}},
 		"thanks": {Data: map[string]any{"Departments": []*company.Department{dept}, "Periods": thanksPeriods, "Period": "", "Person": "Ivan",
 			"Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji, "Filter": feed.BoardFilter{UserID: "u1", Badge: "cup", From: now},
 			"Leaders": []feed.Leader{{Person: feed.Person{ID: "u1", Name: "Ivan"}, Position: "Dev", Count: 3, Badges: []feed.BadgeCount{{Badge: "cup", Count: 2}, {Badge: "star", Count: 1}}}},
@@ -907,6 +914,17 @@ func TestPagesRender(t *testing.T) {
 			"Rooms":   []matrixsync.Room{{ID: "!c", Name: "Клиент", Kind: "collab", Unread: 1}},
 			"Current": matrixsync.Room{ID: "!c", Name: "Клиент", Kind: "collab"}, "CollabInvite": "guests",
 			"Collab": tasks.Collab{Project: collab, Members: 3, Guests: 1, CollabCounters: tasks.CollabCounters{Overdue: 2, Comments: 1}}}},
+		"im/collabchat": {Data: map[string]any{"Room": "!g", "Tab": "collab", "Element": "", "CollabMain": "!c", "CollabChatRemove": true,
+			"Rooms": []matrixsync.Room{{ID: "!c", Name: "Клиент", Kind: "collab"}, {ID: "!g", Name: "Дизайн", Kind: "group", CollabID: "c1", CollabKey: "CL1", CollabName: "Клиент"},
+				{ID: "!o", Name: "Своя", Kind: "group"}},
+			"Current":     matrixsync.Room{ID: "!g", Name: "Дизайн", Kind: "group", CollabID: "c1", CollabKey: "CL1", CollabName: "Клиент"},
+			"Group":       &matrixsync.Group{Owner: true, Members: []matrixsync.Member{{ID: "u1", Name: "Анна", Owner: true, Me: true}}},
+			"CollabChats": []matrixsync.Room{{ID: "!g", Name: "Дизайн", Kind: "group"}}, "CollabChatAdd": []matrixsync.Room{{ID: "!o", Name: "Своя", Kind: "group"}},
+			"Collab":      tasks.Collab{Project: collab, Members: 3}}},
+		"im/owngroup": {Data: map[string]any{"Room": "!o", "Element": "", "Rooms": []matrixsync.Room{{ID: "!o", Name: "Своя", Kind: "group"}},
+			"Current":       matrixsync.Room{ID: "!o", Name: "Своя", Kind: "group"},
+			"Group":         &matrixsync.Group{Owner: true, Members: []matrixsync.Member{{ID: "u1", Name: "Анна", Owner: true, Me: true}}},
+			"CollabTargets": []tasks.Collab{{Project: collab}}}},
 		"disk/collab": {Data: map[string]any{"Drive": drive.Drive{Kind: "project", OwnerID: "c1", ProjectKey: "CL1", Name: "Клиент", Collab: true, CanWrite: true}, "Folder": "", "Me": "u1"}},
 		"mail/compose": {Data: map[string]any{"FolderID": "f1", "New": true, "Pane": "right", "Panes": mailPanes, "Mode": "all",
 			"FavSet": map[string]bool{},
@@ -1032,6 +1050,18 @@ func TestPagesRender(t *testing.T) {
 	rd["RecurUnits"], rd["Today"] = crm.RecurUnits, now.Format("2006-01-02")
 	rd["Timeline"] = []crm.Event{{ID: 7, AuthorName: "Анна", Kind: "recurred", Body: "d2|Обслуживание", At: now}}
 	extra["crmcard/recurring"] = page{Data: rd}
+	rl := maps.Clone(rd) // «Связи»: an element with its parents, a deal with its children
+	parent := crm.Deal{ID: "d9", Title: "Большая сделка", Stage: crm.Stage{ID: "s1", Code: "new", Color: "39A8EF"}}
+	rl["Item"] = crm.Deal{ID: "e1", Title: "Договор", TypeID: "t1", Currency: "RUB", Stage: crm.Stage{ID: "s1", Code: "sp_new"},
+		Company: crm.Ref{ID: "y1", Name: "ООО"}, Contacts: []crm.Ref{{ID: "x1", Name: "Иван"}}, CreatedAt: now}
+	rl["ParentSlots"] = []crmParentSlot{{Kind: "", Parent: &parent, Options: []crm.Deal{parent, {ID: "d8", Title: "Другая"}}},
+		{Kind: "t2", Name: "Поставки", Options: []crm.Deal{{ID: "e2", Title: "Поставка"}}}}
+	rl["ChildGroups"] = []crmChildGroup{{crmSmart: crmSmart{Type: crm.Type{ID: "t2", Name: "Поставки", Color: "39A8EF"},
+		Items: []crm.Deal{{ID: "e3", Title: "Поставка 1", Amount: 100, Currency: "RUB", Stage: crm.Stage{ID: "s2", Code: "sp_preparation"}}}}, Pipeline: "p2"},
+		{crmSmart: crmSmart{Type: crm.Type{ID: "t3", Name: "Акты"}}, Pipeline: "p3"}}
+	rl["Timeline"] = []crm.Event{{ID: 8, AuthorName: "Анна", Kind: "bound", Body: "Большая сделка", At: now}, {ID: 9, AuthorName: "Анна", Kind: "unbound", Body: "Другая", At: now}}
+	delete(rl, "Recurrence")
+	extra["crmcard/relations"] = page{Data: rl}
 	ce := maps.Clone(cases["crmcard"].Data.(map[string]any))
 	ce["Edit"] = true
 	extra["crmcard/edit"] = page{Data: ce}
@@ -1185,6 +1215,14 @@ func TestPagesRender(t *testing.T) {
 				if name == "im" && variant == "collab" && (!strings.Contains(out, `href="/disk/p/CL1"`) || !strings.Contains(out, `/my?view=overdue&amp;project=CL1`) ||
 					!strings.Contains(out, `href="/p/CL1#guests"`)) {
 					t.Fatal("a collab's chat without its tasks, drive, counters or «Пригласить» in the header")
+				}
+				if name == "im" && variant == "collabchat" && (!strings.Contains(out, `action="/im/collab/create"`) || !strings.Contains(out, `action="/im/collab/remove"`) ||
+					!strings.Contains(out, `<option value="!o">Своя</option>`) || !strings.Contains(out, `href="/im?room=%21c"`) || !strings.Contains(out, `data-in="collab"`) ||
+					!strings.Contains(out, `href="/disk/p/CL1"`)) {
+					t.Fatal("a collab's group chat without the collab's chats, making one, adding one, taking it out or the collab in the header")
+				}
+				if name == "im" && variant == "owngroup" && (!strings.Contains(out, `action="/im/collab/add"`) || strings.Contains(out, `action="/im/collab/remove"`)) {
+					t.Fatal("one's own group chat without «Добавить чат в коллаб»")
 				}
 				if p.Guest && name == "collabs" && !strings.Contains(out, `data-counter="collabs" data-base="3" data-rooms="!c !d"`) {
 					t.Fatal("«Коллабы» in the menu without the counter")

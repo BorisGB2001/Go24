@@ -190,6 +190,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}", s.api("crm:read", s.apiCRMGet))
 	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/stage", s.api("crm:write", s.apiCRMStage))
 	mux.HandleFunc("PUT /api/v1/crm/{kind}/{id}/observers", s.api("crm:write", s.apiCRMObservers))
+	mux.HandleFunc("PUT /api/v1/crm/deals/{id}/parents", s.api("crm:write", s.apiCRMParents))
+	mux.HandleFunc("GET /api/v1/crm/deals/{id}/children", s.api("crm:read", s.apiCRMChildren))
 	mux.HandleFunc("PUT /api/v1/crm/{kind}/{id}/utm", s.api("crm:write", s.apiCRMUTM))
 	mux.HandleFunc("GET /api/v1/marketing/analytics", s.api("crm:read", s.apiMktAnalytics))
 	mux.HandleFunc("GET /api/v1/marketing/sources", s.api("crm:read", s.apiMktSources))
@@ -233,6 +235,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	s.apiBPRoutes(mux)
 	s.apiAIRoutes(mux)
 	s.apiBookingRoutes(mux)
+	s.apiTelephonyRoutes(mux)
 	s.apiAppsRoutes(mux)
 }
 

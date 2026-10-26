@@ -16,7 +16,7 @@ import (
 
 // ---------- «Онлайн-запись»: links for clients to book themselves ----------
 
-// bookingLinks: the links of the company with their addresses; administrators add and change them (?edit=id, ?edit=new).
+// bookingLinks: the links of the company with their addresses; its managers add and change them (?edit=id, ?edit=new).
 func (s *Server) bookingLinks(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	links, err := s.Booking.Links(r.Context())
 	if err != nil {
@@ -36,9 +36,9 @@ func (s *Server) bookingLinks(w http.ResponseWriter, r *http.Request, sess auth.
 	for _, l := range links {
 		codes[l.ID] = bookingEmbedCode(s.absURL(r, "/bk/"+l.Token), l.Name)
 	}
-	data := map[string]any{"Links": links, "Resources": res, "Names": names, "Admin": sess.Admin, "Base": s.BaseURL,
+	data := map[string]any{"Links": links, "Resources": res, "Names": names, "Admin": s.bookingManager(r, sess), "Base": s.BaseURL,
 		"Codes": codes, "Msg": r.URL.Query().Get("msg")}
-	if e := r.URL.Query().Get("edit"); e != "" && sess.Admin {
+	if e := r.URL.Query().Get("edit"); e != "" && data["Admin"] == true {
 		ed := booking.Link{DaysAhead: 30, Active: true}
 		if e != "new" {
 			if ed, err = s.Booking.Link(r.Context(), e); err != nil {
@@ -56,9 +56,9 @@ func (s *Server) bookingLinks(w http.ResponseWriter, r *http.Request, sess auth.
 	s.render(w, r, "bookinglinks", page{TitleKey: "booking.links", Nav: "booking", Data: data})
 }
 
-// bookingLinkSave: a link from its form (administrators).
+// bookingLinkSave: a link from its form (those who manage «Онлайн-запись»).
 func (s *Server) bookingLinkSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -79,7 +79,7 @@ func (s *Server) bookingLinkSave(w http.ResponseWriter, r *http.Request, sess au
 }
 
 func (s *Server) bookingLinkDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}

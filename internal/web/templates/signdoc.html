@@ -8,21 +8,34 @@
     {{else if $d.PDF}}<iframe class="pubdoc-view" src="/sign/{{$doc.ID}}/file/pdf?inline=1" title="{{$doc.Title}}"></iframe>
     {{else}}<div class="card empty">{{icon "file-text"}} {{t "sign.no_viewer"}}</div>{{end}}</div>
   <div class="sgside">
-    {{if $d.Mine}}<div class="card sgturn"><h2>{{t "sign.your_turn"}}</h2>
-      <form method="post" action="/sign/{{$doc.ID}}/sign" data-native><label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
+    {{if and $d.Mine $d.Review}}<div class="card sgturn"><h2>{{t "sign.your_review"}}</h2><p class="small muted">{{t "sign.review_hint"}}</p>
+      <form method="post" action="/sign/{{$doc.ID}}/sign" data-native><input type="hidden" name="agree" value="1">
+        <p><button class="primary">{{icon "check"}} {{t "sign.approve"}}</button></p></form>
+      <details><summary class="small">{{t "sign.reject"}}</summary><form method="post" action="/sign/{{$doc.ID}}/sign" data-native>
+        <input type="hidden" name="refuse" value="1"><textarea name="reason" rows="2" maxlength="1000" placeholder="{{t "sign.reason"}}" required></textarea>
+        <p><button class="danger">{{t "sign.reject"}}</button></p></form></details></div>
+    {{else if $d.Mine}}<div class="card sgturn"><h2>{{t "sign.your_turn"}}</h2>
+      <form method="post" action="/sign/{{$doc.ID}}/sign" data-native>{{template "sgpad" (list $d.MySig $d.MyName)}}
+        <label class="small"><input type="checkbox" name="keep" value="1" {{if $d.MySig}}checked{{end}}> {{t "sign.pad.keep"}}</label>
+        <label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
         <p><button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></p></form>
+      {{if $d.MySig}}<form method="post" action="/sign/my-signature/forget" data-confirm="{{t "sign.pad.forget_confirm"}}"><input type="hidden" name="back" value="/sign/{{$doc.ID}}">
+        <button class="ghost small">{{t "sign.pad.forget"}}</button></form>{{end}}
       <details><summary class="small">{{t "sign.refuse"}}</summary><form method="post" action="/sign/{{$doc.ID}}/sign" data-native>
         <input type="hidden" name="refuse" value="1"><textarea name="reason" rows="2" maxlength="1000" placeholder="{{t "sign.reason"}}" required></textarea>
         <p><button class="danger">{{t "sign.refuse"}}</button></p></form></details></div>{{end}}
     <div class="card"><h2>{{t "sign.parties"}}</h2>
-      {{range $doc.Parties}}<div class="sgparty sgp-{{.Status}}"><div class="row"><b style="flex:1">{{.Ord}}. {{.Name}}</b><span class="pill sg-p{{.Status}}">{{t (print "sign.pst." .Status)}}</span></div>
-        <div class="small muted">{{if eq .Side "employee"}}{{t "sign.side.employee"}}{{else if .Employee}}{{t "sign.side.company"}}{{else}}{{t "sign.side.client"}} · {{.Email}}{{end}}</div>
+      {{range $doc.Parties}}<div class="sgparty sgp-{{.Status}}"><div class="row"><b style="flex:1">{{.Ord}}. {{.Name}}</b><span class="pill sg-p{{.Status}}">{{if .Reviewer}}{{t (print "sign.rpst." .Status)}}{{else}}{{t (print "sign.pst." .Status)}}{{end}}</span></div>
+        <div class="small muted">{{if eq .Side "employee"}}{{t "sign.side.employee"}}{{else if .Reviewer}}{{t "sign.side.company"}} · {{t "sign.role.reviewer"}}{{else if .Employee}}{{t "sign.side.company"}}{{else}}{{t "sign.side.client"}} · {{.Email}}{{end}}</div>
         {{with .SignedAt}}<div class="small muted">{{.Format "02.01.2006 15:04"}}</div>{{else}}{{if $d.Viewed}}{{with index $d.Viewed .ID}}<div class="small muted">{{icon "eye"}} {{t "sign.viewed_at"}} {{.Format "02.01.2006 15:04"}}</div>{{end}}{{end}}{{end}}
+        {{if .HasSignature}}<img class="sgsig" src="/sign/{{$doc.ID}}/signature/{{.ID}}" alt="{{t "sign.sheet.signature"}}: {{.Name}}">{{end}}
         {{with .Reason}}<div class="small">{{t "sign.reason"}}: {{.}}</div>{{end}}
         {{if eq .Status "ready"}}{{with .RemindedAt}}<div class="small muted">{{icon "bell"}} {{t "sign.reminded_at"}} {{.Format "02.01.2006 15:04"}}</div>{{end}}{{end}}
         {{if and $d.Author (not .Employee) (eq .Status "ready") (eq $doc.Status "signing")}}<div class="row"><input type="text" readonly value="{{$d.Link}}{{.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}{{.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
           <form method="post" action="/sign/{{$doc.ID}}/resend"><button class="ghost small">{{icon "send"}} {{t "sign.resend"}}</button></form>{{end}}
       </div>{{end}}</div>
+    {{with $doc.Observers}}<div class="card small"><h2>{{icon "eye"}} {{t "sign.observers"}}</h2>
+      {{range .}}<div><a href="/u/{{.UserID}}" data-user="{{.UserID}}">{{.Name}}</a></div>{{end}}</div>{{end}}
     <div class="card small"><div>{{t "sign.sender"}}: <b>{{$doc.Author}}</b>, {{$doc.CreatedAt.Format "02.01.2006 15:04"}}</div>
       {{with $d.Card}}<div><a href="{{.}}">{{icon "link"}} {{t "sign.card"}}</a></div>{{end}}
       {{with $d.Collab}}<div><a href="/p/{{.}}">{{icon "users-group"}} {{t "sign.collab.link"}}</a></div>{{end}}
@@ -38,4 +51,5 @@
           {{with .Note}}<div>{{t "sign.reason"}}: {{.}}</div>{{end}}{{if and $d.Author .IP}}<div class="muted">IP {{.IP}}</div>{{end}}</div></div>{{end}}</div>{{end}}
   </div>
 </div>
+<script src="{{asset "js/signpad.js"}}"></script>
 {{end}}

@@ -236,3 +236,51 @@ func SortTasks(list []Task, by string) {
 		return c
 	})
 }
+
+// PageSizes are the choices of «На странице» under a task list grids; DefaultPageSize is the first
+// choice of a user.
+var PageSizes = []int{10, 20, 50, 100, 200, 500}
+
+const DefaultPageSize = 50
+
+const prefPageSize = "list.page_size"
+
+// PageSize returns the user's number of tasks on a page of a list.
+func (s *Store) PageSize(ctx context.Context, userID string) (int, error) {
+	var raw []byte
+	err := s.db.QueryRow(ctx, `SELECT value FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefPageSize).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultPageSize, nil
+	}
+	if err != nil {
+		return DefaultPageSize, err
+	}
+	var n int
+	if json.Unmarshal(raw, &n) != nil || !slices.Contains(PageSizes, n) {
+		return DefaultPageSize, nil
+	}
+	return n, nil
+}
+
+// SetPageSize keeps the user's «На странице» (one of PageSizes).
+func (s *Store) SetPageSize(ctx context.Context, userID string, n int) error {
+	if !slices.Contains(PageSizes, n) {
+		return invalid("err.bad_form")
+	}
+	raw, _ := json.Marshal(n)
+	_, err := s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefPageSize, raw)
+	return err
+}
+
+// Paginate returns the tasks of page n (from 1) of size each, the page actually shown (a page past the end shows
+// the last one) and the number of pages.
+func Paginate(list []Task, n, size int) ([]Task, int, int) {
+	if size <= 0 {
+		size = DefaultPageSize
+	}
+	pages := max(1, (len(list)+size-1)/size)
+	n = min(max(n, 1), pages)
+	from := (n - 1) * size
+	return list[from:min(from+size, len(list))], n, pages
+}

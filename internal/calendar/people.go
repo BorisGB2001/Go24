@@ -19,9 +19,11 @@ import (
 var Shares = []string{"busy", "full"}
 
 // shared: a meeting (not private) of someone (its organizer or one who has not declined it) who shows their meetings
-// in full to colleagues; $1 — the viewer, an employee.
+// in full to colleagues or has given the viewer access to their calendar; $1 — the viewer, an employee.
 const shared = `(NOT e.private AND NOT EXISTS (SELECT 1 FROM users g WHERE g.id = $1 AND g.guest)
-	AND EXISTS (SELECT 1 FROM users o WHERE o.calendar_share = 'full' AND o.active AND NOT o.guest AND (o.id = e.owner_id
+	AND EXISTS (SELECT 1 FROM users o WHERE o.active AND NOT o.guest
+		AND (o.calendar_share = 'full' OR EXISTS (SELECT 1 FROM calendar_access ca WHERE ca.owner_id = o.id AND ca.user_id = $1))
+		AND (o.id = e.owner_id
 		OR EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id = e.id AND a.user_id = o.id AND a.status <> 'declined'))))`
 
 // Colleague is a colleague whose calendar is in the viewer's panel.
@@ -121,6 +123,13 @@ func (s *Store) PersonRange(ctx context.Context, viewer, person string, from, to
 	if err != nil {
 		return nil, err
 	}
+	level, err := s.Level(ctx, viewer, person) // access given to the viewer by name: the meetings in full
+	if err != nil {
+		return nil, err
+	}
+	if level != "" {
+		share = "full"
+	}
 	rows, err := s.db.Query(ctx, selectSQL+` WHERE e.starts_at < $2
 		AND ((e.repeat = '' AND e.ends_at >= $1) OR (e.repeat <> '' AND (e.repeat_until IS NULL OR e.repeat_until >= $1::date)))
 		AND (e.owner_id::text = $3 OR EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id = e.id AND a.user_id::text = $3 AND a.status <> 'declined'))
@@ -156,6 +165,9 @@ func (s *Store) PersonRange(ctx context.Context, viewer, person string, from, to
 			e.Hidden, e.Title, e.Description, e.Where, e.Attendees, e.RoomID, e.RoomName, e.Video = true, "", "", "", nil, "", "", false
 		}
 		e.Of = person
+		if level == "edit" && !e.Hidden && !e.ReadOnly && (e.OwnerID == person || e.attends(person)) {
+			e.As = person
+		}
 		list = append(list, e.expand(from, to)...)
 	}
 	sortEvents(list)

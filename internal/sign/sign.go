@@ -58,16 +58,22 @@ type Doc struct {
 	CreatedAt                             time.Time
 	DoneAt                                *time.Time
 	Parties                               []Party
+	Observers                             []Observer // see the document and are told how it ended
 }
+
+// Observer is an employee who sees the document without signing it.
+type Observer struct{ UserID, Name string }
 
 // Party is a signer: an employee (UserID) or the client (Email, Token).
 type Party struct {
 	ID, UserID, Name, Email, Token string
 	Side                           string // "" | employee (the employee an HR document is for)
+	Role                           string // "" — signs | reviewer — approves in turn, with no signature (an employee)
 	Ord                            int
 	Status                         string // wait | ready | signed | refused
 	CodeSent                       bool
-	Reminders                      int // the reminders sent by themselves
+	HasSignature                   bool // signed with a handwritten signature (PartySignature)
+	Reminders                      int  // the reminders sent by themselves
 	SignedAt, RemindedAt           *time.Time
 	IP, UserAgent, Reason          string
 }
@@ -77,6 +83,9 @@ const SideMax = 10
 
 // Employee: the signer signs in go24, not by a link.
 func (p Party) Employee() bool { return p.UserID != "" }
+
+// Reviewer: the employee approves the document in their turn instead of signing it.
+func (p Party) Reviewer() bool { return p.Role == "reviewer" }
 
 // Current is the signer whose turn it is (nil — none).
 func (d Doc) Current() *Party {
@@ -108,6 +117,11 @@ func (d Doc) Sees(userID string) bool {
 			return true
 		}
 	}
+	for _, o := range d.Observers {
+		if o.UserID == userID {
+			return true
+		}
+	}
 	return false
 }
 
@@ -133,7 +147,7 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 		return "", ErrParties
 	}
 	for _, p := range parties {
-		if strings.TrimSpace(p.Name) == "" || (p.UserID == "" && !strings.Contains(p.Email, "@")) {
+		if strings.TrimSpace(p.Name) == "" || (p.UserID == "" && !strings.Contains(p.Email, "@")) || (p.Reviewer() && p.UserID == "") {
 			return "", ErrParties
 		}
 	}
@@ -156,9 +170,15 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 		if p.UserID == "" {
 			tok = token()
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status, side, ready_at)
-			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7, $8, CASE WHEN $7 = 'ready' THEN now() END)`,
-			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status, p.Side); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status, side, role, ready_at)
+			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7, $8, $9, CASE WHEN $7 = 'ready' THEN now() END)`,
+			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status, p.Side, p.Role); err != nil {
+			return "", err
+		}
+	}
+	for _, o := range d.Observers {
+		if _, err := tx.Exec(ctx, `INSERT INTO sign_observers (doc_id, user_id) VALUES ($1, $2::uuid) ON CONFLICT DO NOTHING`,
+			id, o.UserID); err != nil {
 			return "", err
 		}
 	}
@@ -179,7 +199,7 @@ func scanDoc(r pgx.CollectableRow) (Doc, error) {
 		&d.Status, &d.AuthorID, &d.Author, &d.CreatedAt, &d.DoneAt, &d.BatchID, &d.RemindDays, &d.ProjectID)
 }
 
-// parties puts the signers into the documents.
+// parties puts the signers and the observers into the documents.
 func (s *Store) parties(ctx context.Context, docs []Doc) error {
 	if len(docs) == 0 {
 		return nil
@@ -189,8 +209,8 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 	for i, d := range docs {
 		ids[i], at[d.ID] = d.ID, i
 	}
-	rows, err := s.db.Query(ctx, `SELECT doc_id::text, id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), side, ord,
-			status, code_until IS NOT NULL, reminders, signed_at, reminded_at, ip, user_agent, reason
+	rows, err := s.db.Query(ctx, `SELECT doc_id::text, id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), side, role, ord,
+			status, code_until IS NOT NULL, signature IS NOT NULL, reminders, signed_at, reminded_at, ip, user_agent, reason
 		FROM sign_parties WHERE doc_id::text = ANY($1) ORDER BY doc_id, ord`, ids)
 	if err != nil {
 		return err
@@ -199,11 +219,28 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 	for rows.Next() {
 		var doc string
 		var p Party
-		if err := rows.Scan(&doc, &p.ID, &p.UserID, &p.Name, &p.Email, &p.Token, &p.Side, &p.Ord, &p.Status, &p.CodeSent, &p.Reminders, &p.SignedAt,
+		if err := rows.Scan(&doc, &p.ID, &p.UserID, &p.Name, &p.Email, &p.Token, &p.Side, &p.Role, &p.Ord, &p.Status, &p.CodeSent, &p.HasSignature, &p.Reminders, &p.SignedAt,
 			&p.RemindedAt, &p.IP, &p.UserAgent, &p.Reason); err != nil {
 			return err
 		}
 		docs[at[doc]].Parties = append(docs[at[doc]].Parties, p)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows, err = s.db.Query(ctx, `SELECT o.doc_id::text, o.user_id::text, u.name FROM sign_observers o JOIN users u ON u.id = o.user_id
+		WHERE o.doc_id::text = ANY($1) ORDER BY o.doc_id, lower(u.name)`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var doc string
+		var o Observer
+		if err := rows.Scan(&doc, &o.UserID, &o.Name); err != nil {
+			return err
+		}
+		docs[at[doc]].Observers = append(docs[at[doc]].Observers, o)
 	}
 	return rows.Err()
 }
@@ -247,9 +284,10 @@ func (s *Store) ByToken(ctx context.Context, tok string) (Doc, *Party, error) {
 	return Doc{}, nil, ErrNotFound
 }
 
-// List is the user's documents (sent or to sign) by the filter, the newest first; admin — everyone's.
+// List is the user's documents (sent, to sign or observed) by the filter, the newest first; admin — everyone's.
 func (s *Store) List(ctx context.Context, userID, filter string, admin bool) ([]Doc, error) {
-	where := `(d.created_by = $1 OR EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1) OR $2)`
+	where := `(d.created_by = $1 OR EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1)
+		OR EXISTS (SELECT 1 FROM sign_observers o WHERE o.doc_id = d.id AND o.user_id = $1) OR $2)`
 	switch filter {
 	case "me":
 		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1 AND p.status = 'ready') AND d.status = 'signing' AND $2::bool IS NOT NULL`
@@ -330,11 +368,11 @@ func (s *Store) Sign(ctx context.Context, docID, partyID, code, ip, ua string) (
 	defer tx.Rollback(ctx)
 	var ord, tries int
 	var employee, live bool
-	var hash string
-	err = tx.QueryRow(ctx, `SELECT p.ord, p.user_id IS NOT NULL, p.code_hash, coalesce(p.code_until > now(), false), p.code_tries
+	var hash, role string
+	err = tx.QueryRow(ctx, `SELECT p.ord, p.user_id IS NOT NULL, p.code_hash, coalesce(p.code_until > now(), false), p.code_tries, p.role
 		FROM sign_parties p JOIN sign_docs d ON d.id = p.doc_id
 		WHERE p.id::text = $1 AND d.id::text = $2 AND p.status = 'ready' AND d.status = 'signing' FOR UPDATE OF p, d`,
-		partyID, docID).Scan(&ord, &employee, &hash, &live, &tries)
+		partyID, docID).Scan(&ord, &employee, &hash, &live, &tries, &role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrTurn
 	}
@@ -364,7 +402,11 @@ func (s *Store) Sign(ctx context.Context, docID, partyID, code, ip, ua string) (
 			code_hash = '', code_until = NULL WHERE id::text = $1`, partyID, ip, truncate(ua, 300)); err != nil {
 		return nil, false, err
 	}
-	if err := logTx(ctx, tx, docID, partyID, "", EvSigned, ip, ""); err != nil {
+	kind := EvSigned
+	if role == "reviewer" {
+		kind = EvApproved
+	}
+	if err := logTx(ctx, tx, docID, partyID, "", kind, ip, ""); err != nil {
 		return nil, false, err
 	}
 	var n Party
@@ -393,19 +435,24 @@ func (s *Store) Refuse(ctx context.Context, docID, partyID, reason, ip, ua strin
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE sign_parties p SET status = 'refused', signed_at = now(), reason = $3, ip = $4, user_agent = $5
-		FROM sign_docs d WHERE d.id = p.doc_id AND p.id::text = $1 AND d.id::text = $2 AND p.status = 'ready' AND d.status = 'signing'`,
-		partyID, docID, truncate(strings.TrimSpace(reason), 1000), ip, truncate(ua, 300))
+	var role string
+	err = tx.QueryRow(ctx, `UPDATE sign_parties p SET status = 'refused', signed_at = now(), reason = $3, ip = $4, user_agent = $5
+		FROM sign_docs d WHERE d.id = p.doc_id AND p.id::text = $1 AND d.id::text = $2 AND p.status = 'ready' AND d.status = 'signing'
+		RETURNING p.role`, partyID, docID, truncate(strings.TrimSpace(reason), 1000), ip, truncate(ua, 300)).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTurn
+	}
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrTurn
+	kind := EvRefused
+	if role == "reviewer" {
+		kind = EvRejected
 	}
 	if _, err := tx.Exec(ctx, `UPDATE sign_docs SET status = 'refused', done_at = now() WHERE id::text = $1`, docID); err != nil {
 		return err
 	}
-	if err := logTx(ctx, tx, docID, partyID, "", EvRefused, ip, strings.TrimSpace(reason)); err != nil {
+	if err := logTx(ctx, tx, docID, partyID, "", kind, ip, strings.TrimSpace(reason)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

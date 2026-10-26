@@ -13,7 +13,7 @@
 <main class="cf-card">
 {{if $d.Sent}}
   <div class="cf-done" role="status"><div class="cf-ok">✓</div><p>{{or $f.Success (t "crm.form_thanks")}}</p></div>
-  {{if and $d.Embed $f.Redirect}}<script>try { top.location.href = {{$f.Redirect}}; } catch (e) { location.href = {{$f.Redirect}}; }</script>{{end}}
+  {{if and $d.Embed $f.Redirect (not $d.OL)}}<script>try { top.location.href = {{$f.Redirect}}; } catch (e) { location.href = {{$f.Redirect}}; }</script>{{end}}
 {{else}}
   {{with $f.Title}}<h1>{{.}}</h1>{{end}}
   {{with $f.Text}}<p class="cf-text">{{nl2br .}}</p>{{end}}
@@ -22,6 +22,7 @@
     <input type="hidden" name="t" value="{{$d.Stamp}}">
     {{if $d.Embed}}<input type="hidden" name="embed" value="1">{{end}}
     {{with $d.Page}}<input type="hidden" name="page" value="{{.}}">{{end}}
+    {{with $d.OL}}<input type="hidden" name="ol" value="{{.}}">{{end}}
     {{range $f.Fields}}{{$v := index $d.Values .Key}}
     <div class="cf-field">
       {{if eq .Kind "bool"}}<label class="cf-check"><input type="checkbox" name="{{.Key}}" value="1" {{if $v}}checked{{end}}{{if .Required}} required{{end}}> {{.Label}}{{if .Required}} <span class="cf-req">*</span>{{end}}</label>

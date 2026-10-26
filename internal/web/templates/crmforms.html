@@ -77,7 +77,8 @@
     <td class="small">{{if .LeadID}}<div>{{t "crm.lead"}}: {{if .LeadTitle}}<a href="/crm/leads/{{.LeadID}}">{{.LeadTitle}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
       {{if .ContactID}}<div>{{t "crm.contact"}}: {{if .ContactName}}<a href="/crm/contacts/{{.ContactID}}">{{.ContactName}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
       {{if .DealID}}<div>{{t "crm.deal"}}: {{if .DealTitle}}<a href="/crm/deals/{{.DealID}}">{{.DealTitle}}</a>{{else}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</div>{{end}}
-      {{if not (or .LeadID .ContactID .DealID)}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}</td>
+      {{if not (or .LeadID .ContactID .DealID)}}<span class="muted">{{t "crm.form_card_gone"}}</span>{{end}}
+      {{with .Session}}<div>{{icon "message-circle"}} <a href="/openlines?s={{.}}">{{t "crm.form_result_dialog"}}</a></div>{{end}}</td>
   </tr>{{end}}</tbody></table></div>
 {{else}}<div class="card empty muted">{{t "crm.form_results_none"}}</div>{{end}}
 {{end}}

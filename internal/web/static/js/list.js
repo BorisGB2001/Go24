@@ -47,6 +47,11 @@
     } catch { /* the page already shows the choice; it is saved next time */ }
   });
 
+  // «На странице» under a task list: the choice reloads the list
+  document.querySelectorAll('form.pagesize select').forEach(sel => {
+    sel.addEventListener('change', () => sel.form.submit());
+  });
+
   // group actions: «all» ticks every task of its list; the panel shows when something is ticked, with the field
   // its action needs
   const bulk = document.querySelector('form[data-bulk]');
@@ -57,6 +62,7 @@
       const n = boxes().filter(b => b.checked).length;
       bulk.hidden = n === 0;
       bulk.querySelector('[data-bulk-count]').textContent = n;
+      document.querySelectorAll('[data-bulk-picked]').forEach(c => { c.textContent = n; });
       bulk.querySelectorAll('[data-bulk-for]').forEach(f => {
         const on = f.dataset.bulkFor.split(' ').includes(op.value);
         f.hidden = !on; f.disabled = !on;

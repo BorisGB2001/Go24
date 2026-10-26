@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"slices"
 	"strconv"
@@ -489,6 +491,20 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", "userinfo:"+user)
 		return next, false, nil
+	case "pick": // «Выбор сотрудника»: one of Users into the user field
+		user, err := s.pick(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
+		if x.Values == nil {
+			x.Values = map[string]string{}
+		}
+		x.Values[st.Field] = user
+		if err := s.saveValues(ctx, x); err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, user, "picked", "")
+		return next, false, nil
 	case "log": // «Запись в отчёт»: the text into the process's history
 		s.log(ctx, x.ID, x.Step, "", "report", text)
 		return next, false, nil
@@ -610,6 +626,63 @@ func (s *Store) userInfo(ctx context.Context, x Instance, user string) error {
 		x.Values[UserInfoPrefix+k] = v
 	}
 	return s.saveValues(ctx, x)
+}
+
+// pick is whom «Выбор сотрудника» chooses of the step's people (those it cannot name — an empty field, no manager —
+// are left out): at random or the one after the last picked, of those at work today when the step skips the absent.
+// When all are absent, the reserve (To) or, without one, anyone of them.
+func (s *Store) pick(ctx context.Context, x Instance, st Step) (string, error) {
+	var all []string
+	for _, to := range st.Users {
+		if user, err := s.who(ctx, x, to); err == nil && user != "" && !slices.Contains(all, user) {
+			all = append(all, user)
+		}
+	}
+	free := all
+	if st.Skip {
+		free = nil
+		for _, user := range all {
+			if a, err := s.Company.AbsentNow(ctx, user); err != nil {
+				return "", err
+			} else if a == nil {
+				free = append(free, user)
+			}
+		}
+		if len(free) == 0 && st.To != "" {
+			return s.who(ctx, x, st.To)
+		}
+		if len(free) == 0 {
+			free = all
+		}
+	}
+	if len(free) == 0 {
+		return "", fmt.Errorf("nobody to pick at step %d", x.Step+1)
+	}
+	if st.Mode != "queue" || x.TemplateID == "" {
+		return free[rand.IntN(len(free))], nil
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var last string
+	err = tx.QueryRow(ctx, `SELECT user_id::text FROM bp_picks WHERE template_id = $1 AND step = $2 FOR UPDATE`, x.TemplateID, x.Step).Scan(&last)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	user, after := free[0], slices.Index(all, last)
+	for _, u := range free {
+		if slices.Index(all, u) > after {
+			user = u
+			break
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO bp_picks (template_id, step, user_id) VALUES ($1, $2, $3)
+		ON CONFLICT (template_id, step) DO UPDATE SET user_id = excluded.user_id`, x.TemplateID, x.Step, user); err != nil {
+		return "", err
+	}
+	return user, tx.Commit(ctx)
 }
 
 // jump is the index of the step numbered n from 1; 0 — past the last one, the end of the process (in a parallel

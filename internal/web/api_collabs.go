@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go24/internal/apikeys"
@@ -31,6 +32,10 @@ func (s *Server) apiCollabRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/collabs/{key}/owner", s.api("collabs:write", s.apiCollabOwner))
 	mux.HandleFunc("DELETE /api/v1/collabs/{key}", s.api("collabs:write", s.apiCollabDelete))
 	mux.HandleFunc("GET /api/v1/collabs/{key}/log", s.api("collabs:read", s.apiCollabLog))
+	mux.HandleFunc("GET /api/v1/collabs/{key}/chats", s.api("collabs:read", s.apiCollabChats))
+	mux.HandleFunc("POST /api/v1/collabs/{key}/chats", s.api("collabs:write", s.apiCollabChatCreate))
+	mux.HandleFunc("PUT /api/v1/collabs/{key}/chats/{room}", s.api("collabs:write", s.apiCollabChatAdd))
+	mux.HandleFunc("DELETE /api/v1/collabs/{key}/chats/{room}", s.api("collabs:write", s.apiCollabChatRemove))
 	mux.HandleFunc("POST /api/v1/users/{id}/employee", s.api("collabs:write", s.apiMakeEmployee))
 }
 
@@ -61,6 +66,11 @@ type apiCollabSettings struct {
 	EditPerm        string `json:"edit_perm"`    // who changes the settings, the name, the avatar: owner | managers
 	ChatPerm        string `json:"chat_perm"`    // who writes in the chat: members | employees | managers
 	MsgTTL          int    `json:"msg_ttl"`      // the chat's messages go after so many seconds: 0 | 3600 | 86400 | 604800 | 2592000
+	// «Уведомления в коллабе»: what the bot tells in the chat — people, guests joining, invitations, the collab itself
+	EventsMembers bool `json:"events_members"`
+	EventsGuests  bool `json:"events_guests"`
+	EventsInvites bool `json:"events_invites"`
+	EventsCollab  bool `json:"events_collab"`
 }
 
 type apiCollabLogEntry struct {
@@ -132,8 +142,8 @@ func (s *Server) writeCollab(w http.ResponseWriter, r *http.Request, p apikeys.P
 	out := apiCollab{apiProject: toAPIProject(c), Members: len(members), Archived: c.Archived, Photo: s.collabPhotoURL(c)}
 	out.Chat, _ = s.Matrix.ProjectRoom(r.Context(), c.ID)
 	if set, err := s.Tasks.CollabSettings(r.Context(), c); err == nil {
-		out.Settings = &apiCollabSettings{set.InvitePerm, set.GuestInvitePerm, set.ChatHistory, set.GuestTasks, set.GuestFiles,
-			set.EditPerm, set.ChatPerm, set.MsgTTL}
+		a := apiCollabSettings(set)
+		out.Settings = &a
 	}
 	ms := make([]apiCollabMember, 0, len(members))
 	for _, m := range members {
@@ -482,6 +492,99 @@ func (s *Server) apiCollabLog(w http.ResponseWriter, r *http.Request, p apikeys.
 		out = append(out, apiCollabLogEntry{e.At, e.Action, e.Actor, e.Target, e.TargetGuest, e.Detail})
 	}
 	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiCollabChat is a chat of a collab: its main chat, or a group chat of it the key's owner is in.
+type apiCollabChat struct {
+	Room string `json:"room"`
+	Name string `json:"name"`
+	Main bool   `json:"main,omitempty"`
+}
+
+// apiCollabChats lists the collab's chats: the main one, then its group chats the key's owner is in.
+func (s *Server) apiCollabChats(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	out := []apiCollabChat{}
+	if main, err := s.Matrix.ProjectRoom(r.Context(), c.ID); err != nil {
+		return err
+	} else if main != "" {
+		out = append(out, apiCollabChat{Room: main, Name: c.Name, Main: true})
+	}
+	chats, err := s.Matrix.CollabChats(r.Context(), p.UserID, c.ID)
+	if err != nil {
+		return err
+	}
+	for _, ch := range chats {
+		out = append(out, apiCollabChat{Room: ch.Room, Name: ch.Name})
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiCollabChatCreate makes a group chat in the collab; the people not in it join the collab.
+func (s *Server) apiCollabChatCreate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	var in struct {
+		Name    string   `json:"name"`
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	room, err := s.Matrix.CreateCollabChat(r.Context(), p.UserID, c.ID, in.Name, in.UserIDs)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, apiCollabChat{Room: room, Name: strings.TrimSpace(in.Name)})
+	return nil
+}
+
+// apiCollabChatAdd adds a group chat the key's owner owns to the collab; its people join the collab.
+func (s *Server) apiCollabChatAdd(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if err := s.Matrix.AddChatToCollab(r.Context(), p.UserID, c.ID, r.PathValue("room")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiCollabChatRemove takes a group chat out of the collab.
+func (s *Server) apiCollabChatRemove(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	room := r.PathValue("room")
+	if s.Matrix.CollabOf(r.Context(), room) != c.ID {
+		return tasks.ErrNotFound
+	}
+	if err := s.Matrix.RemoveChatFromCollab(r.Context(), p.UserID, room); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

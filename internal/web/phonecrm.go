@@ -25,6 +25,7 @@ type phoneEvent struct {
 	Sec    int    `json:"sec,omitempty"`
 	Status string `json:"status"`
 	Rec    bool   `json:"rec,omitempty"`
+	Note   string `json:"note,omitempty"` // «Комментарий к звонку»
 }
 
 // Duration of the conversation as m:ss.
@@ -140,7 +141,7 @@ func (s *Server) phoneBind(ctx context.Context, c telephony.Call, entity, id, au
 	if dir == "in" && c.Missed() {
 		dir = "missed"
 	}
-	body, err := json.Marshal(phoneEvent{ID: c.ID, Dir: dir, Number: number, Sec: c.Seconds, Status: c.Status, Rec: c.Record != ""})
+	body, err := json.Marshal(phoneEvent{ID: c.ID, Dir: dir, Number: number, Sec: c.Seconds, Status: c.Status, Rec: c.Record != "", Note: c.Comment})
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +78,7 @@ func (s *Server) signNew(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			return
 		}
 		data["Tpl"], data["Title"], data["Signers"], data["Remind"] = t, t.Title, t.Signers, t.RemindDays
+		data["Reviewers"], data["Observers"] = t.Reviewers, t.Observers
 	}
 	if q.Get("doc") != "" {
 		kind, id := q.Get("kind"), q.Get("id")
@@ -196,7 +198,8 @@ func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Se
 			d.Title = strings.TrimSuffix(name, path.Ext(name))
 		}
 	}
-	id, err := s.signStart(r, sess, d, data, name, r.Form["signer"], signClients(r.Form["client_name"], r.Form["client_email"]))
+	id, err := s.signStart(r, sess, d, data, name, signWho{Signers: r.Form["signer"], Reviewers: r.Form["reviewer"],
+		Observers: r.Form["observer"], Clients: signClients(r.Form["client_name"], r.Form["client_email"])})
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
@@ -207,7 +210,8 @@ func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Se
 		}
 	}
 	if r.FormValue("save_template") == "1" && r.FormValue("doc") == "" && r.FormValue("tpl") == "" { // «Сохранить как шаблон»
-		t := sign.Template{Title: d.Title, Signers: r.Form["signer"], RemindDays: d.RemindDays, AuthorID: sess.UserID}
+		t := sign.Template{Title: d.Title, Signers: r.Form["signer"], Reviewers: r.Form["reviewer"], Observers: r.Form["observer"],
+			RemindDays: d.RemindDays, AuthorID: sess.UserID}
 		if t.FileID, err = s.signKeep(r, sess.UserID, data, name); err == nil {
 			_, err = s.Sign.NewTemplate(r.Context(), t)
 		}
@@ -236,29 +240,69 @@ func signClients(names, emails []string) []sign.Party {
 	return out
 }
 
-// signStart sends the Word document (data; name — its file's) for signing by the employees in turn, then by the
-// clients when given, in turn; the pages and the REST API send by it.
-func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data []byte, name string, signers []string, clients []sign.Party) (string, error) {
+// signWho are those a document is sent to: the employees approving it (Reviewers) and signing it (Signers), user
+// ids in turn, the clients signing after them, the employees observing it.
+type signWho struct {
+	Signers, Reviewers, Observers []string
+	Clients                       []sign.Party
+}
+
+// signStart sends the Word document (data; name — its file's) for approving by the reviewers and signing by the
+// employees in turn, then by the clients when given, in turn; the pages and the REST API send by it.
+func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data []byte, name string, who signWho) (string, error) {
 	if _, err := docgen.Names(data); err != nil || !strings.EqualFold(path.Ext(name), ".docx") {
 		return "", i18n.E("sign.err.file")
 	}
+	user := func(id string) (tasks.User, error) {
+		var u tasks.User
+		err := s.DB.QueryRow(r.Context(), `SELECT id::text, name, email, guest FROM users WHERE id::text = $1 AND active`,
+			id).Scan(&u.ID, &u.Name, &u.Email, &u.Guest)
+		if err != nil || u.Guest {
+			return u, sign.ErrParties
+		}
+		return u, nil
+	}
 	var parties []sign.Party
 	seen := map[string]bool{}
-	for _, id := range signers {
-		if id == "" || seen[id] {
-			continue
+	signers := 0
+	for _, role := range []string{"reviewer", ""} {
+		ids := who.Signers
+		if role == "reviewer" {
+			ids = who.Reviewers
 		}
-		seen[id] = true
-		var signer tasks.User
-		err := s.DB.QueryRow(r.Context(), `SELECT id::text, name, email, guest FROM users WHERE id::text = $1 AND active`,
-			id).Scan(&signer.ID, &signer.Name, &signer.Email, &signer.Guest)
-		if err != nil || signer.Guest {
+		n := 0
+		for _, id := range ids {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			u, err := user(id)
+			if err != nil {
+				return "", err
+			}
+			parties = append(parties, sign.Party{UserID: u.ID, Name: u.Name, Email: u.Email, Role: role})
+			n++
+		}
+		if n > sign.SideMax {
 			return "", sign.ErrParties
 		}
-		parties = append(parties, sign.Party{UserID: signer.ID, Name: signer.Name, Email: signer.Email})
+		if role == "" {
+			signers = n
+		}
 	}
-	if len(parties) == 0 || len(parties) > sign.SideMax || len(clients) > sign.SideMax {
+	clients := who.Clients
+	if signers == 0 || len(clients) > sign.SideMax {
 		return "", sign.ErrParties
+	}
+	for _, id := range who.Observers {
+		if id == "" || slices.ContainsFunc(d.Observers, func(o sign.Observer) bool { return o.UserID == id }) {
+			continue
+		}
+		u, err := user(id)
+		if err != nil {
+			return "", err
+		}
+		d.Observers = append(d.Observers, sign.Observer{UserID: u.ID, Name: u.Name})
 	}
 	if len(clients) > 0 {
 		for _, c := range clients {
@@ -312,8 +356,12 @@ func (s *Server) signTell(ctx context.Context, lang string, d sign.Doc, p *sign.
 		return true
 	case p.Employee():
 		if p.UserID != actor {
+			kind := "sign_request"
+			if p.Reviewer() {
+				kind = "sign_review"
+			}
 			if _, err := s.DB.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, body, url)
-				VALUES ($1, $2, 'sign_request', $3, $4)`, p.UserID, d.AuthorID, d.Title, "/sign/"+d.ID); err != nil {
+				VALUES ($1, $2, $3, $4, $5)`, p.UserID, d.AuthorID, kind, d.Title, "/sign/"+d.ID); err != nil {
 				s.Log.Warn("sign notify", "err", err)
 			}
 			s.signLog(ctx, d, p, again, true)
@@ -399,8 +447,15 @@ func (s *Server) signDoc(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			viewed[e.PartyID] = &e.At
 		}
 	}
+	mySig, myName := "", "" // the signature the employee keeps, to sign with
+	if mine && !cur.Reviewer() {
+		myName = cur.Name
+		if img, err := s.Sign.MySignature(r.Context(), sess.UserID); err == nil && img != nil {
+			mySig = "data:image/png;base64," + base64.StdEncoding.EncodeToString(img)
+		}
+	}
 	s.render(w, r, "signdoc", page{Title: d.Title, Nav: "sign", Data: map[string]any{"Doc": d, "Me": sess.UserID,
-		"Mine": mine, "Author": d.AuthorID == sess.UserID, "PDF": s.Office != nil, "Link": s.BaseURL + "/sg/", "Card": card,
+		"MySig": mySig, "MyName": myName, "Mine": mine, "Review": mine && cur.Reviewer(), "Author": d.AuthorID == sess.UserID, "PDF": s.Office != nil, "Link": s.BaseURL + "/sg/", "Card": card,
 		"Collab": collab, "Events": events, "Viewed": viewed}})
 }
 
@@ -465,26 +520,35 @@ func (s *Server) signSign(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	if err == nil && r.FormValue("refuse") != "1" && r.FormValue("agree") != "1" {
 		err = i18n.E("sign.err.agree")
 	}
+	refuse := r.FormValue("refuse") == "1"
+	var sig []byte
+	if err == nil && !refuse && !cur.Reviewer() {
+		sig, err = sign.Signature(r.FormValue("signature"))
+	}
+	if err == nil && !refuse && r.FormValue("keep") == "1" && sig != nil {
+		err = s.Sign.KeepMySignature(r.Context(), sess.UserID, sig)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	msg := s.signAct(r, d, cur, "", sess.UserID, r.FormValue("refuse") == "1", r.FormValue("reason"))
+	msg := s.signAct(r, d, cur, "", sess.UserID, refuse, r.FormValue("reason"), sig)
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // signAct signs (or refuses) for the signer, then the next one's turn comes or the document is finished; the message
 // to show (an error too).
-func (s *Server) signAct(r *http.Request, d sign.Doc, p *sign.Party, code, actor string, refuse bool, reason string) string {
-	msg, err := s.signDo(r, d, p, code, actor, refuse, reason)
+func (s *Server) signAct(r *http.Request, d sign.Doc, p *sign.Party, code, actor string, refuse bool, reason string, sig []byte) string {
+	msg, err := s.signDo(r, d, p, code, actor, refuse, reason, sig)
 	if err != nil {
 		return s.signErr(r, err)
 	}
 	return msg
 }
 
-// signDo is signAct giving the error apart (the REST API).
-func (s *Server) signDo(r *http.Request, d sign.Doc, p *sign.Party, code, actor string, refuse bool, reason string) (string, error) {
+// signDo is signAct giving the error apart (the REST API). sig is the handwritten signature (nil — none: an employee
+// signs with the one they keep, if any).
+func (s *Server) signDo(r *http.Request, d sign.Doc, p *sign.Party, code, actor string, refuse bool, reason string, sig []byte) (string, error) {
 	ip, ua := clientIP(r), r.UserAgent()
 	if refuse {
 		if err := s.Sign.Refuse(r.Context(), d.ID, p.ID, reason, ip, ua); err != nil {
@@ -496,21 +560,56 @@ func (s *Server) signDo(r *http.Request, d sign.Doc, p *sign.Party, code, actor 
 			s.Log.Warn("sign notify", "err", err)
 		}
 		s.signCollabSay(r.Context(), d, s.tr(r, "sign.collab.refused", d.Title, p.Name, reason))
+		s.signTellObservers(r.Context(), d, "sign_refused", d.Title+" — "+p.Name, p.UserID)
+		if p.Reviewer() {
+			return s.tr(r, "sign.rejected_msg"), nil
+		}
 		return s.tr(r, "sign.refused_msg"), nil
+	}
+	if p.Reviewer() { // approves with no signature
+		sig = nil
 	}
 	next, done, err := s.Sign.Sign(r.Context(), d.ID, p.ID, code, ip, ua)
 	if err != nil {
 		return "", err
 	}
 	s.Log.Info("sign", "doc", d.ID, "party", p.ID, "done", done)
+	if sig == nil && p.Employee() && !p.Reviewer() {
+		if sig, err = s.Sign.MySignature(r.Context(), p.UserID); err != nil {
+			s.Log.Warn("sign my signature", "user_id", p.UserID, "err", err)
+		}
+	}
+	if sig != nil {
+		if err := s.Sign.SetSignature(r.Context(), p.ID, sig); err != nil {
+			s.Log.Warn("sign signature", "doc", d.ID, "party", p.ID, "err", err)
+		}
+	}
 	if done {
 		s.signFinish(r, d.ID)
 		return s.tr(r, "sign.done_msg"), nil
 	}
-	if !s.signTurn(r, d, next, actor) {
-		return s.tr(r, "sign.signed_msg") + " " + s.tr(r, "sign.not_mailed"), nil
+	msg := s.tr(r, "sign.signed_msg")
+	if p.Reviewer() {
+		msg = s.tr(r, "sign.approved_msg")
 	}
-	return s.tr(r, "sign.signed_msg"), nil
+	if !s.signTurn(r, d, next, actor) {
+		return msg + " " + s.tr(r, "sign.not_mailed"), nil
+	}
+	return msg, nil
+}
+
+// signTellObservers tells the document's observers how it ended (kind: sign_done, sign_refused, sign_cancelled), not
+// the one who did it (actor).
+func (s *Server) signTellObservers(ctx context.Context, d sign.Doc, kind, body, actor string) {
+	for _, o := range d.Observers {
+		if o.UserID == actor || o.UserID == d.AuthorID {
+			continue
+		}
+		if _, err := s.DB.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, body, url)
+			VALUES ($1, nullif($2, '')::uuid, $3, $4, $5)`, o.UserID, actor, kind, body, "/sign/"+d.ID); err != nil {
+			s.Log.Warn("sign notify", "err", err)
+		}
+	}
 }
 
 // signErr is the error as a message to show.
@@ -539,6 +638,7 @@ func (s *Server) signFinish(r *http.Request, id string) {
 		d.AuthorID, d.Title, "/sign/"+d.ID); err != nil {
 		s.Log.Warn("sign notify", "err", err)
 	}
+	s.signTellObservers(r.Context(), d, "sign_done", d.Title, "")
 	if result == "" {
 		return
 	}
@@ -608,10 +708,16 @@ func (s *Server) signSheet(r *http.Request, d sign.Doc) docgen.Sheet {
 		s.tr(r, "sign.sheet.about"),
 	}, Header: []string{"№", s.tr(r, "sign.sheet.signer"), s.tr(r, "sign.sheet.side"), s.tr(r, "sign.sheet.how"),
 		s.tr(r, "sign.sheet.when"), s.tr(r, "sign.sheet.ip")}}
-	for _, p := range d.Parties {
+	pics := slices.ContainsFunc(d.Parties, func(p sign.Party) bool { return p.HasSignature })
+	if pics {
+		sh.Header, sh.Images = append(sh.Header, s.tr(r, "sign.sheet.signature")), map[int]docgen.Image{}
+	}
+	for i, p := range d.Parties {
 		side, how := s.tr(r, "sign.side.company"), s.tr(r, "sign.how.employee")
 		if p.Side == "employee" {
 			side = s.tr(r, "sign.side.employee")
+		} else if p.Reviewer() {
+			how = s.tr(r, "sign.how.reviewer")
 		} else if !p.Employee() {
 			side, how = s.tr(r, "sign.side.client"), s.tr(r, "sign.how.code", p.Email)
 		}
@@ -619,9 +725,51 @@ func (s *Server) signSheet(r *http.Request, d sign.Doc) docgen.Sheet {
 		if p.Email != "" {
 			who += "\n" + p.Email
 		}
-		sh.Rows = append(sh.Rows, []string{fmt.Sprint(p.Ord), who, side, how, when(p.SignedAt), p.IP})
+		row := []string{fmt.Sprint(p.Ord), who, side, how, when(p.SignedAt), p.IP}
+		if pics {
+			row = append(row, "")
+			if img, err := s.Sign.PartySignature(r.Context(), p.ID); err == nil && img != nil {
+				sh.Images[i] = docgen.Image{Data: img, Width: docgen.Cm(3)}
+			}
+		}
+		sh.Rows = append(sh.Rows, row)
 	}
 	return sh
+}
+
+// signSignature gives a signer's handwritten signature (PNG) to those who see the document.
+func (s *Server) signSignature(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	d, err := s.signOf(r, sess)
+	s.signSignatureSend(w, r, d, err)
+}
+
+// signSignatureSend gives the signature of the path's signer of the document (err — the document is not seen).
+func (s *Server) signSignatureSend(w http.ResponseWriter, r *http.Request, d sign.Doc, err error) {
+	p := d.Party(r.PathValue("party"))
+	var img []byte
+	if err == nil && p != nil {
+		img, err = s.Sign.PartySignature(r.Context(), p.ID)
+	}
+	if err != nil || p == nil || img == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = w.Write(img)
+}
+
+// signForget: the employee forgets the signature they keep to sign with.
+func (s *Server) signForget(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := r.FormValue("back")
+	if !strings.HasPrefix(back, "/sign/") || strings.HasPrefix(back, "//") {
+		back = "/sign"
+	}
+	if err := s.Sign.KeepMySignature(r.Context(), sess.UserID, nil); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // signCancel: the sender recalls the document while it is being signed.
@@ -639,6 +787,7 @@ func (s *Server) signCancel(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	s.Log.Info("sign cancel", "user_id", sess.UserID, "doc", d.ID)
+	s.signTellObservers(r.Context(), d, "sign_cancelled", d.Title, sess.UserID)
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "sign.cancelled_msg")), http.StatusSeeOther)
 }
 
@@ -754,9 +903,17 @@ func (s *Server) signPublicSign(w http.ResponseWriter, r *http.Request) {
 	}
 	more := ""
 	var msg string
-	if r.FormValue("refuse") != "1" && r.FormValue("agree") != "1" {
+	refuse := r.FormValue("refuse") == "1"
+	var sig []byte
+	var err2 error
+	if !refuse {
+		sig, err2 = sign.Signature(r.FormValue("signature"))
+	}
+	if !refuse && r.FormValue("agree") != "1" {
 		msg, more = s.tr(r, "sign.err.agree"), "&code=1"
-	} else if msg = s.signAct(r, d, p, r.FormValue("code"), "", r.FormValue("refuse") == "1", r.FormValue("reason")); r.FormValue("refuse") != "1" {
+	} else if err2 != nil {
+		msg, more = s.signErr(r, err2), "&code=1"
+	} else if msg = s.signAct(r, d, p, r.FormValue("code"), "", refuse, r.FormValue("reason"), sig); !refuse {
 		if after, _, _ := s.Sign.ByToken(r.Context(), tok); after.Party(p.ID) != nil && after.Party(p.ID).Status == "ready" {
 			more = "&code=1" // a wrong code: the field stays
 			time.Sleep(time.Second)

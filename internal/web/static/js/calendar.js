@@ -120,9 +120,11 @@
   const local = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const parse = s => new Date(s.length === 10 ? s + 'T00:00' : s);
   const at = (date, minutes) => { const d = parse(date); d.setMinutes(minutes); return d; };
+  const mine = (el, box) => el.dataset.owner === box.dataset.me || !!el.dataset.as; // one's own, or kept for a colleague
   const move = async (el, start, end) => {
     const body = new URLSearchParams({ start: local(start), end: local(end) });
     if (el.dataset.at) body.set('at', el.dataset.at);
+    if (el.dataset.as) body.set('as', el.dataset.as); // a meeting of a colleague whose calendar one keeps
     try {
       const r = await fetch(`/calendar/${el.dataset.id}/move`, { method: 'POST', headers: { Accept: 'application/json' }, body });
       const j = await r.json().catch(() => ({}));
@@ -137,14 +139,14 @@
     const snap = y => Math.round(y / (px * step / 60)) * (px * step / 60); // pixels on the quarter-hour grid
     const minutes = y => h0 * 60 + Math.round(y / px * 60 / step) * step;
     let drag = null, suppress = false;
-    grid.querySelectorAll('.cg-ev[data-owner]').forEach(el => el.classList.toggle('movable', el.dataset.owner === grid.dataset.me));
+    grid.querySelectorAll('.cg-ev[data-owner]').forEach(el => el.classList.toggle('movable', mine(el, grid)));
     grid.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
       const col = e.target.closest('.cg-col');
       if (!col) return;
       const ev = e.target.closest('.cg-ev');
       if (ev) {
-        if (ev.dataset.owner !== grid.dataset.me) return;
+        if (!mine(ev, grid)) return;
         const r = ev.getBoundingClientRect();
         drag = { kind: e.clientY > r.bottom - 6 ? 'resize' : 'move', el: ev, col, x0: e.clientX, y0: e.clientY, top: ev.offsetTop, h: ev.offsetHeight };
       } else if (e.target === col) {
@@ -187,6 +189,7 @@
         const q = new URLSearchParams({ start: local(start), end: local(end) });
         if (grid.dataset.project) q.set('project', grid.dataset.project);
         if (grid.dataset.user) q.set('user', grid.dataset.user); // a colleague's calendar: they are invited
+        if (grid.dataset.as) q.set('as', grid.dataset.as); // … or, if one keeps it, it is their meeting
         location.href = '/calendar/new?' + q;
         return;
       }
@@ -207,7 +210,7 @@
   if (month) {
     let dragged = null;
     month.querySelectorAll('.calitem[data-id][data-owner]').forEach(el => {
-      el.draggable = el.dataset.owner === month.dataset.me; // a link is draggable by default
+      el.draggable = mine(el, month); // a link is draggable by default
     });
     month.addEventListener('dragstart', e => {
       dragged = e.target.closest?.('.calitem[data-owner]');
@@ -308,11 +311,13 @@
 })();
 
 // Calendars of colleagues ([data-cal-people]), as «Календари сотрудников»: the dialog adds one to the panel
-// (a colleague and a colour) and says what colleagues see in one's own calendar; the forms come back to this page.
+// (a colleague and a colour), says what colleagues see in one's own calendar and who has access to it by name; the
+// forms come back to this page (those of the access — with the dialog open).
 (() => {
-  document.querySelectorAll('[data-cal-back]').forEach(i => { i.value = location.pathname + location.search; });
+  document.querySelectorAll('[data-cal-back]').forEach(i => { i.value = location.pathname + location.search + i.dataset.calBack; });
   const dlg = document.querySelector('[data-cal-people-dlg]');
   if (!dlg) return;
+  if (location.hash === '#access') dlg.showModal(); // back from «Доступ к календарю»
   document.querySelector('[data-cal-people]')?.addEventListener('click', () => dlg.showModal());
   dlg.querySelector('[data-cal-close]').addEventListener('click', () => dlg.close());
 })();

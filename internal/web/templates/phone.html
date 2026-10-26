@@ -38,6 +38,18 @@
         <button type="button" class="ghost small" data-sp-return>{{t "phone.xfer_return"}}</button></div>
     </div>
   </div>
+  <div class="sp-card stack" data-sp-card hidden data-saved="{{t "phone.card_saved"}}" data-pending="{{t "phone.card_pending"}}"
+    data-company="{{t "crm.company"}}" data-stage="{{t "phone.card_stage"}}" data-resp="{{t "phone.card_resp"}}">
+    <div class="row sp-card-top"><b>{{icon "address-book"}} {{t "phone.card"}}</b>
+      <button type="button" class="ghost small" data-sp-card-close title="{{t "phone.card_close"}}" aria-label="{{t "phone.card_close"}}">{{icon "x"}}</button></div>
+    <div class="sp-client" data-sp-client hidden><span class="muted small" data-sp-client-kind></span><b data-sp-client-name></b><div data-sp-client-extra></div></div>
+    <div data-sp-deals hidden><span class="small"><b>{{t "phone.card_deals"}}</b></span><ul class="sp-list" data-sp-deal-list></ul></div>
+    <div data-sp-create hidden class="row wrap"></div>
+    <label class="stack"><span class="small"><b>{{t "phone.card_comment"}}</b></span>
+      <textarea data-sp-note rows="3" maxlength="2000" placeholder="{{t "phone.card_comment_hint"}}"></textarea></label>
+    <div class="row"><button type="button" class="small" data-sp-note-save>{{t "common.save"}}</button><span class="muted small" data-sp-note-state></span></div>
+    <div data-sp-calls hidden><span class="small"><b>{{t "phone.card_calls"}}</b></span><ul class="sp-list" data-sp-call-list></ul></div>
+  </div>
   <datalist id="sp-people">{{range $d.People}}<option value="{{.Number}}" label="{{.Name}}"></option>{{end}}</datalist>
   <p class="muted small sp-hint">{{t "phone.keep_open"}}</p>
   <p class="small sp-links"><a href="/telephony/calls" target="_blank" rel="noopener">{{icon "list"}} {{t "tel.calls"}}</a></p>

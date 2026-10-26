@@ -19,6 +19,7 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/company"
+	"go24/internal/crm"
 	"go24/internal/i18n"
 	"go24/internal/openlines"
 )
@@ -64,7 +65,8 @@ func (s *Server) widgetScript(w http.ResponseWriter, r *http.Request) {
 	lang := s.lang(r)
 	t := map[string]string{}
 	for _, k := range []string{"open", "chat", "contact", "placeholder", "contact_note", "name", "phone", "email", "question", "send", "thanks",
-		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram"} {
+		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram",
+		"form_fill", "form_filled"} {
 		t[k] = s.I18n.T(lang, "widget."+k)
 	}
 	bot, _ := s.OpenLines.Telegram(r.Context(), wd.ID) // the line's other channel: «Написать в Telegram»
@@ -124,6 +126,17 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 				x := map[string]any{"id": m.ID, "operator": m.Operator, "body": m.Body}
 				if m.FileName != "" {
 					x["file"] = map[string]any{"name": m.FileName, "size": m.FileSize, "image": m.Image(), "url": openlines.FileLink(base, wd.ID, m)}
+				}
+				switch { // a CRM form an operator sent: its card and the form inside the widget (its link line is for Telegram)
+				case m.Kind == "form" && m.FormToken != "":
+					x["body"], _, _ = strings.Cut(m.Body, "\n")
+					x["form"] = map[string]any{"id": m.FormID, "url": base + "/cf/" + url.PathEscape(m.FormToken) + "?embed=1&ol=" + m.FormSecret,
+						"done": m.FormDone != nil}
+				case m.Kind == "form_done":
+					x["form_done"] = m.FormID
+				case len(m.Buttons) > 0: // the chat bot's menu: its items as buttons (the lines of the text are for Telegram)
+					x["body"] = strings.TrimSpace(strings.TrimSuffix(m.Body, strings.Join(m.Buttons, "\n")))
+					x["buttons"] = m.Buttons
 				}
 				msgs = append(msgs, x)
 			}
@@ -190,6 +203,11 @@ func (s *Server) widgetBase(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
+}
+
+// olFormLink is the address of a CRM form sent in a dialogue: go24's own, with the key of the dialogue's filling.
+func (s *Server) olFormLink(token, secret string) string {
+	return s.BaseURL + "/cf/" + url.PathEscape(token) + "?ol=" + secret
 }
 
 // olUpload stores the form's «file» (if any) in the built-in storage for a message of a dialogue.
@@ -392,6 +410,20 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 		}
 		data["Read"] = read
 		data["CanRate"] = s.olHead(r, sess, x.OperatorID)
+		var forms []crm.Form // «Форма»: the active CRM forms to send to the client
+		if s.CRM != nil && !slices.Contains(s.sectionsOff(r.Context()), "crm") {
+			list, err := s.CRM.Forms(r.Context())
+			if err != nil {
+				s.taskErr(w, r, err, "/openlines")
+				return
+			}
+			for _, f := range list {
+				if f.Active {
+					forms = append(forms, f)
+				}
+			}
+		}
+		data["Forms"] = forms
 		if data["Past"], data["PastOpen"], err = s.OpenLines.ClientDialogues(r.Context(), who, id); err != nil {
 			s.taskErr(w, r, err, "/openlines")
 			return
@@ -495,6 +527,8 @@ func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess au
 		}
 	case "intercept":
 		err = s.OpenLines.Intercept(r.Context(), sess.UserID, id)
+	case "form":
+		err = s.OpenLines.SendForm(r.Context(), sess.UserID, id, r.FormValue("form"), s.olFormLink)
 	case "spam":
 		err = s.OpenLines.Spam(r.Context(), sess.UserID, id)
 		back = list
@@ -702,6 +736,11 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 			days = append(days, int32(n))
 		}
 	}
+	var menu []openlines.BotItem // the chat bot's menu: the tree olbot.js sends as JSON
+	if v := r.FormValue("bot_menu"); v != "" && json.Unmarshal([]byte(v), &menu) != nil {
+		s.taskErr(w, r, i18n.E("err.bad_form"), "/openlines/widgets")
+		return
+	}
 	_, err := s.OpenLines.SaveWidget(r.Context(), sess.UserID, openlines.Widget{ID: id, Name: r.FormValue("name"), Greeting: r.FormValue("greeting"),
 		Color: r.FormValue("color"), Origins: strings.Fields(r.FormValue("origins")), Operators: r.Form["operators"], Active: r.FormValue("active") == "on",
 		QueueMode: r.FormValue("queue_mode"), AnswerWait: num("answer_wait"), HoursOn: r.FormValue("hours_on") == "on", HoursDays: days,
@@ -710,7 +749,8 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 		CloseText: r.FormValue("close_text"), Autoclose: num("autoclose"),
 		VoteOn: r.FormValue("vote_on") == "on", VoteText: r.FormValue("vote_text"), HistoryOn: r.FormValue("history_on") == "on",
 		CRMAuto: r.FormValue("crm_auto") == "on", ConsentOn: r.FormValue("consent_on") == "on", ConsentText: r.FormValue("consent_text"),
-		KPIFirst: num("kpi_first"), KPIFurther: num("kpi_further"), KPIOperator: r.FormValue("kpi_operator") == "on", KPIHeads: r.FormValue("kpi_heads") == "on"})
+		KPIFirst: num("kpi_first"), KPIFurther: num("kpi_further"), KPIOperator: r.FormValue("kpi_operator") == "on", KPIHeads: r.FormValue("kpi_heads") == "on",
+		BotOn: r.FormValue("bot_on") == "on", BotText: r.FormValue("bot_text"), BotMenu: menu, BotOther: r.FormValue("bot_other")})
 	if err != nil {
 		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
 		return

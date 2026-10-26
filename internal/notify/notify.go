@@ -190,9 +190,9 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		t += " «" + i.Body + "»"
 	case "crm_activity_remind":
 		return "⏰ " + tr("notify.kind.crm_activity_remind") + ": " + i.Body
-	case "sign_request":
+	case "sign_request", "sign_review":
 		t += " «" + i.Body + "»"
-	case "sign_done", "sign_refused":
+	case "sign_done", "sign_refused", "sign_cancelled":
 		return "✍ " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated", "event_slot", "event_slot_cancel":
 		return "📅 " + tr("notify.kind."+i.Kind) + ": " + i.Body
@@ -205,6 +205,12 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "workday_decided": // "approved|25.10.2026"
 		status, day, _ := strings.Cut(i.Body, "|")
 		return i.ActorName + " " + tr("notify.kind.workday_decided."+status) + " " + day
+	case "honor": // the reason
+		t = "🏆 " + i.ActorName + " " + tr("notify.kind.honor")
+		if i.Body != "" {
+			t += ": " + i.Body
+		}
+		return t
 	case "work_report", "work_report_comment": // the period (and whose)
 		t += " · " + i.Body
 	case "work_report_mark": // "good|20.10.2026 — 23.10.2026"
@@ -291,9 +297,9 @@ var Kinds = []struct {
 	{"messenger", []string{"im_remind"}},
 	{"disk", []string{"disk_share", "disk_file_share", "disk_comment"}},
 	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
-	{"sign", []string{"sign_request", "sign_done", "sign_refused"}},
+	{"sign", []string{"sign_request", "sign_review", "sign_done", "sign_refused", "sign_cancelled"}},
 	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated"}},
-	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "backup_failed", "backup_restored", "backup_restore_failed"}},
+	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "backup_failed", "backup_restored", "backup_restore_failed"}},
 }
 
 // Settings of a person: kinds turned off, copies in the messenger.

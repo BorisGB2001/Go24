@@ -26,8 +26,8 @@ import (
 )
 
 // TestDiskAPI: «Диск» through REST API v1, as disk.* — the drives, a folder made, files uploaded (the same
-// name — a new version), listed, downloaded, renamed, locked, copied, moved, put into the trash and restored; the
-// key's scope and the drive's rights are kept.
+// name — a new version, with unique_name — «name (2)»), listed, downloaded, renamed, locked, copied, moved, put into
+// the trash and restored; the key's scope and the drive's rights are kept.
 func TestDiskAPI(t *testing.T) {
 	dbURL, s3ep := os.Getenv("GO24_TEST_DATABASE_URL"), os.Getenv("GO24_TEST_S3")
 	if dbURL == "" || s3ep == "" {
@@ -96,11 +96,14 @@ func TestDiskAPI(t *testing.T) {
 			must(json.Unmarshal(raw, out))
 		}
 	}
-	upload := func(folder, name, text, token string, want int) []apiDiskFile {
+	upload := func(folder, name, text, token string, want int, fields ...string) []apiDiskFile {
 		t.Helper()
 		var buf bytes.Buffer
 		mw := multipart.NewWriter(&buf)
 		mw.WriteField("folder", folder)
+		for i := 0; i+1 < len(fields); i += 2 {
+			mw.WriteField(fields[i], fields[i+1])
+		}
 		fw, _ := mw.CreateFormFile("file", name)
 		fw.Write([]byte(text))
 		mw.Close()
@@ -142,6 +145,16 @@ func TestDiskAPI(t *testing.T) {
 		t.Fatalf("uploaded again %+v", again)
 	}
 	upload(folder.ID, "x.txt", "1", readOnly, 403)
+	var drafts apiDiskFolder // unique_name, as generateUniqueName: «name (2)» beside the file of that name
+	call("POST", "/api/v1/disk/drives/my/folders", annaKey, map[string]string{"name": "Черновики"}, 201, &drafts)
+	first := upload(drafts.ID, "итоги.txt", "1", annaKey, 201, "unique_name", "Y")
+	if second := upload(drafts.ID, "итоги.txt", "22", annaKey, 201, "unique_name", "true"); len(second) != 1 || second[0].Name != "итоги (2).txt" || second[0].ID == first[0].ID || first[0].Name != "итоги.txt" {
+		t.Fatalf("unique_name: %+v %+v", first, second)
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM files WHERE folder_id = $1`, drafts.ID) // not to be in the top below
+	must(err)
+	_, err = pool.Exec(ctx, `DELETE FROM drive_folders WHERE id = $1`, drafts.ID)
+	must(err)
 	var versions []apiVersion
 	call("GET", "/api/v1/disk/files/"+file+"/versions", annaKey, nil, 200, &versions)
 	if len(versions) != 2 || versions[0].Size != 2 {

@@ -20,6 +20,7 @@ import (
 	"go24/internal/db"
 	"go24/internal/notify"
 	"go24/internal/tasks"
+	"go24/internal/worktime"
 )
 
 // TestWorksheetHTTP: the forgotten day is closed by a change the manager approves from «Рабочее время»; the table
@@ -61,7 +62,7 @@ func TestWorksheetHTTP(t *testing.T) {
 	now := time.Now()
 	y := now.AddDate(0, 0, -1)
 	yday := time.Date(y.Year(), y.Month(), y.Day(), 0, 0, 0, 0, time.Local)
-	must(srv.Company.WorkAction(ctx, anna, "start", "", yday.Add(9*time.Hour)))
+	must(srv.Company.WorkAction(ctx, anna, "start", "", yday.Add(9*time.Hour), company.Place{}))
 
 	hs := httptest.NewServer(srv.Routes())
 	defer hs.Close()
@@ -72,6 +73,7 @@ func TestWorksheetHTTP(t *testing.T) {
 		as[id] = rec.Result().Cookies()[0]
 	}
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ip := ""
 	do := func(who, method, path string, form url.Values, want int) string {
 		t.Helper()
 		var body io.Reader
@@ -80,6 +82,9 @@ func TestWorksheetHTTP(t *testing.T) {
 		}
 		req, _ := http.NewRequest(method, hs.URL+path, body)
 		req.AddCookie(as[who])
+		if ip != "" {
+			req.Header.Set("X-Forwarded-For", ip)
+		}
 		if form != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
@@ -130,5 +135,30 @@ func TestWorksheetHTTP(t *testing.T) {
 	}
 	if page := do(anna, "GET", dayURL, nil, 200); !strings.Contains(page, "забыла завершить") || !strings.Contains(page, "Борис Начальников") {
 		t.Fatal("the history of the day")
+	}
+
+	// «Офисные сети»: started only from the office, finished outside — the day page and the table say so
+	sched := worktime.Default()
+	sched.Offices, sched.OfficeOnly = []worktime.Office{{Net: "192.168.7.0/24", Name: "Главный офис"}}, true
+	must(srv.Tasks.SetSchedule(ctx, boss, sched))
+	ip = "8.8.8.8"
+	if loc := do(anna, "POST", "/worktime/day", url.Values{"action": {"start"}}, 303); !strings.Contains(loc, "msg=") {
+		t.Fatalf("started outside the office: %s", loc)
+	}
+	ip = "192.168.7.20"
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"start"}}, 303)
+	ip = "8.8.8.8"
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"finish"}}, 303)
+	td, err := srv.Company.Today(ctx, anna, time.Now())
+	must(err)
+	if td == nil || td.Start.IP != "192.168.7.20" || td.Start.Away() || !td.End.Away() || td.End.IP != "8.8.8.8" {
+		t.Fatalf("today %+v", td)
+	}
+	if page := do(anna, "GET", "/worktime/d/"+anna+"/"+time.Now().Format(time.DateOnly), nil, 200); !strings.Contains(page, "Главный офис") ||
+		!strings.Contains(page, "IP 8.8.8.8") || !strings.Contains(page, "вне офиса") {
+		t.Fatal("the day page has no places")
+	}
+	if page := do(boss, "GET", "/worktime/table", nil, 200); !strings.Contains(page, `class="ws-away"`) {
+		t.Fatal("the table has no day out of office")
 	}
 }

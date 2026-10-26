@@ -32,7 +32,7 @@ var (
 )
 
 // StepKinds in the order the constructor offers them.
-var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "start",
+var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "pick", "start",
 	"stage", "update", "create", "comment", "activity", "document", "absence", "wait", "log", "webhook"}
 
 // UserInfo are the fields «Информация о сотруднике» (userinfo) puts into the process, as user_<…>: the employee's
@@ -52,6 +52,10 @@ var Modes = []string{"any", "all", "majority"}
 // Delegations: whom the person given an approval, a review or a request may hand it to («Делегировать»), as the
 // delegation type of the activities: their subordinates ("" too, the default), anyone or nobody.
 var Delegations = []string{"sub", "all", "none"}
+
+// PickModes of «Выбор сотрудника» (pick): anyone of the people at random ("" too), or each in turn — the
+// one after the person the step picked last time, over the processes of the template.
+var PickModes = []string{"random", "queue"}
 
 // Ops of a condition.
 var Ops = []string{"eq", "ne", "gt", "lt", "contains", "empty", "filled"}
@@ -120,6 +124,7 @@ type Step struct {
 	Deed     string   `json:"deed,omitempty"`     // activity: one of crm.ActivityKinds
 	Note     string   `json:"note,omitempty"`     // activity: the description ({…} filled)
 	Doc      string   `json:"doc,omitempty"`      // document: the template of the document generator (of the card's kind)
+	Skip     bool     `json:"skip,omitempty"`     // pick: not the people absent today (To — the reserve when all are)
 }
 
 // Assign is a field of a CRM card a step sets: a key of CardFields or the name of an own field, and the value ({…} filled).
@@ -348,7 +353,7 @@ func checkTemplate(t *Template) error {
 			return i18n.E("err.bp_step")
 		}
 		if (st.Kind == "task" && st.Project == "") || (st.Kind == "stage" && (st.Stage == "" || t.Entity != "deal" && t.Entity != "lead")) ||
-			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo"}, st.Kind)) ||
+			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo", "pick"}, st.Kind)) ||
 			(st.Kind == "webhook" && hooks.CheckURL(st.URL) != nil) {
 			return i18n.E("err.bp_step")
 		}
@@ -363,9 +368,14 @@ func checkTemplate(t *Template) error {
 				return i18n.E("err.bp_step")
 			}
 		}
+		// «Выбор сотрудника»: of Users, into a user variable (To — the reserve, none when "")
+		if st.Kind == "pick" && (len(st.Users) == 0 || kinds[st.Field] != "user" || consts[st.Field] || st.Mode != "" && !contains(PickModes, st.Mode)) ||
+			st.Kind != "pick" && st.Skip {
+			return i18n.E("err.bp_step")
+		}
 		cond := st.Kind == "if" || st.Kind == "loop"
 		if (cond || st.Kind == "set") && !seen[st.Field] || st.Kind == "set" && consts[st.Field] || cond && !contains(Ops, st.Op) ||
-			st.Mode != "" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 ||
+			st.Mode != "" && st.Kind != "pick" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 ||
 			st.Delegate != "" && (!contains(Delegations, st.Delegate) || !contains([]string{"approve", "review", "request"}, st.Kind)) {
 			return i18n.E("err.bp_step")
 		}

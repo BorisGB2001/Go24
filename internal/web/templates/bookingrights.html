@@ -1,0 +1,15 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "booking.rights"}}</h1><a class="btn" href="/booking">{{icon "chevron-left"}} {{t "booking.title"}}</a></div>
+<form method="post" action="/booking/rights" class="card stack">
+  <p class="small muted">{{t "booking.rights_hint"}}</p>
+  <h3>{{t "booking.rights_use"}}</h3>
+  <label class="check"><input type="radio" name="use_who" value="" {{if not $d.Use}}checked{{end}}> {{t "feed.rights_everyone"}}</label>
+  <label class="check"><input type="radio" name="use_who" value="chosen" {{if $d.Use}}checked{{end}}> {{t "feed.rights_chosen"}}</label>
+  <div>{{template "upick" (upick "use" $d.Use $d.Users "multi" "depts" "ph" (t "feed.to_people_ph"))}}</div>
+  <h3>{{t "booking.rights_manage"}}</h3>
+  <p class="small muted">{{t "booking.rights_manage_hint"}}</p>
+  <div>{{template "upick" (upick "manage" $d.Manage $d.Users "multi" "depts" "ph" (t "feed.to_people_ph"))}}</div>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>
+{{end}}

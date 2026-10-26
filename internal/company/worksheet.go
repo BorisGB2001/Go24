@@ -30,6 +30,7 @@ type SheetCell struct {
 	Flags   []string
 	Pending bool // a change of the day waits for approval
 	Open    bool // the day is going on (today)
+	Away    bool // started or finished outside the office networks
 	Plan    DayPlan
 }
 
@@ -71,6 +72,7 @@ func BuildSheet(people []Person, days []Workday, absences []Absence, pending map
 			if d, ok := byKey[p.ID+"|"+key]; ok {
 				c.Kind, c.Flags = "work", n.Violations(d, now)
 				c.Open = d.Ended == nil && key == today
+				c.Away = d.Start.Away() || d.End.Away()
 				if d.Ended != nil || c.Open {
 					c.Worked = d.Worked(now)
 				}

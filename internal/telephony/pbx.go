@@ -1,6 +1,7 @@
 package telephony
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,9 +81,25 @@ type ARI struct {
 }
 
 func (a *ARI) do(ctx context.Context, method, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(a.URL, "/")+"/ari"+path, nil)
+	return a.send(ctx, method, path, nil, out)
+}
+
+// send is do with a JSON body (nil — none).
+func (a *ARI) send(ctx context.Context, method, path string, body, out any) error {
+	var rd io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(a.URL, "/")+"/ari"+path, rd)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.SetBasicAuth(a.User, a.Password)
 	c := a.HTTP
@@ -101,6 +119,19 @@ func (a *ARI) do(ctx context.Context, method, path string, out any) error {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// Call rings the employee's phones (their inner number) showing the number; the one who answers is put through to
+// the number as if they dialed it themselves (go24-click, then go24-phones): an outside number goes by their lines and
+// rights. record: the conversation is recorded.
+func (a *ARI) Call(ctx context.Context, inner, number string, record bool) error {
+	v := url.Values{"endpoint": {"Local/" + inner + "*" + number + "@go24-click/n"}, "extension": {number}, "context": {"go24-phones"},
+		"priority": {"1"}, "callerId": {inner}, "timeout": {"60"}}
+	var body any
+	if record {
+		body = map[string]any{"variables": map[string]string{"GO24_RECORD": "1"}}
+	}
+	return a.send(ctx, http.MethodPost, "/channels?"+v.Encode(), body, nil)
 }
 
 // Version of Asterisk (asks it: an error — it does not answer).

@@ -54,11 +54,11 @@
     const q = (filter?.value || '').toLowerCase();
     im.querySelectorAll('[data-list] .im-room').forEach(a => {
       const row = a.closest('[data-row]') || a; // a hidden chat: only when searched for
-      row.hidden = (tab !== 'all' && a.dataset.kind !== tab) || (q !== '' && !a.dataset.name.toLowerCase().includes(q)) || (q === '' && row.dataset.hidden === '1');
+      row.hidden = (tab !== 'all' && a.dataset.kind !== tab && a.dataset.in !== tab) || (q !== '' && !a.dataset.name.toLowerCase().includes(q)) || (q === '' && row.dataset.hidden === '1');
     });
     callsBox?.querySelectorAll('[data-call]').forEach(row => { row.hidden = q !== '' && !row.dataset.name.toLowerCase().includes(q); });
     im.querySelectorAll('[data-im-tab]').forEach(b => b.classList.toggle('on', b.dataset.imTab === tab));
-    im.querySelectorAll('[data-tab-empty]').forEach(p => { p.hidden = p.dataset.tabEmpty !== tab || im.querySelector(`.im-room[data-kind="${tab}"]`) !== null; });
+    im.querySelectorAll('[data-tab-empty]').forEach(p => { p.hidden = p.dataset.tabEmpty !== tab || im.querySelector(`.im-room[data-kind="${tab}"], .im-room[data-in="${tab}"]`) !== null; });
     if (callsBox) callsBox.hidden = tab !== 'calls';
   };
   // «Звонки»: all the calls or only the missed ones; looking at them clears the tab's counter
@@ -82,7 +82,7 @@
       const c = b.querySelector('[data-tab-unread]');
       if (!c) return;
       let n = 0;
-      im.querySelectorAll(`.im-room[data-kind="${b.dataset.imTab}"] [data-unread]`).forEach(u => { if (!u.hidden) n += parseInt(u.textContent, 10) || 0; });
+      im.querySelectorAll(`.im-room[data-kind="${b.dataset.imTab}"] [data-unread], .im-room[data-in="${b.dataset.imTab}"] [data-unread]`).forEach(u => { if (!u.hidden) n += parseInt(u.textContent, 10) || 0; });
       c.textContent = n > 99 ? '99+' : n; c.hidden = !n;
     });
   };

@@ -442,7 +442,7 @@ func (s *Store) tgDownload(ctx context.Context, b tgBot, src tgFile) (*File, err
 
 // SendTelegram sends to the chats the operators' answers and the line's messages not sent yet; it is how many went.
 func (s *Store) SendTelegram(ctx context.Context) (int, error) {
-	rows, err := s.db.Query(ctx, `SELECT m.id, s.id::text, s.tg_chat, w.id::text, w.tg_secret, coalesce(u.name, ''), m.body, m.file_key, m.file_name, m.file_type
+	rows, err := s.db.Query(ctx, `SELECT m.id, s.id::text, s.tg_chat, w.id::text, w.tg_secret, coalesce(u.name, ''), m.body, m.file_key, m.file_name, m.file_type, m.buttons
 		FROM ol_messages m JOIN ol_sessions s ON s.id = m.session_id JOIN ol_widgets w ON w.id = s.widget_id LEFT JOIN users u ON u.id = m.author_id
 		WHERE s.channel = 'telegram' AND w.tg_secret IS NOT NULL AND m.id > s.tg_sent AND m.kind NOT IN ('note', 'hidden') AND (m.author_id IS NOT NULL OR m.kind <> '')
 		ORDER BY m.id LIMIT 200`)
@@ -456,6 +456,7 @@ func (s *Store) SendTelegram(ctx context.Context) (int, error) {
 		Widget                                      string
 		Sealed                                      []byte
 		Operator, Body, FileKey, FileName, FileType string
+		Buttons                                     []string
 	}
 	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[out])
 	if err != nil {
@@ -469,7 +470,7 @@ func (s *Store) SendTelegram(ctx context.Context) (int, error) {
 		}
 		token, err := s.unseal(m.Sealed)
 		if err == nil {
-			err = s.tgSend(ctx, token, m.Chat, m.Operator, m.Body, m.FileKey, m.FileName, m.FileType)
+			err = s.tgSend(ctx, token, m.Chat, m.Operator, m.Body, m.FileKey, m.FileName, m.FileType, m.Buttons)
 		}
 		var te *tgError
 		if err != nil && !(errors.As(err, &te) && (te.Code == 403 || te.Code == 400)) { // blocked or gone: not sent, never will be
@@ -487,8 +488,8 @@ func (s *Store) SendTelegram(ctx context.Context) (int, error) {
 }
 
 // tgSend writes a message to the chat: the operator's name in bold, the text; a file as a photo or a document with
-// the text as its caption.
-func (s *Store) tgSend(ctx context.Context, token string, chat int64, operator, body, fileKey, fileName, fileType string) error {
+// the text as its caption; the chat bot's menu as the keyboard's buttons (a button sends its text).
+func (s *Store) tgSend(ctx context.Context, token string, chat int64, operator, body, fileKey, fileName, fileType string, buttons []string) error {
 	text := html.EscapeString(body)
 	if operator != "" {
 		text = "<b>" + html.EscapeString(operator) + "</b>"
@@ -500,7 +501,15 @@ func (s *Store) tgSend(ctx context.Context, token string, chat int64, operator, 
 		if fileKey != "" {
 			text += "\n📎 " + html.EscapeString(fileName)
 		}
-		return s.tgCall(ctx, tgShort, token, "sendMessage", map[string]any{"chat_id": chat, "text": text, "parse_mode": "HTML"}, nil)
+		args := map[string]any{"chat_id": chat, "text": text, "parse_mode": "HTML"}
+		if len(buttons) > 0 {
+			rows := [][]map[string]string{}
+			for _, b := range buttons {
+				rows = append(rows, []map[string]string{{"text": b}})
+			}
+			args["reply_markup"] = map[string]any{"keyboard": rows, "resize_keyboard": true, "one_time_keyboard": true}
+		}
+		return s.tgCall(ctx, tgShort, token, "sendMessage", args, nil)
 	}
 	obj, err := s.OpenFile(ctx, fileKey)
 	if err != nil {

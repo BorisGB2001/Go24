@@ -49,9 +49,9 @@
     <nav class="im-list" data-list>
       {{range $d.Rooms}}
       <div class="im-row" data-row data-favorite="{{if .Favorite}}1{{end}}" data-muted="{{if .Muted}}1{{end}}" data-marked="{{if .Marked}}1{{end}}" data-hidden="{{if and .Hidden (ne .ID $d.Room)}}1{{end}}">
-      <a href="/im?room={{.ID}}" class="im-room{{if eq .ID $d.Room}} on{{end}}" data-room-id="{{.ID}}" data-name="{{.Name}}" data-kind="{{.Kind}}">
+      <a href="/im?room={{.ID}}" class="im-room{{if eq .ID $d.Room}} on{{end}}" data-room-id="{{.ID}}" data-name="{{.Name}}" data-kind="{{.Kind}}"{{if .CollabID}} data-in="collab"{{end}}>
         {{if eq .Kind "dm"}}<span class="pr-ava" data-presence="{{.PeerID}}">{{photo .Name (photoURL .PeerID .PeerPhoto) false}}</span>{{else if .Photo}}<img class="im-ico" src="/im/photo?room={{urlquery .ID}}" alt="">{{else}}<span class="im-ico k-{{.Kind}}">{{if eq .Kind "feed"}}{{icon "news"}}{{else if eq .Kind "task"}}{{icon "checkbox"}}{{else if eq .Kind "collab"}}{{icon "users-group"}}{{else if eq .Kind "group"}}{{icon "users"}}{{else if eq .Kind "channel"}}{{icon "speakerphone"}}{{else if eq .Kind "notes"}}{{icon "notebook"}}{{else}}#{{end}}</span>{{end}}
-        <span class="im-meta"><b>{{.Name}}</b>
+        <span class="im-meta"><b>{{.Name}}{{with .CollabName}} <span class="muted small" title="{{t "collab.chat_of"}}">· {{.}}</span>{{end}}</b>
           <span class="muted small" data-preview{{if and .Draft (ne .ID $d.Room)}} data-draft{{end}}>{{if and .Draft (ne .ID $d.Room)}}<span class="im-draft">{{t "im.draft"}}:</span> {{implain .Draft}}{{else}}{{with .Last}}{{if .Encrypted}}🔒 {{t "im.encrypted"}}{{else if .Event}}{{template "imevent" .}}{{else}}{{.SenderName}}: {{implain .Body}}{{end}}{{end}}{{end}}</span></span>
         <span class="im-marks">{{icon "pin"}}{{icon "bell-off"}}</span>
         <span class="cnt at" data-mention="{{.Mentions}}" title="{{t "im.mentioned"}}" {{if not .Mentions}}hidden{{end}}>@</span><span class="cnt" data-unread {{if not .Unread}}hidden{{end}}>{{.Unread}}</span><span class="cnt th" data-threads="{{.Threads}}" title="{{t "im.threads_unread"}}" {{if not .Threads}}hidden{{end}}>{{icon "message-circle"}}<i>{{.Threads}}</i></span><span class="cnt dot" data-marked-dot></span>
@@ -74,11 +74,12 @@
         <a href="/p/{{.Key}}#members" title="{{t "collab.members"}}">{{icon "users"}} {{.Members}}{{if .Guests}} <span class="pill guest">{{t "collab.guests_n" .Guests}}</span>{{end}}</a></span>{{end}}</b>{{if .Encrypted}} <span class="muted small">🔒 {{t "im.encrypted_room"}}</span>{{end}}
       {{with $d.CollabInvite}}<a href="/p/{{$d.Collab.Key}}#{{.}}" class="button ghost" title="{{t "guests.invite"}}">{{icon "user-plus"}}</a>{{end}}
       {{if $d.CollabSign}}<a href="/sign/new?collab={{$d.Collab.Key}}" class="button ghost" title="{{t "sign.collab.button"}}">{{icon "signature"}}</a>{{end}}
+      {{with $d.Collab}}{{template "imcchats" (dict "C" . "D" $d)}}{{end}}
       <button type="button" class="ghost" data-search-open title="{{t "im.search_chat"}}">{{icon "search"}}</button>
       <button type="button" class="ghost" data-media-open title="{{t "im.media_title"}}">{{icon "photo"}}</button>
       <button type="button" class="ghost im-threads-btn" data-threads-open title="{{t "im.threads"}}">{{icon "messages"}}<span class="cnt" data-threads-cnt {{if not .Threads}}hidden{{end}}>{{.Threads}}</span></button>
       <a href="/im/export?room={{urlquery .ID}}" class="button ghost" title="{{t "im.history"}}" download>{{icon "download"}}</a>
-      {{with $d.Group}}{{template "imgroup" (dict "G" . "Room" $d.Current)}}{{end}}
+      {{with $d.Group}}{{template "imgroup" (dict "G" . "Room" $d.Current "D" $d)}}{{end}}
       {{if $d.AutoDeleteCan}}<details class="im-group" data-autodelete><summary class="button ghost" title="{{t "im.autodelete"}}">{{icon "clock"}}{{if $d.AutoDelete}} <span class="small">{{t (printf "im.ttl_%d" $d.AutoDelete)}}</span>{{end}}</summary>
         <form method="post" action="/im/autodelete" class="pop"><input type="hidden" name="room" value="{{.ID}}"><b class="small">{{t "im.autodelete"}}</b>
           <label class="small"><input type="radio" name="ttl" value="0"{{if not $d.AutoDelete}} checked{{end}}> {{t "im.autodelete_off"}}</label>
@@ -169,7 +170,27 @@
     </ul>
     {{if $g.CanAdd}}<form method="post" action="/im/group/add" class="row"><input type="hidden" name="room" value="{{$room}}">
       {{template "upick" (upick "users" "" nil "im" "noself" "multi" "ph" (t "im.group_add"))}}<button>{{t "im.group_add_btn"}}</button></form>{{end}}
+    {{with .D.CollabTargets}}<form method="post" action="/im/collab/add" class="row" data-confirm="{{t "collab.chat_add_confirm"}}"><input type="hidden" name="room" value="{{$room}}">
+      <select name="collab" required aria-label="{{t "collab.chat_add_to"}}"><option value="">{{t "collab.chat_add_to"}}</option>{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><button>{{t "collab.chat_add_btn"}}</button></form>{{end}}
+    {{if .D.CollabChatRemove}}<form method="post" action="/im/collab/remove" data-confirm="{{t "collab.chat_remove_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><button class="ghost">{{icon "unlink"}} {{t "collab.chat_remove"}}</button></form>{{end}}
     <form method="post" action="/im/group/leave" data-confirm="{{t "im.group_leave_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><button class="ghost danger">{{icon "logout"}} {{t "im.group_leave"}}</button></form>
+  </div>
+</details>
+{{end}}
+
+{{define "imcchats"}}{{$c := .C}}{{$d := .D}}
+<details class="im-group" data-cchats><summary class="button ghost" title="{{t "collab.chats"}}">{{icon "message-plus"}}{{with $d.CollabChats}} {{len .}}{{end}}</summary>
+  <div class="pop">
+    <b class="small">{{t "collab.chats"}}</b>
+    <ul class="im-cchats">{{with $d.CollabMain}}<li><a href="/im?room={{urlquery .}}"{{if eq . $d.Room}} class="on"{{end}}>{{icon "users-group"}} {{t "collab.chat_main"}}</a></li>{{end}}
+      {{range $d.CollabChats}}<li><a href="/im?room={{urlquery .ID}}"{{if eq .ID $d.Room}} class="on"{{end}}>{{if eq .Kind "channel"}}{{icon "speakerphone"}}{{else}}{{icon "users"}}{{end}} {{.Name}}</a></li>{{end}}</ul>
+    {{if not $c.Project.Archived}}<form method="post" action="/im/collab/create" class="im-group-new"><input type="hidden" name="collab" value="{{$c.ID}}"><input type="hidden" name="room" value="{{$d.Room}}">
+      <b class="small">{{t "collab.chat_new"}}</b>
+      <input name="name" placeholder="{{t "im.group_name"}}" maxlength="200" required>
+      {{template "upick" (upick "users" "" nil "im" "noself" "multi" "ph" (t "im.group_people"))}}
+      <span class="small muted">{{t "collab.chat_new_hint"}}</span><button>{{t "im.group_create"}}</button></form>{{end}}
+    {{with $d.CollabChatAdd}}<form method="post" action="/im/collab/add" class="row" data-confirm="{{t "collab.chat_add_confirm"}}"><input type="hidden" name="collab" value="{{$c.ID}}">
+      <select name="room" required aria-label="{{t "collab.chat_add"}}"><option value="">{{t "collab.chat_add"}}</option>{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><button>{{t "collab.chat_add_btn"}}</button></form>{{end}}
   </div>
 </details>
 {{end}}

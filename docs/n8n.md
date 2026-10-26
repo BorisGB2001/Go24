@@ -25,7 +25,8 @@ n8n работает в нашем docker compose (сервис `n8n`, обра�
 Настройки → «Вебхуки (n8n)» (администратор): адрес узла **Webhook** из n8n и события:
 `deal.created`, `deal.stage`, `lead.created`, `lead.stage`, `task.created`, `task.completed`, `task.deleted` (задача перемещена в корзину),
 `openline.started` (новый диалог открытой линии), `openline.message` (сообщение посетителя или оператора, `data.from` —
-`visitor` | `operator`), `openline.closed` (диалог закрыт, `data.spam` — как спам). REST открытых линий — `/api/v1/openlines/…`
+`visitor` | `operator`), `openline.closed` (диалог закрыт, `data.spam` — как спам), `call.ended` (звонок телефонии
+завершён: `data` — звонок, как в `GET /api/v1/telephony/calls/{id}`, без записи). REST открытых линий — `/api/v1/openlines/…`
 (ключ `openlines:read` / `openlines:write`): линии, диалоги и сообщения, ответ, передача, закрытие, лид, быстрые ответы, статистика.
 
 Запрос — `POST` JSON:
@@ -93,6 +94,8 @@ CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `cont
 | `POST /api/v1/crm/{kind}` | новая карточка: `{"title", "name", "phone", "email", "source", "amount", "currency", "company_id", "contact_id", "pipeline_id", "stage_id", "responsible_id", "observer_ids", "comment"}` (`observer_ids` — наблюдатели сделки или лида; у лида, контакта и компании вместо `phone`/`email` можно `"phones": [{"value", "type"}]`, `"emails": [...]` — несколько, первый основной; типы телефона `work`, `mobile`, `home`, `other`, e-mail — `work`, `home`, `other`; карточка отдаёт их в `phones`, `emails`) |
 | `POST /api/v1/crm/{kind}/{id}/stage` | `{"stage_id": …}` — сделки и лиды (сработают роботы стадии) |
 | `PUT /api/v1/crm/{deals\|leads}/{id}/observers` | `{"observer_ids": [...]}` — наблюдатели карточки (весь список); видят её при любых правах и получают уведомления о комментариях и стадиях |
+| `PUT /api/v1/crm/deals/{id}/parents` | «Связи» элемента смарт-процесса: `{"parent_ids": [...]}` — все родители сразу, по одному каждого вида, к которому привязан смарт-процесс (сделка или элемент другого смарт-процесса); `[]` — отвязать; у карточки элемента — `parent_ids`, при создании (`POST /api/v1/crm/deals`) — тоже `parent_ids` |
+| `GET /api/v1/crm/deals/{id}/children` | дочерние элементы сделки или элемента (карточки, как в списке, с `type_id`) |
 | `PUT /api/v1/crm/{deals\|leads}/{id}/utm` | `{"utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"}` — UTM-метки карточки (все сразу; `{}` — убрать). Их же можно передать в `POST /api/v1/crm/{kind}` полем `"utm": {…}`; карточка сделки или лида отдаёт их в `utm` (сделка без своих — метки лида, из которого создана) |
 | `GET /api/v1/marketing/analytics?from=2026-10-01&to=2026-10-31` | «Сквозная аналитика» (по умолчанию — текущий месяц): `{"currency", "channels": [{"id", "name", "expenses", "leads", "deals", "won", "revenue", "cost_per_lead", "cost_per_sale", "roi", "campaigns": […]}], "total"}`; канал без `id` — карточки без источника; `roi` — процент, нет без расходов |
 | `GET /api/v1/marketing/sources` | рекламные источники: `[{"id", "name", "utm_source": [...], "crm_source_id"}]` |
@@ -118,8 +121,30 @@ CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `cont
 | `POST /api/v1/crm/{companies\|contacts}/{id}/requisites` | новые реквизиты (тот же объект; без `id`) или изменение реквизитов с `id`; `"is_default": true` — сделать основными — ответ `{"id"}` |
 | `DELETE /api/v1/crm/{companies\|contacts}/{id}/requisites/{req}` | удалить реквизиты |
 
-Онлайн-запись (области `booking:read`, `booking:write`; как `booking.v1.*` корпоративного портала). Типы и ресурсы меняет только
-администратор, брони и лист ожидания — любой сотрудник. Время — RFC 3339 (`2026-10-27T11:00:00+01:00`), периоды —
+Телефония (области `telephony:read`, `telephony:write`; как `voximplant.*` и `telephony.*` корпоративного портала). Детализация,
+статистика и записи — по «Правам доступа» телефонии владельца ключа (свои звонки / своего отдела / все; администратор
+с `X-Go24-Admin: 1` — все), чёрный список — тем, кто может менять настройки телефонии. Событие приложений
+`ONVOXIMPLANTCALLEND` (`CALL_ID`, `CALL_TYPE` 1 — исходящий / 2 — входящий, `PHONE_NUMBER`, `PORTAL_NUMBER`,
+`PORTAL_USER_ID`, `CALL_DURATION`, `CALL_START_DATE`, `CALL_FAILED_CODE` 200 / 304 / 486 / 603, `CALL_STATUS`,
+`CRM_ENTITY_TYPE`, `CRM_ENTITY_ID`) и вебхук `call.ended` — по окончании каждого звонка:
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/telephony/calls` | детализация (`voximplant.statistic.get`), новые первыми: `{"calls": [{"id", "type", "direction", "status", "from", "to", "from_user", "to_user", "phone_number", "line", "started_at", "answered_at", "seconds", "rating", "comment", "transfer_from", "transfer_to", "crm": {"entity", "id", "name"}, "has_record", "record", "transcript"}], "next_before"}`; `type` — для владельца ключа: `out`, `in`, `missed`, `inner` (чужой); `direction` — `in` (снаружи), `out` (наружу), `inner` (между сотрудниками); `status` — `answered`, `busy`, `noanswer`, `cancel`, `failed`, `voicemail`; `record` и `transcript` — тем, кому можно слушать записи. Фильтры: `type` (`in`, `out`, `missed`), `user`, `q` (часть номера), `from`, `to` (даты), `limit` (до 200), `before` — следующая страница (`next_before`) |
+| `GET /api/v1/telephony/calls/{id}` | один звонок |
+| `PATCH /api/v1/telephony/calls/{id}` | `{"comment": "…"}` — «Комментарий к звонку» (и в «Звонке» карточки CRM; `""` — убрать) |
+| `GET /api/v1/telephony/calls/{id}/record` | запись разговора (WAV) |
+| `POST /api/v1/telephony/calls/{id}/transcript` | расшифровать запись (Whisper, один раз — дальше хранится): звонок с `transcript` |
+| `GET /api/v1/telephony/stats?from=&to=&line=&user=` | «Статистика звонков» внешних линий: `{"total", "users": [{"user", "in", "answered", "missed", "missed_pct", "out", "out_answered", "seconds", "avg_talk", "avg_wait", "rated", "avg_rating"}], "days": [{"day", "in", "answered", "missed", "out"}]}` |
+| `GET /api/v1/telephony/lines` | внешние линии (`voximplant.line.get`, без логинов и паролей): `{"lines": [{"id", "name", "number", "can_call"}], "outgoing"}`; `outgoing` — право владельца ключа на исходящие наружу: `none`, `crm`, `all` |
+| `GET /api/v1/telephony/users` | внутренние номера сотрудников (`voximplant.user.get`): `{"users": [{"id", "name", "number", "online"}]}`; `online` — включён SIP-телефон или софтфон (нет поля — АТС не ответила) |
+| `POST /api/v1/telephony/call` | `{"number": "+7…"}` — позвонить: у владельца ключа звонят SIP-телефон и софтфон с номером собеседника, он отвечает — АТС набирает номер, как будто его набрал сам сотрудник (внешний — через его линию и по его праву на исходящие; запись — если включена); в детализации — его исходящий. Ответ `{"calling": true, "from", "to"}` |
+| `GET /api/v1/telephony/blacklist` | чёрный список: `{"blacklist": [{"id", "number", "comment", "added_by", "created_at"}]}` |
+| `POST /api/v1/telephony/blacklist` | `{"number", "comment"}` — добавить (ответ — список); `DELETE …/blacklist/{id}` — убрать |
+
+Онлайн-запись (области `booking:read`, `booking:write`; как `booking.v1.*` корпоративного портала). Типы и ресурсы меняют
+администраторы и выбранные в «Онлайн-запись → Права доступа» управляющие, брони и лист ожидания — те, кто работает с
+онлайн-записью (по умолчанию все сотрудники); остальным REST раздела отвечает 403. Время — RFC 3339 (`2026-10-27T11:00:00+01:00`), периоды —
 даты `from`/`to` включительно (по умолчанию текущий месяц, не больше года):
 
 | Метод | Что |
@@ -158,12 +183,14 @@ ID — владелец ключа:
 | `GET /api/v1/teams?department_id=` | команды структуры: `[{"id", "department_id", "department", "name", "description", "head_id", "head_name", "deputies": [{"id", "name", "position"}], "members": […]}]`; `GET /api/v1/teams/{id}` — одна; у сотрудника в `/users` — `"teams": [{"id", "name"}]` |
 | `POST /api/v1/teams` | `{"department_id", "name", "description", "head_id", "deputies": [ID], "members": [ID]}` — новая команда (администратор; без `department_id` — под компанией) — ответ `{"id"}` |
 | `PATCH /api/v1/teams/{id}` | изменить переданное: администратор — всё, руководитель команды — кроме `department_id` и `head_id`; `DELETE` — удалить команду (администратор), сотрудники остаются в отделах |
-| `GET /api/v1/worktime/status` | рабочий день сегодня (`timeman.status`): `{"state": "none\|running\|paused\|done", "day", "plan": {"work", "start", "end", …}, "workday": {"started", "ended", "paused_at", "pause_secs", "worked_secs", "report", "violations"}}` |
+| `GET /api/v1/worktime/status` | рабочий день сегодня (`timeman.status`): `{"state": "none\|running\|paused\|done", "day", "plan": {"work", "start", "end", …}, "workday": {"started", "ended", "paused_at", "pause_secs", "worked_secs", "report", "violations", "start": {"ip", "office"}, "end": {"ip", "office"}}}` — `office`: название офисной сети, `""` — вне офиса, нет — сети не заданы; при «только из офисной сети» начало вне офиса — 422 |
 | `POST /api/v1/worktime/{start\|pause\|resume\|finish\|reopen}` | начать, перерыв, продолжить, завершить (`{"report"}`), «Продолжить рабочий день» (`timeman.open/pause/close`) — ответ как `status`; не в том состоянии — `422` |
 | `GET /api/v1/worktime/days?user_id=&from=&to=` | рабочие дни (`timeman.timecontrol.reports.get`): `[{"user_id", "day", "state", "started", "ended", "pause_secs", "worked_secs", "report", "violations": ["late\|open\|early\|short"]}]` — нарушения по графику сотрудника |
 | `GET /api/v1/worktime/schedules` | графики работы: `[{"id", "name", "kind": "fixed\|shift\|flexible", "departments", "people"}]`; `GET …/schedules/{id}` — график: `times` (дни недели 0–6 с часами и перерывом), `shifts`, `late_after`, `leave_before`, `min_duration`, `tolerance`, `members` (ID и `dept:ID`), `excluded`, `people` |
 | `GET /api/v1/absences?from=&to=&user_id=` | отсутствия: `[{"id", "user_id", "user_name", "kind": "vacation\|sick\|trip\|dayoff\|other", "from", "to", "comment", "acting_id", "acting_name", "acting_rights"}]` |
 | `POST /api/v1/absences` | `{"user_id", "kind", "from", "to", "comment", "acting_id", "acting_rights": ["view", "work", "control", "manage", "notify"]}` — ответ `{"id"}`; `DELETE /api/v1/absences/{id}` — удалить |
+| `GET /api/v1/honors?department_id=&user_id=&archive=1` | «Доска почёта»: кто на доске сейчас (и с будущей даты), `archive=1` — чей срок прошёл: `[{"id", "user_id", "name", "position", "departments", "reason", "from", "to", "by": {"id", "name"}, "created"}]`; нет `to` — бессрочно |
+| `POST /api/v1/honors` | `{"user_id", "reason", "from", "to"}` — поместить на доску (администратор или сотрудник кадров с правом «Доска почёта»; `from` — сегодня, без `to` — пока не снимут), сотруднику — уведомление; `DELETE /api/v1/honors/{id}` — снять с доски |
 
 Коллабы (как `socialnetwork.collab.*` в корпоративном портале; области `collabs:read`, `collabs:write`). Ключ видит только коллабы
 своего сотрудника (чужой — `404`), права — как на странице коллаба; коллаб в архиве не меняется (`422`), кроме
@@ -176,7 +203,7 @@ ID — владелец ключа:
 | `GET /api/v1/collabs/{key}` | `{"collab": {… "settings"}, "members": [{"id", "name", "role": "owner"\|"manager"\|"member", "guest"}]}` |
 | `PATCH /api/v1/collabs/{key}` | `{"name", "description"}` — что не передано, остаётся (кто может изменять настройки) |
 | `PUT /api/v1/collabs/{key}/photo` | аватар: тело запроса — само изображение (JPEG, PNG, WebP, GIF, до 5 МБ); `DELETE` — убрать |
-| `PATCH /api/v1/collabs/{key}/settings` | `{"invite_perm", "guest_invite_perm": "owner"\|"managers"\|"members", "chat_history", "guests_tasks", "guests_files", "edit_perm": "owner"\|"managers", "chat_perm": "members"\|"employees"\|"managers", "msg_ttl": 0\|3600\|86400\|604800\|2592000 (автоудаление сообщений чата, секунды; 0 — выключено)}` |
+| `PATCH /api/v1/collabs/{key}/settings` | `{"invite_perm", "guest_invite_perm": "owner"\|"managers"\|"members", "chat_history", "guests_tasks", "guests_files", "edit_perm": "owner"\|"managers", "chat_perm": "members"\|"employees"\|"managers", "msg_ttl": 0\|3600\|86400\|604800\|2592000 (автоудаление сообщений чата, секунды; 0 — выключено), "events_members", "events_guests", "events_invites", "events_collab" (уведомления в чате коллаба: участники, вступление гостей, приглашения, сам коллаб)}` |
 | `POST /api/v1/collabs/{key}/members` | `{"user_id", "role"}` — добавить участника или сменить роль; `DELETE …/members/{id}` — исключить (свой id — покинуть коллаб) |
 | `GET /api/v1/collabs/{key}/invites` | приглашения гостей за месяц, действующие — первыми: `[{"id", "kind": "link"\|"email"\|"phone", "url", "email", "phone", "name", "created_by", "created_at", "expires_at", "state": "active"\|"revoked"\|"used"\|"expired", "uses", "used_by"}]` — кто может приглашать гостей |
 | `POST /api/v1/collabs/{key}/invites` | `{"kind", "contact" (e-mail или телефон), "name", "days" (1–90, по умолчанию 7), "send": true — письмо с первого ящика сотрудника в go24}` — приглашение; ответ — оно же с `url` и `sent`. Ссылка (`link`) действует для всех до срока, по e-mail и телефону — один раз |
@@ -186,6 +213,9 @@ ID — владелец ключа:
 | `POST /api/v1/collabs/{key}/owner` | `{"user_id"}` — передать права владельца сотруднику из участников |
 | `DELETE /api/v1/collabs/{key}?confirm=<название>` | удалить коллаб (владелец) |
 | `GET /api/v1/collabs/{key}/log` | журнал действий (владелец и модераторы), новые сверху |
+| `GET /api/v1/collabs/{key}/chats` | чаты коллаба: главный (`"main": true`) и групповые, в которых состоит владелец ключа: `[{"room", "name", "main"}]` |
+| `POST /api/v1/collabs/{key}/chats` | `{"name", "user_ids"}` — создать групповой чат в коллабе (любой участник); кого нет в коллабе — станут участниками (по праву «кто может приглашать»); ответ — `{"room", "name"}` |
+| `PUT /api/v1/collabs/{key}/chats/{room}` | добавить в коллаб свой групповой чат (его владелец, если может приглашать в коллаб); участники чата становятся участниками коллаба, история сохраняется; `DELETE` — убрать чат из коллаба (владелец чата, владелец и модераторы коллаба), гости коллаба выходят из чата |
 | `POST /api/v1/users/{id}/employee` | сделать гостя сотрудником (ключ администратора) |
 
 Бизнес-процессы (как `bizproc.workflow.*`, `bizproc.workflow.template.*`, `bizproc.task.*` в корпоративном портале; области `bp:read` —

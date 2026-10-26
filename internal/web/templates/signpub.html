@@ -6,10 +6,10 @@
   <div class="muted small">{{t "sign.pub_from" $doc.Author}} · {{$d.Party.Name}}</div>
   {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
   {{if $d.Turn}}<div class="card sgturn">
-    {{if $d.Code}}<form method="post" action="/sg/{{$t}}/sign" class="row" data-native>
-      <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="{{t "sign.code"}}" autofocus style="width:10em">
+    {{if $d.Code}}<form method="post" action="/sg/{{$t}}/sign" data-native>{{template "sgpad" (list "" $d.Party.Name)}}
+      <div class="row"><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="{{t "sign.code"}}" autofocus style="width:10em">
       <label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
-      <button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></form>
+      <button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></div></form>
       <form method="post" action="/sg/{{$t}}/code" data-native><button class="ghost small">{{t "sign.code_again"}}</button></form>
     {{else}}<p>{{t "sign.pub_hint" $d.Email}}</p>
       <form method="post" action="/sg/{{$t}}/code" data-native><button class="primary">{{icon "mail"}} {{t "sign.get_code"}}</button></form>{{end}}
@@ -24,4 +24,5 @@
   {{else if $d.PDF}}<iframe class="pubdoc-view" src="/sg/{{$t}}/file/pdf?inline=1" title="{{$doc.Title}}"></iframe>{{end}}
   <p class="muted small share-foot">go24 · {{t "sign.pub_foot"}}</p>
 </div>
+<script src="{{asset "js/signpad.js"}}"></script>
 {{end}}

@@ -53,3 +53,32 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("%v %v", err, s.Holidays)
 	}
 }
+
+func TestOffices(t *testing.T) {
+	list, err := ParseOffices("192.168.1.7/24 Главный офис\n\n 10.0.0.5  Склад \n2001:db8::/32\n")
+	if err != nil || len(list) != 3 || list[0] != (Office{"192.168.1.0/24", "Главный офис"}) || list[1].Net != "10.0.0.5/32" || list[1].Name != "Склад" {
+		t.Fatalf("parsed %+v %v", list, err)
+	}
+	if _, err := ParseOffices("192.168.1.300 Офис"); err == nil {
+		t.Fatal("a wrong address is accepted")
+	}
+	s := Default()
+	s.Offices = list
+	for ip, want := range map[string]string{"192.168.1.200": "Главный офис", "::ffff:10.0.0.5": "Склад", "2001:db8::1": "2001:db8::/32",
+		"10.0.0.6": "", "bad": ""} {
+		if got, ok := s.OfficeOf(ip); got != want || ok != (want != "") {
+			t.Errorf("OfficeOf(%s) = %q %v", ip, got, ok)
+		}
+	}
+	if back, _ := ParseOffices(s.OfficesText()); len(back) != 3 || back[2].Net != "2001:db8::/32" {
+		t.Fatalf("text %q", s.OfficesText())
+	}
+	s.OfficeOnly = true
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.Offices = nil
+	if err := s.Validate(); err == nil {
+		t.Fatal("office only without offices")
+	}
+}

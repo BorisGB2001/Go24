@@ -413,6 +413,10 @@ services:
       # go24 в сети compose — частный адрес: без этого сервер документов отказывается брать у него файлы
       ALLOW_PRIVATE_IP_ADDRESS: "true"
       WOPI_ENABLED: "false"
+      # boris.gb 2026-10-26 19:26 - без DNS-кэша сервера документов (по умолчанию 300 с): после пересборки go24 получает
+      # новый адрес, и до 5 минут ONLYOFFICE ходил на старый (EHOSTUNREACH) — PDF не делались, подписанный документ
+      # оставался DOCX (GO24DEV-706)
+      NODE_CONFIG: '{"dnscache":{"enable":false}}'
     volumes:
       - onlyoffice-data:/var/www/onlyoffice/Data
       - onlyoffice-cache:/var/lib/onlyoffice

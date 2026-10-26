@@ -77,31 +77,78 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 						s.Log.Warn("im auto-delete", "err", err)
 					}
 				}
+				pid := rm.CollabID // a group chat of a collab — or its main chat
 				if rm.Kind == "collab" {
-					data["Tab"] = "collab"
 					if why := s.Matrix.CollabChatClosed(r.Context(), sess.UserID, rm.ID); why != "" { // its «кто может писать в чат»
 						data["ReadOnly"], data["ReadOnlyKey"] = true, matrixsync.ChatClosedKeys[why]
 					}
-					if pid := s.Matrix.RoomCollab(r.Context(), rm.ID); pid != "" { // its tasks, drive, calendar, people in the header
-						if c, err := s.Tasks.CollabCard(r.Context(), sess.UserID, pid); err == nil {
-							data["Collab"] = c
-							if _, off := s.offSection(r.Context(), "/sign"); !off && !tasks.IsGuestCtx(r.Context()) && !c.Project.Archived {
-								data["CollabSign"] = true // «Документ на подпись»: its guest signs as the client
-							}
-							if s.Tasks.CanInviteGuests(r.Context(), c.Project, sess.UserID) { // «Пригласить»: guests, else colleagues
-								data["CollabInvite"] = "guests"
-							} else if ok, _ := s.Tasks.CanInvite(r.Context(), c.Project); ok {
-								data["CollabInvite"] = "members"
-							}
-						} else if !errors.Is(err, tasks.ErrNotFound) {
-							s.Log.Warn("im collab", "err", err)
+					pid = s.Matrix.RoomCollab(r.Context(), rm.ID)
+				} else if (rm.Kind == "group" || rm.Kind == "channel") && pid == "" && !tasks.IsGuestCtx(r.Context()) {
+					if g, _ := data["Group"].(*matrixsync.Group); g != nil && g.Owner { // «Добавить чат в коллаб»: to one of mine
+						if cs, err := s.Tasks.ListCollabs(r.Context(), sess.UserID, false, ""); err == nil {
+							data["CollabTargets"] = cs
+						} else {
+							s.Log.Warn("im collabs", "err", err)
 						}
+					}
+				}
+				if rm.Kind == "collab" || pid != "" {
+					data["Tab"] = "collab"
+				}
+				if pid != "" { // its tasks, drive, calendar, people and chats in the header
+					s.imCollabHead(r, sess, data, rooms, rm, pid)
+				}
+				if c, ok := data["Collab"].(tasks.Collab); ok && rm.Kind == "collab" && !c.Project.Archived && !tasks.IsGuestCtx(r.Context()) {
+					if _, off := s.offSection(r.Context(), "/sign"); !off {
+						data["CollabSign"] = true // «Документ на подпись»: its guest signs as the client
 					}
 				}
 			}
 		}
 	}
 	s.render(w, r, "im", page{TitleKey: "nav.messenger", Nav: "im", Data: data})
+}
+
+// imCollabHead puts into the header of a collab's chat (its main one or a group chat of it) the collab — its tasks,
+// drive, calendar, people, «Пригласить» — and its chats: the main one, the group chats one is in, making one, adding
+// one's own group chat; in a group chat of it — taking the chat out (its owner, the collab's owner and moderators).
+func (s *Server) imCollabHead(r *http.Request, sess auth.Session, data map[string]any, rooms []matrixsync.Room, rm matrixsync.Room, pid string) {
+	c, err := s.Tasks.CollabCard(r.Context(), sess.UserID, pid)
+	if err != nil {
+		if !errors.Is(err, tasks.ErrNotFound) {
+			s.Log.Warn("im collab", "err", err)
+		}
+		return
+	}
+	data["Collab"] = c
+	if s.Tasks.CanInviteGuests(r.Context(), c.Project, sess.UserID) { // «Пригласить»: guests, else colleagues
+		data["CollabInvite"] = "guests"
+	} else if ok, _ := s.Tasks.CanInvite(r.Context(), c.Project); ok {
+		data["CollabInvite"] = "members"
+	}
+	main, err := s.Matrix.ProjectRoom(r.Context(), pid)
+	if err != nil {
+		s.Log.Warn("im collab room", "err", err)
+	}
+	var chats, mine []matrixsync.Room
+	for _, o := range rooms {
+		switch {
+		case o.CollabID == pid:
+			chats = append(chats, o)
+		case o.CollabID == "" && (o.Kind == "group" || o.Kind == "channel"):
+			mine = append(mine, o) // one may add it, if it is theirs (the server checks)
+		}
+	}
+	data["CollabMain"], data["CollabChats"] = main, chats
+	guest := tasks.IsGuestCtx(r.Context())
+	if may, _ := s.Tasks.CanInvite(r.Context(), c.Project); !guest && !c.Project.Archived && (may || c.Project.MyRole == "owner") && len(mine) > 0 {
+		data["CollabChatAdd"] = mine
+	}
+	if rm.CollabID != "" && !guest {
+		if g, _ := data["Group"].(*matrixsync.Group); (g != nil && g.Owner) || c.Project.CanManage() {
+			data["CollabChatRemove"] = true
+		}
+	}
 }
 
 func (s *Server) imFragment(r *http.Request, name string, data any) (string, error) {

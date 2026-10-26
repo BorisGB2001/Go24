@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"go24/internal/audit"
 	"go24/internal/auth"
 	"go24/internal/company"
+	"go24/internal/i18n"
 )
 
 // «Рабочее время»: the working day in the top bar, and the page with one's days and the team's today.
@@ -19,7 +21,11 @@ func (s *Server) workdayAction(w http.ResponseWriter, r *http.Request, sess auth
 	if !strings.HasPrefix(back, "/") || strings.HasPrefix(back, "//") {
 		back = "/worktime"
 	}
-	if err := s.Company.WorkAction(r.Context(), sess.UserID, r.FormValue("action"), r.FormValue("report"), time.Now()); err != nil {
+	at, err := s.workPlace(r, r.FormValue("action"))
+	if err == nil {
+		err = s.Company.WorkAction(r.Context(), sess.UserID, r.FormValue("action"), r.FormValue("report"), time.Now(), at)
+	}
+	if err != nil {
 		sep := "?"
 		if strings.Contains(back, "?") {
 			sep = "&"
@@ -36,6 +42,22 @@ func (s *Server) workdayAction(w http.ResponseWriter, r *http.Request, sess auth
 		}
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// workPlace is where a working-day action is done: the address and its office network. With «Начинать рабочий
+// день только из офисной сети» a day is not started or continued from elsewhere.
+func (s *Server) workPlace(r *http.Request, action string) (company.Place, error) {
+	at := company.Place{IP: audit.ClientIP(r)}
+	sched, err := s.Tasks.Schedule(r.Context())
+	if err != nil || len(sched.Offices) == 0 {
+		return at, err
+	}
+	name, in := sched.OfficeOf(at.IP)
+	at.Office = &name
+	if sched.OfficeOnly && !in && (action == "start" || action == "reopen") {
+		return at, i18n.E("err.workday_office", at.IP)
+	}
+	return at, nil
 }
 
 // timeman: my days of a month (?month=2026-10) and today of my people (subordinates; administrators — everyone).

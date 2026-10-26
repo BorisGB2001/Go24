@@ -21,6 +21,7 @@ import (
 	"go24/internal/company"
 	"go24/internal/db"
 	"go24/internal/drive"
+	"go24/internal/i18n"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -279,5 +280,31 @@ func TestCollabsHTTP(t *testing.T) {
 	must(pool.QueryRow(ctx, `SELECT owner_id::text FROM projects WHERE key = 'CL3'`).Scan(&ownerID))
 	if ownerID != outsider {
 		t.Error("the collab is not handed over")
+	}
+}
+
+// TestCollabLogLine: a line of the collab's log as the bot tells it in the chat — worded as on the page, the
+// settings in words, an invitation without its address.
+func TestCollabLogLine(t *testing.T) {
+	b, err := i18n.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		e    tasks.CollabLogEntry
+		want string
+	}{
+		{tasks.CollabLogEntry{Actor: "Иван", Target: "Анна", TargetGuest: true, Action: "member_added", Detail: "member"},
+			"Иван: добавлен участник Анна (гость) — Участник"},
+		{tasks.CollabLogEntry{Actor: "Анна", Target: "Анна", TargetGuest: true, Action: "joined", Detail: "link"},
+			"Анна: вступил(а) в коллаб Анна (гость) — по ссылке"},
+		{tasks.CollabLogEntry{Actor: "Иван", Action: "settings", Detail: "chat_history=off,events_members=off"},
+			"Иван: изменены настройки: история чата скрыта от новых участников; в чате нет событий участников"},
+		{tasks.CollabLogEntry{Actor: "Иван", Action: "invite_created", Detail: "email anna@x.ru"}, "Иван: создано приглашение"},
+		{tasks.CollabLogEntry{Actor: "Иван", Action: "info", Detail: "Клиент"}, "Иван: изменены название или описание — Клиент"},
+	} {
+		if got := CollabLogLine(b, "ru-RU", c.e); got != c.want {
+			t.Errorf("%s: %q, want %q", c.e.Action, got, c.want)
+		}
 	}
 }

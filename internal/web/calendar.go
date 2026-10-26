@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 	"net/url"
 	"slices"
@@ -245,7 +246,11 @@ func (s *Server) calRange(r *http.Request, sess auth.Session, from, to time.Time
 			return nil, nil, err
 		}
 		list, err := s.Calendar.PersonRange(r.Context(), sess.UserID, id, from, to)
-		return list, &calScope{Person: &calendar.Colleague{ID: id, Name: name}}, err
+		if err != nil {
+			return nil, nil, err
+		}
+		level, err := s.Calendar.Level(r.Context(), sess.UserID, id)
+		return list, &calScope{Person: &calendar.Colleague{ID: id, Name: name}, Level: level}, err
 	}
 	list, err := s.Calendar.Range(r.Context(), sess.UserID, from, to)
 	if err != nil {
@@ -271,13 +276,15 @@ func (s *Server) calRange(r *http.Request, sess auth.Session, from, to time.Time
 type calScope struct {
 	Project *tasks.Project
 	Person  *calendar.Colleague
+	Level   string // the viewer's access to the colleague's calendar: "", "view", "edit" (they keep it)
 }
 
 // renderCal draws the calendar page; a project's or a colleague's calendar keeps ?project= or ?user= in its links
 // (Q), a project's is under its section.
 func (s *Server) renderCal(w http.ResponseWriter, r *http.Request, sc *calScope, data map[string]any) {
 	pg := page{TitleKey: "calendar.title", Nav: "calendar", Data: data}
-	data["Q"] = ""
+	// Q is a part of the links' query (of a project's or a colleague's calendar), not a value of it
+	data["Q"], data["Level"] = template.URL(""), ""
 	if sc == nil { // the panel «Календари»: one's own calendars, the colour of the main one, colleagues' calendars
 		me, _ := data["Me"].(string)
 		var err error
@@ -287,6 +294,11 @@ func (s *Server) renderCal(w http.ResponseWriter, r *http.Request, sc *calScope,
 		if err == nil && !tasks.IsGuestCtx(r.Context()) {
 			if data["People"], err = s.Calendar.People(r.Context(), me); err == nil {
 				data["Share"], err = s.Calendar.Share(r.Context(), me)
+			}
+			if err == nil { // access by name: given to colleagues and given to one
+				if data["Grants"], err = s.Calendar.Grants(r.Context(), me); err == nil {
+					data["Granted"], err = s.Calendar.Granted(r.Context(), me)
+				}
 			}
 			if err == nil {
 				data["Users"], err = s.Tasks.ListUsers(r.Context())
@@ -305,16 +317,41 @@ func (s *Server) renderCal(w http.ResponseWriter, r *http.Request, sc *calScope,
 			return
 		}
 	} else if p := sc.Project; p != nil {
-		data["Project"], data["Q"] = *p, "&project="+url.QueryEscape(p.Key)
+		data["Project"], data["Q"] = *p, template.URL("&project="+url.QueryEscape(p.Key))
 		pg.TitleKey, pg.Title = "", p.Name
 		if p.Collab() {
 			pg.Nav = "collabs"
 		}
 	} else if sc.Person != nil {
-		data["Person"], data["Q"] = *sc.Person, "&user="+url.QueryEscape(sc.Person.ID)
+		q := "&user=" + url.QueryEscape(sc.Person.ID)
+		if sc.Level == "edit" { // a new meeting of the calendar is the colleague's
+			q += "&as=" + url.QueryEscape(sc.Person.ID)
+		}
+		data["Person"], data["Q"], data["Level"] = *sc.Person, template.URL(q), sc.Level
 		pg.TitleKey, pg.Title = "", sc.Person.Name
 	}
 	s.render(w, r, "calendar", pg)
+}
+
+// calActor is whose calendar the person works with: their own, or (as=ID) that of a colleague who gave them
+// «Управление» — then the request's context keeps the colleague's private meetings from them.
+func (s *Server) calActor(r *http.Request, sess auth.Session) (string, *http.Request, error) {
+	return s.actorOf(r, sess.UserID, r.FormValue("as"))
+}
+
+// actorOf is calActor of the viewer and as.
+func (s *Server) actorOf(r *http.Request, viewer, as string) (string, *http.Request, error) {
+	if as == "" || as == viewer {
+		return viewer, r, nil
+	}
+	ok, err := s.Calendar.Manages(r.Context(), viewer, as)
+	if err == nil && !ok {
+		err = calendar.ErrForbidden
+	}
+	if err != nil {
+		return "", r, err
+	}
+	return as, r.WithContext(calendar.AsDelegate(r.Context(), viewer)), nil
 }
 
 func sameDay(a, b time.Time) bool {
@@ -331,12 +368,16 @@ type remindPreset struct {
 }
 
 func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	actor, r, err := s.calActor(r, sess) // the calendar of a colleague one keeps: the meeting is theirs
+	if err != nil {
+		s.taskErr(w, r, err, "/calendar")
+		return
+	}
 	var e calendar.Event
 	copied := "" // the meeting copied (?copy=)
 	at := ""     // an occurrence of a repeated meeting (?at=its start): changed or deleted alone, with the following or all
 	if id := r.PathValue("id"); id != "" {
-		var err error
-		if e, err = s.Calendar.Get(r.Context(), sess.UserID, id); err != nil {
+		if e, err = s.Calendar.Get(r.Context(), actor, id); err != nil {
 			s.taskErr(w, r, err, "/calendar")
 			return
 		}
@@ -362,8 +403,8 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 				e.End = en
 			}
 		}
-		e.OwnerID = sess.UserID
-		cs, err := s.Calendar.Settings(r.Context(), sess.UserID) // the reminder of one's settings, by default 15 minutes before
+		e.OwnerID = actor
+		cs, err := s.Calendar.Settings(r.Context(), actor) // the reminder of one's settings, by default 15 minutes before
 		if err != nil {
 			s.taskErr(w, r, err, "/calendar")
 			return
@@ -374,7 +415,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		if title, text, ok := s.feedSource(r, sess); ok { // «Событие» of the feed: of a post or the feed's form
 			e.Title, e.Description = title, text
 		}
-		if id := r.URL.Query().Get("user"); id != "" && id != sess.UserID { // from a colleague's calendar: they are invited
+		if id := r.URL.Query().Get("user"); id != "" && id != sess.UserID && actor == sess.UserID { // from a colleague's calendar: they are invited
 			if name, err := s.Calendar.PersonName(r.Context(), sess.UserID, id); err == nil {
 				e.Attendees = []calendar.Attendee{{ID: id, Name: name}}
 			}
@@ -433,12 +474,19 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	data := map[string]any{
 		"E": e, "Presets": presets, "Users": users, "Invited": invited, "Projects": projects, "Me": sess.UserID,
-		"CanEdit": e.ID == "" || (e.OwnerID == sess.UserID || tasks.IsAdmin(r.Context())) && !e.ReadOnly, "At": at,
+		"CanEdit": e.ID == "" || (e.OwnerID == actor || tasks.IsAdmin(r.Context())) && !e.ReadOnly && !e.Hidden, "At": at,
 		"Colors": calendar.Colors, "Zones": calendar.Zones(e.Start, e.TZ), "PortalTZ": portalTZ(),
 	}
-	if data["Sections"], err = s.Calendar.Sections(r.Context(), sess.UserID); err != nil { // one's own calendars
+	if data["Sections"], err = s.Calendar.Sections(r.Context(), actor); err != nil { // one's own calendars
 		s.taskErr(w, r, err, "/calendar")
 		return
+	}
+	if actor != sess.UserID { // the forms of the page act for the colleague
+		data["AsQ"] = "?as=" + url.QueryEscape(actor)
+		if data["AsName"], err = s.Calendar.PersonName(r.Context(), sess.UserID, actor); err != nil {
+			s.taskErr(w, r, err, "/calendar")
+			return
+		}
 	}
 	if !tasks.IsGuestCtx(r.Context()) { // the rooms of the company
 		if data["Rooms"], err = s.Calendar.Rooms(r.Context()); err != nil {
@@ -510,6 +558,11 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, i18n.E("err.bad_form"), "/calendar")
 		return
 	}
+	actor, r, err := s.calActor(r, sess)
+	if err != nil {
+		s.taskErr(w, r, err, "/calendar")
+		return
+	}
 	allDay := r.FormValue("all_day") == "on"
 	tz := strings.TrimSpace(r.FormValue("tz")) // the time is entered by the clock of the meeting's zone
 	if !calendar.ValidTZ(tz) {
@@ -576,7 +629,7 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 		var before *calendar.Event // as it was: a changed meeting goes by mail again
 		if e.ID != "" {
-			if b, gerr := s.Calendar.Get(r.Context(), sess.UserID, e.ID); gerr == nil {
+			if b, gerr := s.Calendar.Get(r.Context(), actor, e.ID); gerr == nil {
 				before = &b
 			}
 		}
@@ -589,14 +642,14 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			// an occurrence of a repeated meeting; one taken out of the series is not sent by mail (it has no
 			// RECURRENCE-ID yet), the whole series is
 			scope := r.FormValue("scope")
-			if id, err = s.Calendar.SaveOccurrence(r.Context(), sess.UserID, e.ID, at, scope, e, r.Form["invite"]); err == nil && scope == calendar.ScopeAll {
-				s.feedMeeting(r.Context(), sess.UserID, id)
+			if id, err = s.Calendar.SaveOccurrence(r.Context(), actor, e.ID, at, scope, e, r.Form["invite"]); err == nil && scope == calendar.ScopeAll {
+				s.feedMeeting(r.Context(), actor, id)
 				if m := s.eventMailSend(r, sess, id, before); m != "" {
 					msg = m
 				}
 			}
-		} else if id, err = s.Calendar.Save(r.Context(), sess.UserID, e, r.Form["invite"]); err == nil {
-			s.feedMeeting(r.Context(), sess.UserID, id)
+		} else if id, err = s.Calendar.Save(r.Context(), actor, e, r.Form["invite"]); err == nil {
+			s.feedMeeting(r.Context(), actor, id)
 			if m := s.eventMailSend(r, sess, id, before); m != "" {
 				msg = m
 			}
@@ -606,51 +659,69 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 	}
 	if err == nil && r.FormValue("crm_on") == "1" && s.CRM != nil {
-		err = s.Calendar.SetCRM(r.Context(), sess.UserID, id, crmRefs)
+		err = s.Calendar.SetCRM(r.Context(), actor, id, crmRefs)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/calendar")
 		return
 	}
 	// those invited now come into the meeting's chat
-	s.meetingChatSync(r.Context(), sess.UserID, id)
+	s.meetingChatSync(r.Context(), actor, id)
 	if back := r.FormValue("crm_back"); strings.HasPrefix(back, "/crm/") && !strings.HasPrefix(back, "//") { // made from a card: back to it
 		http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	back := "/calendar?month=" + start.Format("2006-01")
-	if e, err := s.Calendar.Get(r.Context(), sess.UserID, id); err == nil && e.ProjectKey != "" { // back to the project's calendar
+	if e, err := s.Calendar.Get(r.Context(), actor, id); err == nil && e.ProjectKey != "" { // back to the project's calendar
 		back += "&project=" + url.QueryEscape(e.ProjectKey)
+	} else if actor != sess.UserID { // to the colleague's calendar
+		back += "&user=" + url.QueryEscape(actor)
 	}
 	http.Redirect(w, r, back+"&msg="+url.QueryEscape(msg)+"#"+id, http.StatusSeeOther)
 }
 
 func (s *Server) eventDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
+	actor, r, err := s.calActor(r, sess)
+	if err != nil {
+		s.taskErr(w, r, err, "/calendar")
+		return
+	}
+	back := "/calendar?"
+	if actor != sess.UserID { // back to the colleague's calendar
+		back += "user=" + url.QueryEscape(actor) + "&"
+	}
 	if at, perr := time.ParseInLocation("2006-01-02T15:04", r.FormValue("at"), time.Local); perr == nil && r.FormValue("scope") != calendar.ScopeAll {
-		if err := s.Calendar.DeleteOccurrence(r.Context(), sess.UserID, id, at, r.FormValue("scope")); err != nil {
+		if err := s.Calendar.DeleteOccurrence(r.Context(), actor, id, at, r.FormValue("scope")); err != nil {
 			s.taskErr(w, r, err, "/calendar")
 			return
 		}
-		http.Redirect(w, r, "/calendar?month="+at.Format("2006-01"), http.StatusSeeOther)
+		http.Redirect(w, r, back+"month="+at.Format("2006-01"), http.StatusSeeOther)
 		return
 	}
 	s.eventMailCancel(r, sess, id) // the people from outside are told by mail
-	if err := s.Calendar.Delete(r.Context(), sess.UserID, id); err != nil {
+	if err := s.Calendar.Delete(r.Context(), actor, id); err != nil {
 		s.taskErr(w, r, err, "/calendar")
 		return
 	}
 	s.withdraw(r.Context(), feed.SourceMeeting, id)
-	http.Redirect(w, r, "/calendar", http.StatusSeeOther)
+	http.Redirect(w, r, strings.TrimSuffix(strings.TrimSuffix(back, "&"), "?"), http.StatusSeeOther)
 }
 
 func (s *Server) eventRespond(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
-	if err := s.Calendar.Respond(r.Context(), sess.UserID, id, r.FormValue("status")); err != nil {
+	actor, r, err := s.calActor(r, sess) // one answers for the colleague whose calendar one keeps
+	if err == nil {
+		err = s.Calendar.Respond(r.Context(), actor, id, r.FormValue("status"))
+	}
+	if err != nil {
 		s.taskErr(w, r, err, "/calendar/"+id)
 		return
 	}
 	back := "/calendar/" + id
+	if actor != sess.UserID {
+		back += "?as=" + url.QueryEscape(actor)
+	}
 	if r.FormValue("back") != "" { // answered from the search («Приглашения»): back to it
 		back = calBack(r)
 	}
@@ -758,7 +829,12 @@ func (s *Server) eventMove(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.jsonErr(w, r, i18n.E("err.event_time"))
 		return
 	}
-	e, err := s.Calendar.Get(r.Context(), sess.UserID, id)
+	actor, r, err := s.calActor(r, sess) // dragged in the calendar of a colleague one keeps
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	e, err := s.Calendar.Get(r.Context(), actor, id)
 	if err != nil {
 		s.jsonErr(w, r, err)
 		return
@@ -770,7 +846,7 @@ func (s *Server) eventMove(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	if at, perr := time.ParseInLocation("2006-01-02T15:04", r.FormValue("at"), time.Local); perr == nil && e.Repeat != "" {
 		e.Start, e.End = start, end
-		if id, err = s.Calendar.SaveOccurrence(r.Context(), sess.UserID, id, at, calendar.ScopeOne, e, invite); err != nil {
+		if id, err = s.Calendar.SaveOccurrence(r.Context(), actor, id, at, calendar.ScopeOne, e, invite); err != nil {
 			s.jsonErr(w, r, err)
 			return
 		}
@@ -778,11 +854,11 @@ func (s *Server) eventMove(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	e.Start, e.End = start, end
-	if _, err := s.Calendar.Save(r.Context(), sess.UserID, e, invite); err != nil {
+	if _, err := s.Calendar.Save(r.Context(), actor, e, invite); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}
-	s.feedMeeting(r.Context(), sess.UserID, id) // moved: the time of the post's meeting
+	s.feedMeeting(r.Context(), actor, id) // moved: the time of the post's meeting
 	msg := ""
 	if xs, err := s.Calendar.Externals(r.Context(), id); err == nil && len(xs) > 0 { // the same people from outside
 		var addrs []string
@@ -904,6 +980,15 @@ func (s *Server) personDelete(w http.ResponseWriter, r *http.Request, sess auth.
 }
 
 // shareSave: what colleagues see in one's calendar — the busy time or the meetings.
+// accessSave gives a colleague access to one's calendar («Просмотр», «Управление») or takes it away (level "").
+func (s *Server) accessSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if err := s.Calendar.SetGrant(r.Context(), sess.UserID, r.FormValue("user"), r.FormValue("level")); err != nil {
+		s.taskErr(w, r, err, calBack(r))
+		return
+	}
+	http.Redirect(w, r, calBack(r), http.StatusSeeOther)
+}
+
 func (s *Server) shareSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if err := s.Calendar.SetShare(r.Context(), sess.UserID, r.FormValue("share")); err != nil {
 		s.taskErr(w, r, err, calBack(r))

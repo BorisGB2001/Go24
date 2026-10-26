@@ -91,7 +91,7 @@ func (s *Store) UpdateType(ctx context.Context, id, name, color string) error {
 	return err
 }
 
-// DeleteType removes a smart process without cards, with its pipelines, stages, robots and triggers.
+// DeleteType removes a smart process without cards, with its pipelines, stages, robots, triggers and «Связи».
 func (s *Store) DeleteType(ctx context.Context, id string) error {
 	t, err := s.Type(ctx, id)
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *Store) DeleteType(ctx context.Context, id string) error {
 	if t.Items > 0 {
 		return i18n.E("err.crm_type_not_empty", t.Items)
 	}
-	_, err = s.db.Exec(ctx, `DELETE FROM crm_types WHERE id::text = $1`, id)
+	_, err = s.db.Exec(ctx, `WITH r AS (DELETE FROM crm_type_relations WHERE parent = $1) DELETE FROM crm_types WHERE id::text = $1`, id)
 	return err
 }
 

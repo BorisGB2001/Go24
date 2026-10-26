@@ -21,7 +21,7 @@
   <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.status"}}</th><th>{{t "sign.parties"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
   <tbody>{{range $d.Docs}}{{$c := .Current}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "signature"}} {{.Title}}</a></td>
     <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span>{{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
-    <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{t (print "sign.pst." $p.Status)}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</td>
+    <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{if $p.Reviewer}}{{t "sign.role.reviewer"}}: {{t (print "sign.rpst." $p.Status)}}{{else}}{{t (print "sign.pst." $p.Status)}}{{end}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</td>
     <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
 </table></div>{{else}}<div class="empty">{{icon "signature"}} {{if eq $d.Filter "mine"}}{{t "sign.mine_empty"}}{{else}}{{t "sign.empty"}}{{end}}</div>{{end}}</div>{{end}}
 {{end}}

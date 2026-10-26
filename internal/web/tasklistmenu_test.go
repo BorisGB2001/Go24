@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -179,5 +180,43 @@ func TestTaskListMenu(t *testing.T) {
 	// someone outside the project gets no menu
 	if code, menu, _ := do(outsider, "GET", "/t/"+beta+"/rowmenu", nil); code < 400 || strings.Contains(menu, "/action") {
 		t.Fatalf("an outsider's menu: %d", code)
+	}
+	// pages grids: «На странице» is kept for the user and the list starts from its first page again;
+	// the footer counts all the tasks, the rows show their checklist and files
+	must(ts.AddChecklistItem(ctx, boss, betaID, "Шаг"))
+	for i := range 11 {
+		_, err := ts.CreateTask(ctx, boss, p, tasks.NewTask{Title: fmt.Sprintf("Задача %02d", i), ResponsibleID: anna})
+		must(err)
+	}
+	do(boss, "POST", "/prefs/sort", url.Values{"sort": {"title"}, "back": {"/tasks"}})
+	if n, _ := ts.PageSize(ctx, boss); n != tasks.DefaultPageSize {
+		t.Fatalf("the first page size is %d", n)
+	}
+	if _, _, loc := do(boss, "POST", "/prefs/pagesize", url.Values{"size": {"10"}, "back": {"/tasks?all=1&page=3"}}); loc != "/tasks?all=1" {
+		t.Fatalf("«На странице» returns to %q", loc)
+	}
+	do(boss, "POST", "/prefs/pagesize", url.Values{"size": {"7"}, "back": {"/tasks"}})
+	if n, _ := ts.PageSize(ctx, boss); n != 10 {
+		t.Fatalf("an unknown page size was kept: %d", n)
+	}
+	_, list, _ = do(boss, "GET", "/tasks", nil)
+	for _, want := range []string{`data-bulk-picked>0</b> / 12`, `<b class="on">1</b>`, `href="/tasks?page=2"`, `<option selected>10</option>`,
+		`href="/t/` + beta + `#checklist" class="subcnt"`, ">Задача 08<"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("the first page has no %s", want)
+		}
+	}
+	if strings.Contains(list, ">Задача 09<") {
+		t.Fatal("the first page has 11 tasks")
+	}
+	_, list, _ = do(boss, "GET", "/tasks?page=2", nil)
+	if !strings.Contains(list, ">Задача 10<") || strings.Contains(list, ">Бета<") || !strings.Contains(list, `<b class="on">2</b>`) {
+		t.Fatal("the second page")
+	}
+	if _, list, _ = do(boss, "GET", "/tasks?page=9", nil); !strings.Contains(list, `<b class="on">2</b>`) {
+		t.Fatal("a page past the end does not show the last one")
+	}
+	if _, other, _ := do(anna, "GET", "/my", nil); !strings.Contains(other, `<option selected>50</option>`) || strings.Contains(other, `class="pager"`) {
+		t.Fatal("another user's list has the page size too")
 	}
 }

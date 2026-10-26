@@ -1,6 +1,7 @@
 // «Виджет на сайт» in jsdom, as on a stranger's page: the button opens the chat, a message starts the dialogue
 // (token kept in the site's storage), the operator's answer shows, the visitor rates it and gets the conversation by
-// e-mail, the contact form sends; files both ways, the operator's name and photo, «печатает…» and «прочитано».
+// e-mail, the contact form sends; files both ways, the operator's name and photo, «печатает…» and «прочитано»; the chat
+// bot's menu as buttons.
 // node test/js/widget.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
@@ -10,7 +11,8 @@ const src = readFileSync(new URL('../../internal/web/widget/widget.js', import.m
 const cfg = { id: 'w1', base: 'https://go24.test', color: '2FC6F6', name: 'Магазин', greeting: 'Здравствуйте!',
   t: { open: 'Напишите', chat: 'Чат', contact: 'Контакты', placeholder: '…', contact_note: 'note', name: 'Имя', phone: 'Тел', email: 'Почта', question: 'Вопрос', send: 'Отправить', thanks: 'Спасибо!',
   vote: 'Оцените', vote_comment: 'Комментарий', vote_thanks: 'Спасибо за оценку', history: 'На почту', history_note: 'Пришлём', history_sent: 'Отправлено',
-  attach: 'Файл', typing: 'печатает…', read: 'Прочитано', file_big: 'Большой' }, max_file: 1000 };
+  attach: 'Файл', typing: 'печатает…', read: 'Прочитано', file_big: 'Большой',
+  form_fill: 'Заполнить форму', form_filled: 'Форма заполнена' }, max_file: 1000 };
 const dom = new JSDOM('<!doctype html><body><h1>Магазин</h1></body>', { runScripts: 'outside-only', url: 'https://shop.example/catalog', pretendToBeVisual: true });
 const w = dom.window;
 const calls = [];
@@ -131,6 +133,39 @@ await tick();
 assert.equal(calls.filter(c => c.op === 'typing').length, 1, '«печатает…» once in a while');
 assert.match(root.innerHTML, /@media \(max-width:480px\)/, 'the whole screen on a phone');
 
+// a CRM form the operator sent: its card, the form inside the chat, «заполнена» when the client has sent it
+const say = async text => { ta.value = text; root.querySelector('.say').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await tick(); };
+next = { messages: [{ id: 5, operator: 'Анна', body: '📋 Заполните форму «Заявка»', form: { id: 'f1', url: 'https://go24.test/cf/T?embed=1&ol=k1', done: false } }] };
+await say('Хочу заказ');
+const fb = root.querySelector('.m.o[data-id="5"] .fb'), fw = root.querySelector('.fw');
+assert.equal(fb.textContent, 'Заполнить форму');
+assert.equal(root.querySelector('.m.o[data-id="5"]').textContent.includes('ol=k1'), false, 'the link line is not shown');
+assert.equal(fw.hidden, true);
+fb.click();
+assert.equal(fw.hidden, false, 'the form opens inside the chat');
+assert.equal(fw.querySelector('iframe').src, 'https://go24.test/cf/T?embed=1&ol=k1');
+next = { messages: [{ id: 6, operator: 'Магазин', body: '✓ Форма «Заявка» заполнена', form_done: 'f1' }] };
+await say('Готово');
+assert.equal(fb.disabled, true, 'the filled form is not filled again');
+assert.equal(fb.textContent, '✓ Форма заполнена');
+await new Promise(r => setTimeout(r, 1600));
+assert.equal(fw.hidden, true, 'the form closes after sending');
+fb.disabled = false; fw.querySelector('.x').click();
+assert.equal(fw.hidden, true);
+
+// the line's chat bot: its menu as buttons, a button sends its item; only the last menu is live
+next = { messages: [{ id: 7, operator: 'Магазин', body: 'Выберите:', buttons: ['1. Оплата', '2. Оператор'] }] };
+await say('Привет');
+const bm = root.querySelector('.m.o[data-id="7"]');
+assert.equal(bm.childNodes[1].textContent, 'Выберите:', 'the text without the menu\'s lines');
+assert.deepEqual([...bm.querySelectorAll('.bb')].map(b => b.textContent), ['1. Оплата', '2. Оператор']);
+next = { messages: [{ id: 8, operator: '', body: '1. Оплата' }, { id: 9, operator: 'Магазин', body: 'Картой', buttons: ['1. Оплата', '2. Оператор'] }] };
+bm.querySelector('.bb').click();
+await tick();
+assert.deepEqual(calls.filter(c => c.op === 'say').at(-1).body, { body: '1. Оплата' }, 'the button sends its item');
+assert.equal(bm.querySelector('.bb').disabled, true, 'the earlier menu is off');
+assert.equal(root.querySelector('.m.o[data-id="9"] .bb').disabled, false);
+
 // «Согласие на обработку персональных данных»: the first message waits for «Принимаю», then goes; asked once
 {
   const d2 = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only', url: 'https://shop.example/', pretendToBeVisual: true });
@@ -162,5 +197,5 @@ assert.match(root.innerHTML, /@media \(max-width:480px\)/, 'the whole screen on 
   assert.equal(ops.filter(o => o === 'say').length, 2);
   assert.match(r2.innerHTML, /\[hidden\]\{display:none!important\}/, 'hidden blocks stay hidden whatever their display');
 }
-console.log('widget.js: chat, rating, conversation by e-mail, contact form, files, typing, read and consent passed');
+console.log('widget.js: chat, rating, conversation by e-mail, contact form, files, typing, read, CRM form, chat bot and consent passed');
 process.exit(0);

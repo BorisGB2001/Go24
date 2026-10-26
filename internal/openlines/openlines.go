@@ -84,6 +84,12 @@ type Widget struct {
 	// dialogue is told to its operator (KPIOperator) and to the heads of the lines (KPIHeads)
 	KPIFirst, KPIFurther  int
 	KPIOperator, KPIHeads bool
+	// the chat bot «Интерактивное меню»: answers a new dialogue first with BotText and the menu; BotOther — what a text
+	// that picks no item does: «menu» (the menu again) or «queue» (to the operators)
+	BotOn    bool
+	BotText  string
+	BotMenu  []BotItem
+	BotOther string
 }
 
 // Day: is the weekday (0 Sunday … 6 Saturday) a working day of the line?
@@ -166,6 +172,9 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 	if err := cleanLine(&w); err != nil {
 		return "", err
 	}
+	if err := cleanBot(&w); err != nil {
+		return "", err
+	}
 	if w.ConsentText = strings.TrimSpace(w.ConsentText); w.ConsentOn && w.ConsentText == "" {
 		w.ConsentText = s.tr("ol.consent_default", w.Name)
 	}
@@ -183,12 +192,14 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 		queue_mode = $8, answer_wait = $9, hours_on = $10, hours_days = $11, hours_from = $12, hours_to = $13, offline_text = $14,
 		welcome_text = $15, noanswer_text = $16, noanswer_after = $17, close_text = $18, autoclose = $19,
 		vote_on = $20, vote_text = $21, history_on = $22, crm_auto = $23, consent_on = $24, consent_text = $25,
-		kpi_first = $26, kpi_further = $27, kpi_operator = $28, kpi_heads = $29
+		kpi_first = $26, kpi_further = $27, kpi_operator = $28, kpi_heads = $29,
+		bot_on = $30, bot_text = $31, bot_menu = $32, bot_other = $33
 		WHERE id::text = $1`, w.ID, w.Name, w.Greeting, w.Color, origins, nonNil(w.Operators), w.Active,
 		w.QueueMode, w.AnswerWait, w.HoursOn, w.HoursDays, w.HoursFrom, w.HoursTo, w.OfflineText,
 		w.WelcomeText, w.NoanswerText, w.NoanswerAfter, w.CloseText, w.Autoclose,
 		w.VoteOn, w.VoteText, w.HistoryOn, w.CRMAuto, w.ConsentOn, w.ConsentText,
-		w.KPIFirst, w.KPIFurther, w.KPIOperator, w.KPIHeads)
+		w.KPIFirst, w.KPIFurther, w.KPIOperator, w.KPIHeads,
+		w.BotOn, w.BotText, w.BotMenu, w.BotOther)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
@@ -243,7 +254,7 @@ func (s *Store) DeleteWidget(ctx context.Context, id string) error {
 const widgetSQL = `SELECT id, name, greeting, color, origins, operators::text[], active, created_at, queue_mode, answer_wait,
 	hours_on, hours_days, hours_from, hours_to, offline_text, welcome_text, noanswer_text, noanswer_after, close_text, autoclose,
 	vote_on, vote_text, history_on, crm_auto, consent_on, consent_text,
-	kpi_first, kpi_further, kpi_operator, kpi_heads FROM ol_widgets`
+	kpi_first, kpi_further, kpi_operator, kpi_heads, bot_on, bot_text, bot_menu, bot_other FROM ol_widgets`
 
 func nonNil(v []string) []string {
 	if v == nil {
@@ -329,12 +340,16 @@ type Message struct {
 	Operator string // "" — the visitor (or the line, for its automatic messages)
 	Body     string
 	At       time.Time
-	Kind     string // "" — the visitor's or an operator's; welcome, offline, noanswer, close — the line's; note — a service line; hidden — an operator's hidden one
+	Kind     string // "" — the visitor's or an operator's; welcome, offline, noanswer, close, bot — the line's; note — a service line; hidden — an operator's hidden one
 	AuthorID string // the operator's id ("" — the visitor or the line)
 	// a file of the message (FileName "" — none); the visitor gets it by FileSecret
 	FileName, FileType string
 	FileSize           int64
 	FileSecret         string
+	// a CRM form an operator sent (kind form) or the client filled (form_done): the form, its link's token and key
+	FormID, FormToken, FormSecret string
+	FormDone                      *time.Time // when the client filled the sent form
+	Buttons                       []string   // the chat bot's menu (kind bot): «1. Оплата», …
 }
 
 // Image: is the message's file a picture to show?
@@ -358,7 +373,7 @@ func (m Message) Text() string {
 }
 
 // Auto: an automatic message of the line.
-func (m Message) Auto() bool { return m.Kind != "" && !m.Internal() }
+func (m Message) Auto() bool { return m.Kind != "" && m.Kind != "form" && !m.Internal() }
 
 // Internal: a message only go24's people see — a service line or an operator's hidden message.
 func (m Message) Internal() bool { return m.Kind == "note" || m.Kind == "hidden" }
@@ -379,7 +394,7 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 		return err
 	}
 	var recent int
-	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM ol_messages WHERE session_id = $1 AND author_id IS NULL AND at > now() - interval '1 minute'`, id).Scan(&recent); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM ol_messages WHERE session_id = $1 AND author_id IS NULL AND kind = '' AND at > now() - interval '1 minute'`, id).Scan(&recent); err != nil {
 		return err
 	}
 	if recent >= 20 { // a script on a public page: no flood
@@ -398,9 +413,10 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 	var operator *string
 	var said int
 	var spam, pinned bool
-	var queue *string // the line it was passed to
+	var queue *string   // the line it was passed to
+	var botNode *string // where the client is in the bot's menu
 	if err := tx.QueryRow(ctx, `SELECT status, operator_id::text, (SELECT count(*) FROM ol_messages m WHERE m.session_id = s.id AND m.author_id IS NULL AND m.kind = ''),
-		spam, pinned, queue_id::text FROM ol_sessions s WHERE id = $1 FOR UPDATE`, id).Scan(&status, &operator, &said, &spam, &pinned, &queue); err != nil {
+		spam, pinned, queue_id::text, bot_node FROM ol_sessions s WHERE id = $1 FOR UPDATE`, id).Scan(&status, &operator, &said, &spam, &pinned, &queue, &botNode); err != nil {
 		return err
 	}
 	if spam { // the visitor does not know: the message is just not taken
@@ -409,12 +425,35 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 	if err := insertMessage(ctx, tx, id, "", body, f); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET unread = unread + 1, last_at = now(), status = 'open', waiting_since = coalesce(waiting_since, now()),
-		vis_typing_at = NULL,
-		started_at = coalesce(started_at, now()), closed_at = NULL WHERE id = $1`, id); err != nil {
+	fresh := said == 0 || status == "closed" // a new dialogue (or one the visitor came back to)
+	// the line's chat bot answers first: a new dialogue (not a pinned one with its operator), then the client's picks
+	// until they go to the operators; meanwhile the dialogue waits for nobody and the operators are not told
+	next, withBot := "", false
+	switch {
+	case fresh && w.BotOn && len(w.BotMenu) > 0 && !(pinned && operator != nil):
+		withBot = true
+		if err := s.botMenu(ctx, tx, w, id, "", ""); err != nil {
+			return err
+		}
+	case !fresh && botNode != nil:
+		withBot = true
+		if next, err = s.botStep(ctx, tx, w, id, *botNode, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
+			return err
+		}
+	}
+	fromBot := withBot && next == "queue"
+	handed := !withBot || fromBot // the dialogue is the operators'
+	if fromBot {
+		if err := s.note(ctx, tx, id, "ol.note_bot_queue"); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET unread = unread + $2::int, last_at = now(), status = 'open',
+		waiting_since = CASE WHEN $3 THEN coalesce(waiting_since, now()) END, vis_typing_at = NULL,
+		bot_node = CASE WHEN NOT $3 THEN bot_node END,
+		started_at = coalesce(started_at, now()), closed_at = NULL WHERE id = $1`, id, map[bool]int{true: 1}[handed], handed); err != nil {
 		return err
 	}
-	fresh := said == 0 || status == "closed" // a new dialogue (or one the visitor came back to)
 	// whose queue: of the line it was passed to; the client back after closing — of its own line again
 	qw := w
 	if queue != nil && status == "closed" && !pinned {
@@ -426,7 +465,7 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 			return err
 		}
 	}
-	if fresh && qw.QueueMode != "all" && !(pinned && operator != nil) { // a pinned one stays with its operator
+	if handed && (fresh || fromBot) && qw.QueueMode != "all" && !(pinned && operator != nil) { // a pinned one stays with its operator
 		ops, err := s.queue(ctx, tx, qw.ID)
 		if err != nil {
 			return err
@@ -441,22 +480,30 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 	}
 	now := time.Now()
 	switch {
+	case !handed:
 	case !w.InHours(now) && w.OfflineText != "":
 		// once in a while, not on every message
 		if _, err := tx.Exec(ctx, `INSERT INTO ol_messages (session_id, body, kind) SELECT $1, $2, 'offline'
 			WHERE NOT EXISTS (SELECT 1 FROM ol_messages WHERE session_id = $1 AND kind = 'offline' AND at > now() - interval '12 hours')`, id, w.OfflineText); err != nil {
 			return err
 		}
-	case fresh && w.WelcomeText != "":
+	case fresh && !fromBot && w.WelcomeText != "":
 		if _, err := tx.Exec(ctx, `INSERT INTO ol_messages (session_id, body, kind) VALUES ($1, $2, 'welcome')`, id, w.WelcomeText); err != nil {
 			return err
 		}
 	}
-	if err := notifyOperators(ctx, tx, id, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
-		return err
+	if handed {
+		if err := notifyOperators(ctx, tx, id, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	if next == "close" {
+		if err := s.closeAs(ctx, id, "ol.note_bot_closed"); err != nil {
+			return err
+		}
 	}
 	if said == 0 {
 		if err := s.autoLead(ctx, w, id); err != nil {
@@ -504,7 +551,8 @@ func (s *Store) VisitorMessages(ctx context.Context, widgetID, token string, aft
 
 func (s *Store) messages(ctx context.Context, sessionID string, after int64) ([]Message, error) {
 	rows, err := s.db.Query(ctx, `SELECT m.id, coalesce(u.name, ''), m.body, m.at, m.kind, coalesce(m.author_id::text, ''),
-		m.file_name, m.file_type, m.file_size, m.file_secret FROM ol_messages m LEFT JOIN users u ON u.id = m.author_id
+		m.file_name, m.file_type, m.file_size, m.file_secret, coalesce(m.form_id::text, ''), coalesce(f.token, ''), m.form_secret, m.form_done, m.buttons
+		FROM ol_messages m LEFT JOIN users u ON u.id = m.author_id LEFT JOIN crm_forms f ON f.id = m.form_id
 		WHERE m.session_id = $1 AND m.id > $2 ORDER BY m.id LIMIT 500`, sessionID, after)
 	if err != nil {
 		return nil, err
@@ -596,6 +644,7 @@ type Session struct {
 	Pinned                             bool       // «Закрепить за собой»: not passed on to another operator
 	QueueID                            string     // the line it was passed to ("" — its own); Widget is that line's name
 	KPILate                            int        // how many times the visitor waited longer than the line's KPI
+	Bot                                bool       // the client is with the line's chat bot
 }
 
 // Title is how the dialogue is shown: the visitor's name or «Посетитель #…».
@@ -609,7 +658,7 @@ func (x Session) Title() string {
 const sessionSQL = `SELECT s.id, w.name, s.name, s.email, s.phone, s.page, coalesce(o.name, ''), coalesce(s.operator_id::text, ''),
 		coalesce(s.lead_id::text, ''), s.status, s.unread,
 		coalesce((SELECT m.body FROM ol_messages m WHERE m.session_id = s.id AND m.kind NOT IN ('note', 'hidden') ORDER BY m.id DESC LIMIT 1), ''), s.created_at, s.last_at,
-		s.waiting_since IS NOT NULL, s.spam, s.vote, s.head_vote, s.vote_comment, s.head_comment, coalesce(h.name, ''), coalesce(s.contact_id::text, ''), s.widget_id::text, s.vis_read, s.channel, s.consent_at, s.pinned, coalesce(s.queue_id::text, ''), s.kpi_late
+		s.waiting_since IS NOT NULL, s.spam, s.vote, s.head_vote, s.vote_comment, s.head_comment, coalesce(h.name, ''), coalesce(s.contact_id::text, ''), s.widget_id::text, s.vis_read, s.channel, s.consent_at, s.pinned, coalesce(s.queue_id::text, ''), s.kpi_late, s.bot_node IS NOT NULL
 	FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id) LEFT JOIN users o ON o.id = s.operator_id LEFT JOIN users h ON h.id = s.head_by`
 
 // Open is a dialogue with its messages; the operator reads it.
@@ -646,6 +695,11 @@ func (s *Store) ReplyWith(ctx context.Context, userID, id, body string, f *File)
 	if err := checkMessage(body, f); err != nil {
 		return err
 	}
+	return s.answer(ctx, userID, id, func(tx pgx.Tx) error { return insertMessage(ctx, tx, id, userID, body, f) })
+}
+
+// answer is an operator's answer the insert adds to the dialogue: the first operator to answer takes it.
+func (s *Store) answer(ctx context.Context, userID, id string, insert func(tx pgx.Tx) error) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -660,7 +714,7 @@ func (s *Store) ReplyWith(ctx context.Context, userID, id, body string, f *File)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = CASE WHEN answered_at IS NULL THEN $2::uuid ELSE coalesce(operator_id, $2::uuid) END,
 		answered_at = coalesce(answered_at, now()), waiting_since = NULL, noanswer_sent = false, tried = '{}',
-		status = 'open', unread = 0, last_at = now(), op_typing_at = NULL
+		status = 'open', unread = 0, last_at = now(), op_typing_at = NULL, bot_node = NULL
 		WHERE id::text = $1`, id, userID); err != nil {
 		return err
 	}
@@ -669,7 +723,7 @@ func (s *Store) ReplyWith(ctx context.Context, userID, id, body string, f *File)
 			return err
 		}
 	}
-	if err := insertMessage(ctx, tx, id, userID, body, f); err != nil {
+	if err := insert(tx); err != nil {
 		return err
 	}
 	// whoever answered has seen the dialogue: their notification about it is read (the next message notifies anew)

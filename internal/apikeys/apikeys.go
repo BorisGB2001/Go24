@@ -26,7 +26,7 @@ const tokenPrefix = "go24_"
 var ErrInvalid = i18n.E("err.key_invalid")
 
 // Scopes a key can be limited to; names are locale keys scope.<scope>.
-var AllScopes = []string{"projects:read", "projects:write", "tasks:read", "tasks:write", "im:read", "im:write", "crm:read", "crm:write", "bp:read", "bp:write", "mail:read", "mail:write", "collabs:read", "collabs:write", "calendar:read", "calendar:write", "disk:read", "disk:write", "feed:read", "feed:write", "documents:read", "documents:write", "settings:read", "settings:write", "bi:read", "openlines:read", "openlines:write", "kb:read", "kb:write", "booking:read", "booking:write", "company:read", "company:write", "placement", "imbot"}
+var AllScopes = []string{"projects:read", "projects:write", "tasks:read", "tasks:write", "im:read", "im:write", "crm:read", "crm:write", "bp:read", "bp:write", "mail:read", "mail:write", "collabs:read", "collabs:write", "calendar:read", "calendar:write", "disk:read", "disk:write", "feed:read", "feed:write", "documents:read", "documents:write", "settings:read", "settings:write", "bi:read", "openlines:read", "openlines:write", "kb:read", "kb:write", "booking:read", "booking:write", "company:read", "company:write", "telephony:read", "telephony:write", "placement", "imbot"}
 
 type Key struct {
 	ID         string

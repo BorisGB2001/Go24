@@ -16,6 +16,8 @@ const (
 	EvCode      = "code"      // the client asked for a code
 	EvSigned    = "signed"    // the signer signed
 	EvRefused   = "refused"   // the signer refused, Note — the reason
+	EvApproved  = "approved"  // the reviewer approved
+	EvRejected  = "rejected"  // the reviewer rejected, Note — the reason
 	EvCancelled = "cancelled" // the sender recalled it
 	EvDone      = "done"      // signed by all
 )

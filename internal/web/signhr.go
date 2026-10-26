@@ -329,7 +329,7 @@ func (s *Server) signBatchSign(w http.ResponseWriter, r *http.Request, sess auth
 	n := 0
 	for _, d := range docs {
 		if cur := d.Current(); d.Status == "signing" && cur != nil && cur.UserID == sess.UserID {
-			if _, err := s.signDo(r, d, cur, "", sess.UserID, false, ""); err != nil {
+			if _, err := s.signDo(r, d, cur, "", sess.UserID, false, "", nil); err != nil {
 				s.Log.Warn("sign hr batch", "doc", d.ID, "err", err)
 				continue
 			}

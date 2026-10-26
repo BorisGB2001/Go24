@@ -28,6 +28,9 @@ type CollabSettings struct {
 	EditPerm        string // who changes the settings, the name, the avatar: owner | managers
 	ChatPerm        string // who writes in the chat: members | employees (not guests) | managers
 	MsgTTL          int    // the chat's messages are deleted after so many seconds (0 — kept), one of MsgTTLs
+	// «Уведомления в коллабе»: what of the log the go24 bot tells in the chat — people added, removed, leaving, their
+	// roles and the owner; guests joining; invitations; the collab's settings, name and archive
+	EventsMembers, EventsGuests, EventsInvites, EventsCollab bool
 }
 
 // MsgTTLs are the lifetimes of «Автоудаление сообщений»: an hour, a day, a week, a month (as the messenger's).
@@ -47,8 +50,9 @@ func (s *Store) CollabSettings(ctx context.Context, p Project) (CollabSettings, 
 func collabSettings(ctx context.Context, q querier, projectID string) (CollabSettings, error) {
 	var c CollabSettings
 	err := q.QueryRow(ctx, `SELECT invite_perm, guest_invite_perm, chat_history, guests_tasks, guests_files, edit_perm, chat_perm,
-		msg_ttl FROM projects WHERE id = $1`, projectID).Scan(&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks,
-		&c.GuestFiles, &c.EditPerm, &c.ChatPerm, &c.MsgTTL)
+		msg_ttl, events_members, events_guests, events_invites, events_collab FROM projects WHERE id = $1`, projectID).Scan(
+		&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks, &c.GuestFiles, &c.EditPerm, &c.ChatPerm, &c.MsgTTL,
+		&c.EventsMembers, &c.EventsGuests, &c.EventsInvites, &c.EventsCollab)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -84,9 +88,10 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 		}
 		if _, err := tx.Exec(ctx, `UPDATE projects SET invite_perm = $2, guest_invite_perm = $3, chat_history = $4, guests_tasks = $5,
 			guests_files = $6, edit_perm = $7, chat_perm = $8, msg_ttl = $9,
-			msg_ttl_by = CASE WHEN msg_ttl = $9 THEN msg_ttl_by ELSE $10::uuid END, updated_at = now() WHERE id = $1`,
+			msg_ttl_by = CASE WHEN msg_ttl = $9 THEN msg_ttl_by ELSE $10::uuid END, events_members = $11, events_guests = $12,
+			events_invites = $13, events_collab = $14, updated_at = now() WHERE id = $1`,
 			p.ID, in.InvitePerm, in.GuestInvitePerm, in.ChatHistory, in.GuestTasks, in.GuestFiles, in.EditPerm, in.ChatPerm,
-			in.MsgTTL, actorID); err != nil {
+			in.MsgTTL, actorID, in.EventsMembers, in.EventsGuests, in.EventsInvites, in.EventsCollab); err != nil {
 			return err
 		}
 		var diff []string // «invite_perm=members», «chat_history=off»: the log shows them in words
@@ -102,6 +107,8 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 			{"guests_files", onOff(old.GuestFiles), onOff(in.GuestFiles)},
 			{"edit_perm", old.EditPerm, in.EditPerm}, {"chat_perm", old.ChatPerm, in.ChatPerm},
 			{"msg_ttl", strconv.Itoa(old.MsgTTL), strconv.Itoa(in.MsgTTL)},
+			{"events_members", onOff(old.EventsMembers), onOff(in.EventsMembers)}, {"events_guests", onOff(old.EventsGuests), onOff(in.EventsGuests)},
+			{"events_invites", onOff(old.EventsInvites), onOff(in.EventsInvites)}, {"events_collab", onOff(old.EventsCollab), onOff(in.EventsCollab)},
 		} {
 			if d.o != d.n {
 				diff = append(diff, d.k+"="+d.n)
@@ -327,6 +334,12 @@ func logCollab(ctx context.Context, q querier, projectID, actorID, action, targe
 		SELECT $1, (SELECT id FROM users WHERE id::text = $2), $3, (SELECT id FROM users WHERE id::text = $4), $5
 		FROM projects WHERE id = $1 AND kind = 'collab'`, projectID, actorID, action, targetID, detail)
 	return err
+}
+
+// LogCollabChat writes into the collab's log what was done to its chats: chat_created, chat_added, chat_removed (detail —
+// the chat's name); the bot tells it in the collab's chat as its «Уведомления в коллабе» say.
+func (s *Store) LogCollabChat(ctx context.Context, projectID, actorID, action, name string) error {
+	return logCollab(ctx, s.db, projectID, actorID, action, "", name)
 }
 
 // notifyCollab tells the person what was done to them in the collab tells about its groups: added

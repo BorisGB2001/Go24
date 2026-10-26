@@ -79,6 +79,34 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
+// imCollabChat: the chats of a collab — a group chat made in it (create), a group chat of one's own added to it (add),
+// one taken out of it (remove).
+func (s *Server) imCollabChat(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	_ = r.ParseForm()
+	room := r.FormValue("room")
+	back := imRoomURL(room)
+	var err error
+	switch r.PathValue("action") {
+	case "create":
+		var made string
+		if made, err = s.Matrix.CreateCollabChat(r.Context(), sess.UserID, r.FormValue("collab"), r.FormValue("name"), r.Form["users"]); err == nil {
+			back = imRoomURL(made)
+		}
+	case "add":
+		err = s.Matrix.AddChatToCollab(r.Context(), sess.UserID, r.FormValue("collab"), room)
+	case "remove":
+		err = s.Matrix.RemoveChatFromCollab(r.Context(), sess.UserID, room)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
 // imPhoto gives a chat's picture to someone in the chat.
 func (s *Server) imPhoto(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	res, err := s.Matrix.RoomPhoto(r.Context(), sess.UserID, r.URL.Query().Get("room"))

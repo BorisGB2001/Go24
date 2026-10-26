@@ -247,13 +247,14 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
         </div>
       </details>
 {{else if eq .ID "company"}}
-      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
+      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "honor") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
         <summary>{{icon "users"}}<span class="lbl">{{t "nav.sec.company"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
         <div class="msub">
           <a href="/company" {{if eq $n "company"}}class="on"{{end}}><span class="lbl">{{t "nav.employees"}}</span></a>
           <a href="/company/structure" {{if eq $n "structure"}}class="on"{{end}}><span class="lbl">{{t "nav.structure"}}</span></a>
           <a href="/company/changes" {{if eq $n "staffchanges"}}class="on"{{end}}><span class="lbl">{{t "staff.title"}}</span></a>
           <a href="/company/thanks" {{if eq $n "thanks"}}class="on"{{end}}><span class="lbl">{{t "gratitude.page"}}</span></a>
+          <a href="/company/honor" {{if eq $n "honor"}}class="on"{{end}}><span class="lbl">{{t "honor.title"}}</span></a>
           <a href="/company/absences" {{if eq $n "absences"}}class="on"{{end}}><span class="lbl">{{t "absence.title"}}</span></a>
           <a href="/company/birthdays" {{if eq $n "birthdays"}}class="on"{{end}}><span class="lbl">{{t "birthdays.title"}}</span></a>
           <a href="/worktime" {{if eq $n "timeman"}}class="on"{{end}}><span class="lbl">{{t "workday.page"}}</span></a>
@@ -363,6 +364,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
     <td>{{if .Pinned}}<span class="markic" title="{{t "mark.pinned"}}">{{icon "mark-pin"}}</span>{{end}}{{if .Favorite}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}<a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}</a>{{range .Tags}} <a class="tag small" href="/tasks?tag={{.}}">#{{.}}</a>{{end}}{{if .Muted}} <span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}{{if .Unread}} <a href="/t/{{.Key}}" class="newcmt" title="{{t "counter.comments_task" .Unread}}">{{icon "message-circle"}} {{.Unread}}</a>{{end}}
       {{if .SubTotal}} <a href="/t/{{.Key}}#subtasks" class="subcnt{{if eq .SubDone .SubTotal}} done{{end}}" title="{{t "subtasks.count" .SubDone .SubTotal}}">{{icon "hierarchy-2"}} {{.SubDone}}/{{.SubTotal}}</a>{{end}}
       {{if eq .Priority 2}} <span class="prio" title="{{t "task.high_priority"}}">{{icon "flame"}}</span>{{end}}
+      {{with index $l.Info .ID}}{{if .ChecklistTotal}} <a href="/t/{{$t.Key}}#checklist" class="subcnt{{if eq .ChecklistDone .ChecklistTotal}} done{{end}}" title="{{t "list.checklist_count" .ChecklistDone .ChecklistTotal}}">{{icon "list-check"}} {{.ChecklistDone}}/{{.ChecklistTotal}}</a>{{end}}{{if .Files}} <a href="/t/{{$t.Key}}#files" class="subcnt" title="{{t "list.files_count" .Files}}">{{icon "paperclip"}} {{.Files}}</a>{{end}}{{end}}
       {{if .ParentKey}}<div class="small muted">{{icon "hierarchy-2"}} {{.ParentKey}} {{.ParentTitle}}</div>{{end}}</td>
     <td data-col="status" {{if not (index $l.Cols "status")}}hidden{{end}}><span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span></td>
     <td data-col="activity" class="small" {{if not (index $l.Cols "activity")}}hidden{{end}}>{{datetime .UpdatedAt}}</td>
@@ -379,6 +381,18 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
   </tbody>
 </table>
 </div>
+{{if .Size}}<div class="tlist-foot small">
+  {{if .Gear}}<span>{{t "list.picked"}} <b data-bulk-picked>0</b> / {{.Total}}</span>{{end}}
+  <span>{{t "list.total"}} <b>{{.Total}}</b></span>
+  {{if gt .Pages 1}}<nav class="pager" aria-label="{{t "list.pages"}}">
+    {{with .Prev}}<a href="{{.}}" title="{{t "list.page_prev"}}">{{icon "chevron-left"}}</a>{{end}}
+    {{range .PageLinks}}{{if .Gap}}<span class="muted">…</span>{{else if .On}}<b class="on">{{.N}}</b>{{else}}<a href="{{.URL}}">{{.N}}</a>{{end}}{{end}}
+    {{with .Next}}<a href="{{.}}" title="{{t "list.page_next"}}">{{icon "chevron-right"}}</a>{{end}}
+  </nav>{{end}}
+  <form method="post" action="/prefs/pagesize" class="pagesize"><input type="hidden" name="back" value="{{.Back}}">
+    <label>{{t "list.page_size"}} <select name="size">{{range .Sizes}}<option {{if eq . $l.Size}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <noscript><button>{{t "common.save"}}</button></noscript></form>
+</div>{{end}}
 {{else}}
 <div class="empty">{{icon "circle-check"}} {{t "tasks.empty"}}</div>
 {{end}}

@@ -362,7 +362,7 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 		}
 	}
 	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldRows": bpFieldRows(t.Fields, users), "NewRows": bpFieldRows(nil, users), "FieldKinds": bp.FieldKinds, "UserFields": userFields, "Types": types,
-		"AllFields": fields, "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date"), "TimeFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date", "datetime"), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "Delegations": bp.Delegations, "Deeds": crm.ActivityKinds, "Docs": docs, "Scopes": bp.FieldScopes, "Others": others, "MaxLoops": bp.MaxLoops, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
+		"AllFields": fields, "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date"), "TimeFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date", "datetime"), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "PickModes": bp.PickModes, "Delegations": bp.Delegations, "Deeds": crm.ActivityKinds, "Docs": docs, "Scopes": bp.FieldScopes, "Others": others, "MaxLoops": bp.MaxLoops, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
 }
 
 // bpFieldRow is a row of the fields' editor (template "bpfields"): the options joined, a user's default as a name.
@@ -535,6 +535,11 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 			for _, f := range strings.FieldsFunc(r.FormValue("branches"), func(c rune) bool { return c < '0' || c > '9' }) {
 				n, _ := strconv.Atoi(f)
 				st.Branches = append(st.Branches, n)
+			}
+		case "pick":
+			st.Users, st.Mode, st.Field, st.Skip = r.Form["users"], r.FormValue("pick_mode"), r.FormValue("pick_field"), r.FormValue("skip") == "on"
+			if st.To = ""; st.Skip {
+				st.To = r.FormValue("reserve")
 			}
 		case "chat":
 			st.From, st.Users = r.FormValue("from"), r.Form["users"]

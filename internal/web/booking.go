@@ -144,7 +144,7 @@ func (s *Server) bookingPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		"Day": day, "Today": day.Equal(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)),
 		"Prev": day.AddDate(0, 0, -1).Format("2006-01-02"), "Next": day.AddDate(0, 0, 1).Format("2006-01-02"),
 		"Types": types, "Type": typ, "Cols": cols, "All": all, "Wait": wait, "Hours": hours, "Hour0": h0, "HourPx": bookingHourPx,
-		"GridPx": (h1 - h0) * bookingHourPx, "Statuses": booking.Statuses, "Counts": counts, "Admin": sess.Admin,
+		"GridPx": (h1 - h0) * bookingHourPx, "Statuses": booking.Statuses, "Counts": counts, "Admin": s.bookingManager(r, sess), "Rights": sess.Admin,
 		"Open": r.URL.Query().Get("b"), "Preset": s.bookingCRMPreset(r, sess), "CRM": s.CRM != nil}})
 }
 
@@ -215,7 +215,7 @@ func (s *Server) bookingDelete(w http.ResponseWriter, r *http.Request, sess auth
 	http.Redirect(w, r, "/booking?date="+b.Start.Local().Format("2006-01-02"), http.StatusSeeOther)
 }
 
-// bookingResources: the resources and their types; administrators add and change them (?edit=id, ?edit=new).
+// bookingResources: the resources and their types; its managers add and change them (?edit=id, ?edit=new).
 func (s *Server) bookingResources(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	types, err := s.Booking.Types(r.Context())
 	if err != nil {
@@ -227,8 +227,8 @@ func (s *Server) bookingResources(w http.ResponseWriter, r *http.Request, sess a
 		s.fail(w, "booking", err)
 		return
 	}
-	data := map[string]any{"Types": types, "Resources": res, "Admin": sess.Admin, "Days": []int{1, 2, 3, 4, 5, 6, 7}}
-	if e := r.URL.Query().Get("edit"); e != "" && sess.Admin {
+	data := map[string]any{"Types": types, "Resources": res, "Admin": s.bookingManager(r, sess), "Days": []int{1, 2, 3, 4, 5, 6, 7}}
+	if e := r.URL.Query().Get("edit"); e != "" && data["Admin"] == true {
 		ed := booking.Resource{Slot: 30, Days: []int{1, 2, 3, 4, 5}, From: 9 * 60, To: 18 * 60, NotifyMail: true, RemindHours: 24, LateMinutes: 15,
 			CalendarBusy: true}
 		if len(types) > 0 {
@@ -287,10 +287,10 @@ func bookingUntil(m int) int {
 	return m
 }
 
-// bookingResourceSave: a resource from its form (administrators); the hours come as HH:MM; the services — svc (their
+// bookingResourceSave: a resource from its form (those who manage «Онлайн-запись»); the hours come as HH:MM; the services — svc (their
 // products, in order) with svc_min_<product> minutes each.
 func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -352,7 +352,7 @@ func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, ses
 }
 
 func (s *Server) bookingResourceDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -365,7 +365,7 @@ func (s *Server) bookingResourceDelete(w http.ResponseWriter, r *http.Request, s
 
 // bookingTypeSave adds a resource type of its own or renames one; bookingTypeDelete removes an unused one.
 func (s *Server) bookingTypeSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -377,7 +377,7 @@ func (s *Server) bookingTypeSave(w http.ResponseWriter, r *http.Request, sess au
 }
 
 func (s *Server) bookingTypeDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.bookingManager(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}

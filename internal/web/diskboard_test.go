@@ -113,6 +113,8 @@ func TestDiskBoardHTTP(t *testing.T) {
 	}
 	if _, list := do(anna, "GET", "/disk/company", "", "", nil, 200); !strings.Contains(list, `/disk/company/board/`+id+`?folder=`) {
 		t.Fatal("the drive does not open the board in the editor")
+	} else if !strings.Contains(list, `data-edit="/disk/company/board/`+id+`?folder=" data-edit-label="Редактировать"`) {
+		t.Fatal("the viewer of the drive has no «Редактировать» of the board")
 	}
 
 	// a board by a template: its areas are labelled in the user's language; an unknown template is the empty board

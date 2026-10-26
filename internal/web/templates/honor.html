@@ -1,0 +1,49 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<div class="pagehead"><h1 style="flex:1">{{icon "trophy"}} {{t "honor.title"}}</h1>
+  {{if $d.Can}}<button type="button" class="primary" data-show="honorform">{{icon "plus"}} {{t "honor.add"}}</button>{{end}}</div>
+<div class="tabs">
+  <a href="/company">{{icon "users"}} {{t "nav.employees"}}</a>
+  <a href="/company/structure">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a>
+  <a href="/company/changes">{{icon "history"}} {{t "staff.title"}}</a>
+  <a href="/company/thanks">{{icon "star"}} {{t "gratitude.page"}}</a>
+  <a href="/company/honor" class="on">{{icon "trophy"}} {{t "honor.title"}}</a>
+</div>
+{{if $d.Can}}<div class="card" id="honorform" style="max-width:640px"{{if not $d.Add}} hidden{{end}}>
+  <h2 class="row">{{icon "trophy"}} {{t "honor.add"}}<span style="flex:1"></span><button type="button" class="link" data-hide="honorform">{{icon "x"}}</button></h2>
+  <form method="post" action="/company/honor" data-ajax data-failed="{{t "common.save_failed"}}">
+    <div class="form-error" data-error hidden></div>
+    <label>{{t "honor.person"}} <span class="req">*</span></label>
+    <select name="user" required><option value=""></option>{{range $d.Users}}<option value="{{.ID}}"{{if eq .ID $d.Add}} selected{{end}}>{{.FullName}}{{with .Position}} · {{.}}{{end}}</option>{{end}}</select>
+    <label>{{t "honor.reason"}}</label>
+    <textarea name="reason" rows="3" maxlength="{{$d.ReasonMax}}" placeholder="{{t "honor.reason_hint"}}"></textarea>
+    <div class="row evwhen"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.Today.Format "2006-01-02"}}" required></span>
+      <span>{{t "period.to"}} <input type="date" name="to"></span></div>
+    <p class="muted small">{{t "honor.form_hint"}}</p>
+    <p class="row"><button class="primary">{{t "honor.put"}}</button><button type="button" class="ghost" data-hide="honorform">{{t "common.cancel"}}</button></p>
+  </form>
+</div>{{end}}
+<form class="row filters" method="get" action="/company/honor">
+  {{if $f.Archive}}<input type="hidden" name="archive" value="1">{{end}}
+  <select name="dept" style="width:auto" onchange="this.form.submit()"><option value="">{{t "company.all_departments"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <span class="row presets"><a class="chip{{if not $f.Archive}} on{{end}}" href="/company/honor?dept={{$f.DepartmentID}}">{{t "honor.now"}}</a>
+  <a class="chip{{if $f.Archive}} on{{end}}" href="/company/honor?archive=1&dept={{$f.DepartmentID}}">{{t "honor.archive"}}</a></span>
+  <span style="flex:1"></span><span class="muted small">{{t "company.count" (len $d.List)}}</span>
+</form>
+{{if $d.List}}
+<div class="emptiles honortiles">{{range $d.List}}
+  <div class="card emptile honortile{{if .Coming $d.Today}} coming{{end}}">
+    <a href="/u/{{.Person.ID}}" data-user="{{.Person.ID}}" class="honorwho">{{photo .Person.Name .Person.PhotoURL true}}<b>{{.Person.Name}}</b></a>
+    <span class="muted small">{{with .Person.Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</span>
+    {{range .Departments}}<span class="small">{{.}}</span>{{end}}
+    {{with .Reason}}<p class="honorwhy">{{nl2br .}}</p>{{end}}
+    <span class="muted small">{{if .Coming $d.Today}}<span class="pill">{{t "honor.coming"}}</span> {{end}}{{t "period.from"}} {{day .From}}{{with .To}} {{t "period.to"}} {{day (deref .)}}{{else}} · {{t "honor.open_end"}}{{end}}</span>
+    {{if .ByID}}<span class="muted small">{{t "honor.by"}} <a href="/u/{{.ByID}}" data-user="{{.ByID}}">{{.ByName}}</a></span>{{end}}
+    {{if $d.Can}}<form method="post" action="/company/honor/{{.ID}}/delete" data-confirm="{{t "honor.remove_confirm" .Person.Name}}">
+      {{if $f.Archive}}<input type="hidden" name="archive" value="1">{{end}}
+      <button class="link muted small">{{icon "x"}} {{t "honor.remove"}}</button></form>{{end}}
+  </div>{{end}}
+</div>
+{{else}}<p class="muted">{{if $f.Archive}}{{t "honor.archive_empty"}}{{else}}{{t "honor.empty"}}{{end}}</p>{{end}}
+{{end}}

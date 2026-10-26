@@ -44,6 +44,7 @@ var settingsSections = []struct {
 		{"/settings/call-links", "call.ext_my", "video", false},
 		{"/settings/telephony", "tel.title", "phone", true},
 		{"/settings/collabs", "collab.creators.title", "users", true},
+		{"/booking/rights", "booking.rights_settings", "shield-lock", true},
 	}},
 	{"settings.sec.tasks", []settingsLink{
 		{"/settings/task-fields", "nav.task_fields", "list-check", true},

@@ -47,6 +47,8 @@ type Room struct {
 	Mentions  int // unread messages that mention the person (Matrix highlights), the «@» of the list
 	Threads   int // unread replies in the chat's threads (Unread counts the main timeline only)
 	Encrypted bool
+	// a group chat of a collab (collab_chats): the messenger keeps it on the collabs' tab, with the collab's name
+	CollabID, CollabKey, CollabName string
 }
 
 // Message is one message as go24 shows it.
@@ -433,6 +435,22 @@ func (s *Service) Rooms(ctx context.Context, userID string) ([]Room, error) {
 		kinds[id] = k
 	}
 	rows.Close()
+	type inCollab struct{ ID, Key, Name string }
+	collabOf := map[string]inCollab{} // a collab's group chats
+	rows, err = s.DB.Query(ctx, `SELECT c.room_id, p.id::text, p.key, p.name FROM collab_chats c JOIN projects p ON p.id = c.project_id`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id string
+		var c inCollab
+		if err := rows.Scan(&id, &c.ID, &c.Key, &c.Name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		collabOf[id] = c
+	}
+	rows.Close()
 
 	var mxids []string
 	for id, r := range sy.Rooms.Join {
@@ -455,6 +473,9 @@ func (s *Service) Rooms(ctx context.Context, userID string) ([]Room, error) {
 	var out []Room
 	for id, r := range sy.Rooms.Join {
 		room := Room{ID: id, Kind: kinds[id], Unread: r.Unread.Notifications, Mentions: r.Unread.Highlights, Muted: muted[id]}
+		if c, ok := collabOf[id]; ok {
+			room.CollabID, room.CollabKey, room.CollabName = c.ID, c.Key, c.Name
+		}
 		for _, t := range r.Threads {
 			room.Threads += t.Notifications
 			room.Mentions += t.Highlights

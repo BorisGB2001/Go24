@@ -248,6 +248,15 @@ func (a apiUTM) utm() marketing.UTM { return marketing.UTM(a) }
 // writeCRMCard writes a card, a deal's or a lead's with its UTM tags.
 func (s *Server) writeCRMCard(w http.ResponseWriter, r *http.Request, status int, item any) error {
 	c := s.crmCardJSON(r.PathValue("kind"), item)
+	if c.Kind == "deal" && c.TypeID != "" { // «Связи»
+		parents, err := s.CRM.Parents(r.Context(), c.ID)
+		if err != nil {
+			return err
+		}
+		for _, d := range parents {
+			c.ParentIDs = append(c.ParentIDs, d.ID)
+		}
+	}
 	if s.Marketing != nil && (c.Kind == "lead" || c.Kind == "deal") {
 		u, _, err := s.Marketing.UTMOf(r.Context(), c.Kind, c.ID)
 		if err != nil {

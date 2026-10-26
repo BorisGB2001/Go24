@@ -62,7 +62,7 @@ func (s *Server) apiOLPause(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 }
 
 // olOps are a dialogue's actions: POST /api/v1/openlines/dialogs/{id}/<op>.
-var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept"}
+var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept", "form"}
 
 type apiOLLine struct {
 	ID         string    `json:"id"`
@@ -79,12 +79,18 @@ type apiOLLine struct {
 	VoteOn     bool      `json:"vote_on"`
 	CRMAuto    bool      `json:"crm_auto"`
 	// KPI of the answer time, minutes (0 — off), and who is told of a late dialogue
-	KPIFirst    int       `json:"kpi_first_minutes"`
-	KPIFurther  int       `json:"kpi_further_minutes"`
-	KPIOperator bool      `json:"kpi_operator"`
-	KPIHeads    bool      `json:"kpi_heads"`
-	Origins     []string  `json:"origins"`
-	CreatedAt   time.Time `json:"created_at"`
+	KPIFirst    int  `json:"kpi_first_minutes"`
+	KPIFurther  int  `json:"kpi_further_minutes"`
+	KPIOperator bool `json:"kpi_operator"`
+	KPIHeads    bool `json:"kpi_heads"`
+	// the chat bot «Интерактивное меню»: its greeting, menu (title, action text|menu|queue|close, text, items) and what
+	// a text that picks no item does (menu | queue)
+	BotOn     bool                `json:"bot_on"`
+	BotText   string              `json:"bot_text,omitempty"`
+	BotMenu   []openlines.BotItem `json:"bot_menu,omitempty"`
+	BotOther  string              `json:"bot_other,omitempty"`
+	Origins   []string            `json:"origins"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 type apiOLDialog struct {
@@ -112,6 +118,7 @@ type apiOLDialog struct {
 	ConsentAt *time.Time `json:"consent_at,omitempty"` // when the visitor accepted the line's agreement
 	Pinned    bool       `json:"pinned"`               // «Закрепить за собой»: not passed on to another operator
 	KPILate   int        `json:"kpi_late"`             // how many times the visitor waited longer than the line's KPI
+	Bot       bool       `json:"bot"`                  // the client is with the line's chat bot
 }
 
 type apiOLMessage struct {
@@ -119,9 +126,17 @@ type apiOLMessage struct {
 	From     string     `json:"from"` // visitor | operator | hidden (an operator's hidden one) | line (its automatic messages) | note (a service line)
 	Operator *apiUser   `json:"operator,omitempty"`
 	Text     string     `json:"text"`
-	Kind     string     `json:"kind,omitempty"` // of the line's: welcome, offline, noanswer, close
+	Kind     string     `json:"kind,omitempty"` // of the line's: welcome, offline, noanswer, close, form_done, bot; of an operator's: form
 	At       time.Time  `json:"at"`
 	File     *apiOLFile `json:"file,omitempty"`
+	Form     *apiOLForm `json:"form,omitempty"`
+	Buttons  []string   `json:"buttons,omitempty"` // the chat bot's menu (kind bot)
+}
+
+// apiOLForm is the CRM form a message sent (kind form) or the client filled (form_done).
+type apiOLForm struct {
+	ID     string     `json:"id"`
+	DoneAt *time.Time `json:"done_at,omitempty"` // when the client filled the sent form
 }
 
 // apiOLFile is a message's file; url — for go24's users (the session's cookie).
@@ -167,7 +182,7 @@ func apiOLDialogOf(x openlines.Session) apiOLDialog {
 	d := apiOLDialog{ID: x.ID, Line: apiUser{x.WidgetID, x.Widget}, Status: x.Status, Spam: x.Spam, Waiting: x.Waiting, Unread: x.Unread,
 		Name: x.Name, Phone: x.Phone, Email: x.Email, Page: x.Page, LeadID: x.LeadID, ContactID: x.ContactID, Last: x.Last,
 		Vote: x.Vote, VoteText: x.VoteComment, HeadVote: x.HeadVote, HeadText: x.HeadComment, CreatedAt: x.CreatedAt, LastAt: x.LastAt,
-		URL: "/openlines?s=" + x.ID, ConsentAt: x.ConsentAt, Pinned: x.Pinned, KPILate: x.KPILate}
+		URL: "/openlines?s=" + x.ID, ConsentAt: x.ConsentAt, Pinned: x.Pinned, KPILate: x.KPILate, Bot: x.Bot}
 	if x.OperatorID != "" {
 		d.Operator = &apiUser{x.OperatorID, x.Operator}
 	}
@@ -177,7 +192,7 @@ func apiOLDialogOf(x openlines.Session) apiOLDialog {
 func apiOLMessagesOf(list []openlines.Message) []apiOLMessage {
 	out := []apiOLMessage{}
 	for _, m := range list {
-		x := apiOLMessage{ID: m.ID, From: "visitor", Text: m.Body, At: m.At}
+		x := apiOLMessage{ID: m.ID, From: "visitor", Text: m.Body, At: m.At, Buttons: m.Buttons}
 		if m.FileName != "" {
 			x.File = &apiOLFile{m.FileName, m.FileType, m.FileSize, "/openlines/file/" + strconv.FormatInt(m.ID, 10)}
 		}
@@ -190,6 +205,12 @@ func apiOLMessagesOf(list []openlines.Message) []apiOLMessage {
 			x.From, x.Kind = "line", m.Kind
 		case m.AuthorID != "":
 			x.From, x.Operator = "operator", &apiUser{m.AuthorID, m.Operator}
+			if m.Kind == "form" {
+				x.Kind = m.Kind
+			}
+		}
+		if m.FormID != "" {
+			x.Form = &apiOLForm{m.FormID, m.FormDone}
 		}
 		out = append(out, x)
 	}
@@ -218,7 +239,10 @@ func (s *Server) apiOLLines(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	for _, x := range list {
 		l := apiOLLine{ID: x.ID, Name: x.Name, Active: x.Active, Operators: []apiUser{}, QueueMode: x.QueueMode, AnswerWait: x.AnswerWait,
 			HoursOn: x.HoursOn, Autoclose: x.Autoclose, VoteOn: x.VoteOn, CRMAuto: x.CRMAuto, Origins: x.Origins, CreatedAt: x.CreatedAt,
-			KPIFirst: x.KPIFirst, KPIFurther: x.KPIFurther, KPIOperator: x.KPIOperator, KPIHeads: x.KPIHeads}
+			KPIFirst: x.KPIFirst, KPIFurther: x.KPIFurther, KPIOperator: x.KPIOperator, KPIHeads: x.KPIHeads, BotOn: x.BotOn}
+		if x.BotOn {
+			l.BotText, l.BotMenu, l.BotOther = x.BotText, x.BotMenu, x.BotOther
+		}
 		if x.HoursOn {
 			l.HoursDays, l.HoursFrom, l.HoursTo = x.HoursDays, x.HoursFrom, x.HoursTo
 		}
@@ -334,7 +358,9 @@ func (s *Server) apiOLReply(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	}
 	reply := s.OpenLines.Reply
 	if in.Hidden {
-		reply = func(ctx context.Context, userID, id, body string) error { return s.OpenLines.Hide(ctx, userID, id, body, nil) }
+		reply = func(ctx context.Context, userID, id, body string) error {
+			return s.OpenLines.Hide(ctx, userID, id, body, nil)
+		}
 	}
 	if err := reply(r.Context(), p.UserID, id, in.Text); err != nil {
 		return err
@@ -369,6 +395,7 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		Line    string `json:"line"`
 		Vote    int    `json:"vote"`
 		Comment string `json:"comment"`
+		Form    string `json:"form_id"`
 	}
 	if r.ContentLength != 0 {
 		if err := readJSON(r, &in); err != nil {
@@ -385,6 +412,8 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		err = s.OpenLines.Pin(ctx, p.UserID, id, op == "pin")
 	case "intercept":
 		err = s.OpenLines.Intercept(ctx, p.UserID, id)
+	case "form":
+		err = s.OpenLines.SendForm(ctx, p.UserID, id, in.Form, s.olFormLink)
 	case "transfer":
 		if in.Line != "" {
 			err = s.OpenLines.TransferLine(ctx, p.UserID, id, in.Line)

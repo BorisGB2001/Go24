@@ -47,6 +47,8 @@ func (s *Server) apiCalendarRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/calendar/people", s.api("calendar:read", s.apiCalPeople))
 	mux.HandleFunc("POST /api/v1/calendar/people", s.api("calendar:write", s.apiCalPersonAdd))
 	mux.HandleFunc("DELETE /api/v1/calendar/people/{id}", s.api("calendar:write", s.apiCalPersonDelete))
+	mux.HandleFunc("GET /api/v1/calendar/access", s.api("calendar:read", s.apiCalAccess))
+	mux.HandleFunc("PUT /api/v1/calendar/access", s.api("calendar:write", s.apiCalAccess))
 	mux.HandleFunc("GET /api/v1/calendar/share", s.api("calendar:read", s.apiCalShare))
 	mux.HandleFunc("PUT /api/v1/calendar/share", s.api("calendar:write", s.apiCalShare))
 	mux.HandleFunc("GET /api/v1/calendar/settings", s.api("calendar:read", s.apiCalSettings))
@@ -237,6 +239,10 @@ func (s *Server) apiCalSearch(w http.ResponseWriter, r *http.Request, p apikeys.
 }
 
 func (s *Server) apiCalEvent(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	p, r, err := s.apiCalActor(r, p)
+	if err != nil {
+		return err
+	}
 	e, err := s.Calendar.Get(r.Context(), p.UserID, r.PathValue("id"))
 	if err != nil {
 		return err
@@ -270,6 +276,10 @@ func apiOccurrence(r *http.Request) (*time.Time, string, error) {
 // apiCalSave creates (POST) or changes (PATCH: only the fields given) a meeting; attendees are user IDs and replace
 // the invited people.
 func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	p, r, err := s.apiCalActor(r, p)
+	if err != nil {
+		return err
+	}
 	var in struct {
 		Title         *string      `json:"title"`
 		Description   *string      `json:"description"`
@@ -462,6 +472,10 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 }
 
 func (s *Server) apiCalDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	p, r, err := s.apiCalActor(r, p)
+	if err != nil {
+		return err
+	}
 	at, scope, err := apiOccurrence(r)
 	if err != nil {
 		return err
@@ -483,6 +497,10 @@ func (s *Server) apiCalDelete(w http.ResponseWriter, r *http.Request, p apikeys.
 
 // apiCalRespond: {"status": "accepted" | "tentative" | "declined"} — the invited person's answer.
 func (s *Server) apiCalRespond(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	p, r, err := s.apiCalActor(r, p)
+	if err != nil {
+		return err
+	}
 	var in struct {
 		Status string `json:"status"`
 	}
@@ -763,6 +781,51 @@ func (s *Server) apiCalShare(w http.ResponseWriter, r *http.Request, p apikeys.P
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"share": v})
 	return nil
+}
+
+type apiGrant struct {
+	User  apiUser `json:"user"`
+	Level string  `json:"level"` // view | edit
+}
+
+// apiCalAccess: access to one's calendar given to colleagues by name ("given") and the calendars of colleagues given
+// to one ("granted"); PUT {"user", "level": "view" | "edit" | ""} gives it, changes it or ("") takes it away. With
+// «edit» one works with the colleague's meetings by ?as=ID of the events' methods, as that colleague.
+func (s *Server) apiCalAccess(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if r.Method == http.MethodPut {
+		var in struct{ User, Level string }
+		if err := readJSON(r, &in); err != nil {
+			return err
+		}
+		if err := s.Calendar.SetGrant(r.Context(), p.UserID, in.User, in.Level); err != nil {
+			return err
+		}
+	}
+	given, err := s.Calendar.Grants(r.Context(), p.UserID)
+	if err != nil {
+		return err
+	}
+	granted, err := s.Calendar.Granted(r.Context(), p.UserID)
+	if err != nil {
+		return err
+	}
+	conv := func(list []calendar.Grant) []apiGrant {
+		out := make([]apiGrant, 0, len(list))
+		for _, g := range list {
+			out = append(out, apiGrant{apiUser{ID: g.UserID, Name: g.Name}, g.Level})
+		}
+		return out
+	}
+	writeJSON(w, http.StatusOK, map[string][]apiGrant{"given": conv(given), "granted": conv(granted)})
+	return nil
+}
+
+// apiCalActor: with ?as=ID the key's user works with the meetings of a colleague who gave them «Управление» of their
+// calendar — as that colleague, whose private meetings stay hidden from them.
+func (s *Server) apiCalActor(r *http.Request, p apikeys.Principal) (apikeys.Principal, *http.Request, error) {
+	actor, r, err := s.actorOf(r, p.UserID, r.URL.Query().Get("as"))
+	p.UserID = actor
+	return p, r, err
 }
 
 // apiCalSettings: the settings of one's calendar (PUT changes those given, the rest stay) — {"week_start": 1 Monday …

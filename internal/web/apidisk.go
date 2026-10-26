@@ -172,7 +172,8 @@ func (s *Server) apiDiskFolder(w http.ResponseWriter, r *http.Request, p apikeys
 }
 
 // apiDiskUpload takes multipart "file" (one or several) into ?folder= (or the form's "folder"); "path" — the folders
-// of an uploaded folder, made as needed. A file named as one in the folder becomes its new version.
+// of an uploaded folder, made as needed. A file named as one in the folder becomes its new version, or, with
+// "unique_name" (1, true or Y — the generateUniqueName), is put beside it as «name (2)».
 func (s *Server) apiDiskUpload(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	d, err := s.apiOpenDrive(r, p)
@@ -199,7 +200,7 @@ func (s *Server) apiDiskUpload(w http.ResponseWriter, r *http.Request, p apikeys
 	sess := auth.Session{UserID: p.UserID}
 	ids := map[string]bool{}
 	for _, hdr := range hdrs {
-		id, err := s.diskPut(r, sess, d, folder, r.FormValue("storage"), hdr)
+		id, err := s.diskPut(r, sess, d, folder, r.FormValue("storage"), hdr, formTrue(r.FormValue("unique_name")))
 		if err != nil {
 			return err
 		}
@@ -437,4 +438,9 @@ func (s *Server) apiDiskVersions(w http.ResponseWriter, r *http.Request, p apike
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// formTrue reads a yes of a form field: 1, true or Y generateUniqueName).
+func formTrue(v string) bool {
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "y")
 }

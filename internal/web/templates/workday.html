@@ -6,8 +6,8 @@
   · {{icon "calendar-event"}} {{with $d.Norm.WS}}<a href="/worktime/schedules/{{.ID}}">{{.Name}}</a>{{else}}{{t "wschedule.company"}}{{end}}: {{template "wsplan" $d.Plan}}</div>
 <div class="card" style="max-width:720px">
   {{with $d.D}}<table class="tlist"><tbody>
-    <tr><th>{{t "workday.col.start"}}</th><td>{{clock .Started}}</td></tr>
-    <tr><th>{{t "workday.col.end"}}</th><td>{{with .Ended}}{{clock .}}{{else}}<span class="pill wd-{{$d.D.State}}">{{t (print "workday." $d.D.State)}}</span>{{end}}</td></tr>
+    <tr><th>{{t "workday.col.start"}}</th><td>{{clock .Started}} {{template "wdplace" .Start}}</td></tr>
+    <tr><th>{{t "workday.col.end"}}</th><td>{{with .Ended}}{{clock .}} {{template "wdplace" $d.D.End}}{{else}}<span class="pill wd-{{$d.D.State}}">{{t (print "workday." $d.D.State)}}</span>{{end}}</td></tr>
     <tr><th>{{t "workday.col.pause"}}</th><td>{{if .PauseSecs}}{{dur .PauseSecs}}{{else}}—{{end}}</td></tr>
     <tr><th>{{t "workday.col.worked"}}</th><td>{{dur (.Worked $d.Now)}}</td></tr>
     {{with .Report}}<tr><th>{{t "workday.col.report"}}</th><td class="small">{{.}}</td></tr>{{end}}
