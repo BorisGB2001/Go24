@@ -32,3 +32,35 @@ document.querySelectorAll('[data-bi-print]').forEach(b => b.addEventListener('cl
     fetch(grid.dataset.biGrid, { method: 'POST', headers: { Accept: 'application/json', 'X-Go24-Form': '1' }, body });
   });
 })();
+// The filters of a dashboard: a value picked in a filter replaces the field's values; a click on a column, a point, a
+// slice or a cell of a table filters the whole dashboard by its value (a date — by the one value, the others — adding
+// to the field's), a click on a value picked takes it off.
+(() => {
+  const go = set => {
+    const u = new URL(location.href);
+    set(u.searchParams);
+    u.hash = '';
+    location.assign(u);
+  };
+  document.querySelectorAll('select[data-bi-filter]').forEach(s => s.addEventListener('change', () => {
+    if (s.value === '*') return;
+    go(p => {
+      p.delete(s.dataset.biFilter);
+      if (s.value !== '' || s.selectedIndex > 0) p.append(s.dataset.biFilter, s.value);
+    });
+  }));
+  const grid = document.querySelector('.bi-grid');
+  if (!grid || grid.classList.contains('editing')) return;
+  grid.addEventListener('click', e => {
+    const el = e.target.closest('[data-bi-f]');
+    if (!el) return;
+    const f = el.dataset.biF, v = el.dataset.biV;
+    go(p => {
+      const had = p.getAll(f);
+      p.delete(f);
+      if (had.includes(v)) had.filter(x => x !== v).forEach(x => p.append(f, x));
+      else if (/^(day|week|month|quarter|year):\d{4}-\d\d-\d\d$/.test(v)) p.append(f, v);
+      else [...had, v].forEach(x => p.append(f, x));
+    });
+  });
+})();

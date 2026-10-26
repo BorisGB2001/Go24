@@ -101,6 +101,19 @@ func TestEventDiscussionHTTP(t *testing.T) {
 	}
 	base := "/calendar/" + ev
 
+	// the invitation not answered yet is the «Календарь» counter of the menu; the answer takes it away
+	counter := `data-counter="calendar" title="Приглашения" >1</a>`
+	if page := do(anna, "GET", "/my", nil, http.StatusOK); !strings.Contains(page, counter) {
+		t.Fatalf("no invitations counter in the menu: %q", counter)
+	}
+	if page := do(boss, "GET", "/my", nil, http.StatusOK); !strings.Contains(page, `data-counter="calendar" title="Приглашения" hidden>0</a>`) {
+		t.Fatal("the organizer has an invitations counter")
+	}
+	must(srv.Calendar.Respond(ctx, anna, ev, "accepted"))
+	if page := do(anna, "GET", "/my", nil, http.StatusOK); strings.Contains(page, counter) {
+		t.Fatal("the answered invitation is still counted")
+	}
+
 	do(boss, "POST", base+"/files", url.Values{"file": {plan}}, http.StatusOK)
 	do(anna, "POST", base+"/files", url.Values{"file": {notes}}, http.StatusForbidden) // the organizer's files
 	do(anna, "POST", base+"/comments", url.Values{"body": {"Возьму <b>отчёт</b>"}, "drive_file": {notes}}, http.StatusOK)

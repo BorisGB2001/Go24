@@ -173,7 +173,8 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
       <div class="navitem" data-mid="feed" draggable="true"><a href="/feed" {{if eq $n "feed"}}class="on"{{end}}>{{icon "news"}}<span class="lbl">{{t "nav.feed"}}</span></a>
         <a href="/feed?view=important" class="cnt red" data-counter="feed" title="{{t "feed.unread"}}" {{if not .P.FeedUnread}}hidden{{end}}>{{.P.FeedUnread}}</a></div>
 {{else if eq .ID "calendar"}}
-      <div class="navitem" data-mid="calendar" draggable="true"><a href="/calendar" {{if eq $n "calendar"}}class="on"{{end}}>{{icon "calendar-event"}}<span class="lbl">{{t "calendar.title"}}</span></a></div>
+      <div class="navitem" data-mid="calendar" draggable="true"><a href="/calendar" {{if eq $n "calendar"}}class="on"{{end}}>{{icon "calendar-event"}}<span class="lbl">{{t "calendar.title"}}</span></a>
+        <a href="/calendar?preset=invites" class="cnt" data-counter="calendar" title="{{t "calendar.preset.invites"}}" {{if not .P.CalInvites}}hidden{{end}}>{{.P.CalInvites}}</a></div>
 {{else if eq .ID "crm"}}
       <div class="navitem" data-mid="crm" draggable="true"><a href="/crm/deals" {{if hasPrefix $n "crm_"}}class="on"{{end}}>{{icon "users"}}<span class="lbl">{{t "crm.title"}}</span></a></div>
 {{else if eq .ID "marketing"}}

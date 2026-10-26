@@ -629,11 +629,17 @@ func (s *Store) Approvals(ctx context.Context, id string) ([]Approval, error) {
 	return pgx.CollectRows(rows, scanApproval)
 }
 
-// Start starts a process of the template (of a CRM card when the template is of one) with the form's values.
+// Start starts a process of the template (of a CRM card when the template is of one) with the form's values, for one
+// who may start it («Кто может запускать»; administrators — in an administrator's ctx).
 func (s *Store) Start(ctx context.Context, userID, templateID, entityID string, values map[string]string) (string, error) {
 	t, err := s.Template(ctx, templateID)
 	if err != nil {
 		return "", err
+	}
+	if ok, err := s.MayStart(ctx, userID, t.ID); err != nil {
+		return "", err
+	} else if !ok {
+		return "", i18n.E("err.bp_no_start")
 	}
 	return s.start(ctx, userID, t, entityID, values, false)
 }

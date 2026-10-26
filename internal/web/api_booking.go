@@ -114,27 +114,46 @@ func (s *Server) apiBkTypeDelete(w http.ResponseWriter, r *http.Request, p apike
 }
 
 type apiBkResource struct {
-	ID          string `json:"id"`
-	TypeID      string `json:"type_id"`
-	TypeCode    string `json:"type_code,omitempty"`
-	TypeName    string `json:"type_name"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	UserID      string `json:"user_id,omitempty"` // the employee the resource is
-	UserName    string `json:"user_name,omitempty"`
-	Slot        int    `json:"slot_minutes"`
-	Days        []int  `json:"days"` // ISO weekdays, 1 — Monday
-	From        string `json:"from"` // "09:00"
-	To          string `json:"to"`   // "18:00"
-	NotifyMail  bool   `json:"notify_mail"`
-	RemindHours int    `json:"remind_hours"`
-	LateMinutes int    `json:"late_minutes"`
-	Overbooking bool   `json:"overbooking"`
+	ID          string         `json:"id"`
+	TypeID      string         `json:"type_id"`
+	TypeCode    string         `json:"type_code,omitempty"`
+	TypeName    string         `json:"type_name"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	UserID      string         `json:"user_id,omitempty"` // the employee the resource is
+	UserName    string         `json:"user_name,omitempty"`
+	Slot        int            `json:"slot_minutes"`
+	Days        []int          `json:"days"` // ISO weekdays, 1 — Monday
+	From        string         `json:"from"` // "09:00"
+	To          string         `json:"to"`   // "18:00"
+	NotifyMail  bool           `json:"notify_mail"`
+	RemindHours int            `json:"remind_hours"`
+	LateMinutes int            `json:"late_minutes"`
+	Overbooking bool           `json:"overbooking"`
+	Services    []apiBkService `json:"services"` // the catalog's services it provides
+}
+
+// apiBkService is a service of a resource (its minutes) or of a booking (as booked) — the sku of booking.v1.
+type apiBkService struct {
+	ProductID string  `json:"product_id"`
+	Name      string  `json:"name"`
+	Price     float64 `json:"price"`
+	Currency  string  `json:"currency"`
+	Minutes   int     `json:"minutes"`
+}
+
+func toAPIBkServices(list []booking.Service) []apiBkService {
+	out := make([]apiBkService, 0, len(list))
+	for _, x := range list {
+		out = append(out, apiBkService{x.ProductID, x.Name, x.Price, x.Currency, x.Minutes})
+	}
+	return out
 }
 
 func (s *Server) toAPIBkResource(r *http.Request, x booking.Resource) apiBkResource {
 	return apiBkResource{x.ID, x.TypeID, x.TypeCode, s.apiBkTypeName(r, x.TypeCode, x.TypeName), x.Name, x.Description,
-		x.UserID, x.UserName, x.Slot, x.Days, hhmm(x.From), hhmm(x.To), x.NotifyMail, x.RemindHours, x.LateMinutes, x.Overbooking}
+		x.UserID, x.UserName, x.Slot, x.Days, hhmm(x.From), hhmm(x.To), x.NotifyMail, x.RemindHours, x.LateMinutes, x.Overbooking,
+		toAPIBkServices(x.Services)}
 }
 
 // orEmpty: nil as an empty list in JSON.
@@ -179,8 +198,9 @@ func (s *Server) apiBkResource(w http.ResponseWriter, r *http.Request, p apikeys
 	return nil
 }
 
-// GET /api/v1/booking/resources/{id}/slots?date=2026-10-27 — the free slots of the resource that day (today by
-// default): their starts; each is slot_minutes long.
+// GET /api/v1/booking/resources/{id}/slots?date=2026-10-27&service_id= — the free slots of the resource that day
+// (today by default): their starts; each is slot_minutes long, or — for a service of the resource — the starts from
+// which its minutes are free.
 func (s *Server) apiBkSlots(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	x, err := s.Booking.Resource(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -192,16 +212,25 @@ func (s *Server) apiBkSlots(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 			return booking.ErrTime
 		}
 	}
-	free, err := s.Booking.Free(r.Context(), x, day, time.Local)
+	mins := x.Slot
+	if id := r.URL.Query().Get("service_id"); id != "" {
+		svc, ok := x.Service(id)
+		if !ok {
+			return booking.ErrService
+		}
+		mins = svc.Minutes
+	}
+	free, err := s.Booking.FreeFor(r.Context(), x, day, time.Local, mins)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"resource_id": x.ID, "slot_minutes": x.Slot, "free": orEmpty(free)})
+	writeJSON(w, http.StatusOK, map[string]any{"resource_id": x.ID, "slot_minutes": x.Slot, "minutes": mins, "free": orEmpty(free)})
 	return nil
 }
 
 // POST /api/v1/booking/resources, PUT /api/v1/booking/resources/{id} — a resource (administrators): the fields of
 // GET; on PUT those not given stay. A new one works Mon–Fri 9:00–18:00 by 30 minutes unless told otherwise.
+// "services": [{"product_id", "minutes"}] — the catalog's services (of the type «Услуга»), minutes 0 — a slot.
 func (s *Server) apiBkResourceSave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.apiBkAdmin(r, p); err != nil {
 		return err
@@ -219,6 +248,10 @@ func (s *Server) apiBkResourceSave(w http.ResponseWriter, r *http.Request, p api
 		RemindHours *int    `json:"remind_hours"`
 		LateMinutes *int    `json:"late_minutes"`
 		Overbooking *bool   `json:"overbooking"`
+		Services    []struct {
+			ProductID string `json:"product_id"`
+			Minutes   int    `json:"minutes"`
+		} `json:"services"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -253,6 +286,12 @@ func (s *Server) apiBkResourceSave(w http.ResponseWriter, r *http.Request, p api
 	}
 	x.NotifyMail, x.RemindHours = deref(in.NotifyMail, x.NotifyMail), deref(in.RemindHours, x.RemindHours)
 	x.LateMinutes, x.Overbooking = deref(in.LateMinutes, x.LateMinutes), deref(in.Overbooking, x.Overbooking)
+	if in.Services != nil {
+		x.Services = []booking.Service{}
+		for _, v := range in.Services {
+			x.Services = append(x.Services, booking.Service{ProductID: v.ProductID, Minutes: v.Minutes})
+		}
+	}
 	id, err := s.Booking.SaveResource(r.Context(), p.UserID, x)
 	if err != nil {
 		return err
@@ -277,23 +316,26 @@ func (s *Server) apiBkResourceDelete(w http.ResponseWriter, r *http.Request, p a
 }
 
 type apiBkBooking struct {
-	ID          string    `json:"id"`
-	ResourceID  string    `json:"resource_id"`
-	Resource    string    `json:"resource_name"`
-	Extras      []string  `json:"extra_resource_ids"` // the other resources it takes at the same time
-	Start       time.Time `json:"start"`
-	End         time.Time `json:"end"`
-	ClientName  string    `json:"client_name"`
-	ClientPhone string    `json:"client_phone"`
-	ClientEmail string    `json:"client_email"`
-	Note        string    `json:"note"`
-	Status      string    `json:"status"` // unconfirmed, confirmed, came, no_show, cancelled
-	ContactID   string    `json:"contact_id,omitempty"`
-	CompanyID   string    `json:"company_id,omitempty"`
-	DealID      string    `json:"deal_id,omitempty"`
-	CreatedBy   string    `json:"created_by,omitempty"`
-	LinkID      string    `json:"link_id,omitempty"` // booked by the client by this link
-	ClientURL   string    `json:"client_url"`        // the client's page: confirm or cancel
+	ID          string         `json:"id"`
+	ResourceID  string         `json:"resource_id"`
+	Resource    string         `json:"resource_name"`
+	Extras      []string       `json:"extra_resource_ids"` // the other resources it takes at the same time
+	Start       time.Time      `json:"start"`
+	End         time.Time      `json:"end"`
+	ClientName  string         `json:"client_name"`
+	ClientPhone string         `json:"client_phone"`
+	ClientEmail string         `json:"client_email"`
+	Note        string         `json:"note"`
+	Status      string         `json:"status"` // unconfirmed, confirmed, came, no_show, cancelled
+	ContactID   string         `json:"contact_id,omitempty"`
+	CompanyID   string         `json:"company_id,omitempty"`
+	DealID      string         `json:"deal_id,omitempty"`
+	CreatedBy   string         `json:"created_by,omitempty"`
+	LinkID      string         `json:"link_id,omitempty"` // booked by the client by this link
+	ClientURL   string         `json:"client_url"`        // the client's page: confirm or cancel
+	Services    []apiBkService `json:"services"`          // as booked
+	Amount      float64        `json:"amount"`            // of the services
+	Currency    string         `json:"currency,omitempty"`
 }
 
 func (s *Server) toAPIBkBooking(b booking.Booking) apiBkBooking {
@@ -301,8 +343,10 @@ func (s *Server) toAPIBkBooking(b booking.Booking) apiBkBooking {
 	if b.ClientToken != "" {
 		u = s.BaseURL + "/bk/b/" + b.ClientToken
 	}
+	sum, cur := b.Total()
 	return apiBkBooking{b.ID, b.ResourceID, b.ResourceName, orEmpty(b.Extras), b.Start, b.End, b.ClientName,
-		b.ClientPhone, b.ClientEmail, b.Note, b.Status, b.ContactID, b.CompanyID, b.DealID, b.CreatedBy, b.LinkID, u}
+		b.ClientPhone, b.ClientEmail, b.Note, b.Status, b.ContactID, b.CompanyID, b.DealID, b.CreatedBy, b.LinkID, u,
+		toAPIBkServices(b.Services), sum, cur}
 }
 
 // GET /api/v1/booking/bookings?from=2026-10-01&to=2026-10-31&resource_id=&status= — the bookings that touch the days
@@ -334,8 +378,9 @@ func (s *Server) apiBkBooking(w http.ResponseWriter, r *http.Request, p apikeys.
 }
 
 // POST /api/v1/booking/bookings, PUT /api/v1/booking/bookings/{id} — a booking: {"resource_id", "extra_resource_ids",
-// "start", "end" or "minutes" (a slot of the resource by default), "client_name", "client_phone", "client_email",
-// "note", "status", "contact_id", "company_id", "deal_id"}; on PUT those not given stay. Its time must be free on each
+// "service_ids", "start", "end" or "minutes" (the services' minutes together, else a slot of the resource by default),
+// "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id"}; on PUT
+// those not given stay, a service the booking had keeps its price. Its time must be free on each
 // resource (409 otherwise) unless the resource allows overbooking; the CRM cards must be readable by the key's owner,
 // a deal brings its contact and company, a contact — the client's name and phone when they are not given.
 func (s *Server) apiBkBookingSave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
@@ -353,6 +398,7 @@ func (s *Server) apiBkBookingSave(w http.ResponseWriter, r *http.Request, p apik
 		ContactID   *string    `json:"contact_id"`
 		CompanyID   *string    `json:"company_id"`
 		DealID      *string    `json:"deal_id"`
+		ServiceIDs  []string   `json:"service_ids"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -372,6 +418,9 @@ func (s *Server) apiBkBookingSave(w http.ResponseWriter, r *http.Request, p apik
 	if in.Extras != nil {
 		b.Extras = in.Extras
 	}
+	if in.ServiceIDs != nil {
+		b.Services = booking.Keep(in.ServiceIDs, old.Services)
+	}
 	minutes := int(b.End.Sub(b.Start).Minutes())
 	if in.Start == nil && b.ID == "" {
 		return booking.ErrTime
@@ -389,7 +438,18 @@ func (s *Server) apiBkBookingSave(w http.ResponseWriter, r *http.Request, p apik
 		if err != nil {
 			return err
 		}
-		b.End = b.Start.Add(time.Duration(x.Slot) * time.Minute)
+		mins := x.Slot
+		if n := 0; len(b.Services) > 0 {
+			for _, v := range b.Services {
+				svc, ok := x.Service(v.ProductID)
+				if !ok {
+					return booking.ErrService
+				}
+				n += svc.Minutes
+			}
+			mins = n
+		}
+		b.End = b.Start.Add(time.Duration(mins) * time.Minute)
 	default: // moved: the same length
 		b.End = b.Start.Add(time.Duration(minutes) * time.Minute)
 	}

@@ -176,4 +176,31 @@ func TestStockReportsHTTP(t *testing.T) {
 	if api("moves?product_id="+p+"&from=2026-10-01&to=2026-10-31", &one); len(one.Moves) != 1 || one.Moves[0].DocID != doc || one.Moves[0].Balance != 4 {
 		t.Fatalf("api product moves %+v", one)
 	}
+
+	// «Продажи»: what the conducted shipments took, with the cost and the profit to the storekeeper only
+	ship, err := srv.CRM.SaveStockDoc(ctx, anna, crm.StockDoc{Kind: "shipment", Date: day.AddDate(0, 0, 9), Rows: []crm.StockRow{{ProductID: p, Quantity: 1, Price: 400, From: wh}}})
+	must(err)
+	must(srv.CRM.ConductStockDoc(ctx, anna, ship))
+	if _, page = get(anna, "/store/reports/sales?from=2026-10-01&to=2026-10-31"); !strings.Contains(page, "Лампа") || !strings.Contains(page, ">150<") || !strings.Contains(page, ">60<") {
+		t.Fatal("sales report")
+	}
+	if _, page = get(eve, "/store/reports/sales?from=2026-10-01&to=2026-10-31"); !strings.Contains(page, ">400<") || strings.Contains(page, ">150<") {
+		t.Fatal("the profit is shown to one not keeping the warehouse")
+	}
+	if _, page = get(anna, "/store/reports/sales?from=2026-09-01&to=2026-09-30"); strings.Contains(page, "Лампа") {
+		t.Fatal("sales of another month")
+	}
+	if _, csv = get(anna, "/store/reports/sales?from=2026-10-01&to=2026-10-31&csv=1"); !strings.Contains(csv, "Лампа;L-7;;1;1;400;250;150;60") {
+		t.Fatalf("sales csv %q", csv)
+	}
+	if _, csv = get(eve, "/store/reports/sales?from=2026-10-01&to=2026-10-31&csv=1"); !strings.HasSuffix(strings.TrimSpace(csv), "Лампа;L-7;;1;1;400") {
+		t.Fatalf("sales csv without the cost %q", csv)
+	}
+	var sales []struct {
+		Quantity, Revenue float64
+		Cost, Profit      *float64
+	}
+	if api("sales?from=2026-10-01&to=2026-10-31", &sales); len(sales) != 1 || sales[0].Revenue != 400 || sales[0].Cost == nil || *sales[0].Profit != 150 {
+		t.Fatalf("api sales %+v", sales)
+	}
 }

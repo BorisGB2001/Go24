@@ -177,7 +177,7 @@ func TestAppPlacementsHTTP(t *testing.T) {
 	has(send(bossTok, "DELETE", "/api/v1/placements", js, `{"placement": "CRM_DEAL_DETAIL_TAB"}`, 200), true, `"count": 1`)
 	has(send(anna, "GET", "/crm/deals/"+d, "", "", 200), false, "data-app-tab")
 	send(anna, "GET", "/apps/tab/"+dealTab+"?id="+d, "", "", 404)
-	must(srv.Apps.Uninstall(ctx, a.ID))
+	must(srv.Apps.Uninstall(ctx, a.ID, srv.BaseURL, "ru"))
 	if left, err := srv.Apps.Placements(ctx, ""); err != nil || len(left) != 0 {
 		t.Fatalf("after uninstall: %v %v", left, err)
 	}

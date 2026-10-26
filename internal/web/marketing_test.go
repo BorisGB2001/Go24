@@ -302,4 +302,66 @@ func TestMarketingHTTP(t *testing.T) {
 		!strings.Contains(body, "рассылка удалена") && !strings.Contains(body, "the campaign is deleted") {
 		t.Fatalf("Иван's card, the campaign deleted: %d", code)
 	}
+	// templates: a campaign from a ready-made one, «Сохранить как шаблон», the author's template, others' read-only
+	if code, _, body := do(annaC, "GET", "/marketing/templates", nil); code != http.StatusOK || !strings.Contains(body, `action="/marketing/templates/base-promo/use"`) {
+		t.Fatalf("templates page: %d", code)
+	}
+	code, loc, _ = do(annaC, "POST", "/marketing/templates/base-promo/use", url.Values{})
+	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/marketing/campaigns/") {
+		t.Fatalf("use a ready-made template: %d %s", code, loc)
+	}
+	promo, err := srv.Marketing.Campaign(ctx, strings.TrimPrefix(loc, "/marketing/campaigns/"))
+	must(err)
+	if promo.Status != "draft" || promo.Subject == "" || promo.MailboxID != box || !strings.Contains(promo.Body, "SALE20") ||
+		!strings.Contains(promo.Body, "background-color: #f06a2a") || !strings.Contains(promo.Body, "{Name}") {
+		t.Fatalf("the campaign of a template: %+v", promo)
+	}
+	if code, _, _ := do(annaC, "POST", "/marketing/templates/base-nosuch/use", url.Values{}); code == http.StatusSeeOther {
+		if all, _ := srv.Marketing.Campaigns(ctx); len(all) != 2 {
+			t.Fatal("a campaign of an unknown template")
+		}
+	}
+	if _, loc, _ := do(annaC, "POST", "/marketing/campaigns/"+promo.ID, url.Values{"title": {"Акция ноября"}, "box": {box}, "subject": {promo.Subject},
+		"html": {promo.Body}, "go": {"template"}}); !strings.Contains(loc, "msg=") {
+		t.Fatalf("save as template: %s", loc)
+	}
+	tpls, err := srv.Marketing.Templates(ctx)
+	must(err)
+	if len(tpls) != 1 || tpls[0].Name != "Акция ноября" || tpls[0].CreatedBy != anna || !strings.Contains(tpls[0].Body, "SALE20") {
+		t.Fatalf("templates: %+v", tpls)
+	}
+	tpl := tpls[0].ID
+	if code, _, body := do(borisC, "GET", "/marketing/templates?edit="+tpl, nil); code != http.StatusOK || !strings.Contains(body, "Акция ноября") ||
+		strings.Contains(body, `action="/marketing/templates/`+tpl+`"`) || strings.Contains(body, `/marketing/templates/`+tpl+`/delete`) {
+		t.Fatalf("Boris sees Anna's template to change: %d", code)
+	}
+	do(borisC, "POST", "/marketing/templates/"+tpl, url.Values{"name": {"Чужой"}, "html": {"<p>x</p>"}})
+	do(borisC, "POST", "/marketing/templates/"+tpl+"/delete", nil)
+	if got, err := srv.Marketing.Template(ctx, tpl); err != nil || got.Name != "Акция ноября" {
+		t.Fatalf("Boris changed Anna's template: %+v %v", got, err)
+	}
+	if code, _, body := do(annaC, "GET", "/marketing/templates?edit="+tpl, nil); code != http.StatusOK || !strings.Contains(body, `action="/marketing/templates/`+tpl+`"`) {
+		t.Fatalf("Anna's template editor: %d", code)
+	}
+	if _, loc, _ := do(annaC, "POST", "/marketing/templates/"+tpl, url.Values{"name": {"Акция"}, "subject": {"Скидка"}, "html": {`<p>Привет, {Name}<script>x</script></p>`}}); !strings.Contains(loc, "msg=") {
+		t.Fatalf("template saved: %s", loc)
+	}
+	if got, _ := srv.Marketing.Template(ctx, tpl); got.Body != "<p>Привет, {Name}</p>" || got.Subject != "Скидка" {
+		t.Fatalf("the template: %+v", got)
+	}
+	if _, loc, _ := do(annaC, "POST", "/marketing/templates/new", url.Values{"name": {""}}); !strings.Contains(loc, "edit=new") {
+		t.Fatalf("a template without a name: %s", loc)
+	}
+	if _, loc, _ = do(borisC, "POST", "/marketing/templates/"+tpl+"/use", url.Values{}); !strings.HasPrefix(loc, "/marketing/campaigns/") {
+		t.Fatalf("Boris uses Anna's template: %s", loc)
+	}
+	if c, _ := srv.Marketing.Campaign(ctx, strings.TrimPrefix(loc, "/marketing/campaigns/")); c.CreatedBy != boris || c.Body != "<p>Привет, {Name}</p>" || c.MailboxID != "" {
+		t.Fatalf("Boris's campaign of the template: %+v", c)
+	}
+	if _, loc, _ := do(annaC, "POST", "/marketing/templates/"+tpl+"/delete", nil); loc != "/marketing/templates" {
+		t.Fatalf("delete template: %s", loc)
+	}
+	if tpls, _ := srv.Marketing.Templates(ctx); len(tpls) != 0 {
+		t.Fatalf("deleted template: %+v", tpls)
+	}
 }

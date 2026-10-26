@@ -2,6 +2,8 @@ package crm
 
 import (
 	"context"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -9,7 +11,8 @@ import (
 
 // The reports of «Складской учёт»: «Остатки» on a date by warehouses and sections, valued at the average purchase
 // price; «Движение товаров» over a period — what was at its start, what came, what left and what is at its end; and
-// a product's movements document by document with what was left after each. Only conducted documents move the
+// a product's movements document by document with what was left after each; «Продажи» over a period — what the
+// conducted «Реализации» took, the revenue, the cost and the profit. Only conducted documents move the
 // stock, on their documents' dates: the stock on a date is today's less what the documents after it brought.
 
 // StockMove is a product coming to (Quantity above zero) or leaving (below zero) a warehouse by a conducted document.
@@ -48,6 +51,15 @@ type MovementLine struct {
 	Product
 	Opening, In, Out, Closing float64
 	Cost, Sum                 float64 // the average purchase price at the end and the closing worth
+}
+
+// SalesLine is a product's line of «Продажи»: how much the conducted shipments of the period took, at what sum (in
+// the base currency, by the rates), the cost at the average purchase price at the period's end, the profit and the
+// profitability (the profit to the cost, percent; 0 without the cost).
+type SalesLine struct {
+	Product
+	Quantity, Revenue, Cost, Profit, Margin float64
+	Docs                                    int // the shipments
 }
 
 // dayOf: the date's day (a report's dates are days, the documents' too).
@@ -249,4 +261,61 @@ func (s *Store) ProductMoves(ctx context.Context, f StockReportFilter) (float64,
 		moves[i].Balance = left
 	}
 	return opening, moves, nil
+}
+
+// SalesReport is «Продажи» from f.From to f.To: the products the conducted shipments took from the warehouse (or
+// any), the most sold by revenue first.
+func (s *Store) SalesReport(ctx context.Context, f StockReportFilter) ([]SalesLine, error) {
+	list, err := s.Goods(ctx, f.Q, f.Section, true)
+	if err != nil {
+		return nil, err
+	}
+	from, to := dayOf(f.From).AddDate(0, 0, -1), dayOf(f.To)
+	rows, err := s.db.Query(ctx, `SELECT r.product_id::text, sum(r.quantity)::float8, sum(r.quantity * r.price * coalesce(c.rate, 1))::float8,
+			count(DISTINCT d.id)::int
+		FROM crm_stock_doc_rows r JOIN crm_stock_docs d ON d.id = r.doc_id LEFT JOIN crm_currencies c ON c.code = d.currency
+		WHERE d.status = 'conducted' AND d.kind = 'shipment' AND r.product_id IS NOT NULL AND d.doc_date > $1 AND d.doc_date <= $2
+			AND ($3 = '' OR r.from_warehouse::text = $3)
+		GROUP BY r.product_id`, from, to, f.Warehouse)
+	if err != nil {
+		return nil, err
+	}
+	type sold struct {
+		q, sum float64
+		docs   int
+	}
+	by := map[string]sold{}
+	for rows.Next() {
+		var id string
+		var x sold
+		if err := rows.Scan(&id, &x.q, &x.sum, &x.docs); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		by[id] = x
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	avg, err := s.AverageCosts(ctx, to)
+	if err != nil {
+		return nil, err
+	}
+	out := []SalesLine{}
+	for _, p := range list {
+		x, ok := by[p.ID]
+		if !ok {
+			continue
+		}
+		l := SalesLine{Product: p, Quantity: round3(x.q), Revenue: round2(x.sum), Docs: x.docs}
+		l.Cost = round2(l.Quantity * costOf(p, avg))
+		l.Profit = round2(l.Revenue - l.Cost)
+		if l.Cost > 0 {
+			l.Margin = math.Round(l.Profit/l.Cost*1000) / 10
+		}
+		out = append(out, l)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Revenue > out[j].Revenue })
+	return out, nil
 }

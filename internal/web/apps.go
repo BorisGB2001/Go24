@@ -43,6 +43,15 @@ func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.
 	for _, p := range all {
 		places[p.AppID] = append(places[p.AppID], p)
 	}
+	evs, err := s.Apps.AppEvents(r.Context(), "")
+	if err != nil {
+		s.fail(w, "app events", err)
+		return
+	}
+	events := map[string][]apps.Event{} // the events the applications subscribed to
+	for _, e := range evs {
+		events[e.AppID] = append(events[e.AppID], e)
+	}
 	access := map[string][]tasks.User{} // the chips of «Кому доступно»
 	for app, list := range refs {
 		for _, ref := range list {
@@ -51,7 +60,7 @@ func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	s.render(w, r, "apps_settings", page{TitleKey: "apps.title", Nav: "apps_settings", Data: map[string]any{
 		"Apps": list, "Empty": apps.App{}, "Scopes": apikeys.AllScopes, "Base": strings.TrimRight(s.BaseURL, "/"), "Access": access,
-		"Places": places}})
+		"Places": places, "Events": events}})
 }
 
 // appSave: op=save (a new one with id «new»), access («Кому доступно»: to — people and «dept:ID»), install,
@@ -82,7 +91,7 @@ func (s *Server) appSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			kind, msg = "app_installed", s.tr(r, "apps.installed_ok")
 		}
 	case "uninstall":
-		if err = s.Apps.Uninstall(ctx, id); err == nil {
+		if err = s.Apps.Uninstall(ctx, id, s.BaseURL, s.lang(r)); err == nil {
 			kind = "app_uninstalled"
 		}
 	case "access":

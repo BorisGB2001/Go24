@@ -7,21 +7,21 @@
 {{else if eq $c.Kind "kpi"}}<div class="bi-kpi">{{range $i, $k := $c.KPI}}{{if eq $i 0}}<b>{{.Value}}</b><span>{{.Name}}</span>{{else}}<div class="bi-kpi2"><b>{{.Value}}</b> <span>{{.Name}}</span></div>{{end}}{{end}}</div>
 {{else if eq $c.Kind "table"}}<div class="bi-table"><table class="tlist">
   <thead><tr>{{range $c.Cols}}<th{{if .Num}} class="num"{{end}}>{{.Name}}</th>{{end}}</tr></thead>
-  <tbody>{{range $c.Rows}}<tr>{{range .}}<td{{if .Num}} class="num"{{end}}>{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
+  <tbody>{{range $c.Rows}}<tr>{{range .}}<td{{if .Num}} class="num"{{else if .F}} class="bi-click" data-bi-f="{{.F}}" data-bi-v="{{.Key}}"{{end}}>{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
   {{with $c.Sum}}<tfoot><tr>{{range .}}<td{{if .Num}} class="num"{{end}}>{{.Text}}</td>{{end}}</tr></tfoot>{{end}}
 </table>{{if $c.Cut}}<p class="small muted">{{t "bi.cut"}}</p>{{end}}</div>
 {{else if eq $c.Kind "pie"}}<div class="bi-pie">
   <svg viewBox="0 0 {{$c.W}} {{$c.H}}" role="img" aria-label="{{$c.Value}}">
-    {{range $c.Slices}}<path class="{{.Class}}" d="{{.Path}}"><title>{{.Name}}: {{.Value}} ({{.Pct}})</title></path>{{end}}
+    {{range $c.Slices}}<path class="{{.Class}}{{if .Click}} bi-click{{end}}" d="{{.Path}}"{{if .Click}} data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Name}}: {{.Value}} ({{.Pct}})</title></path>{{end}}
     <text class="bi-pie-total" x="110" y="112" text-anchor="middle">{{$c.Total}}</text>
     <text class="bi-pie-cap" x="110" y="132" text-anchor="middle">{{t "bi.total"}}</text>
   </svg>
-  <ul class="bi-legend">{{range $c.Slices}}<li><i class="{{.Class}}"></i><span class="bi-legend-name" title="{{.Name}}">{{.Name}}</span> <b>{{.Value}}</b> <span class="muted">{{.Pct}}</span></li>{{end}}</ul>
+  <ul class="bi-legend">{{range $c.Slices}}<li{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><i class="{{.Class}}"></i><span class="bi-legend-name" title="{{.Name}}">{{.Name}}</span> <b>{{.Value}}</b> <span class="muted">{{.Pct}}</span></li>{{end}}</ul>
 </div>
 {{else}}{{if gt (len $c.Series) 1}}<ul class="bi-legend row">{{range $c.Series}}<li><i class="{{.Class}}"></i>{{.Name}}</li>{{end}}</ul>{{end}}
 <svg class="bi-svg" viewBox="0 0 {{$c.W}} {{$c.H}}" role="img" aria-label="{{$c.Value}}">
   {{range $c.YTicks}}<line class="bi-gl" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{.Y}}" y2="{{.Y}}"/><text class="bi-ylab" x="{{$c.LabX}}" y="{{.Y}}" dy="4" text-anchor="end">{{.Text}}</text>{{end}}
-  {{range $c.Series}}<g class="{{.Class}}">{{range .Bars}}<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"><title>{{.Tip}}</title></rect>{{end}}{{if .Points}}<polyline points="{{.Points}}"/>{{range .Dots}}<circle cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Tip}}</title></circle>{{end}}{{end}}</g>{{end}}
+  {{range $c.Series}}<g class="{{.Class}}">{{range .Bars}}<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></rect>{{end}}{{if .Points}}<polyline points="{{.Points}}"/>{{range .Dots}}<circle cx="{{.X}}" cy="{{.Y}}" r="3.5"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></circle>{{end}}{{end}}</g>{{end}}
   <line class="bi-axis" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{$c.Base}}" y2="{{$c.Base}}"/>
   {{range $c.XTicks}}<text class="bi-xlab" x="{{.X}}" y="{{$c.LabY}}" text-anchor="middle">{{.Text}}</text>{{end}}
 </svg>{{end}}
@@ -51,8 +51,18 @@
   {{icon "calendar-event"}}<select name="period" style="width:auto">{{range $d.Periods}}<option value="{{.}}" {{if eq . $d.Period}}selected{{end}}>{{t (print "bi.p." .)}}</option>{{end}}</select>
   {{if eq $d.Period "range"}}<span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput $d.PFrom}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput $d.PTo}}"></span></span>
   {{else if $d.From}}<span class="muted small">{{day (deref $d.From)}}{{with $d.Last}} – {{day (deref .)}}{{end}}</span>{{end}}
+  {{range $k, $v := $d.Filters.Picked}}{{range $v}}<input type="hidden" name="f_{{$k}}" value="{{.}}">{{end}}{{end}}
   <noscript><button>{{t "bi.apply"}}</button></noscript>
 </form>
+{{with $d.Filters.List}}<div class="row filters bi-filters">{{icon "filter"}}
+  {{range .}}{{if .Select}}<select data-bi-filter="{{.Param}}" title="{{.Name}}" style="width:auto">
+    <option value="" {{if not .Picked}}selected{{end}}>{{.Name}}: {{t "bi.fl.all"}}</option>
+    {{if and .Picked (not .Value)}}{{if gt (len .Picked) 1}}<option value="*" selected>{{.Name}}: {{t "bi.fl.several" (len .Picked)}}</option>{{end}}{{end}}
+    {{$v := .Value}}{{$one := eq (len .Picked) 1}}{{range .Options}}<option value="{{.Key}}" {{if and $one (eq .Key $v)}}selected{{end}}>{{.Label}}</option>{{end}}
+  </select>{{end}}{{end}}
+  {{range .}}{{$n := .Name}}{{range .Picked}}<a class="pill bi-chip" href="{{.Off}}" title="{{t "bi.fl.off"}}">{{$n}}: {{.Label}} {{icon "x"}}</a>{{end}}{{end}}
+  {{with $d.Filters.Clear}}<a class="button ghost small" href="{{.}}">{{t "bi.fl.clear"}}</a>{{end}}
+</div>{{end}}
 {{if $d.Panels}}
 <div class="bi-grid{{if $d.Edit}} editing{{end}}" data-bi-grid="/bi/{{$db.ID}}/order">
 {{range $d.Panels}}<section class="card bi-w bi-w{{.W.Width}}" id="w-{{.W.ID}}" data-id="{{.W.ID}}"{{if $d.Edit}} draggable="true"{{end}}>
@@ -67,6 +77,7 @@
   </div>{{else}}{{if .W.NoPeriod}}<span class="pill" title="{{t "bi.w.no_period"}}">{{t "bi.p.all"}}</span>{{end}}
     {{if not .Chart.Err}}<a class="button ghost bi-csv" href="/bi/w/{{.W.ID}}/csv{{$d.Keep}}" title="{{t "bi.csv"}}">{{icon "download"}}</a>{{end}}{{end}}</header>
   {{template "bi-chart" .}}
+  {{with .Skipped}}<p class="small muted bi-skipped" title="{{t "bi.fl.skipped_hint"}}">{{icon "filter-off"}} {{t "bi.fl.skipped"}}: {{join . ", "}}</p>{{end}}
 </section>{{end}}
 </div>
 {{else}}<div class="card bi-empty">{{icon "layout-dashboard"}}<p>{{t "bi.no_widgets"}}</p>

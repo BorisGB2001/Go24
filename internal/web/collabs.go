@@ -1,8 +1,6 @@
 package web
 
 import (
-	"bytes"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,19 +52,8 @@ func (s *Server) collabCreate(w http.ResponseWriter, r *http.Request, sess auth.
 	if f, hdr, ferr := r.FormFile("photo"); ferr == nil {
 		defer f.Close()
 		if p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, key); err == nil && hdr.Size <= maxPhotoSize {
-			head := make([]byte, 512)
-			n, _ := io.ReadFull(f, head)
-			ct := http.DetectContentType(head[:n])
-			if ext, ok := photoTypes[ct]; ok {
-				obj := "go24/projects/" + p.ID + "/" + randomHex(8) + ext
-				if err := s.Storages.Put(r.Context(), sess.UserID, false, "", obj, io.MultiReader(bytes.NewReader(head[:n]), f), hdr.Size, ct); err == nil {
-					_, err = s.Tasks.SetProjectPhoto(r.Context(), p, obj, ct)
-					if err != nil {
-						s.Log.Warn("collab photo", "err", err)
-					}
-				} else {
-					s.Log.Warn("collab photo", "err", err)
-				}
+			if err := s.storeProjectPhoto(r.Context(), sess.UserID, p, f, hdr.Size); err != nil {
+				s.Log.Warn("collab photo", "err", err)
 			}
 		}
 	}

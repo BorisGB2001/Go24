@@ -304,7 +304,10 @@ func TestAPI(t *testing.T) {
 		t.Fatalf("presets = %v", ps)
 	}
 	// group actions: two tasks get a tag, an unknown one is counted as not changed
-	call("POST", "/api/v1/projects/API/tasks", full, map[string]any{"title": "Вторая"}, http.StatusCreated)
+	plan2 := call("POST", "/api/v1/projects/API/tasks", full, map[string]any{"title": "Вторая", "start_plan": "2026-11-09", "end_plan": "2026-11-13"}, http.StatusCreated)
+	if plan2["start_plan"] != "2026-11-09" || plan2["end_plan"] != "2026-11-13" {
+		t.Fatalf("plan dates of a new task: %v .. %v", plan2["start_plan"], plan2["end_plan"])
+	}
 	got := form(cookie, "/tasks/bulk", url.Values{"op": {"tag"}, "tag": {"пакет"}, "task": {"API-1", "API-2", "NOPE-9"}, "back": {"/my?role=creator"}})
 	if !strings.HasPrefix(got, "/my?role=creator&msg=") {
 		t.Fatalf("bulk: %s", got)

@@ -8,13 +8,14 @@ import (
 )
 
 // systemVersion is the version of the ready dashboards: a greater one replaces their widgets in the database.
-const systemVersion = 2
+const systemVersion = 3
 
 // SystemDashboard is a ready dashboard: its code (the title is the locale's bi.sys.CODE), period and widgets.
 type SystemDashboard struct {
 	Code     string
 	Period   string
 	Sections []string // where it is shown at first, see Sections
+	Filters  []string // «Фильтры дашборда»
 	Widgets  []Widget
 }
 
@@ -50,7 +51,7 @@ var (
 
 // SystemDashboards are the ready dashboards in the order of the list; the titles of their widgets are locale keys.
 var SystemDashboards = []SystemDashboard{
-	{Code: "sales", Period: "month", Sections: []string{"crm"}, Widgets: []Widget{
+	{Code: "sales", Period: "month", Sections: []string{"crm"}, Filters: []string{"responsible", "pipeline"}, Widgets: []Widget{
 		kpi("crm_deal", "bi.sw.deals_new", count),
 		kpi("crm_deal", "bi.sw.deals_won", count, yes("won")),
 		kpi("crm_deal", "bi.sw.won_amount", sum("amount"), yes("won")),
@@ -60,7 +61,7 @@ var SystemDashboards = []SystemDashboard{
 		chart("bar", 6, "crm_deal", "bi.sw.won_by_manager", []string{"responsible"}, []Measure{sum("amount")}, yes("won")),
 		chart("table", 6, "crm_deal", "bi.sw.managers", []string{"responsible"}, []Measure{count, sum("amount"), avg("amount")}),
 	}},
-	{Code: "leads", Period: "month", Sections: []string{"crm"}, Widgets: []Widget{
+	{Code: "leads", Period: "month", Sections: []string{"crm"}, Filters: []string{"responsible", "source"}, Widgets: []Widget{
 		kpi("crm_lead", "bi.sw.leads_new", count),
 		kpi("crm_lead", "bi.sw.leads_converted", count, yes("converted")),
 		kpi("crm_contact", "bi.sw.contacts_new", count),
@@ -70,7 +71,7 @@ var SystemDashboards = []SystemDashboard{
 		chart("bar", 6, "crm_lead", "bi.sw.leads_by_stage", []string{"stage"}, []Measure{count}),
 		chart("table", 6, "crm_lead", "bi.sw.sources", []string{"source", "converted"}, []Measure{count, sum("amount")}),
 	}},
-	{Code: "tasks", Period: "month", Sections: []string{"tasks"}, Widgets: []Widget{
+	{Code: "tasks", Period: "month", Sections: []string{"tasks"}, Filters: []string{"responsible", "project"}, Widgets: []Widget{
 		kpi("task", "bi.sw.tasks_new", count),
 		kpi("task", "bi.sw.tasks_done", count, yes("completed")),
 		kpi("task", "bi.sw.tasks_overdue", count, yes("overdue")),
@@ -79,7 +80,7 @@ var SystemDashboards = []SystemDashboard{
 		chart("pie", 4, "task", "bi.sw.tasks_by_status", []string{"status"}, []Measure{count}),
 		chart("table", 12, "task", "bi.sw.efficiency", []string{"responsible"}, []Measure{count, sum("estimate_hours"), sum("spent_hours")}),
 	}},
-	{Code: "timeman", Period: "month", Sections: []string{"company"}, Widgets: []Widget{
+	{Code: "timeman", Period: "month", Sections: []string{"company"}, Filters: []string{"employee"}, Widgets: []Widget{
 		kpi("timeman", "bi.sw.hours", sum("hours")),
 		kpi("timeman", "bi.sw.days", count),
 		kpi("timeman", "bi.sw.avg_day", avg("hours")),
@@ -127,7 +128,8 @@ func (s *Store) EnsureSystem(ctx context.Context) error {
 					return err
 				}
 			}
-			if _, err := tx.Exec(ctx, `UPDATE bi_dashboards SET version = $2, period = $3 WHERE id = $1`, id, systemVersion, d.Period); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE bi_dashboards SET version = $2, period = $3, filters = coalesce($4::text[], '{}') WHERE id = $1`,
+				id, systemVersion, d.Period, d.Filters); err != nil {
 				return err
 			}
 		}

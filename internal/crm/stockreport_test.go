@@ -13,7 +13,8 @@ import (
 
 // TestStockReports: «Остатки» on a date go back over the documents conducted after it, valued at the average price
 // of what came; «Движение товаров» counts what came and left over the period (a transfer only on one warehouse);
-// a product's movements go document by document with what was left; drafts and cancelled documents don't count.
+// a product's movements go document by document with what was left; drafts and cancelled documents don't count;
+// «Продажи» sums the conducted shipments of the period in the base currency with the cost and the profit.
 func TestStockReports(t *testing.T) {
 	url := os.Getenv("GO24_TEST_DATABASE_URL")
 	if url == "" {
@@ -136,5 +137,26 @@ func TestStockReports(t *testing.T) {
 	}
 	if _, moves, _ = s.ProductMoves(ctx, StockReportFilter{ProductID: p, From: day(1), To: day(31), Warehouse: b}); len(moves) != 1 || moves[0].Balance != 5 {
 		t.Fatalf("on B %+v", moves)
+	}
+
+	// «Продажи»: the conducted shipments of the period, a dollar one by its rate
+	must(s.SaveCurrency(ctx, Currency{Code: "USD", Rate: 90}))
+	doc(StockDoc{Kind: "shipment", Date: day(16), Rows: []StockRow{{ProductID: p, Quantity: 4, Price: 200, From: a}}}, true)
+	doc(StockDoc{Kind: "shipment", Date: day(18), Currency: "USD", Rows: []StockRow{{ProductID: p, Quantity: 1, Price: 3, From: a}}}, true)
+	doc(StockDoc{Kind: "shipment", Date: day(19), Rows: []StockRow{{ProductID: p, Quantity: 1, Price: 999, From: a}}}, false)
+	doc(StockDoc{Kind: "shipment", Date: day(25), Rows: []StockRow{{ProductID: q, Quantity: 1, Price: 80, From: b}}}, true)
+	sales, err := s.SalesReport(ctx, StockReportFilter{From: day(1), To: day(20)})
+	must(err)
+	if len(sales) != 1 || sales[0].ID != p || sales[0].Quantity != 5 || sales[0].Revenue != 1070 || sales[0].Docs != 2 ||
+		sales[0].Cost != 575 || sales[0].Profit != 495 || sales[0].Margin != 86.1 {
+		t.Fatalf("sales %+v", sales)
+	}
+	if sales, _ = s.SalesReport(ctx, StockReportFilter{From: day(1), To: day(20), Warehouse: b}); len(sales) != 0 {
+		t.Fatalf("sales on B %+v", sales)
+	}
+	sales, err = s.SalesReport(ctx, StockReportFilter{From: day(1), To: day(31)})
+	must(err)
+	if len(sales) != 2 || sales[0].ID != p || sales[1].ID != q || sales[1].Revenue != 80 || sales[1].Cost != 50 || sales[1].Margin != 60 {
+		t.Fatalf("sales of the month %+v", sales)
 	}
 }

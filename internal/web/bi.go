@@ -26,9 +26,10 @@ const (
 
 // biPanel is a widget of a dashboard with its chart.
 type biPanel struct {
-	W     bi.Widget
-	Chart biChart
-	Title string // its own, or what it shows: «Сделки: Количество»
+	W       bi.Widget
+	Chart   biChart
+	Title   string   // its own, or what it shows: «Сделки: Количество»
+	Skipped []string // the filters of the dashboard its data set has no field of
 }
 
 // biTitle is a widget's own title or the names of what it counts.
@@ -64,7 +65,7 @@ func biDate(v string) *time.Time {
 }
 
 // biPanels runs the widgets' queries side by side, each over the period unless it has none of its own.
-func (s *Server) biPanels(r *http.Request, viewer string, list []bi.Widget, from, to *time.Time) []biPanel {
+func (s *Server) biPanels(r *http.Request, viewer string, list []bi.Widget, from, to *time.Time, fl biFilters) []biPanel {
 	tr := func(k string) string { return s.tr(r, k) }
 	out := make([]biPanel, len(list))
 	var wg sync.WaitGroup
@@ -75,21 +76,29 @@ func (s *Server) biPanels(r *http.Request, viewer string, list []bi.Widget, from
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i] = s.biPanel(r, viewer, w, from, to, tr)
+			out[i] = s.biPanel(r, viewer, w, from, to, fl, tr)
 		}()
 	}
 	wg.Wait()
 	return out
 }
 
-func (s *Server) biPanel(r *http.Request, viewer string, w bi.Widget, from, to *time.Time, tr func(string) string) biPanel {
+func (s *Server) biPanel(r *http.Request, viewer string, w bi.Widget, from, to *time.Time, fl biFilters, tr func(string) string) biPanel {
 	tr = s.biTr(r, w.Query.Dataset, tr)
 	p := biPanel{W: w, Title: biTitle(w, tr)}
-	q := w.Query
+	q, skipped, err := s.BI.Narrow(r.Context(), w.Query, fl.Picked)
+	for _, c := range skipped {
+		if n := fl.Names[c]; n != "" {
+			p.Skipped = append(p.Skipped, n)
+		}
+	}
 	if !w.NoPeriod {
 		q.From, q.To = from, to
 	}
-	res, err := s.BI.Run(r.Context(), viewer, q, tr)
+	var res bi.Result
+	if err == nil {
+		res, err = s.BI.Run(r.Context(), viewer, q, tr)
+	}
 	if err != nil {
 		p.Chart = biChart{Kind: w.Kind, Err: s.biErr(r, err)}
 		return p
@@ -157,10 +166,12 @@ func (s *Server) biList(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		"Periods": bi.Periods}})
 }
 
-// biDashboardForm reads the settings of a dashboard: its title, description and period.
+// biDashboardForm reads the settings of a dashboard: its title, description, period and filters.
 func biDashboardForm(r *http.Request) bi.Dashboard {
+	r.ParseForm()
 	return bi.Dashboard{ID: r.PathValue("id"), Title: r.FormValue("title"), Description: strings.TrimSpace(r.FormValue("description")),
-		Period: r.FormValue("period"), DateFrom: biDate(r.FormValue("date_from")), DateTo: biDate(r.FormValue("date_to"))}
+		Period: r.FormValue("period"), DateFrom: biDate(r.FormValue("date_from")), DateTo: biDate(r.FormValue("date_to")),
+		Filters: r.Form["filters"]}
 }
 
 func (s *Server) biCreate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -216,6 +227,14 @@ func (s *Server) biDashboard(w http.ResponseWriter, r *http.Request, sess auth.S
 	data["Settings"] = can && r.URL.Query().Get("settings") != ""
 	data["PinForm"] = pin && (data["Settings"] == true || r.URL.Query().Get("pin") != "")
 	data["Sections"] = bi.Sections
+	if data["Settings"] == true {
+		list, err := s.BI.Widgets(r.Context(), d.ID)
+		if err != nil {
+			s.fail(w, "bi", err)
+			return
+		}
+		data["FilterFields"] = s.biFilterFields(r, list)
+	}
 	if manage && data["Settings"] == true {
 		if err := s.biRightsData(r, data, bi.On{Dashboard: d.ID}); err != nil {
 			s.fail(w, "bi", err)
@@ -234,6 +253,7 @@ func (s *Server) biBoard(r *http.Request, sess auth.Session, d bi.Dashboard, pat
 	s.biSystem(r, &d)
 	period, pf, pt := biPeriod(r, d)
 	from, to := bi.Span(period, pf, pt, time.Now())
+	fl := s.biFilterBar(r, sess.UserID, d, list)
 	keep := biKeep(r)
 	link := "?d=" + d.ID // «Ссылка»: the dashboard with the period picked, where it is opened
 	if !strings.HasPrefix(path, "/bi/") {
@@ -244,7 +264,7 @@ func (s *Server) biBoard(r *http.Request, sess auth.Session, d bi.Dashboard, pat
 		link = keep
 	}
 	return map[string]any{
-		"D": d, "Panels": s.biPanels(r, sess.UserID, list, from, to), "Period": period, "PFrom": pf, "PTo": pt,
+		"D": d, "Panels": s.biPanels(r, sess.UserID, list, from, to, fl), "Filters": fl, "Period": period, "PFrom": pf, "PTo": pt,
 		"From": from, "Last": biLastDay(to), "Periods": bi.Periods, "Widths": bi.Widths, "Kinds": bi.Kinds,
 		"Path": path, "Keep": keep, "Self": "/bi/" + d.ID + keep, "Link": s.BaseURL + path + link}, nil
 }
@@ -268,12 +288,17 @@ func (s *Server) biPin(w http.ResponseWriter, r *http.Request, sess auth.Session
 	http.Redirect(w, r, "/bi/"+d.ID, http.StatusSeeOther)
 }
 
-// biKeep is the period picked on the page, to keep in the links of its actions.
+// biKeep is the period and the filters picked on the page, to keep in the links of its actions.
 func biKeep(r *http.Request) string {
 	v := url.Values{}
 	for _, k := range []string{"period", "from", "to"} {
 		if x := r.URL.Query().Get(k); x != "" {
 			v.Set(k, x)
+		}
+	}
+	for k, xs := range r.URL.Query() {
+		if strings.HasPrefix(k, biParam) {
+			v[k] = xs
 		}
 	}
 	if len(v) == 0 {
@@ -629,7 +654,7 @@ func (s *Server) biWidgetPage(w http.ResponseWriter, r *http.Request, sess auth.
 	isDate := func(code string) bool { f, ok := ds.Field(code); return ok && f.Type == bi.Date }
 	s.render(w, r, "biwidget", page{TitleKey: "bi.widget", Nav: "bi", Data: map[string]any{
 		"D": d, "W": x, "V": v, "DS": ds, "DimDate": isDate(v.Dim), "Dim2Date": isDate(v.Dim2), "Datasets": sets, "SetSections": bi.SetSections, "HasFiles": len(sets) > len(bi.Datasets),
-		"Panel": s.biPanel(r, sess.UserID, x, from, to, tr), "Kinds": bi.Kinds, "Widths": bi.Widths,
+		"Panel": s.biPanel(r, sess.UserID, x, from, to, biFilters{}, tr), "Kinds": bi.Kinds, "Widths": bi.Widths,
 		"Grains": bi.Grains, "Aggs": bi.Aggregates, "Ops": biOps, "Period": period}})
 }
 
@@ -709,12 +734,15 @@ func (s *Server) biCSV(w http.ResponseWriter, r *http.Request, sess auth.Session
 		return
 	}
 	tr := s.biTr(r, x.Query.Dataset, func(k string) string { return s.tr(r, k) })
-	q := x.Query
+	q, _, err := s.BI.Narrow(r.Context(), x.Query, biPicked(r))
 	if !x.NoPeriod {
 		period, pf, pt := biPeriod(r, d)
 		q.From, q.To = bi.Span(period, pf, pt, time.Now())
 	}
-	res, err := s.BI.Run(r.Context(), sess.UserID, q, tr)
+	var res bi.Result
+	if err == nil {
+		res, err = s.BI.Run(r.Context(), sess.UserID, q, tr)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/bi/"+d.ID)
 		return

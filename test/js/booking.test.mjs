@@ -259,4 +259,67 @@ assert.equal(dlg.open, false);
   wdlg.querySelector('[data-wait-close]').click();
   assert.equal(wdlg.open, false);
 }
+
+// the services of a resource: only its own are offered; checking them sets the minutes to theirs together and shows
+// the total; a booking's card has its services checked
+{
+  const dom = new JSDOM(`<!doctype html><html lang="ru-RU"><body>
+<div data-booking data-date="2026-10-26" data-hour0="9" data-hour-px="48">
+  <div class="cg-col" data-resource="r1" data-slot="30" data-from="540" data-to="1080">
+    <a href="#" data-bk="b1" data-res="r1" data-services="s2" data-time="10:00" data-minutes="45" data-name="Иван" data-status="confirmed">10:00</a></div>
+  <div class="cg-col" data-resource="r2" data-slot="60" data-from="540" data-to="1080"></div>
+</div>
+<dialog data-booking-dlg><form method="post" action="/booking" data-new-action="/booking">
+  <h3 data-title-new="н" data-title-edit="к"></h3>
+  <select name="resource"><option value="r1" data-slot="30">1</option><option value="r2" data-slot="60">2</option></select>
+  <div data-bk-svcs hidden><div>
+    <label data-svc-res="r1"><input type="checkbox" name="svc" value="s1" data-minutes="90" data-price="3000" data-currency="RUB"></label>
+    <label data-svc-res="r1"><input type="checkbox" name="svc" value="s2" data-minutes="45" data-price="1500.5" data-currency="RUB"></label>
+    <label data-svc-res="r2"><input type="checkbox" name="svc" value="s3" data-minutes="60" data-price="100" data-currency="RUB"></label></div>
+    <p data-bk-total data-label="Итого"></p></div>
+  <input name="time"><input name="minutes"><input name="client_name"><input name="client_phone"><input name="client_email">
+  <textarea name="note"></textarea><select name="status"><option value="unconfirmed"></option><option value="confirmed"></option></select>
+  <p data-booking-by data-label="Записал(а)"></p>
+  <button type="button" data-booking-close></button><button data-booking-delete hidden></button>
+</form></dialog></body></html>`, { runScripts: 'outside-only', url: 'http://go24.test/booking' });
+  const w = dom.window, d = w.document;
+  w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  w.HTMLDialogElement.prototype.close = function () { this.open = false; };
+  w.eval(script);
+  const form = d.querySelector('form'), f = n => form.elements[n], box = d.querySelector('[data-bk-svcs]');
+  const [s1, s2, s3] = d.querySelectorAll('[name=svc]'), total = d.querySelector('[data-bk-total]');
+  const [c1, c2] = d.querySelectorAll('.cg-col');
+  const click = (el, y) => {
+    el.getBoundingClientRect = () => ({ top: 0, left: 0 });
+    el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, clientY: y }));
+  };
+  click(c1, 48 * 2);
+  assert.equal(box.hidden, false);
+  assert.deepEqual([s1, s2, s3].map(x => x.disabled), [false, false, true]);
+  assert.equal(s3.closest('label').hidden, true);
+  assert.equal(f('minutes').value, '30');
+  s1.checked = true;
+  s1.dispatchEvent(new w.Event('change'));
+  s2.checked = true;
+  s2.dispatchEvent(new w.Event('change'));
+  assert.equal(f('minutes').value, '135');
+  assert.match(total.textContent, /^Итого: 4\s?500,50 RUB$/);
+  // the other resource: its own service only, the checked ones of the first are off
+  f('resource').value = 'r2';
+  f('resource').dispatchEvent(new w.Event('change'));
+  assert.deepEqual([s1, s2, s3].map(x => x.checked), [false, false, false]);
+  assert.equal(s3.disabled, false);
+  assert.equal(total.textContent, '');
+  s3.checked = true;
+  s3.dispatchEvent(new w.Event('change'));
+  assert.equal(total.textContent, 'Итого: 100 RUB');
+  assert.equal(f('minutes').value, '60');
+  // a booking: its services checked, its minutes kept
+  d.querySelector('dialog').open = false;
+  click(c1.querySelector('[data-bk]'), 50);
+  assert.deepEqual([s1, s2].map(x => x.checked), [false, true]);
+  assert.equal(f('minutes').value, '45');
+  assert.match(total.textContent, /1\s?500,50 RUB/);
+  void c2;
+}
 console.log('booking.test.mjs: ok');

@@ -290,6 +290,11 @@ func (s *Store) NewSecret(ctx context.Context, id string) error {
 
 // Issue gives an employee new tokens of the application (opening its page, installing it).
 func (s *Store) Issue(ctx context.Context, appID, userID string) (Tokens, error) {
+	return s.issue(ctx, appID, userID, RefreshTTL)
+}
+
+// issue gives tokens whose refresh lives ttl (an event's — as long as the access: the employee did not open anything).
+func (s *Store) issue(ctx context.Context, appID, userID string, ttl time.Duration) (Tokens, error) {
 	// tokens whose refresh is long gone are cleaned up on the way
 	if _, err := s.db.Exec(ctx, `DELETE FROM app_tokens WHERE refresh_expires < now() - interval '1 day'`); err != nil {
 		return Tokens{}, err
@@ -298,7 +303,7 @@ func (s *Store) Issue(ctx context.Context, appID, userID string) (Tokens, error)
 	t := Tokens{Access: accessPrefix + id + "_" + access, Refresh: refreshPrefix + id + "_" + refresh,
 		Expires: time.Now().Add(AccessTTL).Truncate(time.Second), UserID: userID}
 	_, err := s.db.Exec(ctx, `INSERT INTO app_tokens (token_id, app_id, user_id, access_hash, refresh_hash, access_expires, refresh_expires)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`, id, appID, userID, hash(access), hash(refresh), t.Expires, time.Now().Add(RefreshTTL))
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`, id, appID, userID, hash(access), hash(refresh), t.Expires, time.Now().Add(ttl))
 	return t, err
 }
 
@@ -449,8 +454,14 @@ func (s *Store) Install(ctx context.Context, a App, userID, base, lang string) e
 }
 
 // Uninstall takes the application off: its tokens stop working, employees no longer see it, its places are taken
-// off the cards.
-func (s *Store) Uninstall(ctx context.Context, id string) error {
+// off the cards, ONAPPUNINSTALL goes to its handlers and its subscriptions to events are dropped.
+func (s *Store) Uninstall(ctx context.Context, id, base, lang string) error {
+	if a, err := s.Get(ctx, id); err == nil && a.Installed() {
+		s.uninstalled(ctx, a, base, lang)
+	}
+	if _, err := s.db.Exec(ctx, `DELETE FROM app_events WHERE app_id::text = $1`, id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(ctx, `DELETE FROM app_tokens WHERE app_id::text = $1`, id); err != nil {
 		return err
 	}

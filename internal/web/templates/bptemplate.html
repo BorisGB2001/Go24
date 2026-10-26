@@ -19,6 +19,19 @@
     <p><button class="primary">{{t "common.save"}}</button></p>
   </form>
 </div>
+{{if $t.ID}}<div class="card">
+  <h3>{{t "bp.starters"}}</h3>
+  <form method="post" action="/bp/templates/{{$id}}" class="row"><input type="hidden" name="op" value="starters">
+    <div style="flex:1">{{template "upick" (upick "to" $d.Starters nil "multi" "depts" "ph" (t "bp.starters_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+  <p class="small muted">{{t "bp.starters_hint"}}</p>
+</div>
+<div class="card">
+  <h3>{{t "bp.file"}}</h3>
+  <p><a class="button ghost" href="/bp/templates/{{$id}}/export">{{icon "download"}} {{t "bp.export"}}</a></p>
+  <form method="post" action="/bp/templates/{{$id}}/import" enctype="multipart/form-data" class="row" data-confirm="{{t "bp.import_confirm"}}">
+    <input type="file" name="file" accept=".json,application/json" required><button class="ghost">{{icon "cloud-upload"}} {{t "bp.import"}}</button></form>
+  <p class="small muted">{{t "bp.file_hint"}}</p>
+</div>{{end}}
 </div><div>
 {{if $t.ID}}<div class="card">
   <h2>{{t "bp.steps"}}</h2>

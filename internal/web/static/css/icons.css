@@ -132,6 +132,7 @@
 .i-sparkles { --icon: url("../icons/sparkles.svg"); }
 .i-message-circle-off { --icon: url("../icons/message-circle-off.svg"); }
 .i-filter-cog { --icon: url("../icons/filter-cog.svg"); }
+.i-filter-off { --icon: url("../icons/filter-off.svg"); }
 .i-plane-departure { --icon: url("../icons/plane-departure.svg"); }
 .i-printer { --icon: url("../icons/printer.svg"); }
 .i-code { --icon: url("../icons/code.svg"); }

@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/booking"
+	"go24/internal/crm"
 )
 
 // ---------- «Онлайн-запись» ----------
@@ -124,8 +125,8 @@ func (s *Server) bookingPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		"Open": r.URL.Query().Get("b"), "Preset": s.bookingCRMPreset(r, sess), "CRM": s.CRM != nil}})
 }
 
-// bookingSave adds a booking or changes one (id): resource, the other resources (extra), date, time, minutes, the
-// client, a comment, a status; wait — the waiting list entry the client is booked from.
+// bookingSave adds a booking or changes one (id): resource, the other resources (extra), the services (svc), date,
+// time, minutes, the client, a comment, a status; wait — the waiting list entry the client is booked from.
 func (s *Server) bookingSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	date := r.FormValue("date")
 	back := "/booking?date=" + url.QueryEscape(date)
@@ -146,6 +147,7 @@ func (s *Server) bookingSave(w http.ResponseWriter, r *http.Request, sess auth.S
 			return
 		}
 	}
+	b.Services = booking.Keep(r.Form["svc"], old.Services)
 	if err = s.bookingCRM(r, sess, &b); err == nil {
 		b.ID, err = s.Booking.SaveBooking(r.Context(), sess.UserID, b)
 	}
@@ -220,11 +222,41 @@ func (s *Server) bookingResources(w http.ResponseWriter, r *http.Request, sess a
 			return
 		}
 		data["Edit"], data["Users"] = ed, users
+		if s.CRM != nil { // «Услуги»: the catalog's services, those of the resource first with their minutes
+			cat, err := s.CRM.Catalog(r.Context(), "", "", crm.KindService, false)
+			if err != nil {
+				s.fail(w, "booking", err)
+				return
+			}
+			var svcs []bookingSvc
+			for _, x := range ed.Services {
+				svcs = append(svcs, bookingSvc{x, true})
+			}
+			for _, p := range cat {
+				if _, ok := ed.Service(p.ID); !ok {
+					svcs = append(svcs, bookingSvc{booking.Service{ProductID: p.ID, Name: p.Name, Price: p.Price, Currency: p.Currency, Minutes: ed.Slot}, false})
+				}
+			}
+			data["Services"] = svcs
+		}
 	}
 	s.render(w, r, "bookingres", page{TitleKey: "booking.resources", Nav: "booking", Data: data})
 }
 
-// bookingResourceSave: a resource from its form (administrators); the hours come as HH:MM.
+// bookingSum: the total of booking services with its currency, "1 500.00 RUB".
+func bookingSum(list []booking.Service) string {
+	sum, cur := booking.Total(list)
+	return strings.TrimSpace(crm.Amount(sum) + " " + cur)
+}
+
+// bookingSvc is a service of the catalog in a resource's form: On — the resource provides it.
+type bookingSvc struct {
+	booking.Service
+	On bool
+}
+
+// bookingResourceSave: a resource from its form (administrators); the hours come as HH:MM; the services — svc (their
+// products, in order) with svc_min_<product> minutes each.
 func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
@@ -250,6 +282,10 @@ func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, ses
 		RemindHours: remind, LateMinutes: late, Overbooking: r.FormValue("overbooking") == "1"}
 	if x.To == 0 && r.FormValue("to") != "" { // «до 24:00» typed as 00:00
 		x.To = 24 * 60
+	}
+	for _, id := range r.Form["svc"] {
+		m, _ := strconv.Atoi(r.FormValue("svc_min_" + id))
+		x.Services = append(x.Services, booking.Service{ProductID: id, Minutes: m})
 	}
 	for _, d := range r.Form["days"] {
 		if n, err := strconv.Atoi(d); err == nil {

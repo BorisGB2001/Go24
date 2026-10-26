@@ -1,10 +1,14 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="crumbs"><a href="/bp">{{t "bp.title"}}</a></div>
-<div class="pagehead"><h1>{{t "bp.templates"}}</h1><a class="button create" href="/bp/templates/new">{{icon "plus"}} {{t "bp.new_template"}}</a></div>
+<div class="pagehead"><h1>{{t "bp.templates"}}</h1><div class="row">
+  <form method="post" action="/bp/templates/new/import" enctype="multipart/form-data" class="row" title="{{t "bp.file_hint"}}">
+    <input type="file" name="file" accept=".json,application/json" required><button class="ghost">{{icon "cloud-upload"}} {{t "bp.import"}}</button></form>
+  <a class="button create" href="/bp/templates/new">{{icon "plus"}} {{t "bp.new_template"}}</a></div></div>
 <div class="card flush">{{if $d.Templates}}<table class="tlist"><tbody>{{range $d.Templates}}<tr>
   <td><a href="/bp/templates/{{.ID}}" class="ttitle">⚙ {{.Name}}</a>{{if not .Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</td>
   <td class="small">{{if eq .Entity "none"}}{{t "bp.standalone"}}{{else}}{{t (print "crm." .Entity)}}{{end}}</td><td class="small">{{t "bp.n_steps" (len .Steps)}}</td>
+  <td><a class="button ghost" href="/bp/templates/{{.ID}}/export" title="{{t "bp.export"}}">{{icon "download"}}</a></td>
   <td><form method="post" action="/bp/templates/{{.ID}}/delete" data-confirm="{{t "bp.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>
   {{else}}<div class="empty">{{t "bp.no_templates"}}</div>{{end}}</div>
 {{with $d.Std}}<div class="card" style="max-width:640px"><h3>{{t "bp.std.title"}}</h3>

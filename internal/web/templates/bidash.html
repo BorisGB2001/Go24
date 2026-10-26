@@ -28,6 +28,9 @@
     <label>{{t "period.from"}}<input type="date" name="date_from" value="{{dinput $db.DateFrom}}"></label>
     <label>{{t "period.to"}}<input type="date" name="date_to" value="{{dinput $db.DateTo}}"></label></div>
   <p class="small muted">{{t "bi.period_hint"}}</p>
+  {{with $d.FilterFields}}{{$on := $db.Filters}}<fieldset class="bi-ff"><legend>{{icon "filter"}} {{t "bi.fl.title"}}</legend>
+    <div class="row">{{range .}}<label class="check"><input type="checkbox" name="filters" value="{{.Code}}" {{if has $on .Code}}checked{{end}}> {{.Name}}</label>{{end}}</div>
+    <p class="small muted">{{t "bi.fl.hint"}}</p></fieldset>{{end}}
   <div class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/bi/{{$db.ID}}">{{t "common.cancel"}}</a></div>
 </form>
 {{if $d.Manage}}<form class="card bi-settings" id="access" method="post" action="/bi/{{$db.ID}}/publish">

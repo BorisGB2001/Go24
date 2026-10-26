@@ -213,6 +213,9 @@ function go24Mail(d, lead) {
     if (d.mail) { go24Mail(d.mail); return; }
     if (d.call) { dispatchEvent(new CustomEvent('go24:call', { detail: d.call })); return; } // ring.js, call.js
     if (typeof d.unread === 'number') setUnread(d.unread);
+    if (typeof d.invites === 'number') { // meeting invitations not answered yet: the «Календарь» counter
+      document.querySelectorAll('[data-counter="calendar"]').forEach(c => { c.textContent = d.invites > 99 ? '99+' : d.invites; c.hidden = !d.invites; });
+    }
     if (!d.html) return;
     // a new letter pops up as the mail's own toast (go24Mail), with its actions
     if ((!openTask || !d.html.includes(`data-task="${openTask}"`)) && !d.html.includes('data-kind="mail"') && !document.body.hasAttribute('data-dnd')) toast(d.html);

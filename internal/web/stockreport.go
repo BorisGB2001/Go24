@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/csv"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,7 +14,7 @@ import (
 	"go24/internal/crm"
 )
 
-// ---------- The reports of «Складской учёт»: «Остатки» on a date, «Движение товаров» over a period, a product's movements ----------
+// ---------- The reports of «Складской учёт»: «Остатки» on a date, «Движение товаров» over a period, a product's movements, «Продажи» ----------
 
 // stockReportFilter reads a report's filter: «Остатки» on ?date= (today), «Движение товаров» from ?from= (the month's
 // first day) to ?to= (today); the warehouse, the section, the search and a product's movements (?product=).
@@ -33,11 +34,11 @@ func stockReportFilter(q url.Values) crm.StockReportFilter {
 	return f
 }
 
-// stockReport is the page of a report (kind "stock" or "moves"; with ?product= — the product's movements);
+// stockReport is the page of a report (kind "stock", "moves" or "sales"; with ?product= — the product's movements);
 // ?csv=1 gives it as a CSV file.
 func (s *Server) stockReport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind := r.PathValue("kind")
-	if kind != "stock" && kind != "moves" {
+	if kind != "stock" && kind != "moves" && kind != "sales" {
 		http.NotFound(w, r)
 		return
 	}
@@ -60,6 +61,8 @@ func (s *Server) stockReport(w http.ResponseWriter, r *http.Request, sess auth.S
 			}
 		case kind == "moves":
 			data["Items"], err = s.CRM.MovementReport(r.Context(), f)
+		case kind == "sales":
+			data["Items"], err = s.CRM.SalesReport(r.Context(), f)
 		default:
 			data["Items"], err = s.CRM.StockReport(r.Context(), f)
 		}
@@ -71,6 +74,17 @@ func (s *Server) stockReport(w http.ResponseWriter, r *http.Request, sess auth.S
 	data["Sections"], data["Warehouses"] = sections, whs
 	var sum float64
 	switch list := data["Items"].(type) {
+	case []crm.SalesLine:
+		var t crm.SalesLine
+		for _, x := range list {
+			t.Revenue += x.Revenue
+			t.Cost += x.Cost
+			t.Profit += x.Profit
+		}
+		if t.Cost > 0 {
+			t.Margin = math.Round(t.Profit/t.Cost*1000) / 10
+		}
+		data["Total"] = t
 	case []crm.StockReportLine:
 		for _, x := range list {
 			sum += x.Sum
@@ -88,10 +102,7 @@ func (s *Server) stockReport(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.stockReportCSV(w, r, kind, data)
 		return
 	}
-	title := "stock.stock_report"
-	if kind == "moves" {
-		title = "stock.moves_report"
-	}
+	title := map[string]string{"stock": "stock.stock_report", "moves": "stock.moves_report", "sales": "stock.sales_report"}[kind]
 	s.render(w, r, "stockreport", page{TitleKey: title, Nav: "store_reports", Data: data})
 }
 
@@ -117,6 +128,12 @@ func (s *Server) stockReportCSV(w http.ResponseWriter, r *http.Request, kind str
 		for _, m := range data["Moves"].([]crm.StockMove) {
 			rows = append(rows, []string{day(m.Date), "№" + strconv.Itoa(m.Number) + " " + m.Title, tr("stock.kind." + m.Kind), m.Warehouse.Name, num(m.In()), num(m.Out()), num(m.Balance)})
 		}
+	case kind == "sales":
+		name = "sales"
+		head = keys("stock.product", "crm.product_sku", "crm.section", "stock.shipments_count", "stock.sold", "stock.revenue", "stock.cost_sum", "stock.profit", "stock.margin")
+		for _, x := range data["Items"].([]crm.SalesLine) {
+			rows = append(rows, []string{x.Name, x.SKU, x.SectionPath, strconv.Itoa(x.Docs), num(x.Quantity), num(x.Revenue), num(x.Cost), num(x.Profit), num(x.Margin)})
+		}
 	case kind == "moves":
 		name = "moves"
 		head = keys("stock.product", "crm.product_sku", "stock.opening", "stock.in", "stock.out", "stock.closing", "stock.cost", "stock.sum")
@@ -139,9 +156,13 @@ func (s *Server) stockReportCSV(w http.ResponseWriter, r *http.Request, kind str
 		}
 	}
 	if !data["Rights"].(crm.StockRights).PurchasePrice && data["Moves"] == nil { // the purchase prices are for those whose role shows them
-		head = head[:len(head)-2]
+		n := 2
+		if kind == "sales" { // the cost, the profit and the profitability
+			n = 3
+		}
+		head = head[:len(head)-n]
 		for i := range rows {
-			rows[i] = rows[i][:len(rows[i])-2]
+			rows[i] = rows[i][:len(rows[i])-n]
 		}
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -244,6 +265,43 @@ func (s *Server) apiStockMoves(w http.ResponseWriter, r *http.Request, p apikeys
 			x.Cost, x.Sum = 0, 0
 		}
 		out = append(out, line{x.ID, x.Name, x.SKU, x.Opening, x.In, x.Out, x.Closing, x.Cost, x.Sum})
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiStockSales is «Продажи» from ?from= to ?to=: what the conducted shipments took, the revenue in the base currency,
+// and to those who see the purchase prices — the cost, the profit and the profitability.
+func (s *Server) apiStockSales(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	q := r.URL.Query()
+	q.Set("section", q.Get("section_id"))
+	q.Set("warehouse", q.Get("warehouse_id"))
+	rights, err := s.apiStockRights(r, p)
+	if err != nil {
+		return err
+	}
+	list, err := s.CRM.SalesReport(r.Context(), stockReportFilter(q))
+	if err != nil {
+		return err
+	}
+	type line struct {
+		ProductID string   `json:"product_id"`
+		Name      string   `json:"name"`
+		SKU       string   `json:"sku,omitempty"`
+		Docs      int      `json:"shipments"`
+		Quantity  float64  `json:"quantity"`
+		Revenue   float64  `json:"revenue"`
+		Cost      *float64 `json:"cost,omitempty"`
+		Profit    *float64 `json:"profit,omitempty"`
+		Margin    *float64 `json:"margin,omitempty"`
+	}
+	out := make([]line, 0, len(list))
+	for _, x := range list {
+		l := line{ProductID: x.ID, Name: x.Name, SKU: x.SKU, Docs: x.Docs, Quantity: x.Quantity, Revenue: x.Revenue}
+		if rights.PurchasePrice {
+			l.Cost, l.Profit, l.Margin = &x.Cost, &x.Profit, &x.Margin
+		}
+		out = append(out, l)
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil

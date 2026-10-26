@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"io"
 	"net/http"
@@ -131,6 +132,11 @@ func (s *Server) crmProductPhoto(r *http.Request, sess auth.Session, id string) 
 		return i18n.E("err.photo")
 	}
 	defer f.Close()
+	return s.storeProductPhoto(r.Context(), sess.UserID, id, f, hdr.Size)
+}
+
+// storeProductPhoto puts a picture of the given size into the storage as the product's one.
+func (s *Server) storeProductPhoto(ctx context.Context, userID, id string, f io.Reader, size int64) error {
 	head := make([]byte, 512)
 	n, _ := io.ReadFull(f, head)
 	ct := http.DetectContentType(head[:n])
@@ -139,10 +145,10 @@ func (s *Server) crmProductPhoto(r *http.Request, sess auth.Session, id string) 
 		return i18n.E("err.photo")
 	}
 	key := "go24/crm/products/" + id + "/" + randomHex(8) + ext
-	if err := s.Storages.Put(r.Context(), sess.UserID, false, "", key, io.MultiReader(bytes.NewReader(head[:n]), f), hdr.Size, ct); err != nil {
+	if err := s.Storages.Put(ctx, userID, false, "", key, io.MultiReader(bytes.NewReader(head[:n]), f), size, ct); err != nil {
 		return err
 	}
-	_, err = s.CRM.SetProductPhoto(r.Context(), id, key, ct)
+	_, err := s.CRM.SetProductPhoto(ctx, id, key, ct)
 	return err
 }
 

@@ -131,7 +131,8 @@ func (s *Store) LinkResources(ctx context.Context, l Link) ([]Resource, error) {
 }
 
 // BookByLink is a client booking a slot of a resource by a link: the resource must be the link's, the time — a free
-// slot within the link's days, the client — a name and a phone, the address — under PerHour bookings this hour. The
+// slot within the link's days, the client — a name and a phone, the address — under PerHour bookings this hour. A
+// resource with services is booked for one of them (the first of b.Services): for its minutes, at its price. The
 // booking is «не подтверждена», with a token of its own for the client's page.
 func (s *Store) BookByLink(ctx context.Context, l Link, b Booking, loc *time.Location) (Booking, error) {
 	b.ClientName, b.ClientPhone = strings.TrimSpace(b.ClientName), strings.TrimSpace(b.ClientPhone)
@@ -158,7 +159,20 @@ func (s *Store) BookByLink(ctx context.Context, l Link, b Booking, loc *time.Loc
 	if !b.Start.Before(last) {
 		return b, ErrSlot
 	}
-	free, err := s.Free(ctx, r, b.Start.In(loc), loc)
+	mins := r.Slot
+	if len(r.Services) > 0 {
+		if len(b.Services) == 0 {
+			return b, ErrService
+		}
+		svc, ok := r.Service(b.Services[0].ProductID)
+		if !ok {
+			return b, ErrService
+		}
+		b.Services, mins = []Service{svc}, svc.Minutes
+	} else {
+		b.Services = nil
+	}
+	free, err := s.FreeFor(ctx, r, b.Start.In(loc), loc, mins)
 	if err != nil {
 		return b, err
 	}
@@ -173,7 +187,7 @@ func (s *Store) BookByLink(ctx context.Context, l Link, b Booking, loc *time.Loc
 	if b.ClientIP != "" && n >= PerHour {
 		return b, ErrTooMany
 	}
-	b.ID, b.End, b.Status, b.LinkID, b.ClientToken = "", b.Start.Add(time.Duration(r.Slot)*time.Minute), "unconfirmed", l.ID, token()
+	b.ID, b.End, b.Status, b.LinkID, b.ClientToken = "", b.Start.Add(time.Duration(mins)*time.Minute), "unconfirmed", l.ID, token()
 	b.ClientEmail, b.Note = strings.TrimSpace(b.ClientEmail), strings.TrimSpace(b.Note)
 	if b.ID, err = s.save(ctx, "", b, true); errors.Is(err, ErrOverlap) {
 		err = ErrSlot // taken by someone a moment ago
@@ -186,9 +200,5 @@ func (s *Store) ByClientToken(ctx context.Context, tok string) (Booking, error) 
 	if tok == "" {
 		return Booking{}, ErrNotFound
 	}
-	b, err := scanBooking(s.db.QueryRow(ctx, bookingSQL+` WHERE b.client_token = $1`, tok))
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrNotFound
-	}
-	return b, err
+	return s.oneBooking(ctx, bookingSQL+` WHERE b.client_token = $1`, tok)
 }

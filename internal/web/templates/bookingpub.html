@@ -5,6 +5,7 @@
   <div class="card bk-done">
     <h2>{{icon "circle-check"}} {{if eq .Status "cancelled"}}{{t "booking.pub_cancelled"}}{{else}}{{t "booking.pub_done"}}{{end}}</h2>
     <dl class="bk-sum"><dt>{{t "booking.pub_where"}}</dt><dd>{{$d.Res.Name}}{{with $d.Res.UserName}} · {{.}}{{end}}</dd>
+      {{with .Services}}<dt>{{t "booking.services"}}</dt><dd>{{range $i, $x := .}}{{if $i}}, {{end}}{{$x.Name}}{{end}} · {{bookingSum .}}</dd>{{end}}
       <dt>{{t "booking.pub_when"}}</dt><dd>{{t (print "wd." (printf "%d" (wdnum .Start.Local)))}}, {{day .Start.Local}}, {{clock .Start}}–{{clock .End}}</dd>
       <dt>{{t "booking.client_name"}}</dt><dd>{{.ClientName}}{{with .ClientPhone}} · {{.}}{{end}}{{with .ClientEmail}} · {{.}}{{end}}</dd>
       <dt>{{t "booking.status"}}</dt><dd>{{t (print "booking.st." .Status)}}</dd></dl>
@@ -21,18 +22,22 @@
   {{if gt (len $d.Resources) 1}}<div class="card"><h3>{{t "booking.pub_step_res"}}</h3>
     <div class="bk-reslist">{{range $d.Resources}}<a class="bk-resbtn{{if and $d.Res (eq .ID $d.Res.ID)}} on{{end}}" href="/bk/{{$t}}?r={{.ID}}"><b>{{.Name}}</b>
       <span class="small muted">{{if .TypeCode}}{{t (print "booking.type." .TypeCode)}}{{else}}{{.TypeName}}{{end}}{{with .UserName}} · {{.}}{{end}} · {{t "booking.slot_n" (printf "%d" .Slot)}}</span>{{with .Description}}<span class="small">{{.}}</span>{{end}}</a>{{end}}</div></div>{{end}}
-  {{with $d.Res}}{{$r := .}}
+  {{with $d.Res}}{{$r := .}}{{$s := ""}}{{with $d.Svc}}{{$s = .ProductID}}{{end}}
+  {{if gt (len .Services) 1}}<div class="card"><h3>{{t "booking.pub_step_svc"}}{{if eq (len $d.Resources) 1}} · {{.Name}}{{end}}</h3>
+    <div class="bk-reslist">{{range .Services}}<a class="bk-resbtn{{if eq .ProductID $s}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&s={{.ProductID}}{{with $d.Keep}}&{{.}}{{end}}"><b>{{.Name}}</b>
+      <span class="small muted">{{t "booking.slot_n" (printf "%d" .Minutes)}} · {{money .Price}} {{.Currency}}</span></a>{{end}}</div></div>{{end}}
+  {{if $d.Days}}
   <div class="card"><h3>{{t "booking.pub_step_time"}}{{if eq (len $d.Resources) 1}} · {{.Name}}{{end}}</h3>
-    <div class="row bk-days">{{with $d.PrevWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&date={{.}}" title="{{t "booking.pub_prev_week"}}">{{icon "chevron-left"}}</a>{{end}}
-      {{range $d.Days}}{{if .Works}}<a class="bk-day{{if eq .Value $d.DayValue}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&date={{.Value}}">{{else}}<span class="bk-day off">{{end}}<span class="small">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</span><b>{{.Date.Day}}</b><span class="small">{{t (print "month." (printf "%d" .Date.Month))}}</span>{{if .Works}}</a>{{else}}</span>{{end}}{{end}}
-      {{with $d.NextWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&date={{.}}" title="{{t "booking.pub_next_week"}}">{{icon "chevron-right"}}</a>{{end}}</div>
-    {{if $d.Free}}<div class="bk-slots">{{range $d.Free}}{{$c := clock .}}<a class="bk-slot{{if eq $c $d.Slot}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&date={{$d.DayValue}}&t={{$c}}{{with $d.Keep}}&{{.}}{{end}}#form">{{$c}}</a>{{end}}</div>
+    <div class="row bk-days">{{with $d.PrevWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.}}" title="{{t "booking.pub_prev_week"}}">{{icon "chevron-left"}}</a>{{end}}
+      {{range $d.Days}}{{if .Works}}<a class="bk-day{{if eq .Value $d.DayValue}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.Value}}">{{else}}<span class="bk-day off">{{end}}<span class="small">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</span><b>{{.Date.Day}}</b><span class="small">{{t (print "month." (printf "%d" .Date.Month))}}</span>{{if .Works}}</a>{{else}}</span>{{end}}{{end}}
+      {{with $d.NextWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.}}" title="{{t "booking.pub_next_week"}}">{{icon "chevron-right"}}</a>{{end}}</div>
+    {{if $d.Free}}<div class="bk-slots">{{range $d.Free}}{{$c := clock .}}<a class="bk-slot{{if eq $c $d.Slot}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{$d.DayValue}}&t={{$c}}{{with $d.Keep}}&{{.}}{{end}}#form">{{$c}}</a>{{end}}</div>
     {{else}}<p class="muted">{{t "booking.pub_no_slots"}}</p>{{end}}
-  </div>
+  </div>{{end}}
   {{if $d.Slot}}<div class="card" id="form"><h3>{{t "booking.pub_step_client"}}</h3>
-    <p><b>{{$r.Name}}</b> · {{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}, {{$d.Slot}} · {{t "booking.slot_n" (printf "%d" $r.Slot)}}</p>
+    <p><b>{{$r.Name}}</b>{{with $d.Svc}} · {{.Name}}{{end}} · {{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}, {{$d.Slot}} · {{t "booking.slot_n" (printf "%d" $d.Mins)}}{{with $d.Svc}} · {{money .Price}} {{.Currency}}{{end}}</p>
     <form method="post" action="/bk/{{$t}}" data-native class="bk-form">
-      <input type="hidden" name="r" value="{{$r.ID}}"><input type="hidden" name="date" value="{{$d.DayValue}}"><input type="hidden" name="t" value="{{$d.Slot}}">
+      <input type="hidden" name="r" value="{{$r.ID}}"><input type="hidden" name="date" value="{{$d.DayValue}}"><input type="hidden" name="t" value="{{$d.Slot}}"><input type="hidden" name="s" value="{{$s}}">
       <label>{{t "booking.pub_name"}}</label><input type="text" name="name" value="{{$d.Name}}" maxlength="200" required autocomplete="name">
       <label>{{t "booking.client_phone"}}</label><input type="tel" name="phone" value="{{$d.Phone}}" maxlength="40" required autocomplete="tel">
       <label>{{t "booking.client_email"}}</label><input type="email" name="email" value="{{$d.Email}}" maxlength="200" autocomplete="email">

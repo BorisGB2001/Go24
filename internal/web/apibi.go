@@ -52,6 +52,7 @@ func biNamedSets(sets []*bi.Dataset, tr func(string) string) []biDataset {
 type biResult struct {
 	Columns []biColumn `json:"columns"`
 	Rows    [][]any    `json:"rows"`
+	Keys    [][]string `json:"-"` // what the dimensions of a row are filtered by
 }
 
 type biColumn struct {
@@ -60,7 +61,7 @@ type biColumn struct {
 }
 
 func biNamed(res bi.Result, tr func(string) string) biResult {
-	out := biResult{Rows: res.Rows}
+	out := biResult{Rows: res.Rows, Keys: res.Keys}
 	for _, c := range res.Columns {
 		name := tr("bi.f." + c.Field)
 		switch {

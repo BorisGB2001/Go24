@@ -136,7 +136,7 @@ func (s *Server) guestInviteCreate(w http.ResponseWriter, r *http.Request, sess 
 	msg := s.tr(r, "guests.created")
 	if kind == "email" {
 		msg = s.tr(r, "guests.email_link")
-		if sent := s.sendGuestInvite(r, sess, p, inv); sent {
+		if r.FormValue("send") == "1" && s.sendGuestInvite(r, sess.UserID, sess.Name, p, inv) {
 			msg = s.tr(r, "guests.email_sent", inv.Email)
 		}
 	}
@@ -145,16 +145,16 @@ func (s *Server) guestInviteCreate(w http.ResponseWriter, r *http.Request, sess 
 
 // sendGuestInvite sends the personal invitation from the inviter's first mailbox in go24 (none — the inviter passes
 // the link on themselves).
-func (s *Server) sendGuestInvite(r *http.Request, sess auth.Session, p tasks.Project, inv tasks.GuestInvite) bool {
-	if s.Mail == nil || r.FormValue("send") != "1" {
+func (s *Server) sendGuestInvite(r *http.Request, userID, userName string, p tasks.Project, inv tasks.GuestInvite) bool {
+	if s.Mail == nil {
 		return false
 	}
-	boxes, err := s.Mail.Mailboxes(r.Context(), sess.UserID)
+	boxes, err := s.Mail.Mailboxes(r.Context(), userID)
 	if err != nil || len(boxes) == 0 {
 		return false
 	}
-	body := s.tr(r, "guests.mail_body", sess.Name, p.Name, s.joinURL(inv), inv.Expires.In(time.Local).Format("02.01.2006"))
-	if err := s.Mail.Send(r.Context(), sess.UserID, boxes[0].ID, inv.Email, s.tr(r, "guests.mail_subject", p.Name), body); err != nil {
+	body := s.tr(r, "guests.mail_body", userName, p.Name, s.joinURL(inv), inv.Expires.In(time.Local).Format("02.01.2006"))
+	if err := s.Mail.Send(r.Context(), userID, boxes[0].ID, inv.Email, s.tr(r, "guests.mail_subject", p.Name), body); err != nil {
 		s.Log.Warn("guest invite mail", "err", err)
 		return false
 	}

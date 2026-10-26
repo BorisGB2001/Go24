@@ -348,6 +348,54 @@ func TestCollabSecurityHTTP(t *testing.T) {
 		t.Errorf("restore over the API: %d", st)
 	}
 
+	// the API: the name and description, the avatar, the invitations of guests
+	if st, _ := api(token(dev), "PATCH", "/api/v1/collabs/CL1", map[string]any{"name": "Чужое"}); st != http.StatusForbidden {
+		t.Errorf("a member renamed the collab over the API: %d", st)
+	}
+	if st, raw := api(ot, "PATCH", "/api/v1/collabs/CL1", map[string]any{"description": "Про альфу"}); st != http.StatusOK ||
+		!strings.Contains(string(raw), `"name": "Альфа"`) || !strings.Contains(string(raw), `"description": "Про альфу"`) {
+		t.Errorf("the description over the API: %d %s", st, raw)
+	}
+	if st, _ := api(ot, "PATCH", "/api/v1/collabs/CL1", map[string]any{"name": " "}); st != http.StatusUnprocessableEntity {
+		t.Errorf("an empty name over the API: %d", st)
+	}
+	if st, _ := api(ot, "PUT", "/api/v1/collabs/CL1/photo", "not a picture"); st != http.StatusUnprocessableEntity {
+		t.Errorf("a photo that is not a picture: %d", st)
+	}
+	if st, _ := api(token(dev), "DELETE", "/api/v1/collabs/CL1/photo", nil); st != http.StatusForbidden {
+		t.Errorf("a member took the avatar off: %d", st)
+	}
+	if st, _ := api(token(dev), "POST", "/api/v1/collabs/CL1/invites", map[string]any{}); st != http.StatusForbidden {
+		t.Errorf("a member invited a guest over the API: %d", st)
+	}
+	var inv struct {
+		ID, Kind, URL, State, Email string
+	}
+	st, raw = api(ot, "POST", "/api/v1/collabs/CL1/invites", map[string]any{"kind": "email", "contact": "Гость <G@Example.org>", "days": 3})
+	if st != http.StatusCreated || json.Unmarshal(raw, &inv) != nil || inv.Kind != "email" || inv.Email != "g@example.org" ||
+		inv.State != "active" || !strings.Contains(inv.URL, "/join/") {
+		t.Fatalf("an invitation by e-mail over the API: %d %s", st, raw)
+	}
+	if st, _ := api(ot, "POST", "/api/v1/collabs/CL1/invites", map[string]any{"kind": "phone", "contact": "12"}); st != http.StatusUnprocessableEntity {
+		t.Errorf("a wrong phone: %d", st)
+	}
+	if st, raw := api(ot, "POST", "/api/v1/collabs/CL1/invites", map[string]any{}); st != http.StatusCreated || !strings.Contains(string(raw), `"kind": "link"`) {
+		t.Errorf("a link over the API: %d %s", st, raw)
+	}
+	if st, _ := api(ot, "DELETE", "/api/v1/collabs/CL1/invites/"+inv.ID, nil); st != http.StatusNoContent {
+		t.Errorf("revoke over the API: %d", st)
+	}
+	if st, _ := api(ot, "DELETE", "/api/v1/collabs/CL1/invites/"+inv.ID, nil); st != http.StatusNotFound {
+		t.Errorf("revoked twice: %d", st)
+	}
+	st, raw = api(ot, "GET", "/api/v1/collabs/CL1/invites", nil)
+	if st != http.StatusOK || !strings.Contains(string(raw), `"state": "revoked"`) || !strings.Contains(string(raw), `"state": "active"`) {
+		t.Errorf("the invitations over the API: %d %s", st, raw)
+	}
+	if st, _ := api(token(dev), "GET", "/api/v1/collabs/CL1/invites", nil); st != http.StatusForbidden {
+		t.Errorf("a member reads the invitations: %d", st)
+	}
+
 	// the company's administrator: sees and manages a collab they are not in
 	if _, body, _ := do(admin, "GET", "/collabs", nil); !strings.Contains(body, "Альфа") {
 		t.Error("the administrator does not see the collab")

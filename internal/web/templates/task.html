@@ -284,14 +284,15 @@
     <h2>{{icon "link"}} {{t "links.title"}}</h2>
     <div class="grid">
       <div><label>{{t "links.predecessors"}}</label>
-        {{range .Data.Pred}}<div class="row"><a href="/t/{{.FromKey}}" style="flex:1"><span class="tkey">{{.FromKey}}</span>{{.FromTitle}}</a>
+        {{range .Data.Pred}}<div class="row"><a href="/t/{{.FromKey}}" style="flex:1"><span class="tkey">{{.FromKey}}</span>{{.FromTitle}}</a>{{if ne .Type "finish_start"}} <span class="muted small">{{t (print "gantt.link." .Type)}}</span>{{end}}
           {{if $canLink}}<form method="post" action="/t/{{$key}}/links/{{.ID}}/delete"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</div>
         {{else}}<div class="muted small">{{t "common.none"}}</div>{{end}}
         {{if $canLink}}<form method="post" action="/t/{{$key}}/links" class="row" style="margin-top:6px">
-          <input type="text" name="pred" placeholder="{{$c.ProjectKey}}-1" required style="width:120px"><button title="{{t "links.add_hint"}}">{{icon "plus"}} {{t "common.add"}}</button></form>{{end}}
+          <input type="text" name="pred" placeholder="{{$c.ProjectKey}}-1" required style="width:120px">
+          <select name="type" title="{{t "links.type"}}">{{range $.Data.LinkTypes}}<option value="{{.}}">{{t (print "gantt.link." .)}}</option>{{end}}</select><button title="{{t "links.add_hint"}}">{{icon "plus"}} {{t "common.add"}}</button></form>{{end}}
       </div>
       <div><label>{{t "links.successors"}}</label>
-        {{range .Data.Succ}}<div class="row"><a href="/t/{{.ToKey}}" style="flex:1"><span class="tkey">{{.ToKey}}</span>{{.ToTitle}}</a></div>
+        {{range .Data.Succ}}<div class="row"><a href="/t/{{.ToKey}}" style="flex:1"><span class="tkey">{{.ToKey}}</span>{{.ToTitle}}</a>{{if ne .Type "finish_start"}} <span class="muted small">{{t (print "gantt.link." .Type)}}</span>{{end}}</div>
         {{else}}<div class="muted small">{{t "common.none"}}</div>{{end}}
       </div>
     </div>

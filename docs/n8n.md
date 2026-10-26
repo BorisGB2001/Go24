@@ -73,6 +73,15 @@ CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `cont
 | `GET /api/v1/crm/currencies` | валюты CRM: код, название, курс к базовой (`base` — базовая, `auto` — курс ЦБ РФ) |
 | `GET /api/v1/crm/products?section_id=&q=&all=1` | каталог товаров: товары раздела и его подразделов (`section` — путь раздела, `photo_url` — картинка); `all=1` — и неактивные |
 | `GET /api/v1/crm/product-sections` | разделы каталога деревом: `parent_id`, `path` («Оборудование / Принтеры»), `sort` |
+| `GET /api/v1/crm/products/{id}` | товар, услуга или вариация (`purchase_price` — тем, кто видит закупочные цены) |
+| `POST /api/v1/crm/products` | новый товар (администратор): `{"name", "type": "product\|service", "sku", "price", "currency", "purchase_price", "unit", "vat_rate" (null — без НДС), "vat_included", "description", "active", "section_id", "props": {id свойства: значение}, "barcodes": [...]}`; с `"parent_id"` — вариация товара (раздел, единица и НДС — от товара; без названия — по свойствам «для вариаций») |
+| `PUT /api/v1/crm/products/{id}` | изменить товар: только переданные поля (`"section_id": ""` — в корень каталога, `"props"` — только названные свойства, `""` очищает) |
+| `DELETE /api/v1/crm/products/{id}` | удалить товар с вариациями (в сделках строки остаются) |
+| `PUT /api/v1/crm/products/{id}/photo` | картинка товара: тело запроса — само изображение (JPEG, PNG, WebP, GIF, до 5 МБ); `DELETE` — убрать |
+| `POST /api/v1/crm/product-sections` | новый раздел `{"name", "parent_id", "sort"}`; `PUT …/{id}` — изменить переданные поля, `DELETE …/{id}` — удалить (товары и подразделы — в родительский) |
+| `GET /api/v1/store/warehouses` | склады: `name`, `address`, `responsible_id`, `default`, `active`, `products` |
+| `POST /api/v1/store/warehouses` | новый склад (администратор) `{"name", "address", "responsible_id", "default", "active", "sort"}`; `PUT …/{id}` — изменить переданные поля, `DELETE …/{id}` — удалить пустой склад, не названный в документах (склад по умолчанию — только назначив другой) |
+| `GET /api/v1/store/reports/sales?from=2026-10-01&to=2026-10-31` | «Продажи» склада (по умолчанию — текущий месяц; `warehouse_id`, `section_id`, `q`): по проведённым реализациям — `[{"product_id", "name", "sku", "shipments", "quantity", "revenue"}]`, выручка в базовой валюте; тем, кто видит закупочные цены, — ещё `cost` (по средней закупочной цене на конец периода), `profit`, `margin` (прибыль к себестоимости, %) |
 | `GET /api/v1/crm/{kind}?q=…` | список (для сделок можно `&pipeline=<id>`) |
 | `GET /api/v1/crm/{kind}/{id}` | карточка |
 | `POST /api/v1/crm/{kind}` | новая карточка: `{"title", "name", "phone", "email", "source", "amount", "currency", "company_id", "contact_id", "pipeline_id", "stage_id", "responsible_id", "observer_ids", "comment"}` (`observer_ids` — наблюдатели сделки или лида) |
@@ -99,17 +108,39 @@ CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `cont
 |---|---|
 | `GET /api/v1/booking/types` | типы ресурсов (`resourceType.list`): `[{"id", "code", "name", "resources"}]`; `code` — у стандартных (`employee`, `room`, `equipment`) |
 | `POST /api/v1/booking/types`, `PUT …/types/{id}`, `DELETE …/types/{id}` | `{"name"}` — свой тип; удалить можно тип без ресурсов |
-| `GET /api/v1/booking/resources?type_id=` | ресурсы (`resource.list`): `[{"id", "type_id", "type_code", "type_name", "name", "description", "user_id", "user_name", "slot_minutes", "days": [1..7], "from": "09:00", "to": "18:00", "notify_mail", "remind_hours", "late_minutes", "overbooking"}]`; `GET …/resources/{id}` — один |
-| `POST /api/v1/booking/resources`, `PUT …/resources/{id}` | ресурс (те же поля; в `PUT` не переданные остаются; новый — Пн–Пт 9:00–18:00 по 30 минут); `DELETE …/resources/{id}` — вместе с бронями |
-| `GET /api/v1/booking/resources/{id}/slots?date=2026-10-27` | свободные слоты на день (`resource.slots.list`): `{"slot_minutes", "free": [начала слотов]}` |
-| `GET /api/v1/booking/bookings?from=&to=&resource_id=&status=` | брони, задевающие период (`booking.list`): `[{"id", "resource_id", "resource_name", "extra_resource_ids", "start", "end", "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id", "created_by", "link_id", "client_url"}]`; `resource_id` — и где ресурс дополнительный; `GET …/bookings/{id}` — одна |
-| `POST /api/v1/booking/bookings`, `PUT …/bookings/{id}` | бронь (`booking.add`/`update`, `client.set`): `{"resource_id", "extra_resource_ids", "start", "end" или "minutes" (по умолчанию — слот ресурса), "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id"}`; в `PUT` не переданные остаются, перенос без `end` сохраняет длительность. Время занято — `409`; сделка подтягивает контакт и компанию, контакт — имя и телефон клиента; в истории карточек CRM — «Запись клиента» |
+| `GET /api/v1/booking/resources?type_id=` | ресурсы (`resource.list`): `[{"id", "type_id", "type_code", "type_name", "name", "description", "user_id", "user_name", "slot_minutes", "days": [1..7], "from": "09:00", "to": "18:00", "notify_mail", "remind_hours", "late_minutes", "overbooking", "services": [{"product_id", "name", "price", "currency", "minutes"}]}]`; `services` — услуги каталога, которые оказывает ресурс; `GET …/resources/{id}` — один |
+| `POST /api/v1/booking/resources`, `PUT …/resources/{id}` | ресурс (те же поля; `services` — `[{"product_id", "minutes"}]`, только товары с типом «Услуга», `minutes` 0 — слот; в `PUT` не переданные остаются; новый — Пн–Пт 9:00–18:00 по 30 минут); `DELETE …/resources/{id}` — вместе с бронями |
+| `GET /api/v1/booking/resources/{id}/slots?date=2026-10-27&service_id=` | свободные слоты на день (`resource.slots.list`): `{"slot_minutes", "minutes", "free": [начала слотов]}`; с `service_id` — начала, с которых свободны `minutes` услуги |
+| `GET /api/v1/booking/bookings?from=&to=&resource_id=&status=` | брони, задевающие период (`booking.list`): `[{"id", "resource_id", "resource_name", "extra_resource_ids", "start", "end", "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id", "created_by", "link_id", "client_url", "services": [{"product_id", "name", "price", "currency", "minutes"}], "amount", "currency"}]`; услуги — с ценой на момент записи, `amount` — их сумма; `resource_id` — и где ресурс дополнительный; `GET …/bookings/{id}` — одна |
+| `POST /api/v1/booking/bookings`, `PUT …/bookings/{id}` | бронь (`booking.add`/`update`, `client.set`): `{"resource_id", "extra_resource_ids", "service_ids", "start", "end" или "minutes" (по умолчанию — длительность услуг вместе, без них — слот ресурса), "client_name", "client_phone", "client_email", "note", "status", "contact_id", "company_id", "deal_id"}`; в `PUT` не переданные остаются, перенос без `end` сохраняет длительность. Время занято — `409`; сделка подтягивает контакт и компанию, контакт — имя и телефон клиента; в истории карточек CRM — «Запись клиента» |
 | `POST /api/v1/booking/bookings/{id}/status` | `{"status"}`: `unconfirmed`, `confirmed`, `came`, `no_show`, `cancelled` |
 | `POST /api/v1/booking/bookings/{id}/wait` | клиента — в лист ожидания, бронь удаляется (`waitlist.createfrombooking`); `DELETE …/bookings/{id}` — удалить бронь |
 | `GET /api/v1/booking/waitlist`, `GET …/waitlist/{id}` | лист ожидания (`waitlist.list`): `[{"id", "resource_id", "resource_name", "client_name", "client_phone", "client_email", "note", "contact_id", "company_id", "deal_id", "created_by", "created_at"}]` |
 | `POST /api/v1/booking/waitlist`, `PUT …/waitlist/{id}`, `DELETE …/waitlist/{id}` | клиент в листе (те же поля; `resource_id` — желаемый ресурс, без него — любой) |
 | `POST /api/v1/booking/waitlist/{id}/book` | `{"resource_id", "start"}` — записать клиента из листа на слот ресурса; ответ — бронь |
 | `GET /api/v1/booking/stats?from=&to=&type_id=` | загрузка ресурсов (как «Онлайн-запись → Статистика»): `{"resources": [{"resource_id", "name", "work_minutes", "busy_minutes", "load", "bookings", "statuses": {…}, "no_show_share"}], "total": {…}}`; `load` и `no_show_share` — проценты, `no_show_share` — `null`, пока никто не пришёл и не «не пришёл» |
+
+Коллабы (как `socialnetwork.collab.*` в корпоративном портале; области `collabs:read`, `collabs:write`). Ключ видит только коллабы
+своего сотрудника (чужой — `404`), права — как на странице коллаба; коллаб в архиве не меняется (`422`), кроме
+восстановления:
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/collabs?q=&archived=1` | свои коллабы (`q` — по названию и описанию, `archived=1` — архив): `[{"key", "name", "description", "my_role", "members", "guests", "archived", "photo_url", "chat", "counters": {"overdue", "comments"}}]` |
+| `POST /api/v1/collabs` | `{"name", "description", "members": [id сотрудников и гостей]}` — новый коллаб, владелец — сотрудник ключа |
+| `GET /api/v1/collabs/{key}` | `{"collab": {… "settings"}, "members": [{"id", "name", "role": "owner"\|"manager"\|"member", "guest"}]}` |
+| `PATCH /api/v1/collabs/{key}` | `{"name", "description"}` — что не передано, остаётся (кто может изменять настройки) |
+| `PUT /api/v1/collabs/{key}/photo` | аватар: тело запроса — само изображение (JPEG, PNG, WebP, GIF, до 5 МБ); `DELETE` — убрать |
+| `PATCH /api/v1/collabs/{key}/settings` | `{"invite_perm", "guest_invite_perm": "owner"\|"managers"\|"members", "chat_history", "guests_tasks", "guests_files", "edit_perm": "owner"\|"managers", "chat_perm": "members"\|"employees"\|"managers"}` |
+| `POST /api/v1/collabs/{key}/members` | `{"user_id", "role"}` — добавить участника или сменить роль; `DELETE …/members/{id}` — исключить (свой id — покинуть коллаб) |
+| `GET /api/v1/collabs/{key}/invites` | приглашения гостей за месяц, действующие — первыми: `[{"id", "kind": "link"\|"email"\|"phone", "url", "email", "phone", "name", "created_by", "created_at", "expires_at", "state": "active"\|"revoked"\|"used"\|"expired", "uses", "used_by"}]` — кто может приглашать гостей |
+| `POST /api/v1/collabs/{key}/invites` | `{"kind", "contact" (e-mail или телефон), "name", "days" (1–90, по умолчанию 7), "send": true — письмо с первого ящика сотрудника в go24}` — приглашение; ответ — оно же с `url` и `sent`. Ссылка (`link`) действует для всех до срока, по e-mail и телефону — один раз |
+| `DELETE /api/v1/collabs/{key}/invites/{id}` | отозвать приглашение (вступившие по нему остаются) |
+| `POST /api/v1/collabs/{key}/archive` | `{"archived": true\|false}` — в архив и обратно |
+| `POST /api/v1/collabs/{key}/owner` | `{"user_id"}` — передать права владельца сотруднику из участников |
+| `DELETE /api/v1/collabs/{key}?confirm=<название>` | удалить коллаб (владелец) |
+| `GET /api/v1/collabs/{key}/log` | журнал действий (владелец и модераторы), новые сверху |
+| `POST /api/v1/users/{id}/employee` | сделать гостя сотрудником (ключ администратора) |
 
 Бизнес-процессы (как `bizproc.workflow.*`, `bizproc.workflow.template.*`, `bizproc.task.*` в корпоративном портале; области `bp:read` —
 чтение, `bp:write` — запуск, решения, остановка). Шаблоны создают и меняют администраторы портала (они же видят

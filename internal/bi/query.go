@@ -32,9 +32,10 @@ var Grains = []string{"day", "week", "month", "quarter", "year"}
 // Aggregates of a measure: count needs no field, count_distinct any one, the others a number.
 var Aggregates = []string{"count", "count_distinct", "sum", "avg", "min", "max"}
 
-// Filter ops: eq, ne, in (Values), contains; gt, gte, lt, lte (a number or a date); empty, set; yes, no (a flag).
+// Filter ops: eq, ne, in (Values; "" — an empty value), contains; gt, gte, lt, lte (a number or a date); empty, set;
+// yes, no (a flag); within — a date in the day, week, month, quarter or year of Value ("month:2026-10-01").
 var filterOps = map[string]bool{"eq": true, "ne": true, "in": true, "contains": true, "gt": true, "gte": true, "lt": true,
-	"lte": true, "empty": true, "set": true, "yes": true, "no": true}
+	"lte": true, "empty": true, "set": true, "yes": true, "no": true, "within": true}
 
 // Measure is an aggregate of a field.
 type Measure struct {
@@ -92,6 +93,8 @@ type Column struct {
 type Result struct {
 	Columns []Column `json:"columns"`
 	Rows    [][]any  `json:"rows"`
+	// Keys are what a row's dimensions are filtered by (a Filter "in", a date's "within"), one for each dimension
+	Keys [][]string `json:"-"`
 }
 
 const (
@@ -344,7 +347,16 @@ func (q Query) build(ds *Dataset, scope func(*Dataset) (string, error), args []a
 			}
 			c = k + map[string]string{"eq": " = ", "ne": " IS DISTINCT FROM ", "gt": " > ", "gte": " >= ", "lt": " < ", "lte": " <= "}[fl.Op] + arg(fl.Value) + cast
 		case "in":
-			c = k + "::text = ANY(" + arg(fl.Values) + "::text[])"
+			if f.Type == Bool { // as grouped: no flag is «no»
+				k = "coalesce(" + f.Expr + ", false)"
+			}
+			c = "coalesce(" + k + "::text, '') = ANY(" + arg(fl.Values) + "::text[])"
+		case "within":
+			a, b, ok := Within(fl.Value)
+			if f.Type != Date || !ok {
+				return fail(i18n.E("bi.err.value", fl.Field))
+			}
+			c = f.Expr + " >= " + arg(a) + "::timestamptz AND " + f.Expr + " < " + arg(b) + "::timestamptz"
 		case "contains":
 			c = k + "::text ILIKE '%' || " + arg(fl.Value) + " || '%'"
 		case "empty":
@@ -426,30 +438,42 @@ func (s *Store) exec(ctx context.Context, b built, n int, tr func(string) string
 			return res, err
 		}
 		row := make([]any, 0, len(res.Columns))
+		var keys []string
 		i := 0
 		for _, d := range dims {
 			var v string
+			key := ""
 			switch {
 			case b.raw && (d.f.Type == Number || d.f.Type == Bool || d.f.Type == Date):
 				row = append(row, vals[i])
 				i++
 				continue
 			case d.f.Type == Bool:
+				key = strconv.FormatBool(vals[i] == true)
 				v = tr(map[bool]string{true: "bi.yes", false: "bi.no"}[vals[i] == true])
 			case d.f.CodeOf != "":
 				v, _ = vals[i].(string)
+				key = v
 				if code, _ := vals[i+1].(string); v == "" && code != "" {
-					v = tr(d.f.Prefix + code)
+					v, key = tr(d.f.Prefix+code), code
 				}
 				i++
+			case d.f.Type == Date:
+				v, _ = vals[i].(string)
+				key = d.grain + ":" + v
 			default:
 				v, _ = vals[i].(string)
+				key = v
 				if d.f.Prefix != "" && v != "" {
 					v = tr(d.f.Prefix + v)
 				}
 			}
 			i++
 			row = append(row, v)
+			keys = append(keys, key)
+		}
+		if !b.raw {
+			res.Keys = append(res.Keys, keys)
 		}
 		for range n {
 			row = append(row, vals[i])

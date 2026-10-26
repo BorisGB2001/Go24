@@ -148,14 +148,27 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/crm/forms", s.api("crm:read", s.apiCRMForms))
 	mux.HandleFunc("GET /api/v1/crm/forms/{id}/results", s.api("crm:read", s.apiCRMFormResults))
 	mux.HandleFunc("GET /api/v1/crm/products", s.api("crm:read", s.apiCRMCatalog))
+	mux.HandleFunc("GET /api/v1/crm/products/{id}", s.api("crm:read", s.apiCRMProduct))
+	mux.HandleFunc("POST /api/v1/crm/products", s.api("crm:write", s.apiCRMProductSave))
+	mux.HandleFunc("PUT /api/v1/crm/products/{id}", s.api("crm:write", s.apiCRMProductSave))
+	mux.HandleFunc("DELETE /api/v1/crm/products/{id}", s.api("crm:write", s.apiCRMProductDelete))
+	mux.HandleFunc("PUT /api/v1/crm/products/{id}/photo", s.api("crm:write", s.apiCRMProductPhoto))
+	mux.HandleFunc("DELETE /api/v1/crm/products/{id}/photo", s.api("crm:write", s.apiCRMProductPhoto))
 	mux.HandleFunc("GET /api/v1/crm/product-sections", s.api("crm:read", s.apiCRMSections))
+	mux.HandleFunc("POST /api/v1/crm/product-sections", s.api("crm:write", s.apiCRMSectionSave))
+	mux.HandleFunc("PUT /api/v1/crm/product-sections/{id}", s.api("crm:write", s.apiCRMSectionSave))
+	mux.HandleFunc("DELETE /api/v1/crm/product-sections/{id}", s.api("crm:write", s.apiCRMSectionDelete))
 	mux.HandleFunc("GET /api/v1/crm/product-units", s.api("crm:read", s.apiCRMUnits))
 	mux.HandleFunc("GET /api/v1/crm/product-props", s.api("crm:read", s.apiCRMProps))
 	// «Складской учёт» (api_stock.go)
 	mux.HandleFunc("GET /api/v1/store/warehouses", s.api("crm:read", s.apiStockWarehouses))
+	mux.HandleFunc("POST /api/v1/store/warehouses", s.api("crm:write", s.apiStockWarehouseSave))
+	mux.HandleFunc("PUT /api/v1/store/warehouses/{id}", s.api("crm:write", s.apiStockWarehouseSave))
+	mux.HandleFunc("DELETE /api/v1/store/warehouses/{id}", s.api("crm:write", s.apiStockWarehouseDelete))
 	mux.HandleFunc("GET /api/v1/store/stock", s.api("crm:read", s.apiStock))
 	mux.HandleFunc("GET /api/v1/store/reports/stock", s.api("crm:read", s.apiStockReport))
 	mux.HandleFunc("GET /api/v1/store/reports/moves", s.api("crm:read", s.apiStockMoves))
+	mux.HandleFunc("GET /api/v1/store/reports/sales", s.api("crm:read", s.apiStockSales))
 	mux.HandleFunc("GET /api/v1/store/docs", s.api("crm:read", s.apiStockDocs))
 	mux.HandleFunc("GET /api/v1/store/docs/{id}", s.api("crm:read", s.apiStockDoc))
 	mux.HandleFunc("POST /api/v1/store/docs", s.api("crm:write", s.apiStockDocSave))
@@ -298,7 +311,7 @@ func (s *Server) apiFail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, apikeys.ErrInvalid), errors.Is(err, errNoAuth):
 		status = http.StatusUnauthorized
-	case errors.Is(err, tasks.ErrForbidden), ie.Key == "err.api_no_scope", ie.Key == "err.forbidden", ie.Key == "ipaccess.denied", ie.Key == "err.api_app_only":
+	case errors.Is(err, tasks.ErrForbidden), ie.Key == "err.api_no_scope", ie.Key == "err.forbidden", ie.Key == "err.bp_no_start", ie.Key == "ipaccess.denied", ie.Key == "err.api_app_only":
 		status = http.StatusForbidden
 	case errors.Is(err, tasks.ErrNotFound), ie.Key == "err.not_found":
 		status = http.StatusNotFound
@@ -432,6 +445,7 @@ type apiCard struct {
 type apiLink struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"` // pred (this task waits for it) | succ (it waits for this task)
+	Type  string `json:"type"` // finish_start | start_start | finish_finish | start_finish
 	Key   string `json:"key"`
 	Title string `json:"title"`
 }
@@ -614,6 +628,23 @@ func (s *Server) apiCreateTask(w http.ResponseWriter, r *http.Request, p apikeys
 	})
 	if err != nil {
 		return err
+	}
+	if in.StartPlan != nil || in.EndPlan != nil { // the plan dates (Gantt) are set on the new task
+		start, err := parseDate(deref(in.StartPlan, ""))
+		if err != nil {
+			return err
+		}
+		end, err := parseDate(deref(in.EndPlan, ""))
+		if err != nil {
+			return err
+		}
+		id, err := s.Tasks.TaskIDByKey(r.Context(), key)
+		if err != nil {
+			return err
+		}
+		if err := s.Tasks.SetPlanDates(r.Context(), p.UserID, id, start, end); err != nil {
+			return err
+		}
 	}
 	return s.writeCard(w, r, p, key, http.StatusCreated)
 }
@@ -952,10 +983,10 @@ func (s *Server) writeCard(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 	}
 	out.Links = []apiLink{}
 	for _, l := range pred {
-		out.Links = append(out.Links, apiLink{l.ID, "pred", l.FromKey, l.FromTitle})
+		out.Links = append(out.Links, apiLink{l.ID, "pred", l.Type, l.FromKey, l.FromTitle})
 	}
 	for _, l := range succ {
-		out.Links = append(out.Links, apiLink{l.ID, "succ", l.ToKey, l.ToTitle})
+		out.Links = append(out.Links, apiLink{l.ID, "succ", l.Type, l.ToKey, l.ToTitle})
 	}
 	files, err := s.Storages.TaskFiles(r.Context(), id)
 	if err != nil {
@@ -1010,15 +1041,17 @@ func (s *Server) apiTag(w http.ResponseWriter, r *http.Request, p apikeys.Princi
 	return s.apiTaskOp(w, r, p, func(id string) error { return s.Tasks.SetTag(r.Context(), p.UserID, id, in.Tag, !in.Remove) })
 }
 
-// apiLinkAdd links a task to this one («Связанные задачи»): {"pred": "GO-1"} — this task follows GO-1.
+// apiLinkAdd links a task to this one («Связанные задачи»): {"pred": "GO-1"} — this task follows GO-1;
+// "type": finish_start (default), start_start, finish_finish, start_finish — as the links Gantt.
 func (s *Server) apiLinkAdd(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
 		Pred string `json:"pred"`
+		Type string `json:"type"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	return s.apiTaskOp(w, r, p, func(id string) error { return s.Tasks.AddLink(r.Context(), p.UserID, id, in.Pred) })
+	return s.apiTaskOp(w, r, p, func(id string) error { return s.Tasks.AddLink(r.Context(), p.UserID, id, in.Pred, in.Type) })
 }
 
 func (s *Server) apiLinkDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {

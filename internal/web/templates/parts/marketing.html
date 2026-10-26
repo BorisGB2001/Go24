@@ -1,5 +1,5 @@
 {{/* the tabs of «Маркетинг» */}}
-{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
+{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "templates" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
 
 {{/* a campaign's status: a draft, planned, being sent, paused, done, stopped */}}
 {{define "mktstatus"}}{{if .Planned}}<span class="pill mkt-planned" title="{{date .SendAt}}">{{icon "clock"}} {{t "mkt.st.planned"}}</span>
@@ -22,3 +22,12 @@
   <td class="num {{template "mktroicls" $c}}">{{with mktROI $c}}{{.}}{{else}}—{{end}}</td></tr>{{end}}
 
 {{define "mktroicls"}}{{with mktROI .}}{{if hasPrefix . "-"}}red{{else}}green{{end}}{{end}}{{end}}
+
+{{/* templates as cards: the letter in small, «Создать рассылку», the author's «Изменить» and «Удалить» */}}
+{{define "mkttpls"}}{{$d := .D}}<h3 class="mkt-tpl-h">{{t .Title}}</h3><div class="mkt-tpls">{{range .List}}<div class="card mkt-tpl" id="tpl-{{.ID}}">
+  <div class="mkt-tpl-thumb" aria-hidden="true"><div>{{index $d.Letters .ID}}</div></div>
+  <b>{{.Name}}</b><div class="small muted">{{.Subject}}{{with .AuthorName}} · {{.}}{{end}}</div>
+  <div class="row"><form method="post" action="/marketing/templates/{{.ID}}/use"><button class="primary small">{{icon "send"}} {{t "mkt.tpl_use"}}</button></form>
+  {{if and .CreatedBy (or (eq .CreatedBy $d.Me) $d.Admin)}}<a class="button ghost small" href="/marketing/templates?edit={{.ID}}#edit" title="{{t "crm.edit"}}">{{icon "edit"}}</a>
+  <form method="post" action="/marketing/templates/{{.ID}}/delete" data-confirm="{{t "mkt.tpl_delete" .Name}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
+</div>{{end}}</div>{{end}}

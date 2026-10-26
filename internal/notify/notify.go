@@ -167,7 +167,7 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "comment_like": // the reaction's emoji, then the comment
 		t += " " + i.Reaction()
 		i.Body = i.Excerpt()
-	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed":
+	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like":
 		t += " «" + i.Body + "»"
 	case "subtasks_done":
 		t = "✅ " + tr("notify.kind.subtasks_done")
@@ -281,7 +281,7 @@ var Kinds = []struct {
 	{"mail", []string{"mail", "mail_assign", "mail_remind", "mail_recall"}},
 	{"messenger", []string{"im_remind"}},
 	{"disk", []string{"disk_share", "disk_file_share", "disk_comment"}},
-	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed"}},
+	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
 	{"sign", []string{"sign_request", "sign_done", "sign_refused"}},
 	{"booking", []string{"booking_new", "booking_late", "booking_confirmed", "booking_cancelled"}},
 	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "backup_failed", "backup_restored", "backup_restore_failed"}},

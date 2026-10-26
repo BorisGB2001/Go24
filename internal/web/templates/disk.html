@@ -47,7 +47,7 @@
     <div class="pop"><form method="post" action="{{$dr.Path}}/folders" class="row"><input type="hidden" name="folder" value="{{$d.Folder}}">
       <input type="text" name="name" maxlength="200" required placeholder="{{t "disk.folder_name"}}" style="flex:1"><button>{{t "common.create"}}</button></form></div></details>
   <details class="tsettings"><summary class="button ghost">{{icon "file-pencil"}} {{t "office.create"}}</summary>
-    <div class="pop"><form method="post" action="{{$dr.Path}}/new-doc" class="officenew"><input type="hidden" name="folder" value="{{$d.Folder}}">
+    <div class="pop"><form method="post" action="{{$dr.Path}}/{{if $d.Office}}new-doc{{else}}new-board{{end}}" class="officenew"><input type="hidden" name="folder" value="{{$d.Folder}}">
       <input type="text" name="name" maxlength="200" placeholder="{{t "office.name"}}">
       {{if $d.Office}}<button name="kind" value="docx" class="ghost">{{icon "file-text"}} {{t "office.new_docx"}}</button>
       <button name="kind" value="xlsx" class="ghost">{{icon "table"}} {{t "office.new_xlsx"}}</button>

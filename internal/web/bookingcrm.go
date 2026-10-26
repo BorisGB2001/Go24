@@ -162,7 +162,13 @@ func (s *Server) bookingDeal(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	d := crm.Deal{Title: title, PipelineID: pipes[0].ID, Comment: b.Note, Origin: crm.Dict{Code: "BOOKING"}, Responsible: crm.Ref{ID: sess.UserID},
 		Contacts: []crm.Ref{{ID: b.ContactID}}, Company: crm.Ref{ID: b.CompanyID}}
-	if b.DealID, err = s.CRM.SaveDeal(ctx, sess.UserID, d); err == nil {
+	if _, cur := b.Total(); cur != "" { // the deal is in the currency of its services
+		d.Currency = cur
+	}
+	if b.DealID, err = s.CRM.SaveDeal(ctx, sess.UserID, d); err == nil && len(b.Services) > 0 {
+		_, err = s.CRM.SetProductRows(ctx, sess.UserID, "deal", b.DealID, s.bookingRows(ctx, b))
+	}
+	if err == nil {
 		_, err = s.Booking.SaveBooking(ctx, sess.UserID, b)
 	}
 	if err != nil {
@@ -171,6 +177,20 @@ func (s *Server) bookingDeal(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	s.bookingEvents(ctx, sess.UserID, old, b)
 	http.Redirect(w, r, "/crm/deals/"+b.DealID, http.StatusSeeOther)
+}
+
+// bookingRows: the services of a booking as product rows of its deal, at the prices they were booked at (the VAT
+// and the unit — of the catalog's service, while it is there).
+func (s *Server) bookingRows(ctx context.Context, b booking.Booking) []crm.ProductRow {
+	rows := make([]crm.ProductRow, 0, len(b.Services))
+	for _, x := range b.Services {
+		row := crm.ProductRow{ProductID: x.ProductID, Name: x.Name, Price: x.Price, Quantity: 1, VATIncluded: true}
+		if p, err := s.CRM.Product(ctx, x.ProductID); x.ProductID != "" && err == nil {
+			row.Unit, row.VATRate, row.VATIncluded = p.Unit, p.VATRate, p.VATIncluded
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // bookingClientCard makes the client of a booking by a link a contact of the responsible one (the one with the

@@ -206,9 +206,14 @@ func (s *Server) kbPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		s.taskErr(w, r, err, "/kb")
 		return
 	}
-	if old == nil {
+	var talk kb.Discussion
+	if old == nil { // the discussion under the page, its views with this one
 		if err := s.KB.Viewed(r.Context(), sess.UserID, p.ID); err != nil {
 			s.Log.Warn("kb view", "err", err)
+		}
+		if talk, err = s.KB.Discussion(r.Context(), sess.UserID, p, sp); err != nil {
+			s.taskErr(w, r, err, "/kb")
+			return
 		}
 	}
 	var crumbs, children []*kb.Page // the parents above the page and the pages right under it
@@ -218,7 +223,7 @@ func (s *Server) kbPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	}
 	s.render(w, r, "kbspace", page{Title: p.Title, Nav: "kb", Data: map[string]any{"Space": sp, "Tree": tree, "Page": p, "Old": old,
 		"Diff": diff, "Targets": targets, "Version": r.URL.Query().Get("v"), "Edit": r.URL.Query().Get("edit") == "1" && sp.CanEdit, "Versions": versions,
-		"Crumbs": crumbs, "Children": children, "Sub": sub, "TOC": kb.Headings(p.Body), "Pub": pub, "Base": s.BaseURL, "Marks": marks}})
+		"Crumbs": crumbs, "Children": children, "Sub": sub, "TOC": kb.Headings(p.Body), "Pub": pub, "Base": s.BaseURL, "Marks": marks, "Talk": talk}})
 }
 
 func (s *Server) kbSavePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -561,4 +566,44 @@ func kbImportFiles(hdrs []*multipart.FileHeader) ([]kb.ImportFile, error) {
 		files = append(files, kb.ImportFile{Name: name, Data: data})
 	}
 	return files, nil
+}
+
+// kbDiscuss: the discussion under a page — a comment or a reply to one (…/comment: body, parent), «Нравится»
+// (…/like, on=0 takes it back).
+func (s *Server) kbDiscuss(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/kb/" + r.PathValue("space") + "/" + r.PathValue("page")
+	var err error
+	if strings.HasSuffix(r.URL.Path, "/like") {
+		err = s.KB.Like(r.Context(), sess.UserID, r.PathValue("page"), r.FormValue("on") != "0")
+		back += "#kblikes"
+	} else {
+		var c kb.Comment
+		if c, err = s.KB.AddComment(r.Context(), sess.UserID, r.PathValue("page"), r.FormValue("parent"), r.FormValue("body")); err == nil {
+			back += "#c-" + c.ID
+		}
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// kbComment changes the user's comment under a page (body) or deletes it (delete=1) with the replies to it.
+func (s *Server) kbComment(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/kb/" + r.PathValue("space") + "/" + r.PathValue("page")
+	id := r.PathValue("id")
+	var err error
+	if r.FormValue("delete") != "" {
+		err = s.KB.DeleteComment(r.Context(), sess.UserID, id)
+		back += "#kbcomments"
+	} else {
+		err = s.KB.EditComment(r.Context(), sess.UserID, id, r.FormValue("body"))
+		back += "#c-" + id
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }

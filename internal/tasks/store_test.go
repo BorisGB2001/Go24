@@ -229,14 +229,14 @@ func TestStoreScenario(t *testing.T) {
 	}
 
 	// Gantt: links with cycle protection, plan dates
-	must(s.AddLink(ctx, creator, id2, k1)) // GO-1 must finish before GO-2
-	if err := s.AddLink(ctx, creator, id1, k2); !errors.As(err, &ve) || ve.Key != "err.link_cycle" {
+	must(s.AddLink(ctx, creator, id2, k1, "")) // GO-1 must finish before GO-2
+	if err := s.AddLink(ctx, creator, id1, k2, ""); !errors.As(err, &ve) || ve.Key != "err.link_cycle" {
 		t.Fatalf("cycle not refused: %v", err)
 	}
-	if err := s.AddLink(ctx, creator, id2, k2); !errors.As(err, &ve) || ve.Key != "err.link_self" {
+	if err := s.AddLink(ctx, creator, id2, k2, ""); !errors.As(err, &ve) || ve.Key != "err.link_self" {
 		t.Fatalf("self link not refused: %v", err)
 	}
-	wantErr(s.AddLink(ctx, auditor, id2, k1), ErrForbidden)
+	wantErr(s.AddLink(ctx, auditor, id2, k1, ""), ErrForbidden)
 	pred, succ, err := s.TaskLinks(ctx, id2)
 	must(err)
 	if len(pred) != 1 || pred[0].FromKey != "GO-1" || len(succ) != 0 {
@@ -249,7 +249,7 @@ func TestStoreScenario(t *testing.T) {
 		t.Fatalf("reversed plan dates accepted: %v", err)
 	}
 	must(s.UpdateTask(ctx, creator, id2, TaskUpdate{Version: c2.Version, Title: c2.Title, ResponsibleID: c2.ResponsibleID, StartPlan: &start, EndPlan: &end}))
-	g, err := s.Gantt(ctx, creator, p.ID, true)
+	g, err := s.Gantt(ctx, creator, p, true)
 	must(err)
 	if len(g.Tasks) != 2 || len(g.Links) != 1 {
 		t.Fatalf("gantt: tasks=%d links=%d", len(g.Tasks), len(g.Links))
@@ -259,6 +259,28 @@ func TestStoreScenario(t *testing.T) {
 			t.Fatalf("GO-2 bar = %v..%v planned=%v", gt.Start, gt.End, gt.Planned)
 		}
 	}
+	if gt := g.Tasks[0]; !gt.Editable || !gt.Linkable {
+		t.Fatalf("the creator must move and link the bars: %+v", gt)
+	}
+	pa, _ := s.ProjectByKey(ctx, auditor, "GO")
+	if g, _ := s.Gantt(ctx, auditor, pa, true); len(g.Tasks) > 0 && (g.Tasks[0].Editable || g.Tasks[0].Linkable) {
+		t.Fatal("an auditor must not move the bars")
+	}
+	// the four kinds of links Gantt; linking the pair again changes the kind
+	if err := s.AddLink(ctx, creator, id2, k1, "middle_start"); !errors.As(err, &ve) || ve.Key != "err.link_type" {
+		t.Fatalf("unknown link type accepted: %v", err)
+	}
+	must(s.AddLink(ctx, creator, id2, k1, "start_start"))
+	if pred, _, _ := s.TaskLinks(ctx, id2); len(pred) != 1 || pred[0].Type != "start_start" {
+		t.Fatalf("link type not changed: %+v", pred)
+	}
+	// the Gantt bar moves the plan dates only
+	ns, ne := start.AddDate(0, 0, 3), end.AddDate(0, 0, 3)
+	must(s.SetPlanDates(ctx, creator, id2, &ns, &ne))
+	if c, _ := s.GetCard(ctx, creator, id2); !c.StartPlan.Equal(ns) || !c.EndPlan.Equal(ne) || c.Title != c2.Title {
+		t.Fatalf("plan dates not moved: %v..%v", c.StartPlan, c.EndPlan)
+	}
+	wantErr(s.SetPlanDates(ctx, auditor, id2, &start, &end), ErrForbidden)
 	must(s.RemoveLink(ctx, creator, id2, pred[0].ID))
 
 	// Visibility "participants" tasks without a group): project role alone shows nothing

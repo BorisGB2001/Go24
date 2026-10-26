@@ -88,7 +88,10 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	var processes []bp.Template
 	if s.BP != nil && !tasks.IsGuestCtx(r.Context()) {
-		if processes, err = s.BP.Templates(r.Context(), "none", true); err != nil {
+		if processes, err = s.BP.Templates(r.Context(), "none", true); err == nil {
+			processes, err = s.BP.Startable(bpAdmin(r, sess), sess.UserID, processes)
+		}
+		if err != nil {
 			s.taskErr(w, r, err, "/my")
 			return
 		}

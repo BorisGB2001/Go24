@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/apps"
 	"go24/internal/auth"
+	"go24/internal/bp"
 	"go24/internal/crm"
 	"go24/internal/i18n"
 	"go24/internal/marketing"
@@ -600,7 +601,11 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		data["MailForm"], err = s.crmMailForm(r, sess, entity, id)
 	}
 	if err == nil && s.BP != nil { // business processes of this kind of card, and those of this card
-		if data["BPTemplates"], err = s.BP.CardTemplates(r.Context(), entity, id); err == nil {
+		var tpls []bp.Template
+		if tpls, err = s.BP.CardTemplates(r.Context(), entity, id); err == nil {
+			data["BPTemplates"], err = s.BP.Startable(bpAdmin(r, sess), sess.UserID, tpls)
+		}
+		if err == nil {
 			data["BPInstances"], err = s.BP.Instances(r.Context(), sess.UserID, entity, id)
 		}
 	}

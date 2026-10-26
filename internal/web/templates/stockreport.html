@@ -4,7 +4,7 @@
   <a class="button ghost" href="{{$d.CSV}}" title="{{t "crm.export_hint"}}">{{icon "download"}} {{t "crm.export"}}</a></div>
 <div class="tabs">{{template "stocktabs" $d}}</div>
 <form method="get" action="/store/reports/{{$d.Report}}" class="row stockreportbar">
-  <span class="seg"><a class="chip{{if eq $d.Report "stock"}} on{{end}}" href="/store/reports/stock">{{t "stock.stock_report"}}</a><a class="chip{{if eq $d.Report "moves"}} on{{end}}" href="/store/reports/moves">{{t "stock.moves_report"}}</a></span>
+  <span class="seg"><a class="chip{{if eq $d.Report "stock"}} on{{end}}" href="/store/reports/stock">{{t "stock.stock_report"}}</a><a class="chip{{if eq $d.Report "moves"}} on{{end}}" href="/store/reports/moves">{{t "stock.moves_report"}}</a><a class="chip{{if eq $d.Report "sales"}} on{{end}}" href="/store/reports/sales">{{t "stock.sales_report"}}</a></span>
   {{if eq $d.Report "stock"}}<label class="small">{{t "stock.on_date"}} <input type="date" name="date" value="{{dinput (ptr $f.Date)}}" data-autosubmit style="width:auto"></label>
   {{else}}<span class="period small"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput (ptr $f.From)}}" data-autosubmit style="width:auto"></span>
     <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput (ptr $f.To)}}" data-autosubmit style="width:auto"></span></span>{{end}}
@@ -33,6 +33,13 @@
     {{if not $f.Warehouse}}{{range $d.Warehouses}}<td class="right nowrap">{{with index $x.On .ID}}{{fnum .}}{{else}}<span class="muted">0</span>{{end}}</td>{{end}}{{end}}
     <td class="right nowrap"><b>{{fnum .Quantity}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td>
     {{if $cost}}<td class="right nowrap">{{money .Cost}}</td><td class="right nowrap">{{money .Sum}}</td>{{end}}</tr>{{end}}</tbody>
+  {{else if eq $d.Report "sales"}}
+  <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.product_sku"}}</th><th class="right">{{t "stock.shipments_count"}}</th><th class="right">{{t "stock.sold"}}</th><th class="right">{{t "stock.revenue"}}</th>{{if $cost}}<th class="right">{{t "stock.cost_sum"}}</th><th class="right">{{t "stock.profit"}}</th><th class="right">{{t "stock.margin"}}</th>{{end}}</tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/store/reports/moves?product={{.ID}}&warehouse={{$f.Warehouse}}&from={{dinput (ptr $f.From)}}&to={{dinput (ptr $f.To)}}" class="ttitle">{{.Name}}</a>{{with .SectionPath}}<div class="small muted">{{icon "folder"}} {{.}}</div>{{end}}</td><td class="small">{{.SKU}}</td>
+    <td class="right nowrap">{{.Docs}}</td><td class="right nowrap"><b>{{fnum .Quantity}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td><td class="right nowrap">{{money .Revenue}}</td>
+    {{if $cost}}<td class="right nowrap">{{money .Cost}}</td><td class="right nowrap{{if lt .Profit 0.0}} loss{{end}}">{{money .Profit}}</td><td class="right nowrap">{{if .Cost}}{{fnum .Margin}}{{else}}<span class="muted">—</span>{{end}}</td>{{end}}</tr>{{end}}</tbody>
+  {{with $d.Total}}<tfoot><tr><td colspan="4"><b>{{t "stock.total"}}</b></td><td class="right nowrap"><b>{{money .Revenue}}</b></td>
+    {{if $cost}}<td class="right nowrap"><b>{{money .Cost}}</b></td><td class="right nowrap{{if lt .Profit 0.0}} loss{{end}}"><b>{{money .Profit}}</b></td><td class="right nowrap">{{if .Cost}}<b>{{fnum .Margin}}</b>{{end}}</td>{{end}}</tr></tfoot>{{end}}
   {{else}}
   <thead><tr><th>{{t "stock.product"}}</th><th>{{t "crm.product_sku"}}</th><th class="right">{{t "stock.opening"}}</th><th class="right">{{t "stock.in"}}</th><th class="right">{{t "stock.out"}}</th><th class="right">{{t "stock.closing"}}</th>{{if $cost}}<th class="right">{{t "stock.cost"}}</th><th class="right">{{t "stock.sum"}}</th>{{end}}</tr></thead>
   <tbody>{{range $d.Items}}<tr><td><a href="/store/reports/moves?product={{.ID}}&warehouse={{$f.Warehouse}}&from={{dinput (ptr $f.From)}}&to={{dinput (ptr $f.To)}}" class="ttitle">{{.Name}}</a>{{with .SectionPath}}<div class="small muted">{{icon "folder"}} {{.}}</div>{{end}}</td><td class="small">{{.SKU}}</td>
@@ -40,7 +47,7 @@
     <td class="right nowrap"><b>{{fnum .Closing}}</b> <span class="small muted">{{if .Unit}}{{.Unit}}{{else}}{{t "crm.unit_default"}}{{end}}</span></td>
     {{if $cost}}<td class="right nowrap">{{money .Cost}}</td><td class="right nowrap">{{money .Sum}}</td>{{end}}</tr>{{end}}</tbody>
   {{end}}
-</table></div>{{if $cost}}<div class="stockreportfoot">{{t "stock.value"}}: <b>{{money $d.Sum}}</b></div>{{end}}</div>
-{{else}}<div class="card"><div class="empty">{{if eq $d.Report "stock"}}{{t "stock.no_stock"}}{{else}}{{t "stock.no_moves"}}{{end}}</div></div>{{end}}
+</table></div>{{if eq $d.Report "sales"}}<div class="stockreportfoot small muted">{{t "stock.sales_hint"}}</div>{{else if $cost}}<div class="stockreportfoot">{{t "stock.value"}}: <b>{{money $d.Sum}}</b></div>{{end}}</div>
+{{else}}<div class="card"><div class="empty">{{if eq $d.Report "stock"}}{{t "stock.no_stock"}}{{else if eq $d.Report "sales"}}{{t "stock.no_sales"}}{{else}}{{t "stock.no_moves"}}{{end}}</div></div>{{end}}
 <script src="{{asset "js/stock.js"}}"></script>
 {{end}}

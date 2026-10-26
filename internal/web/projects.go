@@ -2,12 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"time"
 
 	"go24/internal/auth"
 	"go24/internal/i18n"
+	"go24/internal/tasks"
 )
 
 // The project's card: «О проекте» (name, description, type and dates), the avatar, the archive.
@@ -62,25 +64,29 @@ func (s *Server) projectPhoto(w http.ResponseWriter, r *http.Request, sess auth.
 		return
 	}
 	defer f.Close()
-	head := make([]byte, 512)
-	n, _ := io.ReadFull(f, head)
-	ct := http.DetectContentType(head[:n])
-	ext, ok := photoTypes[ct]
-	if !ok {
-		s.taskErr(w, r, i18n.E("err.photo"), back)
-		return
-	}
-	key := "go24/projects/" + p.ID + "/" + randomHex(8) + ext
-	if err := s.Storages.Put(r.Context(), sess.UserID, false, "", key, io.MultiReader(bytes.NewReader(head[:n]), f), hdr.Size, ct); err != nil {
-		s.taskErr(w, r, err, back)
-		return
-	}
-	if _, err := s.Tasks.SetProjectPhoto(r.Context(), p, key, ct); err != nil {
+	if err := s.storeProjectPhoto(r.Context(), sess.UserID, p, f, hdr.Size); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
 	s.Log.Info("project photo uploaded", "user_id", sess.UserID, "project", p.Key)
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// storeProjectPhoto keeps a new avatar of the project: an image (JPEG, PNG, WebP or GIF), its type by its first bytes.
+func (s *Server) storeProjectPhoto(ctx context.Context, userID string, p tasks.Project, f io.Reader, size int64) error {
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	ct := http.DetectContentType(head[:n])
+	ext, ok := photoTypes[ct]
+	if !ok {
+		return i18n.E("err.photo")
+	}
+	key := "go24/projects/" + p.ID + "/" + randomHex(8) + ext
+	if err := s.Storages.Put(ctx, userID, false, "", key, io.MultiReader(bytes.NewReader(head[:n]), f), size, ct); err != nil {
+		return err
+	}
+	_, err := s.Tasks.SetProjectPhoto(ctx, p, key, ct)
+	return err
 }
 
 // projectPhotoFile serves a project's avatar to signed-in users.

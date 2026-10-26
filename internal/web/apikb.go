@@ -54,6 +54,12 @@ func (s *Server) apiKBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/kb/spaces/{space}/marks/{kind}", s.api("kb:read", s.apiKBMark))
 	mux.HandleFunc("PUT /api/v1/kb/pages/{page}/marks/{kind}", s.api("kb:read", s.apiKBMark))
 	mux.HandleFunc("DELETE /api/v1/kb/pages/{page}/marks/{kind}", s.api("kb:read", s.apiKBMark))
+	mux.HandleFunc("GET /api/v1/kb/pages/{page}/comments", s.api("kb:read", s.apiKBComments))
+	mux.HandleFunc("POST /api/v1/kb/pages/{page}/comments", s.api("kb:write", s.apiKBAddComment))
+	mux.HandleFunc("PATCH /api/v1/kb/comments/{id}", s.api("kb:write", s.apiKBEditComment))
+	mux.HandleFunc("DELETE /api/v1/kb/comments/{id}", s.api("kb:write", s.apiKBDeleteComment))
+	mux.HandleFunc("PUT /api/v1/kb/pages/{page}/like", s.api("kb:read", s.apiKBLike))
+	mux.HandleFunc("DELETE /api/v1/kb/pages/{page}/like", s.api("kb:read", s.apiKBLike))
 }
 
 type apiKBSpace struct {
@@ -91,6 +97,33 @@ type apiKBPage struct {
 	Link      string        `json:"link"`     // the page in go24
 	Favorite  bool          `json:"favorite"` // the key's owner starred it
 	Watching  bool          `json:"watching"` // the key's owner watches it, or a page above it, or the base
+	Comments  int           `json:"comments"` // with the replies
+	Likes     []string      `json:"likes"`    // who likes it
+	Liked     bool          `json:"liked"`    // the key's owner likes it
+	Views     int           `json:"views"`    // how many people opened it
+}
+
+// apiKBComment is a comment under a page; the top ones carry their replies.
+type apiKBComment struct {
+	ID        string          `json:"id"`
+	Parent    string          `json:"parent,omitempty"`
+	Author    apiUser         `json:"author"`
+	Body      string          `json:"body"` // Markdown
+	HTML      string          `json:"html"`
+	CreatedAt time.Time       `json:"created_at"`
+	EditedAt  *time.Time      `json:"edited_at,omitempty"`
+	CanEdit   bool            `json:"can_edit"`
+	CanDelete bool            `json:"can_delete"`
+	Replies   []*apiKBComment `json:"replies,omitempty"`
+}
+
+func apiKBCommentOf(c *kb.Comment) *apiKBComment {
+	out := &apiKBComment{ID: c.ID, Parent: c.ParentID, Author: apiUser{c.AuthorID, c.Author}, Body: c.Body, HTML: string(kb.Render(c.Body)),
+		CreatedAt: c.Created, EditedAt: c.Edited, CanEdit: c.CanEdit, CanDelete: c.CanDelete}
+	for _, r := range c.Replies {
+		out.Replies = append(out.Replies, apiKBCommentOf(r))
+	}
+	return out
 }
 
 func apiKBSpaceOf(sp kb.Space) apiKBSpace {
@@ -294,6 +327,11 @@ func (s *Server) apiKBWritePage(w http.ResponseWriter, r *http.Request, p apikey
 		return err
 	}
 	out.Favorite, out.Watching = m.FavPage, m.WatchPage || m.Inherited
+	talk, err := s.KB.Discussion(r.Context(), p.UserID, pg, sp)
+	if err != nil {
+		return err
+	}
+	out.Comments, out.Likes, out.Liked, out.Views = talk.Count, talk.Likes, talk.Liked, talk.Views
 	writeJSON(w, status, out)
 	return nil
 }
@@ -724,6 +762,70 @@ func (s *Server) apiKBMark(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 		return kb.ErrNotFound
 	}
 	if err := s.KB.SetMark(r.Context(), p.UserID, kind, r.PathValue("space"), r.PathValue("page"), r.Method == http.MethodPut); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiKBComments: the comments under a page, the top ones with their replies, oldest first.
+func (s *Server) apiKBComments(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	pg, sp, err := s.KB.Page(r.Context(), p.UserID, r.PathValue("page"))
+	if err != nil {
+		return err
+	}
+	talk, err := s.KB.Discussion(r.Context(), p.UserID, pg, sp)
+	if err != nil {
+		return err
+	}
+	out := []*apiKBComment{}
+	for _, c := range talk.Comments {
+		out = append(out, apiKBCommentOf(c))
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiKBAddComment writes a comment under a page: {"body" (Markdown, «@Имя» mentions), "parent": "ID" — a reply}.
+// Who sees the base may comment, as in go24.
+func (s *Server) apiKBAddComment(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct{ Body, Parent string }
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := s.KB.AddComment(r.Context(), p.UserID, r.PathValue("page"), in.Parent, in.Body)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, apiKBCommentOf(&c))
+	return nil
+}
+
+// apiKBEditComment changes the key owner's comment: {"body"}.
+func (s *Server) apiKBEditComment(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct{ Body string }
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if err := s.KB.EditComment(r.Context(), p.UserID, r.PathValue("id"), in.Body); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiKBDeleteComment deletes a comment with its replies: its author, or who manages the base.
+func (s *Server) apiKBDeleteComment(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.KB.DeleteComment(r.Context(), p.UserID, r.PathValue("id")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiKBLike: PUT — «Нравится» of the key's owner at a page, DELETE — takes it back.
+func (s *Server) apiKBLike(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.KB.Like(r.Context(), p.UserID, r.PathValue("page"), r.Method == http.MethodPut); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

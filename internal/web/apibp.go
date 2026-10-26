@@ -69,10 +69,14 @@ func (s *Server) apiBPTemplateOf(t bp.Template, admin bool) apiBPTemplate {
 	return out
 }
 
-// apiBPTemplates: ?entity=deal|lead|contact|company|none; the inactive ones — for administrators only.
+// apiBPTemplates: ?entity=deal|lead|contact|company|none, those the key's owner starts; the inactive ones — for
+// administrators only.
 func (s *Server) apiBPTemplates(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	_, admin := s.apiBPCtx(r, p)
+	ctx, admin := s.apiBPCtx(r, p)
 	list, err := s.BP.Templates(r.Context(), r.URL.Query().Get("entity"), !admin)
+	if err == nil {
+		list, err = s.BP.Startable(ctx, p.UserID, list) // «Кто может запускать»
+	}
 	if err != nil {
 		return err
 	}
@@ -320,7 +324,8 @@ func (s *Server) apiBPStart(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	id, err := s.BP.Start(r.Context(), p.UserID, r.PathValue("template"), in.EntityID, in.Values)
+	ctx, _ := s.apiBPCtx(r, p)
+	id, err := s.BP.Start(ctx, p.UserID, r.PathValue("template"), in.EntityID, in.Values)
 	if err != nil {
 		return err
 	}

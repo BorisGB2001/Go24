@@ -1,10 +1,13 @@
 package web
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"time"
 
 	"go24/internal/apikeys"
+	"go24/internal/i18n"
 	"go24/internal/tasks"
 )
 
@@ -14,6 +17,12 @@ func (s *Server) apiCollabRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/collabs", s.api("collabs:read", s.apiCollabs))
 	mux.HandleFunc("POST /api/v1/collabs", s.api("collabs:write", s.apiCollabCreate))
 	mux.HandleFunc("GET /api/v1/collabs/{key}", s.api("collabs:read", s.apiCollab))
+	mux.HandleFunc("PATCH /api/v1/collabs/{key}", s.api("collabs:write", s.apiCollabUpdate))
+	mux.HandleFunc("PUT /api/v1/collabs/{key}/photo", s.api("collabs:write", s.apiCollabPhoto))
+	mux.HandleFunc("DELETE /api/v1/collabs/{key}/photo", s.api("collabs:write", s.apiCollabPhoto))
+	mux.HandleFunc("GET /api/v1/collabs/{key}/invites", s.api("collabs:read", s.apiCollabInvites))
+	mux.HandleFunc("POST /api/v1/collabs/{key}/invites", s.api("collabs:write", s.apiCollabInvite))
+	mux.HandleFunc("DELETE /api/v1/collabs/{key}/invites/{id}", s.api("collabs:write", s.apiCollabInviteRevoke))
 	mux.HandleFunc("POST /api/v1/collabs/{key}/members", s.api("collabs:write", s.apiCollabMember))
 	mux.HandleFunc("DELETE /api/v1/collabs/{key}/members/{uid}", s.api("collabs:write", s.apiCollabMemberRemove))
 	mux.HandleFunc("PATCH /api/v1/collabs/{key}/settings", s.api("collabs:write", s.apiCollabSettings))
@@ -28,6 +37,8 @@ type apiCollab struct {
 	apiProject
 	Members  int                `json:"members"`
 	Guests   int                `json:"guests"`
+	Archived bool               `json:"archived"`
+	Photo    string             `json:"photo_url,omitempty"`
 	Chat     string             `json:"chat,omitempty"` // the Matrix room of the collab
 	Settings *apiCollabSettings `json:"settings,omitempty"`
 	Counters *apiCollabCounters `json:"counters,omitempty"` // in the list: the caller's tasks needing attention
@@ -74,6 +85,7 @@ func (s *Server) apiCollabs(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	for _, c := range list {
 		room, _ := s.Matrix.ProjectRoom(r.Context(), c.ID)
 		out = append(out, apiCollab{apiProject: toAPIProject(c.Project), Members: c.Members, Guests: c.Guests, Chat: room,
+			Archived: c.Archived, Photo: s.collabPhotoURL(c.Project),
 			Counters: &apiCollabCounters{Overdue: c.Overdue, Comments: c.Comments}})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -115,7 +127,7 @@ func (s *Server) writeCollab(w http.ResponseWriter, r *http.Request, p apikeys.P
 	if err != nil {
 		return err
 	}
-	out := apiCollab{apiProject: toAPIProject(c), Members: len(members)}
+	out := apiCollab{apiProject: toAPIProject(c), Members: len(members), Archived: c.Archived, Photo: s.collabPhotoURL(c)}
 	out.Chat, _ = s.Matrix.ProjectRoom(r.Context(), c.ID)
 	if set, err := s.Tasks.CollabSettings(r.Context(), c); err == nil {
 		out.Settings = &apiCollabSettings{set.InvitePerm, set.GuestInvitePerm, set.ChatHistory, set.GuestTasks, set.GuestFiles,
@@ -129,6 +141,168 @@ func (s *Server) writeCollab(w http.ResponseWriter, r *http.Request, p apikeys.P
 		}
 	}
 	writeJSON(w, status, map[string]any{"collab": out, "members": ms})
+	return nil
+}
+
+// collabPhotoURL is the full address of the collab's avatar ("" — none).
+func (s *Server) collabPhotoURL(c tasks.Project) string {
+	if u := c.PhotoURL(); u != "" {
+		return s.BaseURL + u
+	}
+	return ""
+}
+
+// apiCollabUpdate changes the name and the description (socialnetwork.collab.update); fields left out stay.
+func (s *Server) apiCollabUpdate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	in := struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}{c.Name, c.Description}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if c.Frozen() {
+		return errCollabArchived
+	}
+	if err := s.Tasks.SaveProjectInfo(r.Context(), c, in.Name, in.Description, c.DateStart, c.DateFinish); err != nil {
+		return err
+	}
+	s.Matrix.Wake() // the chat is named after the collab
+	return s.writeCollab(w, r, p, c.Key, http.StatusOK)
+}
+
+// apiCollabPhoto: PUT — the collab's avatar, the body is the image itself (JPEG, PNG, WebP or GIF, up to 5 MB);
+// DELETE removes it. Those who change the collab's settings.
+func (s *Server) apiCollabPhoto(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if c.Frozen() {
+		return errCollabArchived
+	}
+	if !c.CanEdit() {
+		return tasks.ErrForbidden
+	}
+	if r.Method == http.MethodDelete {
+		_, err = s.Tasks.SetProjectPhoto(r.Context(), c, "", "")
+	} else {
+		data, rerr := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPhotoSize+1))
+		if rerr != nil || len(data) == 0 || len(data) > maxPhotoSize {
+			return i18n.E("err.photo")
+		}
+		err = s.storeProjectPhoto(r.Context(), p.UserID, c, bytes.NewReader(data), int64(len(data)))
+	}
+	if err != nil {
+		return err
+	}
+	return s.writeCollab(w, r, p, c.Key, http.StatusOK)
+}
+
+// apiGuestInvite is an invitation into the collab: kind link (for anyone, until it expires or is revoked), email or
+// phone (for one person, once).
+type apiGuestInvite struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	URL       string    `json:"url"`
+	Email     string    `json:"email,omitempty"`
+	Phone     string    `json:"phone,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	Expires   time.Time `json:"expires_at"`
+	State     string    `json:"state"` // active | revoked | used | expired
+	Uses      int       `json:"uses"`
+	UsedBy    string    `json:"used_by,omitempty"`
+	Sent      bool      `json:"sent,omitempty"` // the e-mail went from the inviter's mailbox
+}
+
+func (s *Server) toAPIGuestInvite(i tasks.GuestInvite) apiGuestInvite {
+	state := "active"
+	switch {
+	case i.Revoked:
+		state = "revoked"
+	case i.Kind != "link" && i.Uses > 0:
+		state = "used"
+	case !i.Active(time.Now()):
+		state = "expired"
+	}
+	return apiGuestInvite{i.ID, i.Kind, s.joinURL(i), i.Email, i.Phone, i.Name, i.CreatedBy, i.CreatedAt, i.Expires, state,
+		i.Uses, i.UsedBy, false}
+}
+
+// apiCollabInvites: the collab's invitations of the last month, active first (those who may invite guests).
+func (s *Server) apiCollabInvites(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	list, err := s.Tasks.GuestInvites(r.Context(), c, p.UserID)
+	if err != nil {
+		return err
+	}
+	out := make([]apiGuestInvite, 0, len(list))
+	for _, i := range list {
+		out = append(out, s.toAPIGuestInvite(i))
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiCollabInvite makes an invitation {kind: link | email | phone, contact, name, days (1–90, a week by default),
+// send: true — the e-mail from the inviter's first mailbox in go24}; the answer has the link to pass on.
+func (s *Server) apiCollabInvite(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Kind    string `json:"kind"`
+		Contact string `json:"contact"`
+		Name    string `json:"name"`
+		Days    int    `json:"days"`
+		Send    bool   `json:"send"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if c.Frozen() {
+		return errCollabArchived
+	}
+	if in.Kind == "" {
+		in.Kind = "link"
+	}
+	inv, err := s.Tasks.CreateGuestInvite(r.Context(), c, p.UserID, in.Kind, in.Contact, in.Name, time.Duration(in.Days)*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	s.Log.Info("guest invite", "user_id", p.UserID, "collab", c.Key, "kind", in.Kind, "api", true)
+	out := s.toAPIGuestInvite(inv)
+	if in.Kind == "email" && in.Send {
+		var name string
+		if err := s.DB.QueryRow(r.Context(), `SELECT name FROM users WHERE id = $1`, p.UserID).Scan(&name); err != nil {
+			return err
+		}
+		out.Sent = s.sendGuestInvite(r, p.UserID, name, c, inv)
+	}
+	writeJSON(w, http.StatusCreated, out)
+	return nil
+}
+
+// apiCollabInviteRevoke: the link stops working at once (people who joined by it stay).
+func (s *Server) apiCollabInviteRevoke(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if err := s.Tasks.RevokeGuestInvite(r.Context(), c, p.UserID, r.PathValue("id")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

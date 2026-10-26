@@ -540,7 +540,7 @@ func (s *Server) apiCRMCurrencies(w http.ResponseWriter, r *http.Request, p apik
 // product with the barcode only, type=product or type=service — the products or the services only ("type" of a
 // product: service — not kept on the warehouses). The products on sale are listed: a product with variations by its variations
 // (parent_id — the product's); parent_id= lists a product's variations (the inactive ones too). The purchase price
-// is for administrators only and is not given here.
+// is given to those who see it in «Складской учёт» (administrators and the roles with the right).
 func (s *Server) apiCRMCatalog(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	q := r.URL.Query()
 	var list []crm.Product
@@ -563,33 +563,13 @@ func (s *Server) apiCRMCatalog(w http.ResponseWriter, r *http.Request, p apikeys
 	if kind := q.Get("type"); kind != "" {
 		list = slices.DeleteFunc(list, func(x crm.Product) bool { return x.Kind != kind })
 	}
-	type product struct {
-		ID          string            `json:"id"`
-		Name        string            `json:"name"`
-		Type        string            `json:"type"`
-		SKU         string            `json:"sku,omitempty"`
-		Price       float64           `json:"price"`
-		Currency    string            `json:"currency"`
-		Unit        string            `json:"unit,omitempty"`
-		VATRate     *float64          `json:"vat_rate"`
-		VATIncluded bool              `json:"vat_included"`
-		Description string            `json:"description,omitempty"`
-		Active      bool              `json:"active"`
-		SectionID   string            `json:"section_id,omitempty"`
-		Section     string            `json:"section,omitempty"`
-		Photo       string            `json:"photo_url,omitempty"`
-		Props       map[string]string `json:"props"`
-		Barcodes    []string          `json:"barcodes"`
-		ParentID    string            `json:"parent_id,omitempty"`
+	rights, err := s.apiStockRights(r, p)
+	if err != nil {
+		return err
 	}
-	out := make([]product, 0, len(list))
+	out := make([]apiProduct, 0, len(list))
 	for _, x := range list {
-		photo := ""
-		if x.PhotoKey != "" {
-			photo = s.BaseURL + "/crm/products/" + x.ID + "/photo"
-		}
-		out = append(out, product{x.ID, x.Name, x.Kind, x.SKU, x.Price, x.Currency, x.Unit, x.VATRate, x.VATIncluded, x.Description, x.Active,
-			x.SectionID, x.SectionPath, photo, x.Props, x.Barcodes, x.ParentID})
+		out = append(out, s.apiProductOut(x, rights.PurchasePrice))
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil

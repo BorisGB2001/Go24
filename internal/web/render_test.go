@@ -102,7 +102,7 @@ func TestPagesRender(t *testing.T) {
 		"project": {Data: map[string]any{"CanInvite": true, "InvitePerm": "managers", "Invites": []tasks.Invite{{UserID: "u9", UserName: "Анна", Role: "viewer", InvitedBy: "Борис"}}, "Project": project, "Tasks": []tasks.Task{task},
 			"Members": []tasks.Member{{User: user, Role: "owner"}}, "Users": []tasks.User{user}, "ShowAll": true, "Me": "u1", "DefaultDeadline": now}},
 		"task": {Data: map[string]any{"Card": card, "Users": []tasks.User{user}, "CanTake": true, "AppTabs": []apps.Placement{{ID: "p1", Placement: "TASK_VIEW_TAB", Handler: "https://app/t", AppTitle: "Доставка", Description: "Расчёт"}}, "DodComplete": true, "Dod": &tasks.TaskDod{InSprint: true, CanEdit: true, Types: []tasks.ScrumType{{ID: "st1", Name: "Задача"}}, Type: tasks.ScrumType{ID: "st1", Name: "Задача", Required: true, Items: []tasks.DodItem{{ID: "i1", Title: "Тесты", Done: true}, {ID: "i2", Title: "Ревью"}}}}, "Viewers": []tasks.TaskViewer{{ID: "u1", Name: "Иван", First: now, Last: now, Times: 3}},
-			"Pred": []tasks.Link{{ID: "l1", FromKey: "GO-1", FromTitle: "Эпик"}}, "Succ": []tasks.Link{{ID: "l2", ToKey: "GO-9", ToTitle: "После"}},
+			"Pred": []tasks.Link{{ID: "l1", Type: "start_start", FromKey: "GO-1", FromTitle: "Эпик"}}, "Succ": []tasks.Link{{ID: "l2", Type: "finish_start", ToKey: "GO-9", ToTitle: "После"}}, "LinkTypes": tasks.LinkTypes,
 			"Files": []storages.File{{ID: "f1", Name: "a.pdf", CreatedAt: now}}, "Storages": []storages.Storage{{ID: "s1", Name: "NC"}},
 			"People": 3, "BaseURL": "http://x", "Chat": chatFeed(card, user.ID, map[string]bool{"c1": true}), "Results": []tasks.Result{{Comment: tasks.Comment{ID: "c1", AuthorName: "Анна", Body: "готово", CreatedAt: now}, MarkedBy: "Я", MarkedAt: now}}, "ResultIDs": map[string]bool{"c1": true}, "Form": editTaskForm(card, []tasks.User{user}),
 			"Calls": true, "Ancestors": []tasks.TaskRef{{Key: "GO-1", Title: "Корень"}}, "SubDone": 1, "SubTotal": 3,
@@ -527,7 +527,8 @@ func TestPagesRender(t *testing.T) {
 		"webhooks": {Data: map[string]any{"Events": hooks.Events, "Base": "https://go24",
 			"Hooks": []hooks.Webhook{{ID: "h1", Name: "n8n", URL: "https://n8n/webhook/x", Secret: "abc", Events: []string{"deal.created"}, Active: true, LastAt: &now, LastError: "HTTP 500", Pending: 2}}}},
 		"apps_settings": {Data: map[string]any{"Empty": apps.App{}, "Scopes": apikeys.AllScopes, "Base": "https://go24", "Access": map[string][]tasks.User{"a1": {{ID: "dept:d1", Name: "Продажи"}}},
-			"Places": map[string][]apps.Placement{"a1": {{ID: "p1", Placement: "CRM_DYNAMIC_t1_DETAIL_TAB", Handler: "https://app/t", AppTitle: "Доставка"}}}, "Apps": []apps.App{
+			"Places": map[string][]apps.Placement{"a1": {{ID: "p1", Placement: "CRM_DYNAMIC_t1_DETAIL_TAB", Handler: "https://app/t", AppTitle: "Доставка"}}},
+			"Events": map[string][]apps.Event{"a1": {{ID: "e1", Event: "ONCRMDEALADD", Handler: "https://app/e", LastAt: &now, LastError: "HTTP 500", Pending: 1}}}, "Apps": []apps.App{
 			{ID: "a1", Name: "Доставка", HandlerURL: "https://app/x", Scopes: []string{"crm:read"}, ClientID: "local.1", ClientSecret: "s", InstalledAt: &now, Users: 2},
 			{ID: "a2", Name: "Синхронизация", APIOnly: true, InstallURL: "https://app/i", InstallError: "HTTP 500", Scopes: []string{"tasks:read", "tasks:write"}}}}},
 		"apps": {Data: map[string]any{"Admin": true, "Apps": []apps.App{{ID: "a1", Name: "Доставка", MenuTitle: "Расчёт доставки"}}}},
@@ -548,10 +549,12 @@ func TestPagesRender(t *testing.T) {
 			"Statuses": []tasks.Status{tasks.StatusPending, tasks.StatusInProgress}, "Periods": tasks.DeadlinePeriods,
 			"Bulk": bulkBar{Back: "/tasks", Users: []tasks.User{user}, Ops: bulkOps}}},
 		"search": {Query: "трекер", Data: []tasks.Task{task}},
-		"gantt": {Data: map[string]any{"Project": project, "All": false, "View": buildGantt(tasks.GanttData{
-			Tasks: []tasks.GanttTask{{Task: task, Start: now.AddDate(0, 0, -3), End: now.AddDate(0, 0, 2), Planned: true},
-				{Task: tasks.Task{ID: "t2", ProjectKey: "GO", Number: 8, Title: "Веха", Status: tasks.StatusPending}, Start: now, End: now, Planned: true}},
-			Links: []tasks.Link{{FromID: "t1", ToID: "t2", FromKey: "GO-7", ToKey: "GO-8"}}}, "", now)}},
+		"gantt": {Data: map[string]any{"Project": project, "All": false, "Fold": "GO-9", "LinkTypes": tasks.LinkTypes, "View": buildGantt(tasks.GanttData{
+			Tasks: []tasks.GanttTask{{Task: task, Start: now.AddDate(0, 0, -3), End: now.AddDate(0, 0, 2), Planned: true, Editable: true, Linkable: true},
+				{Task: tasks.Task{ID: "t2", ProjectKey: "GO", Number: 8, Title: "Веха", Status: tasks.StatusPending, ParentKey: "GO-7", Deadline: &now}, Start: now, End: now, Planned: true},
+				{Task: tasks.Task{ID: "t3", ProjectKey: "GO", Number: 9, Title: "Свёрнутая", Status: tasks.StatusPending, SubTotal: 1}, Start: now, End: now.AddDate(0, 0, 1)},
+				{Task: tasks.Task{ID: "t4", ProjectKey: "GO", Number: 10, Title: "Скрытая", Status: tasks.StatusPending, ParentKey: "GO-9"}, Start: now, End: now}},
+			Links: []tasks.Link{{FromID: "t1", ToID: "t2", Type: "start_finish", FromKey: "GO-7", ToKey: "GO-8"}}}, "", now, map[string]bool{"GO-9": true})}},
 		"plan":    {Data: []tasks.PlanColumn{{Tasks: []tasks.Task{task}}, {ID: "s1", Code: "today"}, {ID: "s2", Title: "Жду ответа", Tasks: []tasks.Task{task}}}},
 		"calsettings": {Data: map[string]any{"S": calendar.DefaultSettings(), "Days": []int{1, 2, 3, 4, 5, 6, 7}, "Hours": []int{0, 9, 18, 24}, "Reminds": calendar.RemindPresets}},
 		"calslots": {Data: map[string]any{"Base": "https://go24.test", "Links": []calendar.SlotLink{

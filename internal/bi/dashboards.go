@@ -47,6 +47,7 @@ type Dashboard struct {
 	GroupID, GroupTitle    string
 	Access                 string   // the viewer's: view, edit
 	Sections               []string // shown in these sections too
+	Filters                []string // «Фильтры дашборда»: the fields picked on it besides the period
 }
 
 // Widget is a chart of a query on a dashboard; the query holds no period — the dashboard gives it.
@@ -114,7 +115,7 @@ func Span(period string, dateFrom, dateTo *time.Time, now time.Time) (from, to *
 const dashboardSQL = `SELECT d.id, d.title, d.description, coalesce(d.code, ''), d.period, d.date_from, d.date_to,
 		coalesce(d.created_by::text, ''), coalesce(u.name, ''), d.updated_at,
 		(SELECT count(*) FROM bi_widgets w WHERE w.dashboard_id = d.id)::int,
-		d.status, coalesce(d.group_id::text, ''), coalesce(g.title, ''), a.access, d.sections
+		d.status, coalesce(d.group_id::text, ''), coalesce(g.title, ''), a.access, d.sections, d.filters
 	FROM bi_dashboards d LEFT JOIN users u ON u.id = d.created_by LEFT JOIN bi_groups g ON g.id = d.group_id
 	CROSS JOIN LATERAL (SELECT CASE WHEN d.code IS NOT NULL THEN 'view'
 		WHEN $2::bool OR d.created_by = nullif($1, '')::uuid THEN 'edit'
@@ -124,7 +125,7 @@ const dashboardSQL = `SELECT d.id, d.title, d.description, coalesce(d.code, ''),
 func scanDashboard(r pgx.Row) (Dashboard, error) {
 	var d Dashboard
 	err := r.Scan(&d.ID, &d.Title, &d.Description, &d.Code, &d.Period, &d.DateFrom, &d.DateTo, &d.CreatedBy, &d.AuthorName,
-		&d.UpdatedAt, &d.Widgets, &d.Status, &d.GroupID, &d.GroupTitle, &d.Access, &d.Sections)
+		&d.UpdatedAt, &d.Widgets, &d.Status, &d.GroupID, &d.GroupTitle, &d.Access, &d.Sections, &d.Filters)
 	return d, err
 }
 
@@ -176,7 +177,7 @@ func (s *Store) Dashboard(ctx context.Context, v Viewer, id string) (Dashboard, 
 	return d, err
 }
 
-// SaveDashboard adds a dashboard (no ID) by the user or changes one.
+// SaveDashboard adds a dashboard (no ID) by the user or changes one, its filters too.
 func (s *Store) SaveDashboard(ctx context.Context, by string, d Dashboard) (string, error) {
 	d.Title = strings.TrimSpace(d.Title)
 	if d.Title == "" {
@@ -193,13 +194,21 @@ func (s *Store) SaveDashboard(ctx context.Context, by string, d Dashboard) (stri
 	} else if d.DateFrom != nil && d.DateTo != nil && d.DateTo.Before(*d.DateFrom) {
 		return "", ErrPeriod
 	}
+	filters := []string{}
+	for _, f := range d.Filters {
+		if f != "" && !slices.Contains(filters, f) {
+			filters = append(filters, f)
+		}
+	}
 	if d.ID == "" {
-		err := s.db.QueryRow(ctx, `INSERT INTO bi_dashboards (title, description, period, date_from, date_to, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, d.Title, d.Description, d.Period, d.DateFrom, d.DateTo, by).Scan(&d.ID)
+		err := s.db.QueryRow(ctx, `INSERT INTO bi_dashboards (title, description, period, date_from, date_to, created_by, filters)
+			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, d.Title, d.Description, d.Period, d.DateFrom, d.DateTo, by,
+			filters).Scan(&d.ID)
 		return d.ID, err
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE bi_dashboards SET title = $2, description = $3, period = $4, date_from = $5,
-		date_to = $6, updated_at = now() WHERE id = $1 AND code IS NULL`, d.ID, d.Title, d.Description, d.Period, d.DateFrom, d.DateTo)
+		date_to = $6, filters = $7, updated_at = now() WHERE id = $1 AND code IS NULL`, d.ID, d.Title, d.Description,
+		d.Period, d.DateFrom, d.DateTo, filters)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
@@ -212,8 +221,8 @@ func (s *Store) SaveDashboard(ctx context.Context, by string, d Dashboard) (stri
 func (s *Store) CopyDashboard(ctx context.Context, by, id, title string, name func(string) string) (string, error) {
 	var nid string
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO bi_dashboards (title, description, period, date_from, date_to, created_by)
-			SELECT $2, description, period, date_from, date_to, $3 FROM bi_dashboards WHERE id::text = $1 RETURNING id`,
+		err := tx.QueryRow(ctx, `INSERT INTO bi_dashboards (title, description, period, date_from, date_to, created_by, filters)
+			SELECT $2, description, period, date_from, date_to, $3, filters FROM bi_dashboards WHERE id::text = $1 RETURNING id`,
 			id, title, by).Scan(&nid)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound

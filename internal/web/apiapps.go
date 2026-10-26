@@ -20,6 +20,10 @@ func (s *Server) apiAppsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/placements/list", s.api("placement", s.apiPlacementList))
 	mux.HandleFunc("POST /api/v1/placements", s.api("placement", s.apiPlacementBind))
 	mux.HandleFunc("DELETE /api/v1/placements", s.api("placement", s.apiPlacementUnbind))
+	mux.HandleFunc("GET /api/v1/events", s.api("", s.apiEvents))
+	mux.HandleFunc("GET /api/v1/events/list", s.api("", s.apiEventList))
+	mux.HandleFunc("POST /api/v1/events", s.api("", s.apiEventBind))
+	mux.HandleFunc("DELETE /api/v1/events", s.api("", s.apiEventUnbind))
 }
 
 var errAppOnly = i18n.E("err.api_app_only")
@@ -124,6 +128,109 @@ func (s *Server) apiPlacementUnbind(w http.ResponseWriter, r *http.Request, p ap
 		return i18n.E("err.app_placement", "")
 	}
 	n, err := s.Apps.Unbind(r.Context(), a.ID, x.Placement, x.Handler)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"count": n})
+	return nil
+}
+
+// ---------- Events over REST, as event.* ----------
+//
+// Only an application calls them, with its token and any rights: events (the events), event.get (its handlers),
+// event.bind and event.unbind — by an administrator.
+
+// apiEventList is «events»: what an application can subscribe to.
+func (s *Server) apiEventList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if _, err := s.apiApp(r, p); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, apps.Events)
+	return nil
+}
+
+// apiEvents is event.get: the handlers of the application, with ?event= — of one event.
+func (s *Server) apiEvents(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	a, err := s.apiApp(r, p)
+	if err != nil {
+		return err
+	}
+	list, err := s.Apps.AppEvents(r.Context(), a.ID)
+	if err != nil {
+		return err
+	}
+	out := []apps.Event{}
+	event := strings.ToUpper(r.URL.Query().Get("event"))
+	for _, x := range list {
+		if event == "" || x.Event == event {
+			out = append(out, x)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// eventReq is the body of bind and unbind: {"event", "handler", "auth_type"}; the query works too.
+func eventReq(r *http.Request) (apps.Event, error) {
+	var x apps.Event
+	if r.ContentLength != 0 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if err := readJSON(r, &x); err != nil {
+			return x, err
+		}
+	}
+	q := r.URL.Query()
+	for _, f := range []struct {
+		v   *string
+		key string
+	}{{&x.Event, "event"}, {&x.Handler, "handler"}, {&x.UserID, "auth_type"}} {
+		if *f.v == "" {
+			*f.v = q.Get(f.key)
+		}
+	}
+	return x, nil
+}
+
+// apiEventBind is event.bind: the handler on the application's host to the event; it gets the tokens of the employee
+// of auth_type (an active one), by default of the one who binds.
+func (s *Server) apiEventBind(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	a, err := s.apiApp(r, p)
+	if err != nil {
+		return err
+	}
+	if !s.apiAdmin(r.Context(), p.UserID) {
+		return tasks.ErrForbidden
+	}
+	x, err := eventReq(r)
+	if err != nil {
+		return err
+	}
+	if x.UserID == "" || x.UserID == "0" {
+		x.UserID = p.UserID
+	}
+	if x, err = s.Apps.BindEvent(r.Context(), a, x); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, x)
+	return nil
+}
+
+// apiEventUnbind is event.unbind: the handler off the event; without a handler — all of the event.
+func (s *Server) apiEventUnbind(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	a, err := s.apiApp(r, p)
+	if err != nil {
+		return err
+	}
+	if !s.apiAdmin(r.Context(), p.UserID) {
+		return tasks.ErrForbidden
+	}
+	x, err := eventReq(r)
+	if err != nil {
+		return err
+	}
+	if x.Event == "" {
+		return i18n.E("err.app_event", "")
+	}
+	n, err := s.Apps.UnbindEvent(r.Context(), a.ID, x.Event, x.Handler)
 	if err != nil {
 		return err
 	}

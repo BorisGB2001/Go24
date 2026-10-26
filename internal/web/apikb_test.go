@@ -191,6 +191,34 @@ func TestKBAPI(t *testing.T) {
 		t.Fatalf("unstarred: %+v %+v", favs, recent)
 	}
 	call("DELETE", base+"/marks/watch", eveKey, nil, 204, nil)
+
+	// comments, «Нравится», views: commenting needs kb:write, liking reading
+	var c1, r1 apiKBComment
+	call("POST", "/api/v1/kb/pages/"+top.ID+"/comments", readOnly, map[string]string{"body": "x"}, 403, nil)
+	call("POST", "/api/v1/kb/pages/"+top.ID+"/comments", eveKey, map[string]string{"body": "Сколько **дней**?"}, 201, &c1)
+	call("POST", "/api/v1/kb/pages/"+top.ID+"/comments", annaKey, map[string]string{"body": "28", "parent": c1.ID}, 201, &r1)
+	if c1.ID == "" || !strings.Contains(c1.HTML, "<b>дней</b>") || r1.Parent != c1.ID || !r1.CanEdit {
+		t.Fatalf("comments: %+v %+v", c1, r1)
+	}
+	call("PATCH", "/api/v1/kb/comments/"+c1.ID, annaKey, map[string]string{"body": "x"}, 403, nil)
+	call("PATCH", "/api/v1/kb/comments/"+c1.ID, eveKey, map[string]string{"body": "Сколько дней отпуска?"}, 204, nil)
+	call("PUT", "/api/v1/kb/pages/"+top.ID+"/like", readOnly, nil, 204, nil)
+	var talk []apiKBComment
+	call("GET", "/api/v1/kb/pages/"+top.ID+"/comments", eveKey, nil, 200, &talk)
+	if len(talk) != 1 || talk[0].Body != "Сколько дней отпуска?" || talk[0].EditedAt == nil || len(talk[0].Replies) != 1 || talk[0].Replies[0].CanEdit {
+		t.Fatalf("discussion: %+v", talk)
+	}
+	var liked apiKBPage
+	call("GET", "/api/v1/kb/pages/"+top.ID, annaKey, nil, 200, &liked)
+	if liked.Comments != 2 || !liked.Liked || len(liked.Likes) != 1 {
+		t.Fatalf("page discussion: %+v", liked)
+	}
+	call("DELETE", "/api/v1/kb/pages/"+top.ID+"/like", annaKey, nil, 204, nil)
+	call("DELETE", "/api/v1/kb/comments/"+c1.ID, eveKey, nil, 204, nil)
+	call("GET", "/api/v1/kb/pages/"+top.ID+"/comments", eveKey, nil, 200, &talk)
+	if len(talk) != 0 {
+		t.Fatalf("deleted with the replies: %+v", talk)
+	}
 	var pg apiKBPage
 	call("GET", "/api/v1/kb/pages/"+top.ID, annaKey, nil, 200, &pg)
 	if len(pg.Children) != 1 || pg.Children[0].Title != "Перенос" || len(pg.Path) != 0 {

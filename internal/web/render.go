@@ -192,6 +192,7 @@ var baseFuncs = template.FuncMap{
 	"md":         kb.Render, // a knowledge base page
 	"mark":       kb.Mark,   // a found snippet with the query marked
 	"money":      crm.Amount,
+	"bookingSum": bookingSum,
 	"mktROI":     mktROI,
 	"keepOf":     keepOf,
 	"photoURL":   company.PhotoURL,
@@ -727,6 +728,7 @@ type page struct {
 	ActingFor      []company.Person // people the user acts for today (menu «Задачи за …»)
 	Unread         int              // unread notifications (the bell)
 	MailUnread     int              // unread letters of the inboxes («Почта» in the menu)
+	CalInvites     int              // meeting invitations not answered yet («Календарь» in the menu)
 	Workday        *company.Workday // today's working day («Рабочее время» in the top bar); nil — not started
 	WorkdayOn      bool             // the top bar shows the working day (signed-in pages)
 	ReportDue      *company.ReportPeriod // a work report whose day has come is not sent yet
@@ -798,6 +800,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 			}
 			if s.Mail != nil && !p.Guest {
 				p.MailUnread, _ = s.Mail.Unread(r.Context(), sess.UserID)
+			}
+			if s.Calendar != nil && !p.Guest {
+				p.CalInvites, _ = s.Calendar.Invitations(r.Context(), sess.UserID)
 			}
 			if s.Company != nil && !p.Guest { // a guest has no working day and acts for nobody
 				p.ActingFor, _ = s.Company.ActingFor(r.Context(), sess.UserID, "view")

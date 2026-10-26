@@ -604,7 +604,7 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request, sess auth.Session)
 	}
 	s.render(w, r, "task", page{Title: card.Key() + " " + card.Title, Nav: nav, Data: map[string]any{
 		"Letters": letters, "Me": sess.UserID, "Viewers": viewers, "Dod": dod, "DodComplete": slices.Contains(card.Actions, tasks.ActionComplete),
-		"Card": card, "Users": users, "Files": files, "Storages": stores, "Pred": pred, "Succ": succ,
+		"Card": card, "Users": users, "Files": files, "Storages": stores, "Pred": pred, "Succ": succ, "LinkTypes": tasks.LinkTypes,
 		"Chat": chatFeed(card, sess.UserID, resultIDs), "People": peopleCount(card), "BaseURL": s.BaseURL,
 		"Messenger": s.Matrix != nil, "Form": editTaskForm(card, users),
 		"Ancestors": ancestors, "SubDone": subDone, "SubTotal": subTotal, "Marks": marks, "Tags": one[0].Tags, "AllTags": allTags,
@@ -723,6 +723,14 @@ func (s *Server) taskPost(w http.ResponseWriter, r *http.Request, anchor string,
 	id, err := s.Tasks.TaskIDByKey(r.Context(), r.PathValue("key"))
 	if err == nil {
 		err = fn(id)
+	}
+	if wantsJSON(r) { // a page script (the Gantt chart): the page updates itself
+		if err != nil {
+			s.jsonErr(w, r, err)
+		} else {
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}
+		return
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)

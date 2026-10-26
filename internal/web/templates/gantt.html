@@ -6,16 +6,18 @@
 <div class="tabs">
   {{template "pviews" (dict "P" $p "On" "gantt")}}
   <span class="spacer"></span>
-  {{range list "day" "week" "month"}}<a href="/p/{{$p.Key}}/gantt?scale={{.}}{{if $d.All}}&all=1{{end}}" {{if eq . $v.Scale}}class="on"{{end}}>{{t (print "gantt.scale." .)}}</a>{{end}}
-  {{if $d.All}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}">{{t "my.only_open"}}</a>{{else}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}&all=1">{{t "my.with_completed"}}</a>{{end}}
+  {{range list "day" "week" "month"}}<a href="/p/{{$p.Key}}/gantt?scale={{.}}{{if $d.All}}&all=1{{end}}{{with $d.Fold}}&fold={{.}}{{end}}" {{if eq . $v.Scale}}class="on"{{end}}>{{t (print "gantt.scale." .)}}</a>{{end}}
+  {{if $d.All}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}{{with $d.Fold}}&fold={{.}}{{end}}">{{t "my.only_open"}}</a>{{else}}<a href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}&all=1{{with $d.Fold}}&fold={{.}}{{end}}">{{t "my.with_completed"}}</a>{{end}}
 </div>
 
 {{if $v.Empty}}
 <div class="card"><div class="empty">{{t "tasks.empty"}}</div></div>
 {{else}}
-<div class="card flush gantt">
+<div class="card flush gantt" data-gantt data-dayw="{{$v.DayW}}" data-failed="{{t "common.save_failed"}}" data-unlink="{{t "gantt.unlink_confirm"}}">
   <div class="g-names" style="padding-top:{{$v.HeadH}}px" data-pane="gantt-names">
-    {{range $v.Bars}}<div class="g-name" style="height:{{$v.RowH}}px"><a href="/t/{{.Key}}" title="{{.Title}}"><span class="tkey">{{.Key}}</span>{{.Title}}</a></div>{{end}}
+    {{range $v.Bars}}<div class="g-name" style="height:{{$v.RowH}}px;padding-left:{{add 12 (mul .Depth 18)}}px">
+      {{if .Kids}}<a class="g-fold" href="/p/{{$p.Key}}/gantt?scale={{$v.Scale}}{{if $d.All}}&all=1{{end}}{{with .Fold}}&fold={{.}}{{end}}" title="{{if .Folded}}{{t "gantt.unfold"}}{{else}}{{t "gantt.fold"}}{{end}}">{{if .Folded}}{{icon "chevron-right"}}{{else}}{{icon "chevron-down"}}{{end}}</a>{{else}}<span class="g-fold"></span>{{end}}
+      <a href="/t/{{.Key}}" title="{{.Title}}"><span class="tkey">{{.Key}}</span>{{.Title}}</a>{{if .Folded}} <span class="muted small">+{{.SubTotal}}</span>{{end}}</div>{{end}}
   </div>
   <div class="g-chart">
     <svg width="{{$v.Width}}" height="{{$v.Height}}" viewBox="0 0 {{$v.Width}} {{$v.Height}}" role="img" aria-label="{{t "tabs.gantt"}}">
@@ -35,19 +37,25 @@
       {{end}}
       {{range $i, $b := $v.Bars}}<line class="g-row" x1="0" y1="{{add $v.HeadH (mul (add $i 1) $v.RowH)}}" x2="{{$v.Width}}" y2="{{add $v.HeadH (mul (add $i 1) $v.RowH)}}"/>{{end}}
       {{if $v.ShowToday}}<line class="g-today" x1="{{$v.TodayX}}" y1="24" x2="{{$v.TodayX}}" y2="{{$v.Height}}"/>{{end}}
-      {{range $v.Links}}<path class="g-link{{if .Bad}} bad{{end}}" d="{{.D}}" marker-end="url(#{{if .Bad}}g-arrow-bad{{else}}g-arrow{{end}})"><title>{{.FromKey}} → {{.ToKey}}{{if .Bad}} — {{t "gantt.link_conflict"}}{{end}}</title></path>{{end}}
+      {{range $v.Links}}<path class="g-link{{if .Bad}} bad{{end}}" d="{{.D}}" marker-end="url(#{{if .Bad}}g-arrow-bad{{else}}g-arrow{{end}})" data-link="{{.ID}}" data-to="{{.ToKey}}"><title>{{.FromKey}} → {{.ToKey}} · {{t (print "gantt.link." .Type)}}{{if .Bad}} — {{t "gantt.link_conflict"}}{{end}}</title></path>{{end}}
       {{range $v.Bars}}
+      <g class="g-item{{if .Editable}} edit{{end}}" data-key="{{.Key}}" data-start="{{.StartISO}}" data-end="{{.EndISO}}" data-x="{{.X}}" data-w="{{.W}}" {{if .Linkable}}data-linkable{{end}}>
       <a href="/t/{{.Key}}">
         {{if .Milestone}}
         <path class="g-bar st-{{.Status}}" d="M{{add .X (half $v.DayW)}} {{.Y}} l9 9 l-9 9 l-9 -9 z"><title>{{.Key}} {{.Title}}</title></path>
         {{else}}
-        <rect class="g-bar st-{{.Status}}{{if not .Planned}} derived{{end}}{{if .Overdue}} over{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="18" rx="4"><title>{{.Key}} {{.Title}} · {{day .Start}} – {{day .End}}</title></rect>
+        <rect class="g-bar st-{{.Status}}{{if not .Planned}} derived{{end}}{{if .Overdue}} over{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="18" rx="4"><title>{{.Key}} {{.Title}} · {{day .Start}} – {{day .End}}{{if .DatesFollow}} · {{t "field.dates_from_subtasks"}}{{end}}</title></rect>
         {{end}}
       </a>
+      {{if .DeadlineX}}<path class="g-deadline" d="M{{.DeadlineX}} {{add .Y 20}} l-4 6 h8 z"><title>{{t "field.deadline"}}: {{datetime .Deadline}}</title></path>{{end}}
+      <circle class="g-dot" data-side="start" cx="{{.DotL}}" cy="{{.Mid}}" r="4"/>
+      <circle class="g-dot" data-side="finish" cx="{{.DotR}}" cy="{{.Mid}}" r="4"/>
+      </g>
       {{end}}
     </svg>
   </div>
 </div>
 <p class="small muted">{{t "gantt.legend"}}</p>
+<script src="{{asset "js/gantt.js"}}"></script>
 {{end}}
 {{end}}

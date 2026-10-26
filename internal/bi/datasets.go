@@ -349,6 +349,8 @@ var Datasets = []*Dataset{
 			{Code: "no_show", Type: Bool, Expr: "b.status = 'no_show'"},
 			{Code: "cancelled", Type: Bool, Expr: "b.status = 'cancelled'"},
 			{Code: "duration_hours", Type: Number, Expr: "(extract(epoch FROM b.ends_at - b.starts_at) / 3600)::float8"},
+			{Code: "services", Type: String, Expr: "coalesce((SELECT string_agg(bs.name, ', ' ORDER BY bs.sort) FROM booking_services bs WHERE bs.booking_id = b.id), '')"},
+			{Code: "amount", Type: Number, Expr: "coalesce((SELECT sum(" + inBase("bs.price", "bs.currency") + ") FROM booking_services bs WHERE bs.booking_id = b.id), 0)::float8"},
 		}},
 }
 

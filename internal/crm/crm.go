@@ -1001,8 +1001,11 @@ func (s *Store) DeleteLead(ctx context.Context, userID, id string) error {
 	return s.trash(ctx, userID, "lead", id, l.Title, "", l.Responsible.ID, `DELETE FROM crm_leads WHERE id::text = $1`)
 }
 
-// Amount formats a sum: 1 500 000,50.
+// Amount formats a sum: 1 500 000,50 (a loss: −1 500,50).
 func Amount(v float64) string {
+	if v < 0 && Amount(-v) != "0" {
+		return "−" + Amount(-v)
+	}
 	whole := int64(v)
 	cents := int64((v-float64(whole))*100 + 0.5)
 	s := strconv.FormatInt(whole, 10)

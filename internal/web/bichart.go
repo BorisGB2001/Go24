@@ -53,6 +53,7 @@ type biChart struct {
 	Sum   []biCell // «Итого», for the counts and the sums
 	Cut   bool     // more rows than shown
 	Value string   // the measure's name (pie, single-series charts)
+	F     string   // the dashboard's parameter of the first dimension a click filters by
 }
 
 type biKPI struct{ Name, Value string }
@@ -72,11 +73,15 @@ type biSeriesView struct {
 type biBar struct {
 	X, Y, W, H float64
 	Tip        string
+	Key        string
+	Click      bool // filters the dashboard by Key
 }
 
 type biSlice struct {
 	Path, Class, Name, Value string
 	Pct                      string
+	Key                      string
+	Click                    bool
 }
 
 type biCol struct {
@@ -87,6 +92,8 @@ type biCol struct {
 type biCell struct {
 	Text string
 	Num  bool
+	F    string // a dimension's: the parameter and the key a click filters the dashboard by
+	Key  string
 }
 
 // biNum is a number as the widgets show it: 1 234 567, 1 234,5; dec is the locale's decimal mark.
@@ -213,6 +220,9 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 	if len(meas) > 0 {
 		ch.Value = res.Columns[meas[0]].Name
 	}
+	if len(dims) > 0 && len(res.Keys) == len(res.Rows) {
+		ch.F = biParam + res.Columns[dims[0]].Field
+	}
 	switch w.Kind {
 	case "kpi":
 		for _, m := range meas {
@@ -232,10 +242,13 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 			for i, v := range r {
 				c := res.Columns[i]
 				if c.Agg != "" {
-					row[i] = biCell{biNum(biFloat(v), dec), true}
+					row[i] = biCell{Text: biNum(biFloat(v), dec), Num: true}
 					sums[i] += biFloat(v)
 				} else {
 					row[i] = biCell{Text: biLabel(c.Column, v, tr)}
+					if ch.F != "" {
+						row[i].F, row[i].Key = biParam+c.Field, res.Keys[n][i]
+					}
 				}
 			}
 			if n < biTableMax {
@@ -248,7 +261,7 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 			ch.Sum[0] = biCell{Text: tr("bi.total")}
 			for _, m := range meas {
 				if a := res.Columns[m].Agg; a == "count" || a == "sum" {
-					ch.Sum[m] = biCell{biNum(sums[m], dec), true}
+					ch.Sum[m] = biCell{Text: biNum(sums[m], dec), Num: true}
 				}
 			}
 		}
@@ -271,19 +284,24 @@ func biPie(ch *biChart, res biResult, dims, meas []int, tr func(string) string) 
 	type part struct {
 		name string
 		v    float64
+		key  string
+		ok   bool // has a key: not «Другие»
 	}
 	var parts []part
 	total := 0.0
-	for _, r := range res.Rows {
+	for n, r := range res.Rows {
 		v := biFloat(r[m])
 		if v <= 0 {
 			continue
 		}
-		name := ""
+		p := part{v: v}
 		if len(dims) > 0 {
-			name = biLabel(res.Columns[dims[0]].Column, r[dims[0]], tr)
+			p.name = biLabel(res.Columns[dims[0]].Column, r[dims[0]], tr)
+			if ch.F != "" {
+				p.key, p.ok = res.Keys[n][0], true
+			}
 		}
-		parts = append(parts, part{name, v})
+		parts = append(parts, p)
 		total += v
 	}
 	if total == 0 {
@@ -297,7 +315,7 @@ func biPie(ch *biChart, res biResult, dims, meas []int, tr func(string) string) 
 		for _, p := range parts[biPieMax-1:] {
 			rest += p.v
 		}
-		parts = append(parts[:biPieMax-1], part{tr("bi.others"), rest})
+		parts = append(parts[:biPieMax-1], part{name: tr("bi.others"), v: rest})
 	}
 	dec := tr("bi.decimal")
 	const cx, cy, r0, r1 = 110.0, 110.0, 100.0, 58.0
@@ -320,7 +338,7 @@ func biPie(ch *biChart, res biResult, dims, meas []int, tr func(string) string) 
 				" A58 58 0 " + large + " 0 " + pt(a, r1) + "Z"
 		}
 		ch.Slices = append(ch.Slices, biSlice{Path: path, Class: "bi-c" + strconv.Itoa(i%biColors), Name: p.name,
-			Value: biNum(p.v, dec), Pct: biNum(math.Round(p.v/total*1000)/10, dec) + "%"})
+			Value: biNum(p.v, dec), Pct: biNum(math.Round(p.v/total*1000)/10, dec) + "%", Key: p.key, Click: p.ok})
 		a += da
 	}
 	ch.Total = biShort(total, tr)
@@ -334,31 +352,35 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 		return
 	}
 	dec := tr("bi.decimal")
-	var cats []string
+	var cats, keys []string
 	catOf := map[string]int{}
+	click := ch.F != ""
 	type series struct {
 		name string
 		vals map[int]float64
 	}
 	var ss []*series
-	cat := func(r []any) int {
-		name := ""
+	cat := func(n int) int {
+		r, name, key := res.Rows[n], "", ""
 		if len(dims) > 0 {
 			name = biLabel(res.Columns[dims[0]].Column, r[dims[0]], tr)
+		}
+		if click {
+			key = res.Keys[n][0]
 		}
 		i, ok := catOf[name]
 		if !ok {
 			i = len(cats)
 			catOf[name] = i
-			cats = append(cats, name)
+			cats, keys = append(cats, name), append(keys, key)
 		}
 		return i
 	}
 	if len(dims) > 1 {
 		byName := map[string]*series{}
 		totals := map[string]float64{}
-		for _, r := range res.Rows {
-			c := cat(r)
+		for k, r := range res.Rows {
+			c := cat(k)
 			n := biLabel(res.Columns[dims[1]].Column, r[dims[1]], tr)
 			s := byName[n]
 			if s == nil {
@@ -378,8 +400,8 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 		for _, m := range meas {
 			ss = append(ss, &series{res.Columns[m].Name, map[int]float64{}})
 		}
-		for _, r := range res.Rows {
-			c := cat(r)
+		for n, r := range res.Rows {
+			c := cat(n)
 			for k, m := range meas {
 				ss[k].vals[c] = biFloat(r[m])
 			}
@@ -424,7 +446,7 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 				x := biPadL + group*(float64(i)+0.5)
 				pts = append(pts, strconv.FormatFloat(x, 'f', 1, 64)+","+strconv.FormatFloat(y(v), 'f', 1, 64))
 				if ok {
-					sv.Dots = append(sv.Dots, biBar{X: x, Y: y(v), Tip: tip})
+					sv.Dots = append(sv.Dots, biBar{X: x, Y: y(v), Tip: tip, Key: keys[i], Click: click})
 				}
 				continue
 			}
@@ -435,7 +457,7 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 			bw := min(group*0.8/k, biBarMax)
 			top, bot := y(max(v, 0)), y(min(v, 0))
 			sv.Bars = append(sv.Bars, biBar{X: biPadL + group*float64(i) + (group-bw*k)/2 + bw*float64(j), Y: top, W: max(bw-1, 1),
-				H: max(bot-top, 0.5), Tip: tip})
+				H: max(bot-top, 0.5), Tip: tip, Key: keys[i], Click: click})
 		}
 		sv.Points = strings.Join(pts, " ")
 		ch.Series = append(ch.Series, sv)

@@ -3,7 +3,8 @@
 // found by typing (/mail/crm/search) and shown as chips; «Записать» from a CRM card (?crm=) brings its client to every
 // new booking, ?b=id opens that booking. A booking may take other resources too (extra). The waiting list above the
 // grid: a client is dragged onto a free time (booked there for a slot of the resource) or booked by «Записать» in
-// the dialog; «В лист ожидания» puts a booking's client back.
+// the dialog; «В лист ожидания» puts a booking's client back. The services of the resource (svc): checking them sets
+// the booking's minutes to theirs together and shows the total.
 (() => {
   const grid = document.querySelector('[data-booking]');
   const dlg = document.querySelector('[data-booking-dlg]');
@@ -23,6 +24,35 @@
     x.closest('label').hidden = own;
   });
   f('resource').addEventListener('change', syncExtras);
+  const svcBox = form.querySelector('[data-bk-svcs]'), svcs = [...form.querySelectorAll('[name=svc]')];
+  const total = form.querySelector('[data-bk-total]');
+  // as the server's money: «3 500», «1 500,50»
+  const fmt = { format: v => new Intl.NumberFormat(document.documentElement.lang || undefined,
+    { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }).format(v) };
+  const showTotal = () => {
+    const on = svcs.filter(x => x.checked && !x.disabled);
+    const sum = on.reduce((a, x) => a + +x.dataset.price, 0);
+    total.textContent = on.length ? total.dataset.label + ': ' + fmt.format(sum) + ' ' + on[0].dataset.currency : '';
+    return on;
+  };
+  // only the services of the booking's resource are offered
+  const syncSvcs = () => {
+    let any = false;
+    svcs.forEach(x => {
+      const mine = x.closest('[data-svc-res]').dataset.svcRes === f('resource').value;
+      if (!mine) x.checked = false;
+      x.disabled = !mine;
+      x.closest('label').hidden = !mine;
+      any ||= mine;
+    });
+    if (svcBox) svcBox.hidden = !any;
+    if (total) showTotal();
+  };
+  f('resource').addEventListener('change', syncSvcs);
+  svcs.forEach(x => x.addEventListener('change', () => {
+    const mins = showTotal().reduce((a, y) => a + +y.dataset.minutes, 0);
+    if (mins) f('minutes').value = mins;
+  }));
   const chips = crm?.querySelector('[data-bk-chips]'), found = crm?.querySelector('[data-bk-crm-res]'), q = crm?.querySelector('[data-bk-crm-q]');
   const kinds = ['contact', 'company', 'deal'];
   const paths = { contacts: 'contact', companies: 'company', deals: 'deal' };
@@ -68,6 +98,9 @@
     const extra = (b?.dataset.extras || '').split(',');
     extras.forEach(x => { x.checked = !!b && extra.includes(x.value); });
     syncExtras();
+    const own = (b?.dataset.services || '').split(',');
+    svcs.forEach(x => { x.checked = !!b && own.includes(x.value); });
+    syncSvcs();
     if (f('wait')) {
       f('wait').value = w?.dataset.wait || '';
       f('wait').disabled = !w;

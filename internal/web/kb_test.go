@@ -186,6 +186,32 @@ func TestKBHTTP(t *testing.T) {
 		t.Fatal("unstarred page still in favorites")
 	}
 
+	// comments, «Нравится», views under the page
+	if page := do(ann, "GET", "/kb/"+space+"/"+pg, nil, 200); !strings.Contains(page, `id="kbcomments"`) || !strings.Contains(page, "Просмотров:") {
+		t.Fatal("no discussion under the page")
+	}
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/comment", url.Values{"body": {"Сколько дней? @Босс"}}, 200)
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/like", url.Values{"on": {"1"}}, 200)
+	do(eve, "POST", "/kb/"+space+"/"+pg+"/comment", url.Values{"body": {"тайком"}}, 404)
+	var cid string
+	must(pool.QueryRow(ctx, `SELECT id FROM kb_comments WHERE page_id = $1`, pg).Scan(&cid))
+	do(boss, "POST", "/kb/"+space+"/"+pg+"/comment", url.Values{"body": {"28"}, "parent": {cid}}, 200)
+	page := do(boss, "GET", "/kb/"+space+"/"+pg, nil, 200)
+	if !strings.Contains(page, `id="c-`+cid+`"`) || !strings.Contains(page, `class="kbreplies"`) || !strings.Contains(page, "Нравится: Анна") ||
+		!strings.Contains(page, "Просмотров: 3") { // the three who opened it so far
+		t.Fatal("discussion not shown")
+	}
+	var mention int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'kb_mention'`, boss).Scan(&mention))
+	if mention != 1 {
+		t.Fatalf("mention notices %d", mention)
+	}
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/comments/"+cid, url.Values{"body": {"Сколько дней отпуска?"}}, 200)
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/comments/"+cid, url.Values{"delete": {"1"}}, 200)
+	if page := do(ann, "GET", "/kb/"+space+"/"+pg, nil, 200); strings.Contains(page, `class="kbcomment"`) {
+		t.Fatal("deleted comment shown")
+	}
+
 	// «Публикация»: a page with its subpages, then the whole base, opens by an outside link without signing in
 	sub, err := srv.KB.CreatePage(ctx, boss, space, pg, "Больничный", "в тот же день")
 	must(err)

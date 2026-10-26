@@ -93,7 +93,7 @@ type bookingDay struct {
 }
 
 // bookingPublic: the page of a link for clients, without signing in — the resource (?r=, when the link has several),
-// the day (?date=, the days of the link a week at a time), its free slots and, with a slot chosen (?t=HH:MM), the
+// its service (?s=, when it has services; the slots are for the service's minutes), the day (?date=, the days of the link a week at a time), its free slots and, with a slot chosen (?t=HH:MM), the
 // client's form.
 func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -125,7 +125,21 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 			cur = &res[i]
 		}
 	}
-	if cur != nil {
+	var svc *booking.Service // a resource with services: the client picks one first, its minutes make the slots
+	if cur != nil && len(cur.Services) > 0 {
+		if x, ok := cur.Service(q.Get("s")); ok {
+			svc = &x
+		} else if len(cur.Services) == 1 {
+			svc = &cur.Services[0]
+		}
+		data["Svc"] = svc
+	}
+	if cur != nil && (len(cur.Services) == 0 || svc != nil) {
+		mins := cur.Slot
+		if svc != nil {
+			mins = svc.Minutes
+		}
+		data["Mins"] = mins
 		now := time.Now()
 		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 		last := today.AddDate(0, 0, l.DaysAhead-1)
@@ -147,7 +161,7 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 		for d := w0; d.Before(w0.AddDate(0, 0, 7)) && !d.After(last); d = d.AddDate(0, 0, 1) {
 			days = append(days, bookingDay{d, d.Format("2006-01-02"), cur.WorksOn(d)})
 		}
-		free, err := s.Booking.Free(r.Context(), *cur, day, time.Local)
+		free, err := s.Booking.FreeFor(r.Context(), *cur, day, time.Local, mins)
 		if err != nil {
 			s.fail(w, "booking", err)
 			return
@@ -158,7 +172,7 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 				slot = q.Get("t")
 			}
 		}
-		data["Res"], data["Day"], data["DayValue"], data["Days"], data["Free"], data["Slot"] = cur, day, day.Format("2006-01-02"), days, free, slot
+		data["Day"], data["DayValue"], data["Days"], data["Free"], data["Slot"] = day, day.Format("2006-01-02"), days, free, slot
 		if w0.After(today) {
 			data["PrevWeek"] = w0.AddDate(0, 0, -7).Format("2006-01-02")
 		}
@@ -166,6 +180,7 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 			data["NextWeek"] = nw.Format("2006-01-02")
 		}
 	}
+	data["Res"] = cur
 	s.render(w, r, "bookingpub", page{Title: l.Name, Data: data})
 }
 
@@ -181,7 +196,8 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 	date, at := r.FormValue("date"), r.FormValue("t")
 	start, err := time.ParseInLocation("2006-01-02 15:04", date+" "+at, time.Local)
 	b := booking.Booking{ResourceID: r.FormValue("r"), Start: start, ClientName: r.FormValue("name"),
-		ClientPhone: r.FormValue("phone"), ClientEmail: r.FormValue("email"), Note: r.FormValue("note"), ClientIP: clientIP(r)}
+		ClientPhone: r.FormValue("phone"), ClientEmail: r.FormValue("email"), Note: r.FormValue("note"), ClientIP: clientIP(r),
+		Services: []booking.Service{{ProductID: r.FormValue("s")}}}
 	switch {
 	case r.FormValue("website") != "": // the field people do not see: a robot filled it
 		err = booking.ErrSlot
@@ -191,7 +207,7 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 		b, err = s.Booking.BookByLink(r.Context(), l, b, time.Local)
 	}
 	if err != nil {
-		v := url.Values{"r": {b.ResourceID}, "date": {date}, "name": {b.ClientName}, "phone": {b.ClientPhone},
+		v := url.Values{"r": {b.ResourceID}, "s": {r.FormValue("s")}, "date": {date}, "name": {b.ClientName}, "phone": {b.ClientPhone},
 			"email": {b.ClientEmail}, "note": {b.Note}, "msg": {s.bookingErr(r, err)}}
 		if !errors.Is(err, booking.ErrSlot) {
 			v.Set("t", at)
@@ -223,7 +239,7 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 
 // bookingErr is the message of an error for the client: a known one in their language, else a common one.
 func (s *Server) bookingErr(r *http.Request, err error) string {
-	for _, e := range []error{booking.ErrSlot, booking.ErrClient, booking.ErrPhone, booking.ErrTooMany, booking.ErrClosed, booking.ErrNotFound} {
+	for _, e := range []error{booking.ErrSlot, booking.ErrClient, booking.ErrPhone, booking.ErrTooMany, booking.ErrClosed, booking.ErrService, booking.ErrNotFound} {
 		if errors.Is(err, e) {
 			return s.errText(r, e)
 		}

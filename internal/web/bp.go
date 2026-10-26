@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -28,6 +30,9 @@ func (s *Server) bpHome(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	}
 	data := map[string]any{"Tab": tab}
 	tpls, err := s.BP.Templates(r.Context(), "none", true)
+	if err == nil {
+		tpls, err = s.BP.Startable(bpAdmin(r, sess), sess.UserID, tpls)
+	}
 	if err == nil {
 		data["Templates"] = tpls
 		data["Approvals"], err = s.BP.MyApprovals(r.Context(), sess.UserID)
@@ -93,6 +98,12 @@ func (s *Server) bpDeleteInstance(w http.ResponseWriter, r *http.Request, sess a
 // bpStartPage: the form of a template (for a CRM card with ?entity_id=…).
 func (s *Server) bpStartPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	t, err := s.BP.Template(r.Context(), r.PathValue("id"))
+	if err == nil {
+		var ok bool
+		if ok, err = s.BP.MayStart(bpAdmin(r, sess), sess.UserID, t.ID); err == nil && !ok {
+			err = i18n.E("err.bp_no_start")
+		}
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/bp")
 		return
@@ -110,7 +121,7 @@ func (s *Server) bpStart(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	for _, f := range t.Fields {
 		values[f.Key] = r.FormValue("f_" + f.Key)
 	}
-	id, err := s.BP.Start(r.Context(), sess.UserID, t.ID, r.FormValue("entity_id"), values)
+	id, err := s.BP.Start(bpAdmin(r, sess), sess.UserID, t.ID, r.FormValue("entity_id"), values)
 	if err != nil {
 		back := "/bp/start/" + t.ID
 		if eid := r.FormValue("entity_id"); eid != "" {
@@ -309,7 +320,18 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 			ownFields[entity] = append(ownFields[entity], f.Name)
 		}
 	}
-	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "FieldsText": strings.Join(fields, "\n"), "Types": types,
+	var starters []tasks.User // the chips of «Кто может запускать»
+	if t.ID != "" {
+		refs, err := s.BP.Starters(r.Context(), t.ID)
+		if err != nil {
+			s.taskErr(w, r, err, "/bp")
+			return
+		}
+		for _, ref := range refs {
+			starters = append(starters, tasks.User{ID: ref.ID, Name: ref.Name})
+		}
+	}
+	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldsText": strings.Join(fields, "\n"), "Types": types,
 		"AllFields": bp.AllFields(t.Fields, t.Steps), "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps)), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
 }
 
@@ -357,10 +379,19 @@ func parseSets(text string) []bp.Assign {
 	return out
 }
 
-// bpTemplateSave: op=meta (name, description, kind of card, active, fields), op=add (a step, before step at), op=delete|up (step n).
+// bpTemplateSave: op=meta (name, description, kind of card, active, fields), op=add (a step, before step at), op=delete|up
+// (step n), op=starters («Кто может запускать»: to — people and «dept:ID»).
 func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if r.FormValue("op") == "starters" {
+		id, msg := r.PathValue("id"), s.tr(r, "common.saved")
+		if err := s.BP.SetStarters(r.Context(), id, r.Form["to"]); err != nil {
+			msg = s.errText(r, err)
+		}
+		http.Redirect(w, r, "/bp/templates/"+id+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	t := bp.Template{Entity: "none", Active: true}
@@ -516,4 +547,55 @@ func (s *Server) bpTemplateDelete(w http.ResponseWriter, r *http.Request, sess a
 		return
 	}
 	http.Redirect(w, r, "/bp/templates", http.StatusSeeOther)
+}
+
+// bpTemplateExport: «Экспорт» — the template as a file to «Импорт» here or on another portal.
+func (s *Server) bpTemplateExport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	f, err := s.BP.Export(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.taskErr(w, r, err, "/bp/templates")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(f.Name+".bp.json"))
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(f)
+}
+
+// bpTemplateImport: «Импорт» of a template's file (file) — a new template (id «new») or over this one.
+func (s *Server) bpTemplateImport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	id, back := r.PathValue("id"), "/bp/templates/"+r.PathValue("id")
+	if id == "new" {
+		id, back = "", "/bp/templates"
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "err.bp_import_file")), http.StatusSeeOther)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 1<<20))
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	nid, missing, err := s.BP.Import(r.Context(), sess.UserID, id, data)
+	if err != nil {
+		http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	msg := s.tr(r, "bp.imported")
+	if missing > 0 {
+		msg = s.tr(r, "bp.imported_missing", missing)
+	}
+	http.Redirect(w, r, "/bp/templates/"+nid+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }

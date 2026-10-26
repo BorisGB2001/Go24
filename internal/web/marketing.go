@@ -181,6 +181,13 @@ func (s *Server) mktCampaignSave(w http.ResponseWriter, r *http.Request, sess au
 			return
 		}
 		msg = s.tr(r, "mkt.test_sent", to)
+	case "template": // «Сохранить как шаблон»: the draft's letter, named as the campaign
+		t := marketing.Template{Name: c.Title, Subject: c.Subject, Body: c.Body}
+		if _, err := s.Marketing.SaveTemplate(r.Context(), sess.UserID, false, t); err != nil {
+			s.taskErr(w, r, err, back)
+			return
+		}
+		msg = s.tr(r, "mkt.tpl_made", t.Name)
 	case "start":
 		n, err := s.Marketing.Start(r.Context(), sess.UserID, tasks.IsAdmin(r.Context()), id)
 		if err != nil {

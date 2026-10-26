@@ -129,12 +129,15 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 		}
 	}()
-	go func() { // outgoing webhooks (n8n …): every 15 s
+	go func() { // outgoing webhooks (n8n …) and events of applications: every 15 s
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
 			for _, err := range errsOf(srv.Hooks.Deliver(ctx, time.Now())) {
 				log.Warn("webhook", "err", err)
+			}
+			for _, err := range errsOf(srv.Apps.DeliverEvents(ctx, time.Now(), srv.BaseURL)) {
+				log.Warn("app event", "err", err)
 			}
 			select {
 			case <-ctx.Done():

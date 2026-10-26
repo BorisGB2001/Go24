@@ -19,6 +19,19 @@
     title="{{if .Watch}}{{t "kb.watch_off"}}{{else if .Via}}{{t "kb.watch_via"}}{{else if .Page}}{{t "kb.watch_page_hint"}}{{else}}{{t "kb.watch_space_hint"}}{{end}}" aria-pressed="{{or .Watch .Via}}">{{if or .Watch .Via}}{{icon "bell"}} {{t "kb.watching"}}{{else}}{{icon "bell-off"}} {{t "kb.watch"}}{{end}}</button>
 </form>{{end}}
 
+{{/* kbcomment: one comment of the discussion under a page; .C — the comment, .S — the base, .P — the page, .Top — a top one (replies go under it) */}}
+{{define "kbcomment"}}{{$c := .C}}<div class="kbcomment" id="c-{{$c.ID}}">
+  <div class="row small"><b>{{or $c.Author (t "kb.comment_gone")}}</b><span class="muted">{{datetime $c.Created}}{{if $c.Edited}} · {{t "kb.comment_edited"}}{{end}}</span><span style="flex:1"></span>
+    {{if $c.CanDelete}}<form method="post" action="/kb/{{.S}}/{{.P}}/comments/{{$c.ID}}" data-confirm="{{if $c.Replies}}{{t "kb.comment_delete_tree"}}{{else}}{{t "kb.comment_delete_confirm"}}{{end}}"><input type="hidden" name="delete" value="1"><button class="ghost small" title="{{t "common.remove"}}">{{icon "trash"}}</button></form>{{end}}</div>
+  <div class="kbcomment-body">{{md $c.Body}}</div>
+  <div class="kbcomment-acts">{{if .Top}}<details><summary class="small">{{icon "arrow-back-up"}} {{t "kb.reply"}}</summary>
+    <form method="post" action="/kb/{{.S}}/{{.P}}/comment" class="stack"><input type="hidden" name="parent" value="{{$c.ID}}">
+      <textarea name="body" rows="2" required maxlength="20000" placeholder="{{t "kb.reply_placeholder"}}" data-mention>{{if not $c.CanEdit}}{{with $c.Author}}@{{.}} {{end}}{{end}}</textarea><div><button class="small primary">{{t "kb.comment_send"}}</button></div></form></details>{{end}}
+    {{if $c.CanEdit}}<details><summary class="small">{{icon "edit"}} {{t "task.change"}}</summary>
+    <form method="post" action="/kb/{{.S}}/{{.P}}/comments/{{$c.ID}}" class="stack"><textarea name="body" rows="3" required maxlength="20000" data-mention>{{$c.Body}}</textarea><div><button class="small primary">{{t "common.save"}}</button></div></form></details>{{end}}</div>
+  {{with $c.Replies}}<div class="kbreplies">{{range .}}{{template "kbcomment" (dict "C" . "S" $.S "P" $.P "Top" false)}}{{end}}</div>{{end}}
+</div>{{end}}
+
 {{define "content"}}
 {{$d := .Data}}{{$s := $d.Space}}
 <div class="crumbs"><a href="/kb">{{t "kb.title"}}</a> {{icon "chevron-right"}} <a href="/kb/{{$s.ID}}">{{$s.Name}}</a>{{range $d.Crumbs}} {{icon "chevron-right"}} <a href="/kb/{{.SpaceID}}/{{.ID}}">{{.Title}}</a>{{end}}{{with $d.Page}} {{icon "chevron-right"}} {{.Title}}{{end}}</div>
@@ -90,6 +103,17 @@
       {{if $s.CanEdit}}<a class="button ghost small" href="/kb/{{$s.ID}}?new=1&parent={{.ID}}">{{icon "plus"}} {{t "kb.add_sub"}}</a>{{end}}</div>{{end}}
     <p class="small muted">{{t "kb.meta" .Author (datetime .Created) .Editor (datetime .Updated)}}</p>
   </article>
+  {{if not $d.Old}}{{with $d.Talk}}<section class="card kbtalk" id="kbcomments">
+    <div class="row kblikes" id="kblikes"><form method="post" action="/kb/{{$s.ID}}/{{$p.ID}}/like"><input type="hidden" name="on" value="{{if .Liked}}0{{else}}1{{end}}">
+      <button class="ghost small{{if .Liked}} on{{end}}" aria-pressed="{{.Liked}}" title="{{if .Liked}}{{t "kb.unlike"}}{{else}}{{t "kb.like"}}{{end}}">{{icon "thumb-up"}} {{t "kb.like"}}{{with len .Likes}} <b>{{.}}</b>{{end}}</button></form>
+      {{with .Likes}}<span class="small muted" title="{{join . ", "}}">{{t "kb.liked_by" (join . ", ")}}</span>{{end}}<span style="flex:1"></span>
+      <span class="small muted" title="{{t "kb.views_hint"}}">{{icon "eye"}} {{t "kb.views" .Views}}</span></div>
+    <h3>{{icon "messages"}} {{t "kb.comments"}}{{with .Count}} <span class="muted">{{.}}</span>{{end}}</h3>
+    {{range .Comments}}{{template "kbcomment" (dict "C" . "S" $s.ID "P" $p.ID "Top" true)}}{{else}}<p class="muted small">{{t "kb.comments_empty"}}</p>{{end}}
+    <form method="post" action="/kb/{{$s.ID}}/{{$p.ID}}/comment" class="stack">
+      <textarea name="body" rows="3" required maxlength="20000" placeholder="{{t "kb.comment_placeholder"}}" data-mention></textarea>
+      <div><button class="primary">{{icon "send"}} {{t "kb.comment_send"}}</button></div></form>
+  </section>{{end}}{{end}}
   {{with $d.Versions}}<details class="card"><summary>{{icon "history"}} {{t "kb.history"}} <span class="muted small">{{len .}}</span></summary>
     {{range .}}<div class="small"><a href="/kb/{{$s.ID}}/{{$p.ID}}?v={{.ID}}">{{datetime .EditedAt}}</a> · {{.Editor}} · {{.Title}} · <a href="/kb/{{$s.ID}}/{{$p.ID}}?v={{.ID}}&diff=1">{{t "kb.compare"}}</a></div>{{end}}</details>{{end}}
   {{if $s.CanEdit}}<form method="post" action="/kb/{{$s.ID}}/{{.ID}}/delete" data-confirm="{{if $d.Sub}}{{t "kb.delete_tree_confirm" $d.Sub}}{{else}}{{t "kb.delete_page_confirm"}}{{end}}"><button class="ghost small">{{icon "trash"}} {{t "kb.delete_page"}}</button></form>{{end}}

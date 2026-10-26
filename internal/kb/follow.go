@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"go24/internal/i18n"
-	"go24/internal/tasks"
 )
 
 // Mark kinds: «В избранное» and «Следить».
@@ -174,12 +173,7 @@ func (s *Store) Recent(ctx context.Context, userID string, limit int) ([]Item, e
 // kb_page_new or kb_page_trashed, the body — the page's title. Only who still sees the base is told, and one unread
 // notice of a kind about a page is enough. A failure to notify does not undo the change.
 func (s *Store) tell(ctx context.Context, actorID, spaceID, pageID, kind, title string) error {
-	rows, err := s.db.Query(ctx, `SELECT DISTINCT user_id::text FROM kb_marks WHERE kind = 'watch' AND space_id = $2 AND user_id <> $3
-		AND (page_id IS NULL OR page_id IN (`+ancestorsSQL+`))`, pageID, spaceID, actorID)
-	if err != nil {
-		return err
-	}
-	users, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	users, err := s.watchers(ctx, spaceID, pageID)
 	if err != nil {
 		return err
 	}
@@ -187,18 +181,7 @@ func (s *Store) tell(ctx context.Context, actorID, spaceID, pageID, kind, title 
 	if kind == "kb_page_trashed" {
 		url = "/kb/" + spaceID
 	}
-	plain := tasks.WithoutAdmin(ctx)
-	for _, u := range users {
-		if _, err := s.Space(plain, u, spaceID); err != nil {
-			continue
-		}
-		if _, err := s.db.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, body, url)
-			SELECT $1, $2, $3, left($4, 300), $5 WHERE NOT EXISTS (SELECT 1 FROM notifications
-				WHERE user_id = $1 AND kind = $3 AND url = $5 AND body = left($4, 300) AND read_at IS NULL)`, u, actorID, kind, title, url); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.notify(ctx, actorID, spaceID, users, map[string]bool{actorID: true}, kind, title, url)
 }
 
 // MarkedPages are the pages of the base the user starred and those they watch themselves.

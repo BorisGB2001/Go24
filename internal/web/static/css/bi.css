@@ -133,3 +133,14 @@
 .bi-unread { color: var(--warn, #b7791f); white-space: nowrap; }
 .bi-scroll { overflow-x: auto; }
 .bi-scroll td { white-space: nowrap; }
+/* the filters of a dashboard; what a click filters it by */
+.bi-filters { gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.bi-filters select { max-width: 260px; }
+.bi-chip { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.bi-chip .icon { width: 14px; height: 14px; }
+.bi-grid:not(.editing) .bi-click { cursor: pointer; }
+.bi-grid:not(.editing) td.bi-click:hover, .bi-grid:not(.editing) li.bi-click:hover { text-decoration: underline; }
+.bi-skipped { margin: 6px 0 0; }
+.bi-skipped .icon { width: 14px; height: 14px; vertical-align: -2px; }
+.bi-ff { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+@media print { .bi-filters select, .bi-filters .button { display: none; } }

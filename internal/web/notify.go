@@ -165,7 +165,11 @@ func (s *Server) notifyLive(w http.ResponseWriter, r *http.Request, sess auth.Se
 				continue
 			}
 			n, _ := s.Notify.Unread(r.Context(), sess.UserID)
-			data, _ := json.Marshal(map[string]any{"id": it.ID, "html": strings.TrimSpace(html), "unread": n})
+			ev := map[string]any{"id": it.ID, "html": strings.TrimSpace(html), "unread": n}
+			if it.EventID != "" && s.Calendar != nil { // an invitation came or went: the «Календарь» counter of the menu
+				ev["invites"], _ = s.Calendar.Invitations(r.Context(), sess.UserID)
+			}
+			data, _ := json.Marshal(ev)
 			fmt.Fprintf(w, "event: notify\ndata: %s\n\n", data)
 			flusher.Flush()
 		}

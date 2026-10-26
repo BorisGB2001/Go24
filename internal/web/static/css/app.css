@@ -241,6 +241,16 @@ details > summary::-webkit-details-marker { display: none; }
 .g-link.bad { stroke: var(--danger); stroke-width: 2; }
 .g-arrowhead { fill: var(--muted); }
 .g-arrowhead.bad { fill: var(--danger); }
+.g-link[data-link] { cursor: pointer; }
+.g-link[data-link]:hover { stroke: var(--accent); stroke-width: 3; }
+.g-link.draft { stroke: var(--accent); stroke-dasharray: 4 3; pointer-events: none; }
+.g-item.edit .g-bar { cursor: grab; }
+.g-item.dragging .g-bar { cursor: grabbing; fill-opacity: .8; }
+.g-dot { fill: var(--card); stroke: var(--accent); stroke-width: 1.5; opacity: 0; cursor: crosshair; }
+.g-item:hover .g-dot, .gantt svg:has(.g-link.draft) .g-dot { opacity: 1; }
+.g-deadline { fill: var(--danger); }
+.g-fold { display: inline-flex; width: 18px; flex: none; color: var(--muted); }
+.g-tip { position: fixed; z-index: 50; pointer-events: none; background: var(--text); color: var(--card); padding: 3px 8px; border-radius: 4px; font-size: var(--font-size-sm); }
 @media (max-width: 900px) { .gantt { grid-template-columns: 140px 1fr; } }
 
 /* login */
@@ -1155,6 +1165,17 @@ li.open > .kbtoggle::before { content: "▾"; }
 .kbchildren { margin-top: 1.5em; border-top: 1px solid var(--border); padding-top: .5em; }
 .kbchildren ul { list-style: none; padding: 0; }
 .kbchildren li { padding: 2px 0; }
+.kbtalk h3 { margin: 12px 0 4px; }
+.kblikes { gap: 8px; align-items: center; }
+.kblikes button.on { color: var(--accent); }
+.kbcomment { border-top: 1px solid var(--line); padding: 8px 0 4px; }
+.kbcomment:target { background: var(--accent-soft); border-radius: 6px; }
+.kbcomment-body { overflow-wrap: anywhere; }
+.kbcomment-body > :first-child { margin-top: 2px; }
+.kbcomment-acts { display: flex; gap: 12px; flex-wrap: wrap; }
+.kbcomment-acts summary { cursor: pointer; color: var(--muted); list-style: none; }
+.kbcomment-acts details[open] { flex-basis: 100%; }
+.kbreplies { margin-left: 24px; }
 .kbpage h2, .kbpage h3, .kbpage h4 { margin-top: 1.2em; }
 .kbpage pre { background: var(--hover); padding: 10px; border-radius: 6px; overflow-x: auto; }
 .kbpage img { max-width: 100%; height: auto; border-radius: 4px; }
@@ -2021,6 +2042,8 @@ tr[data-service] [data-stockcell] > * { visibility: hidden; } /* a service is no
 .stockreporthead { display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; }
 .stockreporthead h2 { margin: 0; }
 .stockreportfoot { padding: 10px 16px; text-align: right; border-top: 1px solid var(--line); }
+.tlist td.loss { color: var(--danger); }
+.tlist tfoot td { border-top: 1px solid var(--line); }
 .crmrows select[name="warehouse"] { width: auto; min-width: 120px; }
 /* the numbers keep their width: a wide table scrolls rather than squeezes them */
 .crmrows input[name="price"] { min-width: 90px; }
@@ -2183,6 +2206,10 @@ form .callext .lbl { display: inline; }
 .bk-crm-res button { text-align: left; justify-content: flex-start; }
 .bk-extras { display: grid; gap: 4px; }
 .bk-extras .bk-checks label[hidden] { display: none; }
+.bk-svcs { display: grid; gap: 4px; }
+.bk-svcs[hidden], .bk-svcs .bk-checks label[hidden] { display: none; }
+.bk-svcs [data-bk-total] { margin: 0; font-weight: 600; }
+.bk-ev-svc { opacity: .85; }
 .bk-ev.bk-extra { border-left-style: dashed; opacity: .85; }
 .bk-wait { display: grid; gap: 8px; margin-bottom: 12px; }
 .bk-wait-head { align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -2249,6 +2276,12 @@ form .callext .lbl { display: inline; }
 .mkt-stat.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .mkt-letter { overflow-wrap: anywhere; }
 .mkt-letter img { max-width: 100%; height: auto; }
+.mkt-tpl-h { margin: 18px 0 8px; }
+.mkt-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.mkt-tpl { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.mkt-tpl-thumb { height: 240px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fff; pointer-events: none; }
+.mkt-tpl-thumb > div { width: 640px; zoom: .36; overflow-wrap: anywhere; }
+.mkt-tpl .row { margin-top: auto; flex-wrap: nowrap; }
 .mkt-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; }
 .tlist td.num, .tlist th.num { text-align: right; white-space: nowrap; }
 .mkt-scroll { overflow-x: auto; }
