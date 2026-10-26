@@ -154,6 +154,24 @@ func TestFeedAPI(t *testing.T) {
 	if got.Poll.Voters != 1 || !got.Poll.Options[1].Mine {
 		t.Fatalf("vote: %+v", got.Poll)
 	}
+	var voters []struct {
+		Option string  `json:"option"`
+		User   apiUser `json:"user"`
+	}
+	call("GET", "/api/v1/feed/posts/"+all.ID+"/poll/voters", annaKey, nil, 200, &voters)
+	if len(voters) != 1 || voters[0].User.ID != ivan || voters[0].Option != all.Poll.Options[1].ID {
+		t.Fatalf("poll voters: %+v", voters)
+	}
+	call("POST", "/api/v1/feed/posts/"+all.ID+"/poll/stop", ivanKey, nil, 403, nil) // not the author
+	call("POST", "/api/v1/feed/posts/"+all.ID+"/poll/stop", annaKey, nil, 200, &got)
+	if !got.Poll.Closed {
+		t.Fatalf("stopped: %+v", got.Poll)
+	}
+	call("POST", "/api/v1/feed/posts/"+all.ID+"/vote", ivanKey, map[string]any{"options": []string{all.Poll.Options[0].ID}}, 422, nil)
+	call("POST", "/api/v1/feed/posts/"+all.ID+"/poll/resume", annaKey, nil, 200, &got)
+	if got.Poll.Closed || got.Poll.Voters != 1 {
+		t.Fatalf("resumed: %+v", got.Poll)
+	}
 	var read map[string]int
 	call("POST", "/api/v1/feed/posts/"+all.ID+"/read", ivanKey, nil, 200, &read)
 	if read["readers"] != 1 {

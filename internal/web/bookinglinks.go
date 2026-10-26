@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/booking"
+	"go24/internal/payqr"
 )
 
 // ---------- «Онлайн-запись»: links for clients to book themselves ----------
@@ -31,8 +32,12 @@ func (s *Server) bookingLinks(w http.ResponseWriter, r *http.Request, sess auth.
 	for _, x := range res {
 		names[x.ID] = x.Name
 	}
+	codes := map[string]string{}
+	for _, l := range links {
+		codes[l.ID] = bookingEmbedCode(s.absURL(r, "/bk/"+l.Token), l.Name)
+	}
 	data := map[string]any{"Links": links, "Resources": res, "Names": names, "Admin": sess.Admin, "Base": s.BaseURL,
-		"Msg": r.URL.Query().Get("msg")}
+		"Codes": codes, "Msg": r.URL.Query().Get("msg")}
 	if e := r.URL.Query().Get("edit"); e != "" && sess.Admin {
 		ed := booking.Link{DaysAhead: 30, Active: true}
 		if e != "new" {
@@ -85,6 +90,49 @@ func (s *Server) bookingLinkDelete(w http.ResponseWriter, r *http.Request, sess 
 	http.Redirect(w, r, "/booking/links", http.StatusSeeOther)
 }
 
+// bookingEmbedCode is «Код для сайта» of the link at u: its page in a frame that grows with it (bkembed.js inside
+// tells the height).
+func bookingEmbedCode(u, title string) string {
+	return `<iframe src="` + template.HTMLEscapeString(u) + `?embed=1" title="` + template.HTMLEscapeString(title) +
+		`" style="display:block;width:100%;max-width:760px;min-height:480px;border:0" data-go24-booking></iframe>
+<script>addEventListener('message', function (e) { document.querySelectorAll('iframe[data-go24-booking]').forEach(function (f) {
+  if (f.contentWindow === e.source && e.data && e.data.go24booking > 0) f.style.height = e.data.go24booking + 'px'; }); });</script>`
+}
+
+// bookingLinkQR: the QR code of a link's address (PNG), to print or to show to clients.
+func (s *Server) bookingLinkQR(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	l, err := s.Booking.Link(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	png, err := payqr.PNG(s.absURL(r, "/bk/"+l.Token))
+	if err != nil {
+		s.fail(w, "booking qr", err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", `attachment; filename="booking-qr.png"`)
+	}
+	_, _ = w.Write(png)
+}
+
+// bookingEmbedded: the page of a link or of a booking is shown in a frame of a website (?embed=1 — «Код для сайта»,
+// the block «Онлайн-запись» of Сайты): no go24 menu, and the links, forms and redirects of the page keep it embedded.
+func bookingEmbedded(r *http.Request) bool { return r.FormValue("embed") == "1" }
+
+// bookingURL is the address u of the public pages as the request is shown: embedded or not.
+func bookingURL(r *http.Request, u string) string {
+	if !bookingEmbedded(r) {
+		return u
+	}
+	if strings.Contains(u, "?") {
+		return u + "&embed=1"
+	}
+	return u + "?embed=1"
+}
+
 // bookingDay is a day of the public page: the resource works on it or not.
 type bookingDay struct {
 	Date  time.Time
@@ -101,7 +149,7 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 	l, err := s.Booking.LinkByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		s.render(w, r, "share", page{TitleKey: "share.gone", Data: map[string]any{"Gone": true}})
+		s.render(w, r, "share", page{TitleKey: "share.gone", Bare: bookingEmbedded(r), Data: map[string]any{"Gone": true}})
 		return
 	}
 	res, err := s.Booking.LinkResources(r.Context(), l)
@@ -181,7 +229,7 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data["Res"] = cur
-	s.render(w, r, "bookingpub", page{Title: l.Name, Data: data})
+	s.renderBookingPub(w, r, page{Title: l.Name, Data: data})
 }
 
 // bookingPublicBook: the client books the slot; then the client goes to the booking's own page, and the responsible
@@ -212,7 +260,7 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 		if !errors.Is(err, booking.ErrSlot) {
 			v.Set("t", at)
 		}
-		http.Redirect(w, r, "/bk/"+tok+"?"+v.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, bookingURL(r, "/bk/"+tok+"?"+v.Encode()), http.StatusSeeOther)
 		return
 	}
 	s.Log.Info("booking by link", "link", l.ID, "booking", b.ID)
@@ -234,7 +282,7 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	http.Redirect(w, r, "/bk/b/"+b.ClientToken, http.StatusSeeOther)
+	http.Redirect(w, r, bookingURL(r, "/bk/b/"+b.ClientToken), http.StatusSeeOther)
 }
 
 // bookingErr is the message of an error for the client: a known one in their language, else a common one.
@@ -255,7 +303,7 @@ func (s *Server) bookingClient(w http.ResponseWriter, r *http.Request) {
 	b, err := s.Booking.ByClientToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		s.render(w, r, "share", page{TitleKey: "share.gone", Data: map[string]any{"Gone": true}})
+		s.render(w, r, "share", page{TitleKey: "share.gone", Bare: bookingEmbedded(r), Data: map[string]any{"Gone": true}})
 		return
 	}
 	res, err := s.Booking.Resource(r.Context(), b.ResourceID)
@@ -263,6 +311,15 @@ func (s *Server) bookingClient(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "booking", err)
 		return
 	}
-	s.render(w, r, "bookingpub", page{TitleKey: "booking.title", Data: map[string]any{"Booking": b, "Res": &res,
+	s.renderBookingPub(w, r, page{TitleKey: "booking.title", Data: map[string]any{"Booking": b, "Res": &res,
 		"Open": (b.Status == "unconfirmed" || b.Status == "confirmed") && b.Start.After(time.Now()), "Msg": r.URL.Query().Get("msg")}})
+}
+
+// renderBookingPub shows a public page of «Онлайн-запись»; embedded — bare, with the address part that keeps it so.
+func (s *Server) renderBookingPub(w http.ResponseWriter, r *http.Request, p page) {
+	if bookingEmbedded(r) {
+		p.Bare = true
+		p.Data.(map[string]any)["Embed"] = template.URL("&embed=1")
+	}
+	s.render(w, r, "bookingpub", p)
 }

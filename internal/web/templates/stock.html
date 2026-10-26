@@ -14,7 +14,7 @@
   <thead><tr><th>{{t "stock.doc"}}</th><th>{{t "stock.doc_status"}}</th><th>{{t "stock.doc_date"}}</th><th>{{t "crm.f.amount"}}</th><th>{{t "stock.supplier"}}</th><th>{{t "crm.f.responsible"}}</th></tr></thead>
   <tbody>{{range $d.Items}}<tr><td><a href="/store/docs/{{.ID}}" class="ttitle">{{t (print "stock.kind." .Kind)}} № {{.Number}}</a>{{with .Title}}<div class="small muted">{{.}}</div>{{end}}{{if .Deal.ID}}<div class="small"><span class="muted">{{t "stock.deal"}}:</span> <a href="/crm/deals/{{.Deal.ID}}">{{.Deal.Name}}</a></div>{{end}}</td>
     <td>{{template "stockstatus" .Status}}</td><td class="small nowrap">{{day .Date}}</td><td class="nowrap">{{if ne .Kind "moving"}}<b>{{money .Amount}} {{.Currency}}</b>{{else}}<span class="muted">—</span>{{end}}</td>
-    <td class="small">{{if .Supplier.ID}}<a href="/crm/companies/{{.Supplier.ID}}">{{.Supplier.Name}}</a>{{end}}{{with .IncomingNumber}}<div class="muted">{{t "stock.incoming"}} {{.}}</div>{{end}}</td>
+    <td class="small">{{if .Supplier.ID}}<a href="/crm/{{if eq .SupplierKind "contact"}}contacts{{else}}companies{{end}}/{{.Supplier.ID}}">{{.Supplier.Name}}</a>{{end}}{{with .IncomingNumber}}<div class="muted">{{t "stock.incoming"}} {{.}}</div>{{end}}</td>
     <td class="small">{{.Responsible.Name}}</td></tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">{{t "stock.no_docs"}}</div>{{end}}</div>
 {{end}}

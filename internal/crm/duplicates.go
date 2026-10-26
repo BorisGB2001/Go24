@@ -54,20 +54,20 @@ func (s *Store) Duplicates(ctx context.Context, entity, id, name, phone, email s
 	if pk == "" && em == "" && nm == "" && id == "" {
 		return nil, nil
 	}
+	by := func(entity, alias string) string { // which of the card's phones or e-mails matched
+		return `CASE WHEN ` + commHas(entity, alias, "phone", "$1") + ` THEN 'phone' WHEN ` + commHas(entity, alias, "email", "$2") + ` THEN 'email'`
+	}
 	rows, err := s.db.Query(ctx, `
-		SELECT 'contact', id::text, name, phone, email, CASE WHEN $1 <> '' AND `+phoneSQL("phone")+` = $1 THEN 'phone'
-			WHEN $2 <> '' AND lower(email) = $2 THEN 'email' ELSE 'name' END
-		FROM crm_contacts WHERE NOT ($5 = 'contact' AND id::text = $4)
-			AND (($1 <> '' AND `+phoneSQL("phone")+` = $1) OR ($2 <> '' AND lower(email) = $2) OR ($5 = 'contact' AND $3 <> '' AND lower(name) = $3))
+		SELECT 'contact', x.id::text, x.name, x.phone, x.email, `+by("contact", "x")+` ELSE 'name' END
+		FROM crm_contacts x WHERE NOT ($5 = 'contact' AND x.id::text = $4)
+			AND (`+commMatch("contact", "x", "$1", "$2")+` OR ($5 = 'contact' AND $3 <> '' AND lower(x.name) = $3))
 		UNION ALL
-		SELECT 'company', id::text, title, phone, email, CASE WHEN $1 <> '' AND `+phoneSQL("phone")+` = $1 THEN 'phone'
-			WHEN $2 <> '' AND lower(email) = $2 THEN 'email' ELSE 'name' END
-		FROM crm_companies WHERE NOT ($5 = 'company' AND id::text = $4)
-			AND (($1 <> '' AND `+phoneSQL("phone")+` = $1) OR ($2 <> '' AND lower(email) = $2) OR ($5 = 'company' AND $3 <> '' AND lower(title) = $3))
+		SELECT 'company', c.id::text, c.title, c.phone, c.email, `+by("company", "c")+` ELSE 'name' END
+		FROM crm_companies c WHERE NOT ($5 = 'company' AND c.id::text = $4)
+			AND (`+commMatch("company", "c", "$1", "$2")+` OR ($5 = 'company' AND $3 <> '' AND lower(c.title) = $3))
 		UNION ALL
-		SELECT 'lead', id::text, title, phone, email, CASE WHEN $1 <> '' AND `+phoneSQL("phone")+` = $1 THEN 'phone' ELSE 'email' END
-		FROM crm_leads WHERE NOT ($5 = 'lead' AND id::text = $4) AND deal_id IS NULL
-			AND (($1 <> '' AND `+phoneSQL("phone")+` = $1) OR ($2 <> '' AND lower(email) = $2))
+		SELECT 'lead', l.id::text, l.title, l.phone, l.email, `+by("lead", "l")+` ELSE 'email' END
+		FROM crm_leads l WHERE NOT ($5 = 'lead' AND l.id::text = $4) AND l.deal_id IS NULL AND `+commMatch("lead", "l", "$1", "$2")+`
 		LIMIT 20`, pk, em, nm, id, entity)
 	if err != nil {
 		return nil, err
@@ -118,6 +118,10 @@ func (s *Store) Merge(ctx context.Context, userID, entity, keep, other string) e
 			`DELETE FROM crm_mail WHERE entity = '` + entity + `' AND entity_id::text = $2 AND $1 <> ''`,
 			`UPDATE crm_requisites SET entity_id = $1::uuid, is_default = is_default AND NOT EXISTS (SELECT 1 FROM crm_requisites k
 				WHERE k.entity = '` + entity + `' AND k.entity_id = $1::uuid AND k.is_default) WHERE entity = '` + entity + `' AND entity_id::text = $2`,
+			`UPDATE crm_comms m SET entity_id = $1::uuid, sort = m.sort + 100 WHERE entity = '` + entity + `' AND entity_id::text = $2
+				AND NOT EXISTS (SELECT 1 FROM crm_comms k WHERE k.entity = m.entity AND k.entity_id::text = $1 AND k.kind = m.kind
+					AND ((k.key <> '' AND k.key = m.key) OR lower(k.value) = lower(m.value)))`, // its other phones and e-mails, after keep's
+			`DELETE FROM crm_comms WHERE entity = '` + entity + `' AND entity_id::text = $2 AND $1 <> ''`,
 			`INSERT INTO crm_` + entity + `_field_values (` + ref + `, field_id, value) SELECT $1::uuid, field_id, value
 				FROM crm_` + entity + `_field_values WHERE ` + ref + `::text = $2 ON CONFLICT DO NOTHING`,
 		} {

@@ -139,7 +139,7 @@ func TestFeedFilter(t *testing.T) {
 	must(err)
 	poll, err := s.CreatePost(ctx, boss, "", "", "Куда едем?", false)
 	must(err)
-	must(s.AddPoll(ctx, boss, poll, "Куда?", []string{"Море", "Горы"}, false))
+	must(s.AddPoll(ctx, boss, poll, "Куда?", []string{"Море", "Горы"}, PollKind{}))
 	_, err = ts.CreateProject(ctx, boss, "GO", "go24", "")
 	must(err)
 	p, _ := ts.ProjectByKey(ctx, boss, "GO")

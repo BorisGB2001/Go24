@@ -1,9 +1,9 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="pagehead"><h1>{{if $d.AsName}}{{t $d.TitleKey $d.AsName}}{{else}}{{t "title.my_tasks"}}{{end}}</h1><a href="/tasks/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<div class="pagehead"><h1>{{if $d.AsName}}{{t $d.TitleKey $d.AsName}}{{else}}{{t "title.my_tasks"}}{{end}}</h1>{{if not $d.AsName}}<a href="/tasks/robots" class="button ghost" title="{{t "taskrobot.my_subtitle"}}">🤖 {{t "taskrobot.title"}}</a>{{end}}<a href="/tasks/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
 <div class="sub">{{t "my.subtitle"}}</div>
 {{if $d.View}}
-<div class="flash">{{icon "alert-triangle"}} {{t (print "my.view." $d.View)}}{{with $d.Project}} · <a href="/p/{{.Key}}">{{.Name}}</a>{{end}} — {{len $d.Tasks}} · <a href="/my">{{t "my.view_reset"}}</a></div>
+<div class="flash">{{icon "alert-triangle"}} {{t (print "my.view." $d.View)}}{{with $d.Project}} · <a href="/p/{{.Key}}">{{.Name}}</a>{{end}} — {{len $d.Tasks}} · <a href="/my">{{t "my.view_reset"}}</a>{{if and (eq $d.View "comments") $d.Tasks (not $d.AsName)}} · <form method="post" action="/tasks/comments/read" class="inline">{{with $d.Project}}<input type="hidden" name="project" value="{{.Key}}">{{end}}<button class="ghost small">{{icon "checks"}} {{t "my.read_all"}}</button></form>{{end}}</div>
 {{end}}
 <div class="tabs">
   {{range $d.Tabs}}
@@ -16,6 +16,6 @@
 <div class="sub">{{t "my.subordinates_hint"}}</div>
 <div class="subpeople">{{range $d.Subordinates}}<a class="person" href="/my?as={{.ID}}" data-user="{{.ID}}">{{icon "user"}}<span>{{.Name}}</span></a>{{end}}</div>
 {{end}}
-<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true $)}}</div>
 {{if $d.Tasks}}{{template "bulkbar" $d.Bulk}}{{end}}
 {{end}}

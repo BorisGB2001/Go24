@@ -192,7 +192,7 @@ func (s *Server) diskPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	s.render(w, r, "disk", page{TitleKey: "disk.title", Nav: nav, Data: map[string]any{
 		"Shares": shares, "Rights": rights, "MayRight": mayRight, "RightUsers": rightUsers, "Users": users, "Departments": depts, "Accesses": drive.Accesses, "FileAccesses": drive.FileAccesses, "Office": s.Office != nil, "Usage": usage, "DavURL": s.davURL(r), "Q": q, "Type": ftype, "Types": fileTypes, "Searching": searching, "Sort": sortBy, "Desc": desc, "SortURL": diskSortURLs(qs, sortBy, desc),
-		"Drive": d, "Folder": folder, "Folders": folders, "Found": found, "Files": files, "Snippets": snippets, "Trail": trail, "Trash": trash, "Links": links, "Comments": comments, "Base": s.BaseURL, "InTrash": qs.Has("trash"), "InSpace": qs.Has("space"), "Aside": qs.Has("trash") || qs.Has("space"), "Space": space, "KeepVersions": lim.Versions, "LinksOff": lim.NoLinks, "LocksOff": lim.NoLocks, "Connected": connected, "Conn": conn, "Storages": stores, "Projects": projects, "Me": sess.UserID}})
+		"Drive": d, "Folder": folder, "Folders": folders, "Found": found, "Files": files, "Snippets": snippets, "Trail": trail, "Trash": trash, "Links": links, "Comments": comments, "Base": s.BaseURL, "InTrash": qs.Has("trash"), "InSpace": qs.Has("space"), "Aside": qs.Has("trash") || qs.Has("space"), "Space": space, "KeepVersions": lim.Versions, "LinksOff": lim.NoLinks, "LocksOff": lim.NoLocks, "Connected": connected, "Conn": conn, "Storages": stores, "Projects": projects, "Me": sess.UserID, "Local": !tasks.IsGuestCtx(r.Context())}})
 }
 
 // searchMax is how many files a search or a filter of a drive shows.
@@ -295,7 +295,7 @@ func (s *Server) diskUpload(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	defer r.MultipartForm.RemoveAll()
 	folder := r.FormValue("folder")
-	back := diskBack(d, folder)
+	back := docsBack(r, diskBack(d, folder))
 	if err := s.Drive.CheckFolder(r.Context(), d, folder); err != nil {
 		s.diskErr(w, r, err, back)
 		return
@@ -401,7 +401,7 @@ func (s *Server) diskDelete(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	_ = r.ParseForm()
-	back := diskBack(d, r.FormValue("folder"))
+	back := docsBack(r, diskBack(d, r.FormValue("folder")))
 	sel := diskSelection(r)
 	for _, id := range sel.Files {
 		if err = s.Drive.DeleteFile(r.Context(), sess.UserID, d, id); err != nil {
@@ -515,7 +515,7 @@ func (s *Server) diskRename(w http.ResponseWriter, r *http.Request, sess auth.Se
 		s.taskErr(w, r, err, "/disk/my")
 		return
 	}
-	back := diskBack(d, r.FormValue("folder"))
+	back := docsBack(r, diskBack(d, r.FormValue("folder")))
 	if id := r.FormValue("file"); id != "" {
 		err = s.Drive.RenameFile(r.Context(), sess.UserID, d, id, r.FormValue("name"))
 	} else {

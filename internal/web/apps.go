@@ -1,8 +1,11 @@
 package web
 
 import (
+	"cmp"
+	_ "embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,10 +16,14 @@ import (
 	"go24/internal/audit"
 	"go24/internal/auth"
 	"go24/internal/i18n"
+	"go24/internal/matrixsync"
 	"go24/internal/tasks"
 )
 
 // ---------- «Приложения», as «Разработчикам → Локальное приложение» ----------
+
+//go:embed widget/go24.js
+var appSDKJS string
 
 // appsSettings is «Настройки → Приложения» (administrators): the local applications, their codes and keys.
 func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -52,6 +59,17 @@ func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.
 	for _, e := range evs {
 		events[e.AppID] = append(events[e.AppID], e)
 	}
+	bots := map[string][]matrixsync.Bot{} // the applications' chat bots
+	if s.Matrix != nil {
+		all, err := s.Matrix.Bots(r.Context(), "")
+		if err != nil {
+			s.fail(w, "app bots", err)
+			return
+		}
+		for _, b := range all {
+			bots[b.AppID] = append(bots[b.AppID], b)
+		}
+	}
 	access := map[string][]tasks.User{} // the chips of «Кому доступно»
 	for app, list := range refs {
 		for _, ref := range list {
@@ -60,7 +78,7 @@ func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	s.render(w, r, "apps_settings", page{TitleKey: "apps.title", Nav: "apps_settings", Data: map[string]any{
 		"Apps": list, "Empty": apps.App{}, "Scopes": apikeys.AllScopes, "Base": strings.TrimRight(s.BaseURL, "/"), "Access": access,
-		"Places": places, "Events": events}})
+		"Places": places, "Events": events, "Bots": bots}})
 }
 
 // appSave: op=save (a new one with id «new»), access («Кому доступно»: to — people and «dept:ID»), install,
@@ -201,8 +219,81 @@ func (s *Server) appFrame(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	target.RawQuery = q.Encode()
 	w.Header().Set("Cache-Control", "no-store") // the page carries tokens
 	s.render(w, r, "app", page{Title: a.Title(), Nav: "app:" + a.ID, Bare: bare, Data: map[string]any{"App": a, "Action": target.String(),
+		"Placement": placement, "Options": options,
 		"Fields": [][2]string{{"AUTH_ID", t.Access}, {"AUTH_EXPIRES", strconv.Itoa(int(apps.AccessTTL.Seconds()))}, {"REFRESH_ID", t.Refresh},
 			{"member_id", apps.MemberID(s.BaseURL)}, {"status", "L"}, {"PLACEMENT", placement}, {"PLACEMENT_OPTIONS", options}}}})
+}
+
+// appFrameAuth gives go24.js of an application's frame (static/js/apphost.js asks for it) what BX24.getAuth and
+// placement.info give: new tokens of the employee, the place and its options, the settings of the application and
+// the employee's, and the addresses the frame may be on (the application's hosts). tab= (a card's tab, with id=
+// of the card) or app= (its page, with placement= and options=).
+func (s *Server) appFrameAuth(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	ctx := r.Context()
+	var (
+		a                  apps.App
+		placement, options string
+		err                error
+	)
+	if tab := r.FormValue("tab"); tab != "" {
+		var p apps.Placement
+		if p, a, err = s.Apps.Placement(ctx, tab, sess.UserID); err == nil {
+			placement = p.Placement
+			o, _ := json.Marshal(apps.Options(p.Placement, r.FormValue("id")))
+			options = string(o)
+		}
+	} else if a, err = s.Apps.Get(ctx, r.FormValue("app")); err == nil {
+		if !a.Installed() || a.APIOnly {
+			err = tasks.ErrNotFound
+		} else if ok, e := s.Apps.MayUse(ctx, a.ID, sess.UserID); e != nil || !ok {
+			err = tasks.ErrForbidden
+		}
+		placement, options = cmp.Or(r.FormValue("placement"), "DEFAULT"), r.FormValue("options")
+	}
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": s.tr(r, "err.not_found")})
+		return
+	}
+	var opts any = map[string]any{}
+	if options != "" && json.Unmarshal([]byte(options), &opts) != nil {
+		opts = map[string]any{}
+	}
+	t, err := s.Apps.Issue(ctx, a.ID, sess.UserID)
+	if err != nil {
+		s.fail(w, "app tokens", err)
+		return
+	}
+	appOpts, err := s.Apps.Options(ctx, a.ID, "")
+	if err != nil {
+		s.fail(w, "app options", err)
+		return
+	}
+	userOpts, err := s.Apps.Options(ctx, a.ID, sess.UserID)
+	if err != nil {
+		s.fail(w, "app options", err)
+		return
+	}
+	var origins []string
+	for _, raw := range []string{a.HandlerURL, a.InstallURL} {
+		if u, err := url.Parse(raw); err == nil && raw != "" && u.Host != "" {
+			origins = append(origins, u.Scheme+"://"+u.Host)
+		}
+	}
+	base, _ := url.Parse(s.BaseURL)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"origins": origins, "title": a.Title(), "app": a.ID,
+		"auth": map[string]any{"access_token": t.Access, "refresh_token": t.Refresh, "expires_in": int(apps.AccessTTL.Seconds()),
+			"domain": base.Host, "member_id": apps.MemberID(s.BaseURL), "client_endpoint": strings.TrimRight(s.BaseURL, "/") + "/api/v1/"},
+		"placement": placement, "options": opts, "lang": s.lang(r), "user_id": sess.UserID, "admin": s.apiAdmin(ctx, sess.UserID),
+		"app_options": appOpts, "user_options": userOpts})
+}
+
+// appSDK is go24.js, the library of an application's page in go24's frame, as BX24.js
+// (<script src="https://go24…/go24.js">): it talks to go24's page around the frame.
+func (s *Server) appSDK(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = io.WriteString(w, appSDKJS)
 }
 
 // appTabs are the tabs of the applications in the place for the employee (a card's «Data.AppTabs»).

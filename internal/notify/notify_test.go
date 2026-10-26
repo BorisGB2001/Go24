@@ -111,6 +111,19 @@ func TestTriggers(t *testing.T) {
 		t.Errorf("watcher did not get the important post: %v", got)
 	}
 
+	// «Прочитать все» of the tasks: only the task messages, only in the project when one is given
+	var other string
+	must(pool.QueryRow(ctx, `INSERT INTO projects (key, name, owner_id) VALUES ('XX', 'xx', $1) RETURNING id`, boss).Scan(&other))
+	if n, err := s.MarkCommentsRead(ctx, boss, other); err != nil || n != 0 {
+		t.Errorf("read in another project: %d %v", n, err)
+	}
+	if n, err := s.MarkCommentsRead(ctx, boss, project); err != nil || n != 1 {
+		t.Errorf("read the comments: %d %v", n, err)
+	}
+	if n, _ := s.Unread(ctx, boss); n != 2 {
+		t.Errorf("the like and the status stay unread: %d", n)
+	}
+
 	// counters and reading
 	n, err := s.Unread(ctx, watcher)
 	must(err)

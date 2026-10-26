@@ -12,7 +12,9 @@ import (
 	"errors"
 	"html"
 	"io"
+	"path"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -26,12 +28,18 @@ var (
 	name = regexp.MustCompile(`^\{(\pL[\pL\pN_. -]*)\}$`) // {Title}, and the cards' own fields by their names: {Срок поставки}
 )
 
-// fillXML replaces the known placeholders of one XML part of the document; unknown ones stay as they are.
-func fillXML(xml string, values map[string]string) string {
+// fillXML replaces the known placeholders of one XML part of the document; unknown ones stay as they are. pic is the
+// picture's XML of a placeholder of an image (ok false — not an image's).
+func fillXML(xml string, values map[string]string, pic func(name string) (string, bool)) string {
 	return span.ReplaceAllStringFunc(xml, func(m string) string {
 		n := name.FindStringSubmatch(tags.ReplaceAllString(m, ""))
 		if n == nil {
 			return m
+		}
+		if pic != nil {
+			if x, ok := pic(n[1]); ok {
+				return x
+			}
 		}
 		v, ok := values[n[1]]
 		if !ok {
@@ -107,7 +115,7 @@ func fillRows(xml string, rows Rows) string {
 		}
 		out.WriteString(xml[:start])
 		for _, item := range rows[list] {
-			out.WriteString(span.ReplaceAllStringFunc(fillXML(xml[start:end], prefixed(list, item)), func(m string) string {
+			out.WriteString(span.ReplaceAllStringFunc(fillXML(xml[start:end], prefixed(list, item), nil), func(m string) string {
 				if n := name.FindStringSubmatch(tags.ReplaceAllString(m, "")); n != nil && strings.HasPrefix(n[1], list+".") {
 					return ""
 				}
@@ -171,13 +179,22 @@ func Fill(template []byte, values map[string]string) ([]byte, error) {
 
 // FillRows is Fill with the lists repeated by their items.
 func FillRows(template []byte, values map[string]string, rows Rows) ([]byte, error) {
+	return Make(template, values, rows, nil)
+}
+
+// Make is FillRows with pictures: the placeholders of the images (by their names) become them; an image that is not
+// a PNG nor a JPEG — nothing.
+func Make(template []byte, values map[string]string, rows Rows, images map[string]Image) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(template), int64(len(template)))
 	if err != nil {
 		return nil, ErrNotDocx
 	}
-	found := false
-	var out bytes.Buffer
-	zw := zip.NewWriter(&out)
+	type part struct {
+		hdr  zip.FileHeader
+		data []byte
+	}
+	var parts []part
+	at := map[string]int{}
 	for _, f := range zr.File {
 		rc, err := f.Open()
 		if err != nil {
@@ -188,23 +205,62 @@ func FillRows(template []byte, values map[string]string, rows Rows) ([]byte, err
 		if err != nil {
 			return nil, err
 		}
-		if f.Name == "word/document.xml" {
-			found = true
+		at[f.Name] = len(parts)
+		parts = append(parts, part{f.FileHeader, data})
+	}
+	if _, ok := at["word/document.xml"]; !ok {
+		return nil, ErrNotDocx
+	}
+	pics := map[string]*picture{}
+	for k, img := range images {
+		pics[k] = pictureOf(img)
+	}
+	n := 0
+	used := map[string][]*picture{} // by the part they are in
+	exts := map[string]bool{}
+	for i := range parts {
+		name := parts[i].hdr.Name
+		if !textPart(name) {
+			continue
 		}
-		if textPart(f.Name) {
-			data = []byte(fillXML(fillRows(string(data), rows), values))
+		parts[i].data = []byte(fillXML(fillRows(string(parts[i].data), rows), values, func(k string) (string, bool) {
+			p, ok := pics[k]
+			if !ok || p == nil {
+				return "", ok
+			}
+			n++
+			q := *p
+			q.rel = "rIdGo24Img" + strconv.Itoa(n)
+			used[name], exts[q.ext] = append(used[name], &q), true
+			return drawing(&q, 90000+n), true
+		}))
+	}
+	for name, list := range used {
+		rels := relsOf(name)
+		if j, ok := at[rels]; ok {
+			parts[j].data = []byte(addRels(string(parts[j].data), list))
+		} else {
+			at[rels] = len(parts)
+			parts = append(parts, part{zip.FileHeader{Name: rels, Method: zip.Deflate}, []byte(addRels("", list))})
 		}
-		hdr := f.FileHeader
+		for _, p := range list {
+			parts = append(parts, part{zip.FileHeader{Name: path.Join(path.Dir(name), "media", p.rel+"."+p.ext), Method: zip.Deflate}, p.img.Data})
+		}
+	}
+	if j, ok := at["[Content_Types].xml"]; ok && len(exts) > 0 {
+		parts[j].data = []byte(addTypes(string(parts[j].data), exts))
+	}
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	for _, p := range parts {
+		hdr := p.hdr
 		w, err := zw.CreateHeader(&hdr)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := w.Write(data); err != nil {
+		if _, err := w.Write(p.data); err != nil {
 			return nil, err
 		}
-	}
-	if !found {
-		return nil, ErrNotDocx
 	}
 	if err := zw.Close(); err != nil {
 		return nil, err

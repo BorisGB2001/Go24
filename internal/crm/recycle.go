@@ -57,7 +57,7 @@ type snapshot struct {
 }
 
 // polymorphic: the tables bound to a card by (entity, entity_id) that go with it (triggers or the delete itself).
-var polymorphic = []string{"crm_activities", "crm_product_rows", "crm_requisites"}
+var polymorphic = []string{"crm_activities", "crm_product_rows", "crm_requisites", "crm_comms"}
 
 func ident(name string) string { return pgx.Identifier{name}.Sanitize() }
 

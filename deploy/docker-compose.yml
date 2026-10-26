@@ -147,6 +147,14 @@ services:
       GO24_RCLONE_RC_URL: http://rclone-rcd:5572
       GO24_RCLONE_RC_USER: go24
       GO24_RCLONE_RC_PASS: ${RCLONE_RC_PASS}
+      # boris.gb 2026-10-26 12:31 - «Хранилища» Google Диск, Dropbox, OneDrive входом в аккаунт (GO24DEV-643): приложение go24 в сервисе,
+      # адрес возврата https://<go24>/settings/storages/oauth; пусто — сервис не предлагается
+      GO24_GDRIVE_CLIENT_ID: ${GO24_GDRIVE_CLIENT_ID:-}
+      GO24_GDRIVE_CLIENT_SECRET: ${GO24_GDRIVE_CLIENT_SECRET:-}
+      GO24_DROPBOX_CLIENT_ID: ${GO24_DROPBOX_CLIENT_ID:-}
+      GO24_DROPBOX_CLIENT_SECRET: ${GO24_DROPBOX_CLIENT_SECRET:-}
+      GO24_ONEDRIVE_CLIENT_ID: ${GO24_ONEDRIVE_CLIENT_ID:-}
+      GO24_ONEDRIVE_CLIENT_SECRET: ${GO24_ONEDRIVE_CLIENT_SECRET:-}
       # boris.gb 2026-10-12 06:57 - API Authentik изнутри сети compose: дописывать в Authentik данные из карточки сотрудника
       GO24_AUTHENTIK_URL: http://authentik-server:9000
       GO24_AUTHENTIK_TOKEN: ${GO24_AUTHENTIK_TOKEN:-}

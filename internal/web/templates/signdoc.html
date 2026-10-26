@@ -16,16 +16,26 @@
         <p><button class="danger">{{t "sign.refuse"}}</button></p></form></details></div>{{end}}
     <div class="card"><h2>{{t "sign.parties"}}</h2>
       {{range $doc.Parties}}<div class="sgparty sgp-{{.Status}}"><div class="row"><b style="flex:1">{{.Ord}}. {{.Name}}</b><span class="pill sg-p{{.Status}}">{{t (print "sign.pst." .Status)}}</span></div>
-        <div class="small muted">{{if .Employee}}{{t "sign.side.company"}}{{else}}{{t "sign.side.client"}} · {{.Email}}{{end}}</div>
-        {{with .SignedAt}}<div class="small muted">{{.Format "02.01.2006 15:04"}}</div>{{end}}
+        <div class="small muted">{{if eq .Side "employee"}}{{t "sign.side.employee"}}{{else if .Employee}}{{t "sign.side.company"}}{{else}}{{t "sign.side.client"}} · {{.Email}}{{end}}</div>
+        {{with .SignedAt}}<div class="small muted">{{.Format "02.01.2006 15:04"}}</div>{{else}}{{if $d.Viewed}}{{with index $d.Viewed .ID}}<div class="small muted">{{icon "eye"}} {{t "sign.viewed_at"}} {{.Format "02.01.2006 15:04"}}</div>{{end}}{{end}}{{end}}
         {{with .Reason}}<div class="small">{{t "sign.reason"}}: {{.}}</div>{{end}}
+        {{if eq .Status "ready"}}{{with .RemindedAt}}<div class="small muted">{{icon "bell"}} {{t "sign.reminded_at"}} {{.Format "02.01.2006 15:04"}}</div>{{end}}{{end}}
         {{if and $d.Author (not .Employee) (eq .Status "ready") (eq $doc.Status "signing")}}<div class="row"><input type="text" readonly value="{{$d.Link}}{{.Token}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}{{.Token}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
           <form method="post" action="/sign/{{$doc.ID}}/resend"><button class="ghost small">{{icon "send"}} {{t "sign.resend"}}</button></form>{{end}}
       </div>{{end}}</div>
     <div class="card small"><div>{{t "sign.sender"}}: <b>{{$doc.Author}}</b>, {{$doc.CreatedAt.Format "02.01.2006 15:04"}}</div>
       {{with $d.Card}}<div><a href="{{.}}">{{icon "link"}} {{t "sign.card"}}</a></div>{{end}}
+      {{with $d.Collab}}<div><a href="/p/{{.}}">{{icon "users-group"}} {{t "sign.collab.link"}}</a></div>{{end}}
+      {{if and $d.Author $doc.BatchID}}<div><a href="/sign/batch/{{$doc.BatchID}}">{{icon "users"}} {{t "sign.hr.batch"}}</a></div>{{end}}
+      {{if eq $doc.Status "signing"}}{{if $d.Author}}<form method="post" action="/sign/{{$doc.ID}}/remind" class="row sgremind"><label for="sg-remind">{{icon "bell"}} {{t "sign.remind"}}</label>
+        {{template "sgremind" $doc.RemindDays}}<button class="ghost small">{{t "common.save"}}</button></form>
+      {{else}}<div>{{icon "bell"}} {{t "sign.remind"}}: {{t (print "sign.remind_" $doc.RemindDays)}}</div>{{end}}{{end}}
       <div class="muted" style="word-break:break-all">SHA-256: {{$doc.Hash}}</div>
       {{if and $d.Author (eq $doc.Status "signing")}}<form method="post" action="/sign/{{$doc.ID}}/cancel" data-confirm="{{t "sign.cancel_confirm"}}"><p><button class="ghost small">{{icon "x"}} {{t "sign.cancel"}}</button></p></form>{{end}}</div>
+    {{with $d.Events}}<div class="card small sghist"><h2>{{t "sign.history"}}</h2>
+      {{range .}}<div class="sgev sgev-{{.Kind}}"><span class="muted">{{.At.Format "02.01.2006 15:04"}}</span>
+        <div>{{t (print "sign.ev." .Kind)}}{{with .Party}} · <b>{{.}}</b>{{end}}{{if and .Actor (ne .Actor .Party)}} · {{.Actor}}{{end}}{{if not .OK}} · <span class="sgev-warn">{{t "sign.ev.not_sent"}}</span>{{end}}
+          {{with .Note}}<div>{{t "sign.reason"}}: {{.}}</div>{{end}}{{if and $d.Author .IP}}<div class="muted">IP {{.IP}}</div>{{end}}</div></div>{{end}}</div>{{end}}
   </div>
 </div>
 {{end}}

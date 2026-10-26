@@ -75,7 +75,7 @@
 
 {{/* a kanban card; S is its amount in the base currency, for the column's sum */}}
 {{define "crmkcard"}}{{$k := .K}}{{with .I}}<div class="kcard" draggable="true" data-key="{{.ID}}" data-sum="{{$.S}}">
-  <a href="/crm/{{$k}}/{{.ID}}" class="ttitle">{{.Title}}</a>
+  <a href="/crm/{{$k}}/{{.ID}}" class="ttitle">{{.Title}}</a>{{if eq $k "leads"}}{{if .Repeat}} <span class="pill small crmrep" title="{{t "crm.repeat_hint"}}">{{t "crm.repeat_short"}}</span>{{end}}{{end}}
   {{with $.N}}<a href="/crm/{{$k}}/{{.EntityID}}#activities" class="small nextact {{if .Overdue}}overdue{{else}}muted{{end}}">{{icon "clock"}} {{datetime .Deadline}} · {{.Subject}}</a>{{else}}<a href="/crm/{{$k}}/{{.ID}}#activities" class="small nextact muted">{{icon "plus"}} {{t "crm.activity_plan"}}</a>{{end}}
   <div class="foot small">{{if .Amount}}<b>{{money .Amount}} {{.Currency}}</b>{{end}}<span style="flex:1"></span><span class="muted">{{.Responsible.Name}}</span></div>
 </div>{{end}}{{end}}
@@ -142,13 +142,14 @@
 </div>
 <div class="row crmtools">
   <div class="seg">{{range list "kanban" "list"}}<a class="chip{{if or (eq . $d.View) (and (eq . "kanban") (ne $d.View "list"))}} on{{end}}" href="/crm/{{$k}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}&view={{.}}">{{t (print "crm.view." .)}}</a>{{end}}</div>
-  <details class="tsettings"><summary class="chip{{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}} on{{end}}">{{icon "filter"}} {{t "crm.filter"}}</summary>
+  <details class="tsettings"><summary class="chip{{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Repeat $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}} on{{end}}">{{icon "filter"}} {{t "crm.filter"}}</summary>
     <div class="pop"><form method="get" action="/crm/{{$k}}">
       {{with $d.Pipeline}}<input type="hidden" name="pipeline" value="{{.ID}}">{{end}}<input type="hidden" name="view" value="{{$d.View}}"><input type="hidden" name="q" value="{{$d.Q}}">
       <label>{{t "crm.filter_semantic"}}</label><select name="semantic"><option value="">{{t "crm.any"}}</option>{{range list "process" "success" "failure" "closed"}}<option value="{{.}}" {{if eq . $f.Semantic}}selected{{end}}>{{t (print "crm.semantic." .)}}</option>{{end}}</select>
       <label>{{t "crm.f.stage"}}</label><select name="stage"><option value="">{{t "crm.any"}}</option>{{range $d.Stages}}<option value="{{.ID}}" {{if eq .ID $f.Stage}}selected{{end}}>{{template "crmstage" .}}</option>{{end}}</select>
       <label>{{t "crm.f.responsible"}}</label><select name="responsible"><option value="">{{t "crm.any"}}</option><option value="{{$d.Me}}" {{if eq $d.Me $f.Responsible}}selected{{end}}>{{t "crm.me"}}</option>{{range $d.Users}}{{if ne .ID $d.Me}}<option value="{{.ID}}" {{if eq .ID $f.Responsible}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
       <label>{{t "crm.f.observers"}}</label><select name="observer"><option value="">{{t "crm.any"}}</option><option value="{{$d.Me}}" {{if eq $d.Me $f.Observer}}selected{{end}}>{{t "crm.me"}}</option>{{range $d.Users}}{{if ne .ID $d.Me}}<option value="{{.ID}}" {{if eq .ID $f.Observer}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+      {{if eq $k "leads"}}<label>{{t "crm.repeat_lead"}}</label><select name="repeat"><option value="">{{t "crm.any"}}</option>{{range list "1" "0"}}<option value="{{.}}" {{if eq . $f.Repeat}}selected{{end}}>{{t (print "crm.repeat_f" .)}}</option>{{end}}</select>{{end}}
       <label>{{t "crm.f.origin"}}</label><select name="source"><option value="">{{t "crm.any"}}</option>{{with $d.Dicts}}{{range index . "source"}}<option value="{{.ID}}" {{if eq .ID $f.Source}}selected{{end}}>{{template "crmdict" .}}</option>{{end}}{{end}}</select>
       <label>{{t "crm.f.created"}}</label><div class="row"><span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{dinput $f.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{dinput $f.To}}"></span></span></div>
       <label>{{t "crm.f.amount"}}</label><div class="row"><input type="text" name="min" inputmode="decimal" size="8" value="{{fpts $f.AmountMin}}" placeholder="{{t "crm.from"}}"> — <input type="text" name="max" inputmode="decimal" size="8" value="{{fpts $f.AmountMax}}" placeholder="{{t "crm.to"}}"></div>
@@ -160,7 +161,7 @@
       <label class="check small"><input type="checkbox" name="default" value="1"> {{t "crm.preset_default"}}</label>
       <p><button>{{icon "device-floppy"}} {{t "crm.preset_save"}}</button></p></form>{{end}}
     </div></details>
-  {{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}}<span class="muted small">{{t "crm.found" (len $d.Items)}}</span>{{end}}
+  {{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Repeat $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}}<span class="muted small">{{t "crm.found" (len $d.Items)}}</span>{{end}}
 </div>{{end}}
 
 {{/* the list of deals or leads: sortable columns, the nearest deed, group actions on the checked ones */}}
@@ -179,7 +180,7 @@
       <th><a href="{{$base}}&sort=title{{if and (eq $f.Sort "title") (not $f.Asc)}}&asc=1{{end}}">{{t "crm.f.title"}}{{if eq $f.Sort "title"}} {{if $f.Asc}}↑{{else}}↓{{end}}{{end}}</a></th>
       {{template "crmhead" (dict "D" $d "Base" $base)}}</tr></thead>
     <tbody>{{range $d.Items}}{{$i := .}}<tr><td class="gearcol"></td><td><input type="checkbox" name="id" value="{{.ID}}"></td>
-      <td><a href="/crm/{{$k}}/{{.ID}}" class="ttitle">{{.Title}}</a></td>
+      <td><a href="/crm/{{$k}}/{{.ID}}" class="ttitle">{{.Title}}</a>{{if eq $k "leads"}}{{if .Repeat}} <span class="pill small crmrep" title="{{t "crm.repeat_hint"}}">{{t "crm.repeat_short"}}</span>{{end}}{{end}}</td>
       {{range $d.ListCols}}{{template "crmcell" (dict "K" $k "I" $i "C" . "D" $d)}}{{end}}</tr>{{end}}</tbody>
   </table></div>{{else}}<div class="empty">{{t "crm.empty"}}</div>{{end}}
 </form>

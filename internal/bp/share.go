@@ -123,13 +123,15 @@ type File struct {
 	AutoChange  bool              `json:"auto_change,omitempty"`
 	Fields      []Field           `json:"fields"`
 	Steps       []Step            `json:"steps"`
-	People      map[string]string `json:"people,omitempty"` // the employees of the steps: id → e-mail
-	Stages      map[string]string `json:"stages,omitempty"` // the stages of the steps: id → «code:…» or «name:…»
+	People      map[string]string `json:"people,omitempty"`    // the employees of the steps: id → e-mail
+	Stages      map[string]string `json:"stages,omitempty"`    // the stages of the steps: id → «code:…» or «name:…»
+	Templates   map[string]string `json:"templates,omitempty"` // the templates «Запуск бизнес-процесса» starts: id → name
+	Docs        map[string]string `json:"docs,omitempty"`      // the templates of documents «Создание документа» makes: id → name
 }
 
-// person: who of a step is an employee, not «the starter», «the manager» and the like.
+// person: who of a step is an employee, not «the starter», «the manager», a user field and the like.
 func person(v string) bool {
-	return v != "" && !contains([]string{"starter", "manager", "responsible", "client"}, v)
+	return v != "" && !contains([]string{"starter", "manager", "responsible", "client"}, v) && !strings.HasPrefix(v, FieldPrefix)
 }
 
 // eachPerson calls f on every employee a step names; f returns the new value ("" drops one of Users).
@@ -151,6 +153,21 @@ func eachPerson(st *Step, f func(string) string) {
 	st.Users = users
 }
 
+// eachDefault calls f on the default of every user field (of the form and of the requests) and keeps what it returns.
+func eachDefault(t *Template, f func(string) string) {
+	do := func(list []Field) {
+		for i := range list {
+			if list[i].Kind == "user" && list[i].Default != "" {
+				list[i].Default = f(list[i].Default)
+			}
+		}
+	}
+	do(t.Fields)
+	for i := range t.Steps {
+		do(t.Steps[i].Fields)
+	}
+}
+
 // Export is the template as a file.
 func (s *Store) Export(ctx context.Context, id string) (File, error) {
 	t, err := s.Template(ctx, id)
@@ -158,7 +175,8 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 		return File{}, err
 	}
 	f := File{Format: FileFormat, Version: 1, Name: t.Name, Description: t.Description, Entity: t.Entity, AutoCreate: t.AutoCreate,
-		AutoChange: t.AutoChange, Fields: t.Fields, Steps: t.Steps, People: map[string]string{}, Stages: map[string]string{}}
+		AutoChange: t.AutoChange, Fields: t.Fields, Steps: t.Steps, People: map[string]string{}, Stages: map[string]string{},
+		Templates: map[string]string{}, Docs: map[string]string{}}
 	if f.Fields == nil {
 		f.Fields = []Field{}
 	}
@@ -168,10 +186,21 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 		}
 	}
 	var people, stages []string
+	eachDefault(&t, func(v string) string { people = append(people, v); return v })
 	for i := range t.Steps {
 		eachPerson(&t.Steps[i], func(v string) string { people = append(people, v); return v })
 		if t.Steps[i].Stage != "" {
 			stages = append(stages, t.Steps[i].Stage)
+		}
+		if other := t.Steps[i].Template; other != "" {
+			if o, err := s.Template(ctx, other); err == nil {
+				f.Templates[other] = o.Name
+			}
+		}
+		if doc := t.Steps[i].Doc; doc != "" {
+			if d, err := s.CRM.DocTemplate(ctx, doc); err == nil {
+				f.Docs[doc] = d.Name
+			}
 		}
 	}
 	rows, err := s.db.Query(ctx, `SELECT id::text, email FROM users WHERE id::text = ANY($1)`, people)
@@ -197,7 +226,7 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 // Import puts a template's file into a new template (id "") or over the template id (its activity and «Кто может
 // запускать» stay). An employee of the file is the one of this portal with the id or else the e-mail; one not found
 // becomes «the starter» (or is left out of the several people of a step) — missing counts them. A smart process is
-// found by its name, a stage — by its code or name among those of the template's cards.
+// found by its name, a stage — by its code or name among those of the template's cards, a template started — by its name.
 func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (newID string, missing int, err error) {
 	var f File
 	if json.Unmarshal(data, &f) != nil || f.Format != FileFormat || f.Version != 1 {
@@ -219,13 +248,23 @@ func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (new
 			return "", 0, err
 		}
 	}
+	local := func(v string) (string, bool) {
+		var uid string
+		err := s.db.QueryRow(ctx, `SELECT id::text FROM users WHERE active AND (id::text = $1 OR lower(email) = lower($2) AND $2 <> '')
+			ORDER BY id::text = $1 DESC LIMIT 1`, v, f.People[v]).Scan(&uid)
+		return uid, err == nil
+	}
+	eachDefault(&t, func(v string) string { // one not found — no default
+		if uid, ok := local(v); ok {
+			return uid
+		}
+		missing++
+		return ""
+	})
 	for i := range t.Steps {
 		st := &t.Steps[i]
 		eachPerson(st, func(v string) string {
-			var uid string
-			err := s.db.QueryRow(ctx, `SELECT id::text FROM users WHERE active AND (id::text = $1 OR lower(email) = lower($2) AND $2 <> '')
-				ORDER BY id::text = $1 DESC LIMIT 1`, v, f.People[v]).Scan(&uid)
-			if err == nil {
+			if uid, ok := local(v); ok {
 				return uid
 			}
 			missing++
@@ -237,6 +276,18 @@ func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (new
 		if st.Stage != "" {
 			if st.Stage, err = s.importStage(ctx, t, st.Stage, f.Stages[st.Stage]); err != nil {
 				return "", 0, i18n.E("err.bp_import_stage", i+1)
+			}
+		}
+		if st.Template != "" { // the same template, or one of the name
+			if err := s.db.QueryRow(ctx, `SELECT id::text FROM bp_templates WHERE id::text = $1 OR lower(name) = lower($2) AND $2 <> ''
+				ORDER BY id::text = $1 DESC, created_at LIMIT 1`, st.Template, f.Templates[st.Template]).Scan(&st.Template); err != nil {
+				return "", 0, i18n.E("err.bp_import_template", i+1, f.Templates[st.Template])
+			}
+		}
+		if st.Doc != "" { // the same template of documents, or one of the name for the card's kind
+			if err := s.db.QueryRow(ctx, `SELECT id::text FROM crm_doc_templates WHERE entity = $3 AND (id::text = $1 OR lower(name) = lower($2) AND $2 <> '')
+				ORDER BY id::text = $1 DESC, created_at LIMIT 1`, st.Doc, f.Docs[st.Doc], t.Entity).Scan(&st.Doc); err != nil {
+				return "", 0, i18n.E("err.bp_import_doc", i+1, f.Docs[st.Doc])
 			}
 		}
 	}

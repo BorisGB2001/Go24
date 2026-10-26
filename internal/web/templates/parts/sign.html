@@ -1,0 +1,15 @@
+{{/* «Подпись»: the parts of its pages */}}
+{{define "sgprogress"}}<div class="sgbar" title="{{t "sign.hr.signed_of" .Signed .Total}}"><span style="width:{{pct .Signed .Total}}%"></span></div>
+  {{t "sign.hr.signed_of" .Signed .Total}}{{if .Refused}} · <span class="sgp-refused">{{t "sign.hr.refused_n" .Refused}}</span>{{end}}{{if .Cancelled}} · {{t "sign.hr.cancelled_n" .Cancelled}}{{end}}{{end}}
+
+{{/* a placeholder of a document template: (list name label), click copies {name} */}}
+{{define "docfield"}}<button type="button" class="ghost" data-copy="{{"{"}}{{index . 0}}{{"}"}}" title="{{t "docs.copy"}}"><code>{{"{"}}{{index . 0}}{{"}"}}</code></button><span class="small muted">{{index . 1}}</span>
+{{end}}
+
+{{/* sgremind is the choice of «Напоминать подписанту», the days chosen given */}}
+{{define "sgremind"}}{{$days := .}}<select name="remind" id="sg-remind">{{range remindDays}}<option value="{{.}}" {{if eq . $days}}selected{{end}}>{{t (print "sign.remind_" .)}}</option>{{end}}</select>{{end}}
+
+{{/* sgclient is a row of a client signing: (list name email) */}}
+{{define "sgclient"}}<div class="sgclient" data-row><input type="text" name="client_name" maxlength="200" value="{{index . 0}}" placeholder="{{t "sign.client_name"}}" aria-label="{{t "sign.client_name"}}">
+  <input type="email" name="client_email" value="{{index . 1}}" placeholder="{{t "sign.client_email"}}" aria-label="{{t "sign.client_email"}}">
+  <button type="button" class="ghost" data-rm-row title="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}

@@ -52,7 +52,7 @@ func TestDriveSwitches(t *testing.T) {
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by, drive, folder_id)
 		VALUES ('k2', 'план.docx', 10, $1, 'company', $2) RETURNING id`, anna, folder).Scan(&g))
 	must(s.SetContent(ctx, f, "k1", "поставки оборудования"))
-	token, err := s.SetLink(ctx, anna, co, "file", f, "", false, nil)
+	token, err := s.SetLink(ctx, anna, co, "file", f, "", false, nil, false, "")
 	must(err)
 	must(s.Lock(ctx, anna, co, f))
 
@@ -68,7 +68,7 @@ func TestDriveSwitches(t *testing.T) {
 	}
 
 	// public links
-	if _, err := s.SetLink(ctx, anna, co, "file", g, "", false, nil); !errors.Is(err, ErrLinksOff) {
+	if _, err := s.SetLink(ctx, anna, co, "file", g, "", false, nil, false, ""); !errors.Is(err, ErrLinksOff) {
 		t.Errorf("a link with links off: %v", err)
 	}
 	if _, err := s.OpenLink(ctx, token); !errors.Is(err, ErrNotFound) {

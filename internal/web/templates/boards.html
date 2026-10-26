@@ -12,6 +12,7 @@
 <div class="card row diskbar"><b>{{t "dboard.create"}}</b>
   <form method="post" action="/disk/my/new-board" class="row" style="flex:1" data-boards-new><input type="hidden" name="from" value="boards">
     <input type="text" name="name" maxlength="200" placeholder="{{t "dboard.name"}}" style="flex:1">
+    {{template "boardTemplate"}}
     <button class="primary">{{icon "brush"}} {{t "common.create"}}</button></form>
   <span class="small muted">{{t "docs.new_hint"}}</span></div>
 <div class="card flush disk" data-boards>

@@ -23,6 +23,9 @@ type Session struct {
 	// in the cookie, so that taking it away works at once
 	Granted bool  `json:"-"`
 	Expires int64 `json:"exp"`
+	// SID is the session's row in user_sessions (Devices): ending it there signs this browser out; "" — a cookie
+	// made before sessions were kept
+	SID string `json:"sid,omitempty"`
 }
 
 // AdminActive reports whether the user is an administrator with admin mode switched on.
@@ -38,6 +41,9 @@ type Sessions struct {
 func NewSessions(secret string, secure bool) *Sessions {
 	return &Sessions{secret: []byte(secret), secure: secure, ttl: 12 * time.Hour}
 }
+
+// TTL is how long a session lasts from signing in or a switch of the admin mode.
+func (s *Sessions) TTL() time.Duration { return s.ttl }
 
 func (s *Sessions) Set(w http.ResponseWriter, sess Session) error {
 	sess.Expires = time.Now().Add(s.ttl).Unix()
@@ -91,4 +97,14 @@ func (s *Sessions) sign(payload []byte) string {
 	m := hmac.New(sha256.New, s.secret)
 	m.Write(payload)
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// Stamp signs the parts of a link go24 gives out (not a session), with the purpose as the first part.
+func (s *Sessions) Stamp(parts ...string) string {
+	return s.sign([]byte("stamp\n" + strings.Join(parts, "\n")))[:32]
+}
+
+// Stamped: the stamp is go24's for the parts.
+func (s *Sessions) Stamped(stamp string, parts ...string) bool {
+	return hmac.Equal([]byte(stamp), []byte(s.Stamp(parts...)))
 }

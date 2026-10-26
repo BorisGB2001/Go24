@@ -2,17 +2,22 @@ package bp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"go24/internal/crm"
+	"go24/internal/feed"
+	"go24/internal/i18n"
 	"go24/internal/tasks"
 )
 
@@ -30,7 +35,7 @@ func (s *Store) run(ctx context.Context, id string) error {
 		return err
 	}
 	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtextextended($1, 57))`, id)
-	for i := 0; i < 100; i++ {
+	for i := 0; ; i++ {
 		x, err := s.instance(ctx, id)
 		if err != nil {
 			return err
@@ -56,6 +61,9 @@ func (s *Store) run(ctx context.Context, id string) error {
 		}
 		st := x.Steps[x.Step]
 		next, wait, err := s.step(ctx, x, st)
+		if err == nil && i == 1000 { // loops without a pause or a person to wait for
+			err = i18n.E("err.bp_too_long")
+		}
 		if err != nil {
 			s.log(ctx, id, x.Step, "", "failed", st.Kind+": "+err.Error())
 			s.notify(ctx, x.StartedBy.ID, "", id, "⚠ "+x.Name)
@@ -77,7 +85,65 @@ func (s *Store) run(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	return fmt.Errorf("bp: too many steps")
+}
+
+// holds: the condition of an «if» or a loop step is true — the field's value compared with the step's ({…} filled, a
+// formula counted).
+func (s *Store) holds(ctx context.Context, x Instance, st Step) (bool, error) {
+	want, err := s.value(ctx, x, st.Value)
+	if err != nil {
+		return false, err
+	}
+	switch f, _ := x.Field(st.Field); f.Kind {
+	case "bool", "datetime": // «Y», «yes», «1»; a time with a space
+		if v, err := cleanValue(Field{Kind: f.Kind}, want); err == nil {
+			want = v
+		}
+	case "user": // an employee by name or e-mail too
+		if id, err := s.person(ctx, x, want); want != "" && err == nil {
+			want = id
+		}
+	}
+	return check(x.Values[st.Field], st.Op, want), nil
+}
+
+// startChild starts the process of the step's template for the starter of x: of the same CRM card when the template
+// is of that kind of card, else a standalone one. Its fields are the step's values ({…} of x filled); the chain of
+// processes started so is MaxDepth long at most.
+func (s *Store) startChild(ctx context.Context, x Instance, st Step) (string, error) {
+	t, err := s.Template(ctx, st.Template)
+	if err != nil {
+		return "", err
+	}
+	entity := ""
+	if t.Entity != "none" {
+		if t.Entity != x.Entity || x.EntityID == "" {
+			return "", i18n.E("err.bp_start_entity")
+		}
+		entity = x.EntityID
+	}
+	var depth int
+	if err := s.db.QueryRow(ctx, `WITH RECURSIVE up AS (SELECT id, parent_id FROM bp_instances WHERE id = $1
+		UNION ALL SELECT i.id, i.parent_id FROM bp_instances i JOIN up ON i.id = up.parent_id) SELECT count(*) FROM up`, x.ID).Scan(&depth); err != nil {
+		return "", err
+	}
+	if depth > MaxDepth {
+		return "", i18n.E("err.bp_depth", MaxDepth)
+	}
+	values := map[string]string{}
+	for _, a := range st.Sets {
+		v, err := s.value(ctx, x, a.Value)
+		if err != nil {
+			return "", err
+		}
+		if f, ok := fieldOf(t.Fields, a.Field); ok && f.Kind == "user" && v != "" { // starter, manager, a name, an e-mail
+			if id, err := s.person(ctx, x, v); err == nil {
+				v = id
+			}
+		}
+		values[a.Field] = v
+	}
+	return s.start(ctx, x.StartedBy.ID, t, entity, values, false, x.ID)
 }
 
 // nextBranch is the branch of the parallel step x waits in to run a step of (-1 — all wait); when every branch is over,
@@ -116,24 +182,62 @@ func (s *Store) nextBranch(ctx context.Context, x Instance) (k int, joined bool,
 	return -1, true, nil
 }
 
-// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}.
+// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}, {created_document}.
 func (s *Store) fill(ctx context.Context, x Instance, text string) string {
+	return s.fillAs(ctx, x, text, true)
+}
+
+// fillRaw is fill with the values as kept — the id of a user field, "Y" of a bool — for a field to set or compare.
+func (s *Store) fillRaw(ctx context.Context, x Instance, text string) string {
+	return s.fillAs(ctx, x, text, false)
+}
+
+func (s *Store) fillAs(ctx context.Context, x Instance, text string, shown bool) string {
 	pairs := []string{"{starter}", x.StartedBy.Name, "{process}", x.Name, "{link}", "/bp/i/" + x.ID}
 	for k, v := range x.Values {
+		if f, ok := x.Field(k); ok && shown {
+			v = s.show(ctx, f, v)
+		}
 		pairs = append(pairs, "{"+k+"}", v)
 	}
 	if x.Entity != "none" {
-		pairs = append(pairs, "{title}", s.cardTitle(ctx, x.Entity, x.EntityID), "{card}", cardPath(x.Entity, x.EntityID))
+		pairs = append(pairs, "{title}", s.cardTitle(ctx, x.Entity, x.EntityID), "{card}", CardPath(x.Entity, x.EntityID))
 	}
 	return strings.NewReplacer(pairs...).Replace(text)
 }
 
-func cardPath(entity, id string) string {
+// show is a field's value as people read it: a bool «Да»/«Нет», a user — the name, a datetime without «T».
+func (s *Store) show(ctx context.Context, f Field, v string) string {
+	switch {
+	case v == "":
+	case f.Kind == "bool" && s.Tr != nil:
+		return s.Tr("bp.bool." + v)
+	case f.Kind == "user":
+		var name string
+		if s.db.QueryRow(ctx, `SELECT name FROM users WHERE id::text = $1`, v).Scan(&name) == nil {
+			return name
+		}
+	case f.Kind == "datetime":
+		return strings.Replace(v, "T", " ", 1)
+	}
+	return v
+}
+
+// CardPath is the address of the card a process is about: a CRM card, a document's card on the drive.
+func CardPath(entity, id string) string {
+	if entity == EntityFile {
+		return "/files/" + id + "/about"
+	}
 	return "/crm/" + map[string]string{"deal": "deals", "lead": "leads", "contact": "contacts", "company": "companies"}[entity] + "/" + id
 }
 
 func (s *Store) cardTitle(ctx context.Context, entity, id string) string {
 	switch entity {
+	case EntityFile:
+		if s.Files != nil {
+			name, _, _ := s.Files.BPFile(ctx, id)
+			return name
+		}
 	case "deal":
 		if d, err := s.CRM.Deal(ctx, id); err == nil {
 			return d.Title
@@ -154,8 +258,16 @@ func (s *Store) cardTitle(ctx context.Context, entity, id string) string {
 	return ""
 }
 
-// who is the person a step means: the starter, their manager, the card's responsible or a given user.
+// who is the person a step means: the starter, their manager, the card's responsible, the employee of a user field
+// or a given user.
 func (s *Store) who(ctx context.Context, x Instance, to string) (string, error) {
+	if key, ok := strings.CutPrefix(to, FieldPrefix); ok {
+		if x.Values[key] == "" {
+			f, _ := x.Field(key)
+			return "", fmt.Errorf("the field %q is empty", f.Label)
+		}
+		return x.Values[key], nil
+	}
 	switch to {
 	case "", "starter":
 		return x.StartedBy.ID, nil
@@ -170,6 +282,15 @@ func (s *Store) who(ctx context.Context, x Instance, to string) (string, error) 
 		return list[0].ID, nil
 	case "responsible":
 		switch x.Entity {
+		case EntityFile: // who uploaded the document
+			if s.Files == nil {
+				return "", ErrNotFound
+			}
+			_, by, err := s.Files.BPFile(ctx, x.EntityID)
+			if err == nil && by == "" {
+				return x.StartedBy.ID, nil
+			}
+			return by, err
 		case "deal":
 			d, err := s.CRM.Deal(ctx, x.EntityID)
 			return d.Responsible.ID, err
@@ -197,6 +318,10 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 	case "approve", "review", "request":
 		users, err := s.people(ctx, x, st)
 		if err != nil {
+			return next, false, err
+		}
+		// a loop came back: the decisions of the step's last time are in the history, the people decide anew
+		if _, err := s.db.Exec(ctx, `DELETE FROM bp_approvals WHERE instance_id = $1 AND step = $2`, x.ID, x.Step); err != nil {
 			return next, false, err
 		}
 		for _, user := range users {
@@ -230,6 +355,30 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 			s.log(ctx, x.ID, x.Step, "", "step", "mail:"+to)
 		}
 		return next, false, err
+	case "post": // «Сообщение в живую ленту»: of From, to the addressees or all employees
+		if s.Feed == nil {
+			return next, false, i18n.E("err.bp_no_feed")
+		}
+		author, err := s.who(ctx, x, cmp.Or(st.From, "starter"))
+		if err != nil {
+			return next, false, err
+		}
+		var to feed.Audience
+		for _, u := range st.Users {
+			id, err := s.who(ctx, x, u)
+			if err != nil {
+				return next, false, err
+			}
+			if !slices.Contains(to.Users, id) {
+				to.Users = append(to.Users, id)
+			}
+		}
+		id, err := s.Feed.CreatePostTo(ctx, author, "", to, s.fill(ctx, x, st.Subject), text, false)
+		if err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "post:"+id)
+		return next, false, nil
 	case "update":
 		err := s.updateCard(ctx, x, st.Sets)
 		if err == nil {
@@ -239,15 +388,67 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 	case "create":
 		id, err := s.createCard(ctx, x, st, text)
 		if err == nil {
-			s.log(ctx, x.ID, x.Step, "", "step", "create:"+cardPath(st.Entity, id))
+			s.log(ctx, x.ID, x.Step, "", "step", "create:"+CardPath(st.Entity, id))
 		}
 		return next, false, err
+	case "comment": // «Добавить комментарий»: in the card's timeline, of From
+		author, err := s.who(ctx, x, cmp.Or(st.From, "starter"))
+		if err != nil {
+			return next, false, err
+		}
+		if err := s.CRM.Comment(ctx, author, x.Entity, x.EntityID, text); err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "comment:"+author)
+		return next, false, nil
+	case "activity":
+		id, err := s.activity(ctx, x, st, text)
+		if err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "activity:"+id)
+		return next, false, nil
+	case "document":
+		id, err := s.document(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "document:"+id)
+		return next, false, nil
 	case "if":
-		ok := check(x.Values[st.Field], st.Op, s.fill(ctx, x, st.Value))
+		ok, err := s.holds(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
 		if !ok {
 			next = jump(x, st.Goto)
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("if:%t", ok))
+		return next, false, nil
+	case "loop": // «Цикл»: back to st.Goto while the condition holds, MaxLoops times at most
+		ok, err := s.holds(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
+		if ok {
+			var n int
+			if err := s.db.QueryRow(ctx, `SELECT count(*) FROM bp_log WHERE instance_id = $1 AND step = $2 AND kind = 'step' AND text = 'loop:true'`,
+				x.ID, x.Step).Scan(&n); err != nil {
+				return next, false, err
+			}
+			if n >= MaxLoops {
+				return next, false, i18n.E("err.bp_loops", MaxLoops)
+			}
+			next = st.Goto - 1
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("loop:%t", ok))
+		return next, false, nil
+	case "start": // «Запуск бизнес-процесса»: another one, of the starter, with its fields filled; the process goes on
+		child, err := s.startChild(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "start:"+child)
 		return next, false, nil
 	case "goto":
 		s.log(ctx, x.ID, x.Step, "", "step", "goto")
@@ -256,12 +457,40 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if x.Values == nil {
 			x.Values = map[string]string{}
 		}
-		x.Values[st.Field] = s.fill(ctx, x, st.Value)
+		v, err := s.value(ctx, x, st.Value)
+		if err != nil {
+			return next, false, err
+		}
+		x.Values[st.Field] = v
+		if f, _ := x.Field(st.Field); f.Kind == "user" && x.Values[st.Field] != "" { // starter, manager, a name, an e-mail
+			id, err := s.person(ctx, x, x.Values[st.Field])
+			if err != nil {
+				return next, false, err
+			}
+			x.Values[st.Field] = id
+		} else if f.Kind != "" {
+			if v, err := cleanValue(Field{Kind: f.Kind, Options: f.Options}, x.Values[st.Field]); err == nil {
+				x.Values[st.Field] = v
+			}
+		}
 		vals, _ := json.Marshal(x.Values)
 		if _, err := s.db.Exec(ctx, `UPDATE bp_instances SET values = $2 WHERE id = $1`, x.ID, vals); err != nil {
 			return next, false, err
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", "set:"+st.Field)
+		return next, false, nil
+	case "userinfo": // «Информация о сотруднике»: the person's card into the fields user_<…>
+		user, err := s.who(ctx, x, st.To)
+		if err != nil {
+			return next, false, err
+		}
+		if err := s.userInfo(ctx, x, user); err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "userinfo:"+user)
+		return next, false, nil
+	case "log": // «Запись в отчёт»: the text into the process's history
+		s.log(ctx, x.ID, x.Step, "", "report", text)
 		return next, false, nil
 	case "task":
 		user, err := s.who(ctx, x, st.To)
@@ -287,9 +516,9 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if err != nil {
 			return next, false, err
 		}
-		if x.Entity != "none" {
+		if crm.Entities[x.Entity] {
 			if id, err := s.Tasks.TaskIDByKey(ctx, key); err == nil {
-				_ = s.Tasks.AddCRMLink(actx, x.StartedBy.ID, id, cardPath(x.Entity, x.EntityID))
+				_ = s.Tasks.AddCRMLink(actx, x.StartedBy.ID, id, CardPath(x.Entity, x.EntityID))
 			}
 		}
 		s.feedReader(ctx, x, user)
@@ -330,6 +559,18 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		return next, false, nil
 	case "wait":
 		wake := time.Now().AddDate(0, 0, st.Days)
+		if st.Field != "" { // «до даты» of the field: a date — its beginning; empty or past — no pause
+			v := x.Values[st.Field]
+			t, err := time.ParseInLocation("2006-01-02T15:04", v, time.Local)
+			if err != nil {
+				t, err = time.ParseInLocation("2006-01-02", v, time.Local)
+			}
+			if err != nil || !t.After(time.Now()) {
+				s.log(ctx, x.ID, x.Step, "", "step", "wait:"+st.Field)
+				return next, false, nil
+			}
+			wake = t
+		}
 		if x.branch > 0 {
 			_, err = s.db.Exec(ctx, `UPDATE bp_branches SET wake_at = $2 WHERE instance_id = $1 AND n = $3`, x.ID, wake, x.branch-1)
 		} else {
@@ -338,12 +579,37 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if err != nil {
 			return next, false, err
 		}
-		s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("wait:%d", st.Days))
+		s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("wait:%d%s", st.Days, st.Field))
 		return next, true, nil
 	case "webhook":
 		return next, false, s.webhook(ctx, x, st.URL)
 	}
 	return next, false, fmt.Errorf("unknown step %q", st.Kind)
+}
+
+// userInfo puts the employee's card into the process's values (UserInfo).
+func (s *Store) userInfo(ctx context.Context, x Instance, user string) error {
+	p, err := s.Company.Profile(ctx, user)
+	if err != nil {
+		return err
+	}
+	var depts []string
+	for _, d := range p.Departments {
+		depts = append(depts, d.Name)
+	}
+	var manager string
+	if list, err := s.Company.Managers(ctx, user); err == nil && len(list) > 0 {
+		manager = list[0].ID
+	}
+	if x.Values == nil {
+		x.Values = map[string]string{}
+	}
+	for k, v := range map[string]string{"name": p.Name, "last_name": p.LastName, "first_name": p.FirstName, "email": p.Email,
+		"position": p.Position, "work_phone": p.WorkPhone, "mobile": p.MobilePhone, "inner_phone": p.InnerPhone,
+		"department": strings.Join(depts, ", "), "manager": manager} {
+		x.Values[UserInfoPrefix+k] = v
+	}
+	return s.saveValues(ctx, x)
 }
 
 // jump is the index of the step numbered n from 1; 0 — past the last one, the end of the process (in a parallel
@@ -428,7 +694,7 @@ func (s *Store) webhook(ctx context.Context, x Instance, target string) error {
 	payload := map[string]any{"event": "bp.step", "process": x.Name, "process_id": x.ID, "step": x.Step,
 		"link": s.BaseURL + "/bp/i/" + x.ID, "values": x.Values, "starter": map[string]string{"id": x.StartedBy.ID, "name": x.StartedBy.Name}}
 	if x.Entity != "none" {
-		payload["entity"], payload["entity_id"], payload["card"] = x.Entity, x.EntityID, s.BaseURL+cardPath(x.Entity, x.EntityID)
+		payload["entity"], payload["entity_id"], payload["card"] = x.Entity, x.EntityID, s.BaseURL+CardPath(x.Entity, x.EntityID)
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))

@@ -161,6 +161,126 @@ func TestDue(t *testing.T) {
 	}
 }
 
+// TestConfirm: «Подтверждение записи» — the request to confirm within its hours to an unconfirmed booking with an
+// e-mail (not one made inside them, not a confirmed one), the note to the employee within the alert's hours if the
+// asked client has not confirmed; each once, again after a move.
+func TestConfirm(t *testing.T) {
+	url := os.Getenv("GO24_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("GO24_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var boss, ann string
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('boss', 'Босс', 'boss@go24.test') RETURNING id`).Scan(&boss))
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('ann', 'Анна', 'ann@go24.test') RETURNING id`).Scan(&ann))
+	s := NewStore(pool)
+	types, err := s.Types(ctx)
+	must(err)
+	all := []int{1, 2, 3, 4, 5, 6, 7}
+	res := Resource{TypeID: types[0].ID, Name: "Врач", UserID: ann, Slot: 30, Days: all, From: 0, To: 1440, NotifyMail: true}
+	for _, bad := range [][2]int{{-1, 0}, {400, 0}, {24, 24}, {0, 3}, {24, -1}} {
+		res.ConfirmHours, res.ConfirmAlert = bad[0], bad[1]
+		if _, err := s.SaveResource(ctx, boss, res); !errors.Is(err, ErrConfirm) {
+			t.Fatalf("confirmation %v: %v", bad, err)
+		}
+	}
+	res.ConfirmHours, res.ConfirmAlert = 24, 3
+	doc, err := s.SaveResource(ctx, boss, res)
+	must(err)
+	if r, err := s.Resource(ctx, doc); err != nil || r.ConfirmHours != 24 || r.ConfirmAlert != 3 {
+		t.Fatalf("resource: %+v %v", r, err)
+	}
+
+	now := time.Now().Truncate(time.Minute)
+	book := func(start time.Time, email string) string {
+		t.Helper()
+		id, err := s.SaveBooking(ctx, boss, Booking{ResourceID: doc, Start: start, End: start.Add(30 * time.Minute), ClientName: "Пётр", ClientEmail: email})
+		must(err)
+		must(exec(ctx, pool, `UPDATE bookings SET created_at = now() - interval '3 days', mailed_at = now() WHERE id = $1`, id))
+		return id
+	}
+	ask := book(now.Add(10*time.Hour), "p@go24.test")  // within 24 h: asked
+	alert := book(now.Add(2*time.Hour), "p@go24.test") // within 3 h: asked, then the employee is told
+	far := book(now.Add(48*time.Hour), "p@go24.test")  // not yet
+	sure := book(now.Add(12*time.Hour), "p@go24.test") // confirmed: nothing
+	noMail := book(now.Add(5*time.Hour), "")           // no e-mail: not asked, so nobody told
+	inside, err := s.SaveBooking(ctx, boss, Booking{ResourceID: doc, Start: now.Add(6 * time.Hour), End: now.Add(6*time.Hour + 30*time.Minute),
+		ClientName: "Ира", ClientEmail: "i@go24.test"}) // made inside the hours: its first letter asks
+	must(err)
+	must(s.SetStatus(ctx, boss, sure, "confirmed"))
+	_, _ = far, noMail
+
+	due := func() map[string]string {
+		t.Helper()
+		list, err := s.DueAt(ctx, time.Now())
+		must(err)
+		m := map[string]string{}
+		for _, d := range list {
+			if d.Kind == DueNew {
+				continue
+			}
+			m[d.B.ID] += d.Kind + " "
+			if d.Kind == DueUnconfirmed && d.Notify != ann {
+				t.Fatalf("told: %+v", d)
+			}
+		}
+		return m
+	}
+	send := func() {
+		t.Helper()
+		list, err := s.DueAt(ctx, time.Now())
+		must(err)
+		for _, d := range list {
+			_, err := s.Claim(ctx, d)
+			must(err)
+		}
+	}
+	if got := due(); len(got) != 2 || got[ask] != "confirm " || got[alert] != "confirm " || got[inside] != "" {
+		t.Fatalf("due: %v", got)
+	}
+	send()
+	if got := due(); len(got) != 1 || got[alert] != "unconfirmed " {
+		t.Fatalf("due after the requests: %v", got)
+	}
+	send()
+	if got := due(); len(got) != 0 {
+		t.Fatalf("due after all is sent: %v", got)
+	}
+	// moved within the hours: asked again; confirmed — no note
+	b, err := s.Booking(ctx, alert)
+	must(err)
+	b.Start, b.End = now.Add(150*time.Minute), now.Add(180*time.Minute)
+	_, err = s.SaveBooking(ctx, boss, b)
+	must(err)
+	if got := due(); got[alert] != "confirm " || len(got) != 1 {
+		t.Fatalf("due after a move: %v", got)
+	}
+	send()
+	if _, _, err := s.ClientStatus(ctx, b.ClientToken, "confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	if got := due(); len(got) != 0 {
+		t.Fatalf("due after the client confirmed: %v", got)
+	}
+}
+
 func exec(ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) error {
 	_, err := pool.Exec(ctx, sql, args...)
 	return err

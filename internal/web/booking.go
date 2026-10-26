@@ -24,9 +24,15 @@ type bookingCol struct {
 	Off      bool // the resource does not work that day
 	OffTop   int  // the hours before its work (px)
 	OffBot   int  // the top of the hours after its work (px)
-	Load     int  // percent of its working time booked that day
+	From, To int  // its working hours that day, minutes
+	BreakTop int  // its break (px); BreakH 0 — none
+	BreakH   int
+	Cal      []bookingSpan // its employee busy in the calendar (see booking.CalendarBusy)
+	Load     int           // percent of its working time booked that day
 	Bookings []bookingItem
 }
+
+type bookingSpan struct{ Top, Height int }
 
 type bookingItem struct {
 	B                 booking.Booking
@@ -78,7 +84,8 @@ func (s *Server) bookingPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	h0, h1 := 24, 0
 	for _, x := range res {
 		if x.WorksOn(day) {
-			h0, h1 = min(h0, x.From/60), max(h1, (x.To+59)/60)
+			from, to := x.HoursOn(day)
+			h0, h1 = min(h0, from/60), max(h1, (to+59)/60)
 		}
 	}
 	if h0 >= h1 {
@@ -91,16 +98,32 @@ func (s *Server) bookingPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	counts, counted := map[string]int{}, map[string]bool{}
 	cols := make([]bookingCol, 0, len(res))
 	for _, x := range res {
-		c := bookingCol{R: x, Off: !x.WorksOn(day),
-			OffTop: max(0, x.From-h0*60) * bookingHourPx / 60, OffBot: max(0, x.To-h0*60) * bookingHourPx / 60}
+		from, to := x.HoursOn(day)
+		c := bookingCol{R: x, Off: !x.WorksOn(day), From: from, To: to,
+			OffTop: max(0, from-h0*60) * bookingHourPx / 60, OffBot: max(0, to-h0*60) * bookingHourPx / 60}
+		if x.InBreak(from, to) {
+			c.BreakTop = (max(from, x.BreakFrom) - h0*60) * bookingHourPx / 60
+			c.BreakH = (min(to, x.BreakTo)-h0*60)*bookingHourPx/60 - c.BreakTop
+		}
+		if !c.Off {
+			cal, err := s.Booking.CalendarBusy(r.Context(), x, day, day.AddDate(0, 0, 1))
+			if err != nil {
+				s.fail(w, "booking", err)
+				return
+			}
+			for _, sp := range cal {
+				if top := px(sp.Start); px(sp.End) > top {
+					c.Cal = append(c.Cal, bookingSpan{top, px(sp.End) - top})
+				}
+			}
+		}
 		if work, busy := booking.Load(x, list, day, day.AddDate(0, 0, 1), time.Local); work > 0 {
 			c.Load = (busy*100 + work/2) / work
 		}
 		for _, b := range list {
 			if b.Takes(x.ID) {
 				top := px(b.Start)
-				late := x.LateMinutes > 0 && (b.Status == "unconfirmed" || b.Status == "confirmed") &&
-					now.After(b.Start.Add(time.Duration(x.LateMinutes)*time.Minute))
+				late := b.Late(x, now)
 				c.Bookings = append(c.Bookings, bookingItem{b, top, max(18, px(b.End)-top), int(b.End.Sub(b.Start).Minutes()), late, b.ResourceID != x.ID})
 				if !counted[b.ID] {
 					counted[b.ID] = true
@@ -206,7 +229,8 @@ func (s *Server) bookingResources(w http.ResponseWriter, r *http.Request, sess a
 	}
 	data := map[string]any{"Types": types, "Resources": res, "Admin": sess.Admin, "Days": []int{1, 2, 3, 4, 5, 6, 7}}
 	if e := r.URL.Query().Get("edit"); e != "" && sess.Admin {
-		ed := booking.Resource{Slot: 30, Days: []int{1, 2, 3, 4, 5}, From: 9 * 60, To: 18 * 60, NotifyMail: true, RemindHours: 24, LateMinutes: 15}
+		ed := booking.Resource{Slot: 30, Days: []int{1, 2, 3, 4, 5}, From: 9 * 60, To: 18 * 60, NotifyMail: true, RemindHours: 24, LateMinutes: 15,
+			CalendarBusy: true}
 		if len(types) > 0 {
 			ed.TypeID = types[0].ID
 		}
@@ -255,6 +279,14 @@ type bookingSvc struct {
 	On bool
 }
 
+// bookingUntil: the end of hours, «до 24:00» typed as 00:00.
+func bookingUntil(m int) int {
+	if m == 0 {
+		return 24 * 60
+	}
+	return m
+}
+
 // bookingResourceSave: a resource from its form (administrators); the hours come as HH:MM; the services — svc (their
 // products, in order) with svc_min_<product> minutes each.
 func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -276,12 +308,31 @@ func (s *Server) bookingResourceSave(w http.ResponseWriter, r *http.Request, ses
 	slot, _ := strconv.Atoi(r.FormValue("slot"))
 	remind, _ := strconv.Atoi(r.FormValue("remind_hours"))
 	late, _ := strconv.Atoi(r.FormValue("late_minutes"))
+	confirm, _ := strconv.Atoi(r.FormValue("confirm_hours"))
+	alert, _ := strconv.Atoi(r.FormValue("confirm_alert"))
 	x := booking.Resource{ID: r.PathValue("id"), TypeID: r.FormValue("type"), Name: r.FormValue("name"),
 		Description: strings.TrimSpace(r.FormValue("description")), UserID: r.FormValue("user"), Slot: slot,
 		From: hm(r.FormValue("from")), To: hm(r.FormValue("to")), NotifyMail: r.FormValue("notify_mail") == "1",
-		RemindHours: remind, LateMinutes: late, Overbooking: r.FormValue("overbooking") == "1"}
+		RemindHours: remind, LateMinutes: late, Overbooking: r.FormValue("overbooking") == "1",
+		Feedback: r.FormValue("feedback") == "1", ConfirmHours: confirm, ConfirmAlert: alert,
+		CalendarBusy: r.FormValue("calendar_busy") == "1"}
 	if x.To == 0 && r.FormValue("to") != "" { // «до 24:00» typed as 00:00
 		x.To = 24 * 60
+	}
+	// «Расписание по дням»: a weekday's own hours (day_from_N, day_to_N; empty — the common ones), the break, the dates off
+	x.DayHours = map[int][2]int{}
+	for wd := 1; wd <= 7; wd++ {
+		if f, t := r.FormValue(fmt.Sprintf("day_from_%d", wd)), r.FormValue(fmt.Sprintf("day_to_%d", wd)); f != "" || t != "" {
+			x.DayHours[wd] = [2]int{hm(f), bookingUntil(hm(t))}
+		}
+	}
+	if f, t := r.FormValue("break_from"), r.FormValue("break_to"); f != "" || t != "" {
+		x.BreakFrom, x.BreakTo = hm(f), bookingUntil(hm(t))
+	}
+	for _, v := range r.Form["off"] {
+		if d, err := time.Parse("2006-01-02", v); err == nil {
+			x.OffDates = append(x.OffDates, d)
+		}
 	}
 	for _, id := range r.Form["svc"] {
 		m, _ := strconv.Atoi(r.FormValue("svc_min_" + id))

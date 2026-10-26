@@ -1,18 +1,29 @@
 {{define "content"}}{{$d := .Data}}
 <div class="pagehead"><h1>{{t "sign.new"}}</h1></div>
 <form method="post" action="/sign" enctype="multipart/form-data" class="card form-narrow" data-native>
+  {{with $d.Collab}}<input type="hidden" name="collab" value="{{.Key}}"><p class="small">{{icon "users-group"}} {{t "sign.collab.from" .Name}}</p>{{end}}
   {{if $d.Doc}}<input type="hidden" name="kind" value="{{$d.Kind}}"><input type="hidden" name="id" value="{{$d.ID}}"><input type="hidden" name="doc" value="{{$d.Doc.ID}}">
   <p>{{icon "file-text"}} <a href="/crm/{{$d.Kind}}/{{$d.ID}}/documents/{{$d.Doc.ID}}">{{$d.Doc.FileName}}</a></p>
+  {{else if $d.Tpl}}<input type="hidden" name="tpl" value="{{$d.Tpl.ID}}"><p>{{icon "file-text"}} {{$d.Tpl.FileName}} <span class="small muted">· {{t "sign.tpl.of" $d.Tpl.Title}}</span></p>
   {{else}}<label>{{t "sign.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>{{end}}
   <label>{{t "sign.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$d.Title}}" {{if $d.Doc}}required{{end}} placeholder="{{t "sign.title_hint"}}">
   <h3>{{icon "users"}} {{t "sign.side.company"}}</h3>
-  <label>{{t "sign.company_signer"}}</label>{{template "upick" (upick "signer" $d.Me $d.Users "required")}}
+  <label>{{t "sign.company_signers"}}</label>{{template "upick" (upick "signer" $d.Signers $d.Users "multi")}}
   <p class="small muted">{{t "sign.company_hint"}}</p>
   <h3>{{icon "user"}} {{t "sign.side.client"}}</h3>
-  <label>{{t "sign.client_name"}}</label><input type="text" name="client_name" maxlength="200" value="{{$d.ClientName}}">
-  <label>{{t "sign.client_email"}}</label><input type="email" name="client_email" value="{{$d.ClientEmail}}">
+  <div data-rows="{{$d.SideMax}}">
+    {{template "sgclient" (list $d.ClientName $d.ClientEmail)}}
+    <p><button type="button" class="ghost small" data-add-row="sg-client">{{icon "plus"}} {{t "sign.client_add"}}</button>
+      {{range $i, $g := $d.Guests}}<button type="button" class="ghost small" data-add-row="sg-guest-{{$i}}" title="{{$g.Email}}">{{icon "plus"}} {{$g.Name}} <span class="pill guest">{{t "collab.guest"}}</span></button>{{end}}</p>
+  </div>
+  <template id="sg-client">{{template "sgclient" (list "" "")}}</template>
+  {{range $i, $g := $d.Guests}}<template id="sg-guest-{{$i}}">{{template "sgclient" (list $g.Name $g.Email)}}</template>{{end}}
   <p class="small muted">{{t "sign.client_hint"}}</p>
+  <label for="sg-remind">{{icon "bell"}} {{t "sign.remind"}}</label>{{template "sgremind" $d.Remind}}
+  <p class="small muted">{{t "sign.remind_hint"}}</p>
+  {{if not (or $d.Doc $d.Tpl)}}<label class="check"><input type="checkbox" name="save_template" value="1"> {{t "sign.tpl.save"}}</label>
+  <p class="small muted">{{t "sign.tpl.save_hint"}}</p>{{end}}
   <p><button class="primary">{{icon "send"}} {{t "sign.send"}}</button>
-    <a class="button ghost" href="{{if $d.Doc}}/crm/{{$d.Kind}}/{{$d.ID}}#documents{{else}}/sign{{end}}">{{t "common.cancel"}}</a></p>
+    <a class="button ghost" href="{{if $d.Doc}}/crm/{{$d.Kind}}/{{$d.ID}}#documents{{else if $d.Collab}}/p/{{$d.Collab.Key}}{{else}}/sign{{end}}">{{t "common.cancel"}}</a></p>
 </form>
 {{end}}

@@ -7,7 +7,7 @@
   const link = me?.dataset.form;
   if (!link) return;
   const src = link + (link.includes('?') ? '&' : '?') + 'embed=1&page=' + encodeURIComponent(location.href);
-  const token = link.split('/cf/')[1]?.split(/[?#]/)[0];
+  const token = link.split(/[?#]/)[0].split('/').pop(); // /cf/TOKEN, /cb/TOKEN («Обратный звонок»)
   const frame = () => {
     const f = document.createElement('iframe');
     f.src = src;

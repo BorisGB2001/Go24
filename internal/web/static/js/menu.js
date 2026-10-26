@@ -209,7 +209,22 @@ function go24Mail(d, lead) {
   };
   // the task whose card is open in this tab: its news are seen already (task.js reads them)
   const openTask = document.querySelector('[data-task]:not(.nitem)')?.dataset.task;
+  // «Лента» in the menu: what is new in the feed since it was last opened. The open feed shows it at once, so
+  // there the counter starts over (and so in the other tabs).
+  const onFeed = !!document.querySelector('[data-feed][data-general]');
+  const setNews = n => document.querySelectorAll('[data-counter="feednews"]').forEach(c => { c.textContent = n > 99 ? '99+' : n; c.hidden = !n; });
+  const feedNews = async n => {
+    if (!n || !onFeed || document.visibilityState !== 'visible') { setNews(n); return; }
+    setNews(0);
+    try { await fetch('/feed/seen', { method: 'POST', headers: { Accept: 'application/json' } }); } catch { return; }
+    bc?.postMessage({ feed: { news: 0 } });
+  };
+  if (onFeed) addEventListener('visibilitychange', () => {
+    const c = document.querySelector('[data-counter="feednews"]');
+    if (c && !c.hidden && document.visibilityState === 'visible') feedNews(1);
+  });
   const apply = d => {
+    if (d.feed) { feedNews(d.feed.news); return; }
     if (d.mail) { go24Mail(d.mail); return; }
     if (d.call) { dispatchEvent(new CustomEvent('go24:call', { detail: d.call })); return; } // ring.js, call.js
     if (typeof d.unread === 'number') setUnread(d.unread);
@@ -245,6 +260,12 @@ function go24Mail(d, lead) {
       try { d = JSON.parse(ev.data); } catch { return; }
       go24Mail(d, true);
       bc?.postMessage({ mail: d });
+    });
+    es.addEventListener('feed', ev => {
+      let d;
+      try { d = JSON.parse(ev.data); } catch { return; }
+      apply({ feed: d });
+      bc?.postMessage({ feed: d });
     });
     es.addEventListener('call', ev => { // a call rings, or an answer to one's own call: every tab hears it
       let d;

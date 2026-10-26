@@ -29,7 +29,7 @@ func TestParseInvite(t *testing.T) {
 	if in.Method != "REQUEST" || in.UID != "040000008200E0007" || in.Sequence != 2 || in.Location != "Переговорная 3" || in.Cancelled {
 		t.Fatalf("invite = %+v", in)
 	}
-	if !in.Start.Equal(time.Date(2026, 10, 20, 10, 0, 0, 0, msk)) || !in.End.Equal(time.Date(2026, 10, 20, 11, 30, 0, 0, msk)) || in.AllDay {
+	if !in.Start.Equal(time.Date(2026, 10, 20, 10, 0, 0, 0, msk)) || !in.End.Equal(time.Date(2026, 10, 20, 11, 30, 0, 0, msk)) || in.AllDay || in.TZ != "Europe/Moscow" {
 		t.Fatalf("time = %v — %v", in.Start, in.End)
 	}
 	if !strings.HasSuffix(in.Summary, "сложена") || in.Description != "Повестка:\n1. Сроки, бюджет; риски\n" {
@@ -83,7 +83,7 @@ func TestInviteZones(t *testing.T) {
 		{"20270110T090000", time.Date(2027, 1, 10, 8, 0, 0, 0, time.UTC)},  // the next year, winter
 	} {
 		in, ok := ParseInvite(customZone(c.start))
-		if !ok || !in.Start.Equal(c.want) {
+		if !ok || !in.Start.Equal(c.want) || in.TZ != "" { // a zone of its own: the time only
 			t.Errorf("%s: %v, want %v", c.start, in.Start.UTC(), c.want)
 		}
 	}
@@ -166,6 +166,22 @@ func TestBuildICS(t *testing.T) {
 	}
 	if c := BuildICS(req, "CANCEL", time.Now()); !strings.Contains(c, "STATUS:CANCELLED") || !strings.Contains(c, "METHOD:CANCEL") {
 		t.Fatalf("cancel = %s", c)
+	}
+	// weekly on Mon and Thu, eight meetings: BYDAY and COUNT go and come back, Until is the day of the last
+	req = Invite{UID: "e2@go24.test", Summary: "Йога", Start: time.Date(2026, 10, 19, 18, 0, 0, 0, time.Local),
+		End: time.Date(2026, 10, 19, 19, 0, 0, 0, time.Local), Repeat: "weekly", Every: 1, Days: []int{1, 4}, Count: 8, Until: &until}
+	text = BuildICS(req, "PUBLISH", time.Now())
+	back, ok = ParseInvite(text)
+	if !strings.Contains(text, "RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TH;COUNT=8\r\n") || !ok || back.Count != 8 ||
+		len(back.Days) != 2 || back.Days[1] != 4 || back.Until == nil || back.Until.Format("2006-01-02") != "2026-11-12" {
+		t.Fatalf("weekly on days = %+v\n%s", back, text)
+	}
+	// «every weekday» of Google: DAILY with BYDAY is a weekly one; a numbered day (a month's) is no day of a week
+	if f, _, _, _, days := parseRRule("FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR"); f != "weekly" || len(days) != 5 {
+		t.Fatalf("every weekday: %s %v", f, days)
+	}
+	if f, _, _, _, days := parseRRule("FREQ=MONTHLY;BYDAY=2TU"); f != "monthly" || days != nil {
+		t.Fatalf("second Tuesday: %s %v", f, days)
 	}
 }
 

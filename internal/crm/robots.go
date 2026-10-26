@@ -22,11 +22,12 @@ import (
 // another person, a stage robot moves it on. Sales tunnels («Туннели продаж»): a copy robot makes the deal's copy in
 // a stage of another pipeline of the same kind of cards, a move robot moves the deal itself there. A booking robot
 // («Отправить ссылку для записи») writes to the client as a mail robot does, with the address of a booking link. A robot may wait («Выполнить через» minutes, hours or days: the card
-// must still be in the stage then) and may run only for an amount from–to. Texts may hold {title}, {amount},
+// must still be in the stage then), may run only for an amount from–to and only when the card meets a condition; a
+// fields robot sets fields of the card, a webhook robot posts it to an address (robotfields.go). Texts may hold {title}, {amount},
 // {responsible}, {client}, {link}.
 
 // RobotKinds in the order the settings offer them.
-var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "comment", "responsible", "stage", "copy", "move"}
+var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "comment", "fields", "webhook", "responsible", "stage", "copy", "move"}
 
 // TunnelKinds are the robots that lead into another pipeline (of deals and smart processes only).
 var TunnelKinds = []string{"copy", "move"}
@@ -43,18 +44,21 @@ type Robot struct {
 
 // RobotParams are a robot's settings (unused ones stay empty).
 type RobotParams struct {
-	Text    string  `json:"text"`              // task title, notification, comment, deed's or letter's subject
-	Details string  `json:"details,omitempty"` // task or deed description, the letter's text
-	Project string  `json:"project,omitempty"` // task: the project key
-	To      string  `json:"to,omitempty"`      // "responsible", "creator" or a user id
-	Days    int     `json:"days,omitempty"`    // task, deed: deadline in days (0 — a task has none, a deed is in an hour)
-	Act     string  `json:"act,omitempty"`     // deed: call | meeting | todo
-	Stage   string  `json:"stage,omitempty"`   // stage, copy, move robots: where the card (or its copy) goes
-	Delay   int     `json:"delay,omitempty"`   // wait so many units before running
-	Unit    string  `json:"unit,omitempty"`    // min | hour | day
-	Min     float64 `json:"min,omitempty"`     // run only for an amount from (0 — any)
-	Max     float64 `json:"max,omitempty"`     // and up to (0 — any)
-	Link    string  `json:"link,omitempty"`    // booking: the booking link's id
+	Text    string     `json:"text"`              // task title, notification, comment, deed's or letter's subject
+	Details string     `json:"details,omitempty"` // task or deed description, the letter's text
+	Project string     `json:"project,omitempty"` // task: the project key
+	To      string     `json:"to,omitempty"`      // "responsible", "creator" or a user id
+	Days    int        `json:"days,omitempty"`    // task, deed: deadline in days (0 — a task has none, a deed is in an hour)
+	Act     string     `json:"act,omitempty"`     // deed: call | meeting | todo
+	Stage   string     `json:"stage,omitempty"`   // stage, copy, move robots: where the card (or its copy) goes
+	Delay   int        `json:"delay,omitempty"`   // wait so many units before running
+	Unit    string     `json:"unit,omitempty"`    // min | hour | day
+	Min     float64    `json:"min,omitempty"`     // run only for an amount from (0 — any)
+	Max     float64    `json:"max,omitempty"`     // and up to (0 — any)
+	If      *RobotCond `json:"if,omitempty"`      // run only when the card meets it («Условие»)
+	Set     []RobotSet `json:"set,omitempty"`     // fields robot: what it sets
+	URL     string     `json:"url,omitempty"`     // webhook robot: where it posts the card
+	Link    string     `json:"link,omitempty"`    // booking: the booking link's id
 }
 
 // Wait is how long the robot waits before it runs.
@@ -83,7 +87,7 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 	for _, k := range RobotKinds {
 		ok = ok || k == kind
 	}
-	needText := kind != "responsible" && kind != "stage" && !slices.Contains(TunnelKinds, kind)
+	needText := !slices.Contains([]string{"responsible", "stage", "fields", "webhook"}, kind) && !slices.Contains(TunnelKinds, kind)
 	if !ok || (needText && p.Text == "") || len([]rune(p.Text)) > 500 || len([]rune(p.Details)) > 5000 || p.Days < 0 || p.Days > 365 {
 		return i18n.E("err.robot")
 	}
@@ -92,6 +96,9 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 	}
 	if p.Delay == 0 {
 		p.Unit = ""
+	}
+	if err := s.checkRobotExtra(ctx, stageID, kind, &p); err != nil {
+		return err
 	}
 	switch kind {
 	case "task":
@@ -196,6 +203,12 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 	if (p.Min > 0 && c.amount < p.Min) || (p.Max > 0 && c.amount > p.Max) {
 		return
 	}
+	if p.If != nil {
+		values, err := s.cardValues(ctx, c)
+		if err != nil || !robotCondOK(*p.If, values) {
+			return
+		}
+	}
 	var respName string
 	_ = s.db.QueryRow(ctx, `SELECT name FROM users WHERE id::text = $1`, c.responsible).Scan(&respName)
 	to := p.To
@@ -229,6 +242,10 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 		err = s.robotMail(ctx, actorID, c, text, c.fill(p.Details, respName))
 	case "booking":
 		err = s.robotBooking(ctx, actorID, c, p, text, respName)
+	case "fields":
+		err = s.robotFields(ctx, actorID, c, p.Set, respName)
+	case "webhook":
+		err = s.robotWebhook(ctx, actorID, c, p.URL)
 	case "responsible":
 		if to == c.responsible {
 			return

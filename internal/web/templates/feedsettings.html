@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "feed.settings"}}</h1><a class="btn" href="/feed">{{icon "chevron-left"}} {{t "title.feed"}}</a></div>
+<form method="post" action="/feed/settings" class="card stack" data-feed-rights>
+  <p class="small muted">{{t "feed.rights_hint"}}</p>
+  {{range $k := list "all" "important"}}{{$sel := index $d (ifs (eq $k "all") "All" "Important")}}
+  <h3>{{t (print "feed.rights_" $k)}}</h3>
+  <label class="check"><input type="radio" name="{{$k}}_who" value="" {{if not $sel}}checked{{end}}> {{t "feed.rights_everyone"}}</label>
+  <label class="check"><input type="radio" name="{{$k}}_who" value="chosen" {{if $sel}}checked{{end}}> {{t "feed.rights_chosen"}}</label>
+  <div>{{template "upick" (upick $k $sel $d.Users "multi" "depts" "ph" (t "feed.to_people_ph"))}}</div>
+  {{end}}
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>
+{{end}}

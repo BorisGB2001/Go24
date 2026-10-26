@@ -224,10 +224,35 @@ func (s *Store) Audience(ctx context.Context, viewer string, g Segment) ([]Recip
 	if !ok {
 		return nil, ErrNotFound
 	}
+	q, args, err := s.segmentQuery(ctx, viewer, g, q)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Recipient])
+	if err != nil {
+		return nil, err
+	}
+	seen, out := map[string]bool{}, list[:0]
+	for _, r := range list {
+		r.Email = strings.TrimSpace(r.Email)
+		if k := strings.ToLower(r.Email); ValidEmail(r.Email) && !seen[k] {
+			seen[k] = true
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// segmentQuery adds to q, a query of the segment's cards (x), the viewer's CRM rights and the segment's filter.
+func (s *Store) segmentQuery(ctx context.Context, viewer string, g Segment, q string) (string, []any, error) {
 	args := []any{viewer}
 	sc, err := s.CRM.ReadScope(ctx, viewer, g.Entity, "x", 1)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	q += ` AND ` + sc
 	arg := func(v any) string {
@@ -256,23 +281,7 @@ func (s *Store) Audience(ctx context.Context, viewer string, g Segment) ([]Recip
 	if d, err := time.ParseInLocation(time.DateOnly, f.To, time.Local); err == nil {
 		q += ` AND x.created_at < ` + arg(d.AddDate(0, 0, 1))
 	}
-	rows, err := s.db.Query(ctx, q+` ORDER BY x.created_at LIMIT `+strconv.Itoa(MaxAudience+1), args...)
-	if err != nil {
-		return nil, err
-	}
-	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Recipient])
-	if err != nil {
-		return nil, err
-	}
-	seen, out := map[string]bool{}, list[:0]
-	for _, r := range list {
-		r.Email = strings.TrimSpace(r.Email)
-		if k := strings.ToLower(r.Email); ValidEmail(r.Email) && !seen[k] {
-			seen[k] = true
-			out = append(out, r)
-		}
-	}
-	return out, nil
+	return q + ` ORDER BY x.created_at LIMIT ` + strconv.Itoa(MaxAudience+1), args, nil
 }
 
 // token is a random key of a recipient's links.

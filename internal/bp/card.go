@@ -1,10 +1,12 @@
 package bp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +20,9 @@ import (
 
 // The steps of the designer that act on the CRM and write to people: «Изменить карточку» (update) sets fields of
 // the process's card, «Создать карточку» (create) adds a lead, a deal, a contact or a company, «Сообщение в чат» (chat)
-// writes to people in the messenger and «Письмо» (mail) sends a letter from someone's mailbox.
+// writes to people in the messenger and «Письмо» (mail) sends a letter from someone's mailbox. «Добавить комментарий»
+// (comment) writes in the card's timeline, «Дело CRM» (activity) plans a call, a meeting or a to-do on the card,
+// «Создание документа» (document) makes a document of the card by a template of the document generator.
 
 // CardFields are the built-in fields of each kind of card a step may set (the locales crm.f.<key>); own fields go by
 // their names.
@@ -31,8 +35,11 @@ var CardFields = map[string][]string{
 
 // checkCardStep checks what a step of these kinds needs; entity is the template's card.
 func checkCardStep(entity string, st Step) error {
-	if st.Kind != "update" && st.Kind != "create" && len(st.Sets) > 0 || st.Kind != "create" && st.Entity != "" ||
-		st.Kind != "chat" && st.Kind != "mail" && st.From != "" || st.Kind != "mail" && (st.Email != "" || st.Subject != "") {
+	if st.Kind != "update" && st.Kind != "create" && st.Kind != "start" && st.Kind != "document" && len(st.Sets) > 0 || st.Kind != "create" && st.Entity != "" ||
+		st.Kind != "chat" && st.Kind != "mail" && st.Kind != "post" && st.Kind != "comment" && st.Kind != "document" && st.From != "" || st.Kind != "mail" && st.Email != "" ||
+		st.Kind != "mail" && st.Kind != "post" && st.Subject != "" || st.Kind == "post" && len([]rune(st.Subject)) > 300 ||
+		st.Kind != "activity" && (st.Deed != "" || st.Note != "") || len([]rune(st.Note)) > 1000 ||
+		(st.Kind == "document") != (st.Doc != "") {
 		return i18n.E("err.bp_step")
 	}
 	for _, a := range st.Sets {
@@ -42,7 +49,15 @@ func checkCardStep(entity string, st Step) error {
 	}
 	switch st.Kind {
 	case "update":
-		if entity == "none" || len(st.Sets) == 0 {
+		if !crm.Entities[entity] || len(st.Sets) == 0 {
+			return i18n.E("err.bp_step")
+		}
+	case "comment", "document":
+		if !crm.Entities[entity] || len(st.Sets) > 50 {
+			return i18n.E("err.bp_step")
+		}
+	case "activity":
+		if !crm.Entities[entity] || !slices.Contains(crm.ActivityKinds, st.Deed) {
 			return i18n.E("err.bp_step")
 		}
 	case "create":
@@ -50,9 +65,9 @@ func checkCardStep(entity string, st Step) error {
 			return i18n.E("err.bp_step")
 		}
 	case "mail":
-		// the card's client is there only when the process is of a card
+		// the card's client is there only when the process is of a CRM card
 		if strings.TrimSpace(st.Subject) == "" || len([]rune(st.Subject)) > 300 || len(st.Email) > 1000 ||
-			st.To == "client" && entity == "none" || st.To == "" && strings.TrimSpace(st.Email) == "" {
+			st.To == "client" && !crm.Entities[entity] || st.To == "" && strings.TrimSpace(st.Email) == "" {
 			return i18n.E("err.bp_step")
 		}
 	}
@@ -115,7 +130,7 @@ func (s *Store) apply(ctx context.Context, x Instance, entity string, c card, se
 		if err != nil {
 			return fmt.Errorf("no field %q", a.Field)
 		}
-		v := strings.TrimSpace(s.fill(ctx, x, a.Value))
+		v := strings.TrimSpace(s.fillRaw(ctx, x, a.Value))
 		if id, ok := strings.CutPrefix(key, "uf:"); ok {
 			c.own[id] = v
 			continue
@@ -330,7 +345,7 @@ func (s *Store) createCard(ctx context.Context, x Instance, st Step, title strin
 	if x.Values == nil {
 		x.Values = map[string]string{}
 	}
-	x.Values["created_card"] = cardPath(st.Entity, id)
+	x.Values["created_card"] = CardPath(st.Entity, id)
 	return id, s.saveValues(ctx, x)
 }
 
@@ -430,4 +445,46 @@ func (s *Store) chat(ctx context.Context, x Instance, st Step, text string) ([]s
 		}
 	}
 	return users, nil
+}
+
+// activity plans a deed of the step's kind on the process's card, by its starter: the text is its subject, To its
+// responsible; the deadline is the end of the working day Days days on.
+func (s *Store) activity(ctx context.Context, x Instance, st Step, text string) (string, error) {
+	user, err := s.who(ctx, x, st.To)
+	if err != nil {
+		return "", err
+	}
+	sched, err := s.Tasks.Schedule(ctx)
+	if err != nil {
+		return "", err
+	}
+	day := time.Now().AddDate(0, 0, st.Days)
+	deadline := sched.Deadline(time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 0, 0, day.Location()))
+	return s.CRM.AddActivity(ctx, x.StartedBy.ID, crm.Activity{Entity: x.Entity, EntityID: x.EntityID, Kind: st.Deed,
+		Subject: text, Description: s.fill(ctx, x, st.Note), Deadline: deadline, Responsible: crm.Ref{ID: user}})
+}
+
+// document makes a document of the process's card by the step's template, of From: the placeholders of Sets ({…}
+// filled) go over the card's values. The document's link goes into the process's values as {created_document}.
+func (s *Store) document(ctx context.Context, x Instance, st Step) (string, error) {
+	if s.Document == nil {
+		return "", i18n.E("err.bp_no_docs")
+	}
+	author, err := s.who(ctx, x, cmp.Or(st.From, "starter"))
+	if err != nil {
+		return "", err
+	}
+	values := map[string]string{}
+	for _, a := range st.Sets {
+		values[a.Field] = s.fill(ctx, x, a.Value)
+	}
+	id, err := s.Document(ctx, author, x.Entity, x.EntityID, st.Doc, values)
+	if err != nil {
+		return "", err
+	}
+	if x.Values == nil {
+		x.Values = map[string]string{}
+	}
+	x.Values["created_document"] = CardPath(x.Entity, x.EntityID) + "/documents/" + id
+	return id, s.saveValues(ctx, x)
 }

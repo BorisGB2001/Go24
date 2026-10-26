@@ -3,12 +3,18 @@
 <h1>{{if $e.Hidden}}{{icon "lock"}} {{t "calendar.private_busy"}}{{else if $e.ID}}{{if $e.Important}}<span class="evimportant" title="{{t "calendar.important"}}">{{icon "exclamation-mark"}}</span> {{end}}{{$e.Title}}{{else}}{{t "calendar.new"}}{{end}}</h1>
 {{if and $e.ID (not $e.Hidden)}}<div class="row evtools">
   <a class="button ghost" href="/calendar/new?copy={{$e.ID}}">{{icon "copy"}} {{t "calendar.copy"}}</a>
-  <a class="button ghost" href="/calendar/ics/{{$e.ID}}" title="{{t "calendar.ics_hint"}}">{{icon "download"}} {{t "calendar.ics"}}</a></div>{{end}}
+  <a class="button ghost" href="/calendar/ics/{{$e.ID}}" title="{{t "calendar.ics_hint"}}">{{icon "download"}} {{t "calendar.ics"}}</a>
+  {{if $d.ChatOn}}<form method="post" action="/calendar/{{$e.ID}}/chat" class="inline"><button class="ghost" title="{{t "calendar.chat_hint"}}">{{icon "messages"}} {{t "calendar.chat"}}</button></form>{{end}}</div>{{end}}
+{{if $e.ReadOnly}}<div class="flash">{{icon "link"}} {{t "calendar.linked_readonly"}}</div>{{end}}
 {{with $e.SeriesID}}<div class="flash">{{icon "history"}} {{t "calendar.series_changed"}}</div>{{end}}
 {{with $d.IM}}<div class="flash">{{icon "message-circle"}} {{t "calendar.from_message" .Sender}}</div>{{end}}
 {{with $d.FromLetter}}<div class="flash">{{icon "mail"}} {{t "calendar.from_letter"}} <a href="/mail?letter={{.ID}}">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</a> · {{.From}}</div>{{end}}
 {{if and $e.ID $e.Video (not $e.Hidden)}}<div class="card row evanswer">{{icon "video"}} <b>{{t "calendar.video"}}</b><span style="flex:1"></span>
   <a class="button primary" href="/call?event={{$e.ID}}">{{t "calendar.video_join"}}</a></div>{{end}}
+{{if and $e.ID $e.CategoryID (not $e.MyStatus) (ne $e.OwnerID $d.Me)}}
+<div class="card row evanswer">{{icon "world"}} <span>{{t "calendar.open.event"}}: <a href="/calendar/open?cat={{$e.CategoryID}}">{{$e.CategoryName}}</a></span><span style="flex:1"></span>
+  <form method="post" action="/calendar/{{$e.ID}}/join"><input type="hidden" name="join" value="1"><button class="primary">{{icon "check"}} {{t "calendar.open.join"}}</button></form></div>
+{{end}}
 {{if and $e.ID $e.MyStatus}}
 <div class="card row evanswer">
   <span>{{t "calendar.your_answer"}}: <b>{{t (print "calendar.status." $e.MyStatus)}}</b></span><span style="flex:1"></span>
@@ -25,14 +31,25 @@
   <textarea name="description" rows="3" placeholder="{{t "form.description"}}" data-mention>{{$e.Description}}</textarea>
   <div class="tf-grid">
     <label>{{t "calendar.when"}}</label>
-    <div class="row evwhen"><input type="datetime-local" name="start" value="{{$e.Start.Format "2006-01-02T15:04"}}" required> —
-      <input type="datetime-local" name="end" value="{{$e.End.Format "2006-01-02T15:04"}}" required>
-      <label class="check"><input type="checkbox" name="all_day" {{if $e.AllDay}}checked{{end}}> {{t "calendar.all_day"}}</label></div>
+    <div class="row evwhen"><input type="datetime-local" name="start" value="{{($e.InZone $e.Start).Format "2006-01-02T15:04"}}" required> —
+      <input type="datetime-local" name="end" value="{{($e.InZone $e.End).Format "2006-01-02T15:04"}}" required>
+      <label class="check"><input type="checkbox" name="all_day" {{if $e.AllDay}}checked{{end}}> {{t "calendar.all_day"}}</label>
+      <select name="tz" class="evtz" title="{{t "calendar.tz"}}" data-ev-tz {{if $e.AllDay}}hidden{{end}}><option value="">{{t "calendar.tz_portal"}}{{with $d.PortalTZ}} ({{.}}){{end}}</option>
+        {{range $d.Zones}}<option value="{{.Name}}" {{if eq .Name $e.TZ}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>
     <label>{{t "calendar.repeat"}}</label>
-    <div class="row evwhen"><select name="repeat" style="width:auto"><option value="">{{t "calendar.repeat.none"}}</option>
+    <div><div class="row evwhen"><select name="repeat" style="width:auto"><option value="">{{t "calendar.repeat.none"}}</option>
         {{range list "daily" "weekly" "monthly" "yearly"}}<option value="{{.}}" {{if eq . $e.Repeat}}selected{{end}}>{{t (print "repeat.period." .)}}</option>{{end}}</select>
-      <span class="muted">{{t "repeat.every"}}</span><input type="number" name="every" min="1" max="365" value="{{if $e.Every}}{{$e.Every}}{{else}}1{{end}}" class="num">
-      <span class="muted">{{t "calendar.until"}}</span><input type="date" name="until" value="{{with $e.Until}}{{.Format "2006-01-02"}}{{end}}" style="width:auto"></div>
+      <span class="muted">{{t "repeat.every"}}</span><input type="number" name="every" min="1" max="365" value="{{if $e.Every}}{{$e.Every}}{{else}}1{{end}}" class="num"></div>
+    <div class="evrepeat" data-ev-repeat {{if not $e.Repeat}}hidden{{end}}>
+      <div class="row evwhen" data-ev-days {{if ne $e.Repeat "weekly"}}hidden{{end}}><span class="muted">{{t "calendar.repeat.days"}}</span>
+        {{range $n := $e.WeekDays}}<label class="check"><input type="checkbox" name="days" value="{{$n}}" {{if $e.OnDay $n}}checked{{end}}> {{t (print "wd." $n)}}</label>{{end}}</div>
+      <div class="row evwhen"><span class="muted">{{t "calendar.repeat.ends"}}</span>
+        <select name="ends" style="width:auto" data-ev-ends>
+          <option value="">{{t "calendar.repeat.ends.never"}}</option>
+          <option value="count" {{if $e.Count}}selected{{end}}>{{t "calendar.repeat.ends.count"}}</option>
+          <option value="until" {{if and $e.Until (not $e.Count)}}selected{{end}}>{{t "calendar.repeat.ends.until"}}</option></select>
+        <span data-ev-end="count" {{if not $e.Count}}hidden{{end}}><input type="number" name="count" min="1" max="999" value="{{if $e.Count}}{{$e.Count}}{{else}}10{{end}}" class="num"> <span class="muted">{{t "calendar.repeat.times"}}</span></span>
+        <span data-ev-end="until" {{if or (not $e.Until) $e.Count}}hidden{{end}}><input type="date" name="until" value="{{with $e.Until}}{{.Format "2006-01-02"}}{{end}}" style="width:auto"></span></div></div></div>
     <label>{{t "calendar.remind"}}</label>
     <div class="reminds" data-reminds>
       {{range $m := $e.Reminds}}<span class="remind"><select name="remind">{{range $d.Presets}}<option value="{{.M}}" {{if eq .M $m}}selected{{end}}>{{if eq .Key "calendar.remind.n"}}{{t .Key .M}}{{else}}{{t .Key}}{{end}}</option>{{end}}</select>
@@ -52,12 +69,21 @@
       {{range $d.Sections}}<option value="c:{{.ID}}" {{if eq .ID $e.CalendarID}}selected{{end}}>{{.Name}}</option>{{end}}
       <option value="company" {{if $e.Company}}selected{{end}}>{{t "calendar.company"}}</option>
       {{range $d.Projects}}<option value="{{.ID}}" {{if eq .ID $e.ProjectID}}selected{{end}}>{{t "calendar.project"}}: {{.Name}}</option>{{end}}</select>
+    {{if $d.Categories}}<label>{{t "calendar.open.category"}}</label>
+    <div><input type="hidden" name="category_on" value="1"><select name="category"><option value="">{{t "calendar.open.none"}}</option>
+      {{range $d.Categories}}{{if or (not .Closed) .Mine (eq .ID $e.CategoryID)}}<option value="{{.ID}}" {{if eq .ID $e.CategoryID}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+      <div class="small muted">{{t "calendar.open.hint"}}</div></div>{{end}}
     <label>{{t "calendar.color"}}</label>
     <div class="row evwhen"><div class="swatches evcolors"><label class="nocolor" title="{{t "calendar.color_none"}}"><input type="radio" name="color" value="" {{if not $e.Color}}checked{{end}}></label>
       {{range $d.Colors}}<label style="--sw:{{.}}"><input type="radio" name="color" value="{{.}}" {{if eq . $e.Color}}checked{{end}}></label>{{end}}
       {{if and $e.Color (not (has $d.Colors $e.Color))}}<label style="--sw:{{$e.Color}}"><input type="radio" name="color" value="{{$e.Color}}" checked></label>{{end}}</div>
       <label class="check"><input type="checkbox" name="important" {{if $e.Important}}checked{{end}}> {{icon "exclamation-mark"}} {{t "calendar.important"}}</label></div>
     <label>{{t "calendar.attendees"}}</label>{{template "upick" (upick "invite" $d.Invited $d.Users "multi")}}
+    {{if $d.CRMOn}}<label>{{t "calendar.crm"}}</label>
+    <div class="bk-crm" data-ev-crm data-unbind="{{t "booking.crm_unbind"}}"><input type="hidden" name="crm_on" value="1">{{with $d.CRMBack}}<input type="hidden" name="crm_back" value="{{.}}">{{end}}
+      <div class="row bk-chips" data-ev-crm-chips>{{range $d.CRM}}<span class="pill bk-chip"><input type="hidden" name="crm" value="{{.Entity}}:{{.ID}}"><a href="{{.Path}}" target="_blank">{{t (print "crm." .Entity)}}: {{.Title}}</a><button type="button" class="ghost small" data-unbind title="{{t "booking.crm_unbind"}}">×</button></span>{{end}}</div>
+      <input type="search" data-ev-crm-q placeholder="{{t "calendar.crm_search"}}" autocomplete="off" aria-label="{{t "calendar.crm_search"}}">
+      <div class="bk-crm-res" data-ev-crm-res role="listbox"></div></div>{{end}}
     <label>{{t "calendar.planner"}}</label>
     <div class="planner" data-planner data-owner="{{if $e.OwnerID}}{{$e.OwnerID}}{{else}}{{$d.Me}}{{end}}" data-except="{{$e.ID}}"
       data-t-free="{{t "calendar.planner_free"}}" data-t-busy="{{t "calendar.planner_busy"}}" data-t-none="{{t "calendar.planner_none"}}"
@@ -87,13 +113,15 @@
 </div>
 {{else}}
 <div class="card props">
-  <span class="k">{{t "calendar.when"}}</span><span>{{if $e.AllDay}}{{day $e.Start}}{{if not (eq (day $e.Start) (day $e.End))}} — {{day $e.End}}{{end}}{{else}}{{datetime $e.Start}} — {{clock $e.End}}{{end}}</span>
+  <span class="k">{{t "calendar.when"}}</span><span>{{if $e.AllDay}}{{day $e.Start}}{{if not (eq (day $e.Start) (day $e.End))}} — {{day $e.End}}{{end}}{{else}}{{datetime $e.Start}} — {{clock $e.End}}{{if $e.OtherTZ}} <span class="muted">· {{($e.InZone $e.Start).Format "02.01 15:04"}} — {{($e.InZone $e.End).Format "15:04"}} {{$e.TZ}}</span>{{end}}{{end}}</span>
   {{with $e.Where}}<span class="k">{{t "calendar.where"}}</span><span>{{.}}</span>{{end}}
   {{with $e.RoomName}}<span class="k">{{t "calendar.room"}}</span><span>🚪 {{.}}</span>{{end}}
   {{if and (not $e.Hidden) (ne $e.Accessibility "busy")}}<span class="k">{{t "calendar.accessibility"}}</span><span>{{t (print "calendar.acc." $e.Accessibility)}}</span>{{end}}
   {{if $e.Private}}<span class="k">{{icon "lock"}}</span><span>{{t "calendar.private"}}</span>{{end}}
-  {{if $e.Repeat}}<span class="k">{{t "calendar.repeat"}}</span><span>{{t (print "repeat.period." $e.Repeat)}}{{if gt $e.Every 1}}, {{t "repeat.every"}} {{$e.Every}}{{end}}{{with $e.Until}} — {{t "calendar.until"}} {{day .}}{{end}}</span>{{end}}
+  {{if $e.Repeat}}<span class="k">{{t "calendar.repeat"}}</span><span>{{t (print "repeat.period." $e.Repeat)}}{{if gt $e.Every 1}}, {{t "repeat.every"}} {{$e.Every}}{{end}}{{with $e.Days}}, {{range $i, $n := .}}{{if $i}}, {{end}}{{t (print "wd." $n)}}{{end}}{{end}}{{if $e.Count}} — {{t "calendar.repeat.count_n" $e.Count}}{{else}}{{with $e.Until}} — {{t "calendar.until"}} {{day .}}{{end}}{{end}}</span>{{end}}
   <span class="k">{{t "calendar.organizer"}}</span><span>{{person $e.OwnerName}}</span>
+  {{if $e.CategoryID}}<span class="k">{{t "calendar.open.category"}}</span><span><a class="tag" href="/calendar/open?cat={{$e.CategoryID}}">{{icon "world"}} {{$e.CategoryName}}</a></span>{{end}}
+  {{with $d.CRM}}<span class="k">{{t "calendar.crm"}}</span><span class="row tags">{{range .}}<a class="tag" href="{{.Path}}">{{t (print "crm." .Entity)}}: {{.Title}}</a>{{end}}</span>{{end}}
   {{with $e.Description}}<span class="k">{{t "form.description"}}</span><span>{{nl2br .}}</span>{{end}}
 </div>
 {{end}}

@@ -117,7 +117,7 @@ func TestCRM(t *testing.T) {
 	// a document template of deals
 	var file string
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('tpl', 'dog.docx', 1, $1) RETURNING id`, anna).Scan(&file))
-	if err := s.AddDocTemplate(ctx, anna, "Договор", "invoice", file); !errors.As(err, &ve) {
+	if err := s.AddDocTemplate(ctx, anna, "Договор", "task", file); !errors.As(err, &ve) {
 		t.Fatalf("a template of an unknown card: %v", err)
 	}
 	must(s.AddDocTemplate(ctx, anna, "Договор", "deal", file))

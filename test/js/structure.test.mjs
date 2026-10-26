@@ -14,11 +14,16 @@ const dept = (id, name, people, kids = '') => `<div class="dept" data-dept="${id
 const tree = dept('root', 'Ромашка', [['u0', 'Иванов Иван']],
   dept('it', 'ИТ', [['u1', 'Петров Пётр']], dept('dev', 'Разработка', [['u2', 'Сидоров Сидор'], ['u3', 'Кузнецова Анна']])) +
   dept('sales', 'Продажи', [['u4', 'Смирнов Олег']], dept('b2b', 'Корпоративные', [['u5', 'Попова Мария']])));
+// a team of «Продажи», with a member from another department
+const team = `<div class="dteams"><div class="teamcard card" data-team="t1"><div class="dhead"><b class="teamname"><a href="/company?team=t1">Проект Альфа</a></b></div>
+  <div class="dlead"></div><details class="dpeople"><summary>Участники</summary><a href="/u/u6" class="person" data-user="u6"><span>Орлова Вера</span></a></details></div></div>`;
+const at = tree.indexOf('<div class="dkids">', tree.indexOf('data-dept="sales"'));
+const treeT = tree.slice(0, at) + team + tree.slice(at);
 let reloads = 0;
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('jsdomError', e => { if (/navigation|reload/i.test(e.message)) reloads++; else console.error(e); });
 const page = edit => new JSDOM(`<!doctype html><body><div class="row structbar"><input type="search" class="structfind"><span class="structnone" hidden>Ничего не найдено</span></div>
-  <div class="orgtree"${edit ? ' data-struct-edit' : ''}>${tree.replace('class="dept"', 'class="dept root"')}</div></body>`,
+  <div class="orgtree"${edit ? ' data-struct-edit' : ''}>${treeT.replace('class="dept"', 'class="dept root"')}</div></body>`,
   { runScripts: 'outside-only', url: 'http://go24.test/company/structure', virtualConsole });
 
 // the search
@@ -51,6 +56,21 @@ const page = edit => new JSDOM(`<!doctype html><body><div class="row structbar">
   find.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(find.value, '');
   assert.deepEqual(hidden(), []);
+  // a team: by its name or a person in it — the department above stays, the team is marked
+  const tc = doc.querySelector('[data-team="t1"]');
+  type('альфа');
+  assert.deepEqual(hidden(), ['b2b', 'dev', 'it'], 'the team\'s department and the ones above stay');
+  assert.ok(tc.classList.contains('found') && !tc.classList.contains('struct-hide'));
+  type('орлова');
+  assert.ok(tc.querySelector('[data-user="u6"]').classList.contains('found'));
+  assert.ok(tc.querySelector('.dpeople').open, 'the team\'s list with the person found is opened');
+  assert.ok(!d('sales').classList.contains('struct-hide'));
+  type('попова'); // a person of another branch: the team is hidden
+  assert.ok(tc.classList.contains('struct-hide'));
+  type('продаж'); // its department found: the team stays
+  assert.ok(!tc.classList.contains('struct-hide'));
+  type('');
+  assert.ok(!tc.classList.contains('struct-hide') && !tc.classList.contains('found'));
   // reading only: nothing is dragged
   assert.equal(doc.querySelectorAll('[draggable="true"]').length, 0);
 }
@@ -70,6 +90,7 @@ const page = edit => new JSDOM(`<!doctype html><body><div class="row structbar">
   assert.equal(person('u2').getAttribute('draggable'), 'true');
   assert.equal(head('it').getAttribute('draggable'), 'true');
   assert.ok(!head('root').hasAttribute('draggable'), 'the company is not dragged');
+  assert.ok(!person('u6').hasAttribute('draggable'), 'a team member is not dragged between departments');
   const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0)); };
   const ev = (type, el) => {
     const e = new w.Event(type, { bubbles: true, cancelable: true });

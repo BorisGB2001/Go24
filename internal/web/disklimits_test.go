@@ -121,7 +121,7 @@ func TestDiskLimitsHTTP(t *testing.T) {
 	}
 
 	// «Возможности Диска»: public links and locking off — not in the file's menu, the link made does not open
-	token, err := srv.Drive.SetLink(ctx, anna, drive.Drive{Kind: "user", OwnerID: anna, CanWrite: true}, "file", file, "", false, nil)
+	token, err := srv.Drive.SetLink(ctx, anna, drive.Drive{Kind: "user", OwnerID: anna, CanWrite: true}, "file", file, "", false, nil, false, "")
 	must(err)
 	send(anna, "GET", "/s/"+token, "", nil, 200)
 	page = send(anna, "GET", "/disk/my", "", nil, 200)

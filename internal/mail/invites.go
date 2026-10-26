@@ -143,8 +143,9 @@ func (s *Store) keepMeeting(ctx context.Context, q pgx.Tx, userID, eventID strin
 	every := max(in.Every, 1)
 	if eventID != "" {
 		tag, err := q.Exec(ctx, `UPDATE events SET title = $3, description = $4, location = $5, starts_at = $6, ends_at = $7, all_day = $8,
-			repeat = $9, repeat_every = $10, repeat_until = $11, updated_at = now() WHERE id::text = $1 AND owner_id::text = $2`,
-			eventID, userID, title, text, clip(in.Location, 1000), in.Start, in.End, in.AllDay, in.Repeat, every, in.Until)
+			repeat = $9, repeat_every = $10, repeat_until = $11, repeat_days = coalesce($12::integer[], '{}'), repeat_count = $13,
+			updated_at = now() WHERE id::text = $1 AND owner_id::text = $2`,
+			eventID, userID, title, text, clip(in.Location, 1000), in.Start, in.End, in.AllDay, in.Repeat, every, in.Until, in.Days, in.Count)
 		if err != nil {
 			return "", err
 		}
@@ -153,9 +154,10 @@ func (s *Store) keepMeeting(ctx context.Context, q pgx.Tx, userID, eventID strin
 		}
 	}
 	var id string
-	err := q.QueryRow(ctx, `INSERT INTO events (owner_id, title, description, location, starts_at, ends_at, all_day, repeat, repeat_every, repeat_until)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id::text`, userID, title, text, clip(in.Location, 1000), in.Start, in.End,
-		in.AllDay, in.Repeat, every, in.Until).Scan(&id)
+	err := q.QueryRow(ctx, `INSERT INTO events (owner_id, title, description, location, starts_at, ends_at, all_day, repeat, repeat_every, repeat_until,
+		repeat_days, repeat_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11::integer[], '{}'), $12) RETURNING id::text`, userID, title, text,
+		clip(in.Location, 1000), in.Start, in.End, in.AllDay, in.Repeat, every, in.Until, in.Days, in.Count).Scan(&id)
 	return id, err
 }
 

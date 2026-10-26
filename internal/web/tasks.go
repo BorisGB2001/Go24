@@ -17,6 +17,7 @@ import (
 	"go24/internal/company"
 	"go24/internal/i18n"
 	"go24/internal/mail"
+	"go24/internal/openlines"
 	"go24/internal/tasks"
 	"go24/internal/worktime"
 )
@@ -130,6 +131,25 @@ func (s *Server) myTasks(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		}
 	}
 	s.render(w, r, "my", pg)
+}
+
+// readAllComments is «Прочитать все» of the green counter: the new messages of all the user's tasks, or of one
+// project's (form «project» — its key), are marked read.
+func (s *Server) readAllComments(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back, pid := "/my?view=comments", ""
+	if key := r.FormValue("project"); key != "" {
+		p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, key)
+		if err != nil {
+			s.taskErr(w, r, err, "/my")
+			return
+		}
+		back, pid = back+"&project="+url.QueryEscape(p.Key), p.ID
+	}
+	if _, err := s.Notify.MarkCommentsRead(r.Context(), sess.UserID, pid); err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // allTasks: every task the user may see (in admin mode — every task in go24), with the list filter and presets.
@@ -392,49 +412,92 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	prio, _ := strconv.Atoi(r.FormValue("priority"))
 	tpl := templateID(r, sess.UserID, s)
-	key, err := s.Tasks.CreateTask(r.Context(), sess.UserID, p, tasks.NewTask{
-		Title:               r.FormValue("title"),
-		Description:         r.FormValue("description"),
-		ResponsibleID:       r.FormValue("responsible"),
-		Priority:            tasks.Priority(prio),
-		Deadline:            deadline,
-		RequiresControl:     r.FormValue("requires_control") == "on",
-		AllowChangeDeadline: r.FormValue("allow_change_deadline") == "on",
-		MatchWorkTime:       r.FormValue("match_work_time") == "on",
-		NoEfficiency:        r.FormValue("no_efficiency") == "on",
-		Params:              formParams(r),
-		ParentKey:           strings.TrimSpace(r.FormValue("parent")),
-		Accomplices:         r.Form["accomplices"],
-		Auditors:            r.Form["auditors"],
-		StageID:             r.FormValue("stage"),
-		Checklist:           strings.Split(r.FormValue("checklist"), "\n"),
-		TemplateID:          tpl,
-	})
-	if err == nil && tpl != "" { // made from a template: the subtasks of its subtask templates
-		if serr := s.Tasks.CreateTemplateSubtasks(r.Context(), sess.UserID, tpl, key, time.Now()); serr != nil {
-			s.Log.Warn("subtasks of a template", "template", tpl, "err", serr)
-		}
+	resps := responsibles(r)
+	if wantsJSON(r) && len(resps) > 1 { // «+» on a kanban column and the backlog make one task
+		resps = resps[:1]
 	}
-	if wantsJSON(r) { // «+» on a kanban column
+	var keys []string
+	for _, resp := range resps { // several responsible people: each gets a task of their own
+		key, err := s.Tasks.CreateTask(r.Context(), sess.UserID, p, tasks.NewTask{
+			Title:               r.FormValue("title"),
+			Description:         r.FormValue("description"),
+			ResponsibleID:       resp,
+			Priority:            tasks.Priority(prio),
+			Deadline:            deadline,
+			RequiresControl:     r.FormValue("requires_control") == "on",
+			AllowChangeDeadline: r.FormValue("allow_change_deadline") == "on",
+			MatchWorkTime:       r.FormValue("match_work_time") == "on",
+			NoEfficiency:        r.FormValue("no_efficiency") == "on",
+			Params:              formParams(r),
+			ParentKey:           strings.TrimSpace(r.FormValue("parent")),
+			Accomplices:         r.Form["accomplices"],
+			Auditors:            r.Form["auditors"],
+			StageID:             r.FormValue("stage"),
+			Checklist:           strings.Split(r.FormValue("checklist"), "\n"),
+			TemplateID:          tpl,
+		})
+		if err == nil && tpl != "" { // made from a template: the subtasks of its subtask templates
+			if serr := s.Tasks.CreateTemplateSubtasks(r.Context(), sess.UserID, tpl, key, time.Now()); serr != nil {
+				s.Log.Warn("subtasks of a template", "template", tpl, "err", serr)
+			}
+		}
+		if wantsJSON(r) { // «+» on a kanban column
+			if err != nil {
+				s.jsonErr(w, r, err)
+				return
+			}
+			if r.FormValue("as") == "row" { // backlog of a scrum team
+				s.scrumTaskJSON(w, r, sess, key, func(string) error { return nil })
+				return
+			}
+			s.quickTask(w, r, sess, key)
+			return
+		}
 		if err != nil {
-			s.jsonErr(w, r, err)
+			s.taskErr(w, r, err, back)
 			return
 		}
-		if r.FormValue("as") == "row" { // backlog of a scrum team
-			s.scrumTaskJSON(w, r, sess, key, func(string) error { return nil })
-			return
+		s.newTaskDone(r, sess, key)
+		keys = append(keys, key)
+	}
+	if len(keys) > 1 { // the tasks the person has just set: «Поручил»
+		http.Redirect(w, r, "/my?role=creator", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/t/"+keys[0], http.StatusSeeOther)
+}
+
+// responsibles are the responsible people of a new task's form, each once; none — "" (CreateTask makes the author
+// responsible).
+func responsibles(r *http.Request) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, id := range r.Form["responsible"] {
+		if id = strings.TrimSpace(id); id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
-		s.quickTask(w, r, sess, key)
-		return
 	}
-	if err != nil {
-		s.taskErr(w, r, err, back)
-		return
+	if len(ids) == 0 {
+		return []string{""}
 	}
+	return ids
+}
+
+// newTaskDone links a task made by the form to what it was made of: a CRM card, the day plan, the task it copies,
+// a letter, a chat message, an open line's dialogue.
+func (s *Server) newTaskDone(r *http.Request, sess auth.Session, key string) {
 	if link := r.FormValue("crm"); link != "" { // made from a CRM card: linked to it
 		if id, err := s.Tasks.TaskIDByKey(r.Context(), key); err == nil {
 			if err := s.Tasks.AddCRMLink(r.Context(), sess.UserID, id, link); err != nil {
 				s.Log.Warn("crm link of a new task", "err", err)
+			}
+		}
+	}
+	if r.FormValue("dayplan") == "1" { // «Новая задача» of the working day window: into «План на день»
+		if id, err := s.Tasks.TaskIDByKey(r.Context(), key); err == nil {
+			if err := s.Tasks.SetDayPlan(r.Context(), sess.UserID, id, true); err != nil {
+				s.Log.Warn("day plan of a new task", "err", err)
 			}
 		}
 	}
@@ -447,7 +510,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, sess auth.Se
 	if room, ev := r.FormValue("im_room"), r.FormValue("im_event"); room != "" && ev != "" && s.Matrix != nil { // of a chat message
 		s.taskMessageDone(r, sess, room, ev, key)
 	}
-	http.Redirect(w, r, "/t/"+key, http.StatusSeeOther)
+	if id := r.FormValue("ol"); id != "" { // of an open line's dialogue
+		s.taskDialogueDone(r, sess, id, key)
+	}
 }
 
 func (s *Server) setMember(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -552,6 +617,9 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request, sess auth.Session)
 		return
 	}
 	marks, err := s.Tasks.Marks(r.Context(), sess.UserID, id)
+	if err == nil {
+		marks["dayplan"], err = s.Tasks.InDayPlan(r.Context(), sess.UserID, id)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
@@ -636,10 +704,12 @@ type taskForm struct {
 	Projects                              []tasks.Project // new: where the task may go
 	Project, Parent                       string          // new: preselected project key, parent task key
 	CRM                                   string          // new: a CRM card the task is made from (its go24 path)
+	DayPlan                               bool            // new: «Новая задача» of the working day window (into «План на день»)
 	Copy                                  string          // new: «Копировать» — the task the form is a copy of (its tags and CRM links go along)
 	Mail                                  *mail.Message   // new: the letter the task is made of (its files go along)
 	MailFiles                             int
 	IM                                    *imSource // new: the chat message the task is made of
+	OL                                    *openlines.Session // new: the open line's dialogue the task is made of
 	Checklist                             string // new, template: one item per line
 	// template mode: the deadline is an offset; the schedule of a regular template (a new task can be made regular too)
 	Template                    bool
@@ -731,6 +801,9 @@ func (s *Server) taskPost(w http.ResponseWriter, r *http.Request, anchor string,
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		}
 		return
+	}
+	if b := r.FormValue("back"); localPath(b) { // a form outside the card (the working day window) returns to its page
+		back, anchor = b, ""
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
@@ -876,6 +949,20 @@ func parseDate(v string) (*time.Time, error) {
 
 func (s *Server) timerStart(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	s.taskPost(w, r, "#time", func(id string) error { return s.Tasks.StartTimer(r.Context(), sess.UserID, id) })
+}
+
+// dayPlanAdd: «Добавить задачу» of the working day window (key — a task of the user's list).
+func (s *Server) dayPlanAdd(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	r.SetPathValue("key", strings.ToUpper(strings.TrimSpace(r.FormValue("key"))))
+	s.taskPost(w, r, "", func(id string) error { return s.Tasks.SetDayPlan(r.Context(), sess.UserID, id, true) })
+}
+
+// taskDayPlan puts the task into the user's «План на день» (on=1) or takes it out (on=0); a form of the working day
+// window comes back to its page (back).
+func (s *Server) taskDayPlan(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	s.taskPost(w, r, "", func(id string) error {
+		return s.Tasks.SetDayPlan(r.Context(), sess.UserID, id, r.FormValue("on") == "1")
+	})
 }
 
 // timerStop stops the user's timer wherever it runs and returns to the page the user came from.
@@ -1307,7 +1394,7 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		cancel = "/p/" + project
 	}
 	f := taskForm{New: true, Action: "/tasks/new", Cancel: cancel, Responsible: sess.UserID, Deadline: &deadline,
-		Priority: 1, Users: users, Projects: mine, Project: project, Parent: parent, CRM: q.Get("crm"),
+		Priority: 1, Users: users, Projects: mine, Project: project, Parent: parent, CRM: q.Get("crm"), DayPlan: q.Get("dayplan") == "1",
 		Repeat: tasks.Repeat{Period: "weekly", Every: 1, WeekDays: []int{int(time.Now().Weekday()+6)%7 + 1}, MonthDay: time.Now().Day(),
 			YearMonth: int(time.Now().Month()), At: "09:00", StartsOn: time.Now()}}
 	f.Title = q.Get("title") // «Сделать задачей» of a checklist item
@@ -1332,6 +1419,9 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	if room, ev := q.Get("im_room"), q.Get("im_event"); room != "" && ev != "" && s.Matrix != nil { // … of a chat message
 		s.taskFromMessage(r, sess, room, ev, &f)
+	}
+	if id := q.Get("ol"); id != "" { // «Создать задачу» of an open line's dialogue
+		s.taskFromDialogue(r, sess, id, &f)
 	}
 	s.render(w, r, "newtask", page{TitleKey: "task.new", Nav: "my", Data: map[string]any{"Projects": mine, "Form": f}})
 }
@@ -1407,13 +1497,20 @@ func templateID(r *http.Request, userID string, s *Server) string {
 // newTaskCreate creates the task in the chosen project (same rules as the project's own form).
 func (s *Server) newTaskCreate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if r.FormValue("repeat") == "on" { // a regular task: the portal keeps it as a template that makes the tasks
-		t, err := parseTemplate(r)
-		if err == nil {
-			_, err = s.Tasks.SaveTemplate(r.Context(), sess.UserID, t)
-		}
-		if err != nil {
-			s.taskErr(w, r, err, "/tasks/new")
+		if err := r.ParseForm(); err != nil {
+			s.taskErr(w, r, i18n.E("err.bad_form"), "/tasks/new")
 			return
+		}
+		for _, resp := range responsibles(r) { // several responsible people: a template of each one's own
+			r.Form["responsible"] = []string{resp}
+			t, err := parseTemplate(r)
+			if err == nil {
+				_, err = s.Tasks.SaveTemplate(r.Context(), sess.UserID, t)
+			}
+			if err != nil {
+				s.taskErr(w, r, err, "/tasks/new")
+				return
+			}
 		}
 		http.Redirect(w, r, "/templates?msg="+url.QueryEscape(s.tr(r, "templates.regular_saved")), http.StatusSeeOther)
 		return
@@ -1432,6 +1529,58 @@ func (s *Server) taskMark(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	s.taskPost(w, r, "", func(id string) error {
 		return s.Tasks.SetMark(r.Context(), sess.UserID, id, r.FormValue("mark"), r.FormValue("on") == "1")
 	})
+}
+
+// taskRowMenu is the menu of a row in task lists (☰: what the user may do with the task, rendered
+// with the list template for the page script to show. ?back= — the list the forms of the menu return to.
+func (s *Server) taskRowMenu(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id, err := s.Tasks.TaskIDByKey(r.Context(), r.PathValue("key"))
+	var c tasks.TaskCard
+	if err == nil {
+		c, err = s.Tasks.RowCard(r.Context(), sess.UserID, id)
+	}
+	var marks map[string]bool
+	if err == nil {
+		marks, err = s.Tasks.Marks(r.Context(), sess.UserID, id)
+	}
+	guest := tasks.IsGuestCtx(r.Context())
+	if err == nil && !guest {
+		marks["dayplan"], err = s.Tasks.InDayPlan(r.Context(), sess.UserID, id)
+	}
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	back := r.URL.Query().Get("back")
+	if !localPath(back) {
+		back = "/tasks"
+	}
+	data := map[string]any{
+		"Card": c, "Key": c.Key(), "Marks": marks, "Back": back, "Guest": guest, "BaseURL": s.BaseURL, "Part": r.URL.Query().Get("part"),
+		"CanSub": !c.Frozen && (c.Roles.Manager || c.MemberRole == "member") &&
+			s.Tasks.GuestMay(r.Context(), c.ProjectID, sess.UserID, "tasks") == nil,
+	}
+	var buf bytes.Buffer
+	if err := s.pages[s.lang(r)]["tasks"].ExecuteTemplate(&buf, "trowmenu", data); err != nil {
+		s.fail(w, "row menu", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = buf.WriteTo(w)
+}
+
+// setListSort keeps the sort of task lists a click on a column header chose (sort — a column of tasks.SortColumns,
+// "-column" descending, "" the usual order) and returns to the list.
+func (s *Server) setListSort(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/tasks"
+	if b := r.FormValue("back"); localPath(b) {
+		back = b
+	}
+	if err := s.Tasks.SetSort(r.Context(), sess.UserID, r.FormValue("sort")); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // taskTag adds a tag (op=add) or removes it (op=remove).

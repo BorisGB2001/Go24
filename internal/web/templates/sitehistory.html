@@ -1,0 +1,28 @@
+{{define "content"}}{{$d := .Data}}{{$s := $d.Site}}{{$base := print "/sites/" $s.ID "/p/" $d.Page "/history"}}
+<div class="crumbs"><a href="/sites">{{t "site.title"}}</a> {{icon "chevron-right"}} <a href="/sites/{{$s.ID}}/p/{{$d.From}}">{{$s.Name}}</a> {{icon "chevron-right"}} {{$d.Title}}</div>
+<div class="pagehead"><h1>{{t "site.history"}} · {{$d.Title}}</h1></div>
+<p class="muted">{{t "site.history_hint"}}</p>
+{{if $d.Revisions}}
+<div class="card flush tlist-wrap">
+<table class="tlist">
+  <thead><tr><th>{{t "site.hist_when"}}</th><th>{{t "site.hist_who"}}</th><th>{{t "site.hist_what"}}</th><th>{{t "site.hist_blocks"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $i, $v := $d.Revisions}}
+  <tr>
+    <td>{{datetime .At}}{{if eq $i 0}} <span class="badge">{{t "site.hist_current"}}</span>{{end}}</td>
+    <td>{{or .Author "—"}}</td>
+    <td>{{t (print "site.hist." .Act)}}{{with .BlockType}} «{{t (print "site.block." .)}}»{{end}}</td>
+    <td>{{.Count}}</td>
+    <td class="row tpl-actions">
+      <a class="button ghost small" href="{{$base}}/{{.ID}}" target="_blank" rel="noopener">{{icon "eye"}} {{t "site.preview"}}</a>
+      {{if and $s.CanEdit (gt $i 0)}}<form method="post" action="{{$base}}/{{.ID}}" data-confirm="{{t "site.revert_confirm"}}"><input type="hidden" name="from" value="{{$d.From}}"><button class="ghost small">{{icon "history"}} {{t "site.revert"}}</button></form>{{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "history"}} {{t "site.history_empty"}}</div>
+{{end}}
+{{end}}

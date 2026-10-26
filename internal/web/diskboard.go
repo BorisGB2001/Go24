@@ -262,7 +262,7 @@ func (s *Server) boardOf(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	return d, m, may, back, true
 }
 
-// boardNew is «Создать → Доска»: an empty board in the folder, opened in the editor.
+// boardNew is «Создать → Доска»: an empty board in the folder or one by a template, opened in the editor.
 func (s *Server) boardNew(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d, err := s.openDrive(r, sess)
 	if err != nil {
@@ -286,7 +286,11 @@ func (s *Server) boardNew(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, i18n.E("office.exists"), back)
 		return
 	}
-	id, err := s.diskStore(r, sess, d, folder, "", name, drive.BoardType, bytes.NewReader(boardBlank), int64(len(boardBlank)))
+	scene := boardBlank
+	if tpl := s.boardTemplateScene(r, r.FormValue("template")); tpl != nil {
+		scene = tpl
+	}
+	id, err := s.diskStore(r, sess, d, folder, "", name, drive.BoardType, bytes.NewReader(scene), int64(len(scene)))
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return

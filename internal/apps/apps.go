@@ -83,11 +83,23 @@ type Tokens struct {
 type Store struct {
 	db     *pgxpool.Pool
 	client *http.Client
+	wake   chan struct{} // events queued in this process (a chat bot's): deliver them now
 }
 
 func NewStore(db *pgxpool.Pool) *Store {
-	return &Store{db: db, client: &http.Client{Timeout: 15 * time.Second}}
+	return &Store{db: db, client: &http.Client{Timeout: 15 * time.Second}, wake: make(chan struct{}, 1)}
 }
+
+// Wake asks the worker to deliver the queued events now, not on its next round. Never blocks.
+func (s *Store) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Woken is where Wake is heard.
+func (s *Store) Woken() <-chan struct{} { return s.wake }
 
 func checkURL(raw string, required bool) error {
 	if raw == "" && !required {

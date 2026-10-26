@@ -31,6 +31,10 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/tasks", s.api("tasks:read", s.apiMyTasks))
 	mux.HandleFunc("GET /api/v1/tasks/{key}", s.api("tasks:read", s.apiTask))
 	mux.HandleFunc("GET /api/v1/tasks/{key}/views", s.api("tasks:read", s.apiTaskViews))
+	mux.HandleFunc("POST /api/v1/tasks/comments/read-all", s.api("tasks:write", s.apiReadAllComments))
+	mux.HandleFunc("GET /api/v1/dayplan", s.api("tasks:read", s.apiDayPlan))
+	mux.HandleFunc("PUT /api/v1/dayplan/{key}", s.api("tasks:write", s.apiDayPlanSet))
+	mux.HandleFunc("DELETE /api/v1/dayplan/{key}", s.api("tasks:write", s.apiDayPlanSet))
 	mux.HandleFunc("PATCH /api/v1/tasks/{key}", s.api("tasks:write", s.apiUpdateTask))
 	mux.HandleFunc("DELETE /api/v1/tasks/{key}", s.api("tasks:write", s.apiDeleteTask))
 	mux.HandleFunc("GET /api/v1/trash", s.api("tasks:read", s.apiTrash))
@@ -110,6 +114,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}", s.api("im:write", s.apiReaction))
 	mux.HandleFunc("POST /api/v1/im/direct", s.api("im:write", s.apiDirect))
 	mux.HandleFunc("POST /api/v1/im/notes", s.api("im:write", s.apiNotes))
+	s.apiIMBotRoutes(mux)
 	mux.HandleFunc("GET /api/v1/im/calls", s.api("im:read", s.apiCalls))
 	mux.HandleFunc("GET /api/v1/settings/portal", s.api("settings:read", s.apiPortal))
 	mux.HandleFunc("PUT /api/v1/settings/portal", s.api("settings:write", s.apiPortal))
@@ -118,6 +123,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/admins", s.api("settings:write", s.apiAdmins))
 	mux.HandleFunc("DELETE /api/v1/settings/admins/{id}", s.api("settings:write", s.apiAdmins))
 	mux.HandleFunc("GET /api/v1/settings/ip-access", s.api("settings:read", s.apiIPAccess))
+	mux.HandleFunc("GET /api/v1/settings/sections", s.api("settings:read", s.apiSections))
+	mux.HandleFunc("PUT /api/v1/settings/sections", s.api("settings:write", s.apiSections))
 	mux.HandleFunc("GET /api/v1/settings/backup", s.api("settings:read", s.apiBackup))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", s.api("settings:write", s.apiBackup))
 	mux.HandleFunc("PUT /api/v1/settings/ip-access", s.api("settings:write", s.apiIPAccess))
@@ -142,6 +149,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/messages/{id}/transcript", s.api("im:read", s.apiTranscript))
 	mux.HandleFunc("GET /api/v1/crm/pipelines", s.api("crm:read", s.apiCRMPipelines))
 	mux.HandleFunc("GET /api/v1/crm/currencies", s.api("crm:read", s.apiCRMCurrencies))
+	mux.HandleFunc("GET /api/v1/crm/plan", s.api("crm:read", s.apiCRMPlan))
+	mux.HandleFunc("PUT /api/v1/crm/plan", s.api("crm:write", s.apiCRMPlan))
 	mux.HandleFunc("GET /api/v1/crm/recycle", s.api("crm:read", s.apiCRMRecycle))
 	mux.HandleFunc("POST /api/v1/crm/recycle/{id}/restore", s.api("crm:write", s.apiCRMRestore))
 	mux.HandleFunc("DELETE /api/v1/crm/recycle/{id}", s.api("crm:write", s.apiCRMPurge))
@@ -187,6 +196,18 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/marketing/expenses", s.api("crm:read", s.apiMktExpenses))
 	mux.HandleFunc("POST /api/v1/marketing/expenses", s.api("crm:write", s.apiMktAddExpense))
 	mux.HandleFunc("DELETE /api/v1/marketing/expenses/{id}", s.api("crm:write", s.apiMktDeleteExpense))
+	mux.HandleFunc("GET /api/v1/marketing/campaigns", s.api("crm:read", s.apiMktCampaigns))
+	mux.HandleFunc("GET /api/v1/marketing/campaigns/{id}", s.api("crm:read", s.apiMktCampaign))
+	mux.HandleFunc("POST /api/v1/marketing/campaigns", s.api("crm:write", s.apiMktAddCampaign))
+	mux.HandleFunc("POST /api/v1/marketing/campaigns/{id}/{action}", s.api("crm:write", s.apiMktCampaignAction))
+	mux.HandleFunc("GET /api/v1/marketing/calls", s.api("crm:read", s.apiMktCalls))
+	mux.HandleFunc("POST /api/v1/marketing/calls", s.api("crm:write", s.apiMktAddCalls))
+	mux.HandleFunc("GET /api/v1/marketing/calls/{id}", s.api("crm:read", s.apiMktCall))
+	mux.HandleFunc("GET /api/v1/marketing/segments", s.api("crm:read", s.apiMktSegments))
+	mux.HandleFunc("GET /api/v1/marketing/templates", s.api("crm:read", s.apiMktTemplates))
+	mux.HandleFunc("GET /api/v1/marketing/stoplist", s.api("crm:read", s.apiMktStopList))
+	mux.HandleFunc("POST /api/v1/marketing/stoplist", s.api("crm:write", s.apiMktStopAdd))
+	mux.HandleFunc("DELETE /api/v1/marketing/stoplist/{email}", s.api("crm:write", s.apiMktStopRemove))
 	mux.HandleFunc("POST /api/v1/crm/leads/{id}/convert", s.api("crm:write", s.apiCRMConvert))
 	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/comments", s.api("crm:write", s.apiCRMComment))
 	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}/timeline", s.api("crm:read", s.apiCRMTimeline))
@@ -208,6 +229,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	s.apiFeedRoutes(mux)
 	s.apiOpenLinesRoutes(mux)
 	s.apiKBRoutes(mux)
+	s.apiCompanyRoutes(mux)
 	s.apiBPRoutes(mux)
 	s.apiAIRoutes(mux)
 	s.apiBookingRoutes(mux)
@@ -1029,6 +1051,40 @@ func (s *Server) apiTaskViews(w http.ResponseWriter, r *http.Request, p apikeys.
 	return nil
 }
 
+// apiDayPlan: the caller's «План на день», as task.planner.getlist — the tasks with today_seconds (time
+// logged today, the running timer included) and timer (it runs on the task).
+func (s *Server) apiDayPlan(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	list, err := s.Tasks.DayPlan(r.Context(), p.UserID, time.Now())
+	if err != nil {
+		return err
+	}
+	type item struct {
+		apiTask
+		TodaySeconds int  `json:"today_seconds"`
+		Timer        bool `json:"timer"`
+	}
+	tr := s.apiTr(r)
+	out := make([]item, len(list))
+	for i, d := range list {
+		out[i] = item{toAPITask(d.Task, tr), d.TodaySecs, d.Timer}
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiDayPlanSet: PUT puts the task into the caller's day plan, DELETE takes it out.
+func (s *Server) apiDayPlanSet(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	id, err := s.Tasks.TaskIDByKey(r.Context(), r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if err := s.Tasks.SetDayPlan(r.Context(), p.UserID, id, r.Method == http.MethodPut); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 // apiTag adds a tag to the task or removes it: {"tag": "почта", "remove": false}.
 func (s *Server) apiTag(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
@@ -1039,6 +1095,33 @@ func (s *Server) apiTag(w http.ResponseWriter, r *http.Request, p apikeys.Princi
 		return err
 	}
 	return s.apiTaskOp(w, r, p, func(id string) error { return s.Tasks.SetTag(r.Context(), p.UserID, id, in.Tag, !in.Remove) })
+}
+
+// apiReadAllComments marks the new messages of the user's tasks read, as tasks.task.comment.readAll:
+// {"project": "GO"} — only in that project's tasks; answers {"read": N}.
+func (s *Server) apiReadAllComments(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Project string `json:"project"`
+	}
+	if r.ContentLength != 0 {
+		if err := readJSON(r, &in); err != nil {
+			return err
+		}
+	}
+	pid := ""
+	if in.Project != "" {
+		pr, err := s.Tasks.ProjectByKey(r.Context(), p.UserID, in.Project)
+		if err != nil {
+			return err
+		}
+		pid = pr.ID
+	}
+	n, err := s.Notify.MarkCommentsRead(r.Context(), p.UserID, pid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"read": n})
+	return nil
 }
 
 // apiLinkAdd links a task to this one («Связанные задачи»): {"pred": "GO-1"} — this task follows GO-1;

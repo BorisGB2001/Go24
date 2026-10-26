@@ -44,7 +44,10 @@ type apiCRMCard struct {
 	Comment     string     `json:"comment,omitempty"`
 	Closed      *time.Time `json:"closed_at,omitempty"`
 	DealID      string     `json:"deal_id,omitempty"`
-	UTM         *apiUTM    `json:"utm,omitempty"` // a deal's or a lead's UTM tags (a single card)
+	Phones      []crm.Comm `json:"phones,omitempty"` // all the phones and e-mails of a lead, contact or company: {value, type}
+	Emails      []crm.Comm `json:"emails,omitempty"`
+	IsRepeat    bool       `json:"is_repeat,omitempty"` // a lead: «Повторный лид» (contact_id, company_id — its client)
+	UTM         *apiUTM    `json:"utm,omitempty"`       // a deal's or a lead's UTM tags (a single card)
 	CreatedAt   time.Time  `json:"created_at"`
 	URL         string     `json:"url"`
 }
@@ -94,22 +97,25 @@ func (s *Server) crmCardJSON(kind string, item any) apiCRMCard {
 	case crm.Lead:
 		c.ID, c.Title, c.Name, c.CompanyName, c.Phone, c.Email, c.Source = x.ID, x.Title, x.Name, x.CompanyTitle, x.Phone, x.Email, x.Source
 		c.Amount, c.Currency, c.Comment, c.DealID, c.CreatedAt = x.Amount, x.Currency, x.Comment, x.DealID, x.CreatedAt
-		c.ContactID, c.CompanyID = x.ContactID, x.CompanyID
+		c.ContactID, c.CompanyID, c.IsRepeat = x.ContactID, x.CompanyID, x.Repeat
+		c.Phones, c.Emails = crm.CommsOf(x.Comms, "phone"), crm.CommsOf(x.Comms, "email")
 		c.StageID, c.StageCode, c.StageName = x.Stage.ID, x.Stage.Code, x.Stage.Name
 		c.Responsible, c.Origin = apiUser{x.Responsible.ID, x.Responsible.Name}, dictJSON(x.Origin)
 		c.Observers = observersJSON(x.Observers)
 	case crm.Contact:
 		c.ID, c.Name, c.Phone, c.Email, c.CompanyID, c.Comment, c.CreatedAt = x.ID, x.Name, x.Phone, x.Email, x.Company.ID, x.Comment, x.CreatedAt
 		c.Responsible, c.Origin, c.ContactType = apiUser{x.Responsible.ID, x.Responsible.Name}, dictJSON(x.Origin), dictJSON(x.ContactType)
+		c.Phones, c.Emails = crm.CommsOf(x.Comms, "phone"), crm.CommsOf(x.Comms, "email")
 	case crm.Company:
 		c.ID, c.Title, c.Phone, c.Email, c.Comment, c.CreatedAt = x.ID, x.Title, x.Phone, x.Email, x.Comment, x.CreatedAt
 		c.Responsible, c.CompanyType, c.Industry = apiUser{x.Responsible.ID, x.Responsible.Name}, dictJSON(x.CompanyType), dictJSON(x.Industry)
+		c.Phones, c.Emails = crm.CommsOf(x.Comms, "phone"), crm.CommsOf(x.Comms, "email")
 	}
 	c.URL = s.BaseURL + "/crm/" + kind + "/" + c.ID
 	return c
 }
 
-// GET /api/v1/crm/{kind}?q=… — deals, leads, contacts, companies the key's owner may read.
+// GET /api/v1/crm/{kind}?q=… (leads: &repeat=1|0) — deals, leads, contacts, companies the key's owner may read.
 func (s *Server) apiCRMList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	kind, q := r.PathValue("kind"), r.URL.Query().Get("q")
 	var items []any
@@ -123,7 +129,11 @@ func (s *Server) apiCRMList(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 			items = append(items, x)
 		}
 	case "lead":
-		list, err := s.CRM.Leads(r.Context(), p.UserID, q)
+		f := crm.Filter{Q: q}
+		if v := r.URL.Query().Get("repeat"); v == "1" || v == "0" { // «Повторный лид» or not
+			f.Repeat = v
+		}
+		list, err := s.CRM.LeadList(r.Context(), p.UserID, f)
 		if err != nil {
 			return err
 		}
@@ -214,7 +224,42 @@ type apiCRMInput struct {
 	ObserverIDs   []string   `json:"observer_ids"` // a deal's or a lead's «Наблюдатели»
 	CloseDate     *time.Time `json:"close_date"`
 	Comment       string     `json:"comment"`
-	UTM           *apiUTM    `json:"utm"` // a deal's or a lead's UTM tags
+	UTM           *apiUTM    `json:"utm"`    // a deal's or a lead's UTM tags
+	Phones        []crm.Comm `json:"phones"` // several phones and e-mails {value, type}, the main one first (instead of phone, email)
+	Emails        []crm.Comm `json:"emails"`
+}
+
+// comms are the input's phones and e-mails; nil — none given (only phone and email).
+func (in apiCRMInput) comms() []crm.Comm {
+	if in.Phones == nil && in.Emails == nil {
+		return nil
+	}
+	out := []crm.Comm{}
+	for kind, list := range map[string][]crm.Comm{"phone": in.Phones, "email": in.Emails} {
+		for _, c := range list {
+			c.Kind = kind
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// phoneEmail are the main phone and e-mail of the input: the first of phones and emails, if given.
+func (in apiCRMInput) phoneEmail() (string, string) {
+	phone, email := in.Phone, in.Email
+	if in.Phones != nil {
+		phone = ""
+		if len(in.Phones) > 0 {
+			phone = in.Phones[0].Value
+		}
+	}
+	if in.Emails != nil {
+		email = ""
+		if len(in.Emails) > 0 {
+			email = in.Emails[0].Value
+		}
+	}
+	return phone, email
 }
 
 // POST /api/v1/crm/{kind} — a new card (a deal goes to the first pipeline unless pipeline_id is given).
@@ -234,6 +279,7 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 	var id string
 	var err error
 	ref := crm.Ref{ID: resp}
+	phone, email := in.phoneEmail()
 	switch crmEntities[kind] {
 	case "deal":
 		if in.PipelineID == "" {
@@ -251,14 +297,14 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 		}
 		id, err = s.CRM.SaveDeal(r.Context(), p.UserID, d)
 	case "lead":
-		id, err = s.CRM.SaveLead(r.Context(), p.UserID, crm.Lead{Title: in.Title, Name: in.Name, CompanyTitle: in.CompanyTitle, Phone: in.Phone,
-			Email: in.Email, Source: in.Source, Amount: in.Amount, Currency: in.Currency, Responsible: ref, Comment: in.Comment, Origin: dictIn(in.Origin),
+		id, err = s.CRM.SaveLead(r.Context(), p.UserID, crm.Lead{Title: in.Title, Name: in.Name, CompanyTitle: in.CompanyTitle, Phone: phone,
+			Email: email, Comms: in.comms(), Source: in.Source, Amount: in.Amount, Currency: in.Currency, Responsible: ref, Comment: in.Comment, Origin: dictIn(in.Origin),
 			Observers: observerRefs(in.ObserverIDs)})
 	case "contact":
-		id, err = s.CRM.SaveContact(r.Context(), p.UserID, crm.Contact{Name: in.Name, Position: in.Position, Phone: in.Phone, Email: in.Email,
+		id, err = s.CRM.SaveContact(r.Context(), p.UserID, crm.Contact{Name: in.Name, Position: in.Position, Phone: phone, Email: email, Comms: in.comms(),
 			Company: crm.Ref{ID: in.CompanyID}, Responsible: ref, Comment: in.Comment, Origin: dictIn(in.Origin), ContactType: dictIn(in.ContactType)})
 	case "company":
-		id, err = s.CRM.SaveCompany(r.Context(), p.UserID, crm.Company{Title: in.Title, Phone: in.Phone, Email: in.Email, Website: in.Website,
+		id, err = s.CRM.SaveCompany(r.Context(), p.UserID, crm.Company{Title: in.Title, Phone: phone, Email: email, Comms: in.comms(), Website: in.Website,
 			Address: in.Address, Responsible: ref, Comment: in.Comment, CompanyType: dictIn(in.CompanyType), Industry: dictIn(in.Industry)})
 	default:
 		return i18n.E("err.not_found")

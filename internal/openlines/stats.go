@@ -13,11 +13,12 @@ type StatsFilter struct {
 }
 
 // StatsRow is a line, an operator or a day of the report. New, Spam, NoAnswer, the first answer and the votes are of
-// the dialogues started in the period; Closed and the time to close — of those closed in it.
+// the dialogues started in the period (KPI — of them, those that waited longer than the line's KPI); Closed and the time to close — of those closed in it.
 type StatsRow struct {
 	Key, Name                             string    // the line's or the operator's id ("" — no operator), the day "2006-01-02"
 	Day                                   time.Time // of a day's row
 	New, Closed, NoAnswer, Spam, Up, Down int
+	KPI                                   int
 	answered, closedN                     int
 	answer, close                         time.Duration
 }
@@ -46,7 +47,7 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) (Stats, error) {
 	from := time.Date(f.From.Year(), f.From.Month(), f.From.Day(), 0, 0, 0, 0, time.Local)
 	to := time.Date(f.To.Year(), f.To.Month(), f.To.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
 	rows, err := s.db.Query(ctx, `SELECT s.widget_id::text, w.name, coalesce(s.operator_id::text, ''), coalesce(o.name, ''),
-		s.started_at, s.answered_at, s.closed_at, s.spam, s.vote
+		s.started_at, s.answered_at, s.closed_at, s.spam, s.vote, s.kpi_late > 0
 		FROM ol_sessions s JOIN ol_widgets w ON w.id = s.widget_id LEFT JOIN users o ON o.id = s.operator_id
 		WHERE s.started_at IS NOT NULL AND ((s.started_at >= $1 AND s.started_at < $2) OR (s.closed_at >= $1 AND s.closed_at < $2))
 		AND ($3 = '' OR s.widget_id::text = $3) AND ($4 = '' OR s.operator_id::text = $4)`, from, to, f.Widget, f.OperatorID)
@@ -68,9 +69,9 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) (Stats, error) {
 		var wid, wname, oid, oname string
 		var started time.Time
 		var answered, closed *time.Time
-		var spam bool
+		var spam, kpi bool
 		var vote int
-		if err := rows.Scan(&wid, &wname, &oid, &oname, &started, &answered, &closed, &spam, &vote); err != nil {
+		if err := rows.Scan(&wid, &wname, &oid, &oname, &started, &answered, &closed, &spam, &vote, &kpi); err != nil {
 			return Stats{}, err
 		}
 		in := func(t *time.Time) bool { return t != nil && !t.Before(from) && t.Before(to) }
@@ -88,6 +89,9 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) (Stats, error) {
 					r.answer += answered.Sub(started)
 				}
 				r.New++
+				if kpi {
+					r.KPI++
+				}
 				switch vote {
 				case 1:
 					r.Up++

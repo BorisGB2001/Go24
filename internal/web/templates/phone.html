@@ -4,7 +4,9 @@
   data-connecting="{{t "phone.connecting"}}" data-ready="{{t "phone.ready"}}" data-offline="{{t "phone.offline"}}" data-mic-denied="{{t "phone.mic_denied"}}"
   data-dialing="{{t "phone.dialing"}}" data-ringing="{{t "phone.ringing"}}" data-on-hold="{{t "phone.on_hold"}}" data-ended="{{t "phone.ended"}}" data-busy="{{t "phone.busy"}}"
   data-failed="{{t "phone.failed" "%s"}}" data-incoming="{{t "phone.incoming" "%s"}}" data-busy-line="{{t "phone.busy_line"}}" data-bad-number="{{t "phone.bad_number"}}"
-  data-mute="{{t "phone.mute"}}" data-unmute="{{t "phone.unmute"}}" data-hold="{{t "phone.hold"}}" data-unhold="{{t "phone.unhold"}}">
+  data-mute="{{t "phone.mute"}}" data-unmute="{{t "phone.unmute"}}" data-hold="{{t "phone.hold"}}" data-unhold="{{t "phone.unhold"}}"
+  data-transferred="{{t "phone.transferred" "%s"}}" data-xfer-failed="{{t "phone.xfer_failed"}}" data-xfer-calling="{{t "phone.xfer_calling" "%s"}}"
+  data-xfer-talking="{{t "phone.xfer_talking" "%s"}}" data-xfer-ended="{{t "phone.xfer_ended"}}">
   <div class="sp-top"><span class="sp-dot" data-sp-dot></span><b>{{icon "phone"}} {{$d.Number}}</b><span class="muted small" data-sp-status>{{t "phone.connecting"}}</span></div>
   <div class="sp-who" data-sp-who hidden>
     <img alt="" data-sp-photo hidden>
@@ -19,10 +21,28 @@
     <button type="button" class="sp-call" data-sp-call title="{{t "phone.call"}}">{{icon "phone"}} <span data-sp-call-text data-call="{{t "phone.call"}}" data-answer="{{t "phone.answer"}}">{{t "phone.call"}}</span></button>
     <button type="button" class="sp-hang" data-sp-hang title="{{t "phone.hangup"}}" hidden>{{icon "phone-off"}} <span data-sp-hang-text data-hangup="{{t "phone.hangup"}}" data-decline="{{t "phone.decline"}}">{{t "phone.hangup"}}</span></button>
     <button type="button" class="sp-hold ghost" data-sp-hold title="{{t "phone.hold"}}" aria-label="{{t "phone.hold"}}" hidden>{{icon "player-pause"}}</button>
+    <button type="button" class="ghost" data-sp-xfer title="{{t "phone.transfer"}}" aria-label="{{t "phone.transfer"}}" hidden>{{icon "arrows-exchange"}}</button>
   </div>
+  <div class="sp-xfer stack" data-sp-xfer-panel hidden>
+    <div class="stack" data-sp-xfer-ask>
+      <b>{{icon "arrows-exchange"}} {{t "phone.transfer"}}</b>
+      <input type="tel" data-sp-xfer-to list="sp-people" placeholder="{{t "phone.xfer_to"}}" aria-label="{{t "phone.xfer_to"}}" autocomplete="off" maxlength="24">
+      <div class="row wrap"><button type="button" class="primary small" data-sp-blind>{{t "phone.xfer_now"}}</button>
+        <button type="button" class="ghost small" data-sp-consult>{{t "phone.xfer_consult"}}</button>
+        <button type="button" class="ghost small" data-sp-xfer-cancel>{{t "common.cancel"}}</button></div>
+      <p class="muted small">{{t "phone.xfer_hint"}}</p>
+    </div>
+    <div class="stack" data-sp-xfer-talk hidden>
+      <b data-sp-xfer-who></b>
+      <div class="row wrap"><button type="button" class="primary small" data-sp-complete disabled>{{t "phone.xfer_complete"}}</button>
+        <button type="button" class="ghost small" data-sp-return>{{t "phone.xfer_return"}}</button></div>
+    </div>
+  </div>
+  <datalist id="sp-people">{{range $d.People}}<option value="{{.Number}}" label="{{.Name}}"></option>{{end}}</datalist>
   <p class="muted small sp-hint">{{t "phone.keep_open"}}</p>
   <p class="small sp-links"><a href="/telephony/calls" target="_blank" rel="noopener">{{icon "list"}} {{t "tel.calls"}}</a></p>
   <audio data-sp-audio autoplay></audio>
+  <audio data-sp-audio2 autoplay></audio>
 </div>
 <script src="{{asset "js/vendor/jssip-3.10.1.min.js"}}"></script>
 <script src="{{asset "js/softphone.js"}}"></script>

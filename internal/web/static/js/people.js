@@ -91,7 +91,7 @@
   // ---------- the list ----------
   const extras = (b, q) => [...b.querySelectorAll('[data-extra]')]
     .map(e => ({ id: e.dataset.extra, name: e.textContent, extra: true }))
-    .filter(p => !q || fold(p.name).split(/\s+/).some(w => w.startsWith(fold(q).trim())));
+    .filter(p => !q || fold(p.name).split(/[\s«»"'(),.:]+/).some(w => w.startsWith(fold(q).trim())));
 
   const close = () => {
     pop?.remove();
@@ -101,8 +101,9 @@
   const place = () => {
     if (!pop || !box) return;
     const r = box.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(r.left + scrollX, scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8)) + 'px';
-    pop.style.top = (r.bottom + scrollY + 4) + 'px';
+    const sx = pop.style.position === 'fixed' ? 0 : scrollX, sy = pop.style.position === 'fixed' ? 0 : scrollY; // in a dialog: by the window
+    pop.style.left = Math.max(8, Math.min(r.left + sx, sx + document.documentElement.clientWidth - pop.offsetWidth - 8)) + 'px';
+    pop.style.top = (r.bottom + sy + 4) + 'px';
     pop.style.minWidth = Math.min(Math.max(r.width, 300), document.documentElement.clientWidth - 16) + 'px';
   };
 
@@ -291,7 +292,10 @@
       const it = state.items[Number(row.dataset.i)];
       if (e.target.closest('[data-add]')) addDept(it.d); else activate(it);
     });
-    document.body.append(pop);
+    // a picker in a modal dialog (an application's selectUser) keeps its list in the dialog, above the backdrop
+    const dlg = b.closest('dialog[open]');
+    if (dlg) pop.style.position = 'fixed';
+    (dlg || document.body).append(pop);
     window.go24Pop?.(pop, close, b);
     show(field(b).value.trim() ? 'search' : 'recent');
   };

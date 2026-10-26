@@ -1,0 +1,29 @@
+{{define "telroleform"}}{{$d := .D}}{{$r := .R}}
+<table class="tlist roletable"><tbody>{{range $p := $d.Rights}}<tr><td>{{t (print "telroles.perm." $p.Key)}}</td>
+  <td><select name="{{$p.Key}}">{{range $p.Levels}}<option value="{{.}}" {{if $r}}{{if eq (index $r.Perms $p.Key) .}}selected{{end}}{{end}}>{{t (print "telroles.level." $p.Key "." .)}}</option>{{end}}</select></td></tr>{{end}}</tbody></table>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/settings/telephony">{{t "tel.title"}}</a></div>
+<h1>{{icon "lock"}} {{t "telroles.title"}}</h1>
+<div class="sub">{{t "telroles.subtitle"}}</div>
+{{range $r := $d.Roles}}<div class="card" id="r{{$r.ID}}">
+  <form method="post" action="/telephony/rights/{{$r.ID}}" class="stack">
+    <div class="row"><h2 style="flex:1">{{if $r.Code}}{{t (print "telroles.role." $r.Code)}}{{else}}{{$r.Name}}{{end}}{{if $r.Default}} <span class="pill st-in_progress">{{t "crmroles.default"}}</span>{{end}}</h2>
+      {{if not $r.Code}}<input type="text" name="name" value="{{$r.Name}}" maxlength="100" style="width:220px" aria-label="{{t "crmroles.name_hint"}}">{{end}}</div>
+    {{template "telroleform" (dict "D" $d "R" $r)}}
+    {{if $r.Default}}<p class="small muted">{{t "telroles.default_hint"}}</p>{{else}}
+    <label>{{t "telroles.members"}}{{template "upick" (upick "members" (index $d.Members $r.ID) nil "multi" "depts" "ph" (t "templates.access_nobody"))}}</label>{{end}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+  {{if not $r.Default}}<form method="post" action="/telephony/rights/{{$r.ID}}/delete" data-confirm="{{t "crmroles.delete_confirm"}}"><button class="ghost small danger">{{icon "trash"}} {{t "crmroles.delete"}}</button></form>{{end}}
+</div>{{end}}
+<details class="card"><summary><b>{{icon "plus"}} {{t "crmroles.new"}}</b></summary>
+  <form method="post" action="/telephony/rights/new" class="stack">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "crmroles.name_hint"}}" aria-label="{{t "crmroles.name_hint"}}">
+    {{template "telroleform" (dict "D" $d "R" nil)}}
+    <label>{{t "telroles.members"}}{{template "upick" (upick "members" "" nil "multi" "depts" "ph" (t "templates.access_nobody"))}}</label>
+    <p><button class="primary">{{t "common.create"}}</button></p>
+  </form></details>
+{{end}}

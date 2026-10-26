@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Builds the ready-made templates of «Генератор документов» (GO24DEV-519): an invoice, a contract and an act of
 a deal, in each language, into internal/web/doctemplates/<lang>/. The fields are those of the templates page
-({MyCompany.…}, {Client.…}, a products row {Product.…}, {Total}…). Plain WordprocessingML, no libraries:
+({MyCompany.…}, {Client.…}, a products row {Product.…}, {Total}…); the seller's side has the stamp and the facsimile
+signatures of «Моя компания» ({MyCompany.Stamp}, {MyCompany.DirectorSignature}, GO24DEV-631) — empty when not uploaded. Plain WordprocessingML, no libraries:
 
     python3 tools/doctemplates.py
 """
@@ -38,6 +39,8 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </w:styles>"""
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+# the facsimile signature and the stamp of «Моя компания» lie over the line of the signature (go24 puts them floating)
+SIGNED = "{MyCompany.DirectorSignature}{MyCompany.Stamp}"
 PAGE = 9638  # A4 minus 2 cm and 1.5 cm margins, in twips
 
 
@@ -82,9 +85,10 @@ def totals(t):
 
 
 def signs(left, right):
+    """The parties' signatures; the left one is «Моя компания» — with its facsimile signature and stamp."""
     w = [PAGE // 2, PAGE - PAGE // 2]
-    return table([[[p(left[0], bold=True), p(left[1]), p("_______________ " + left[2])],
-                   [p(right[0], bold=True), p(right[1]), p("_______________ " + right[2])]]], w, borders=False)
+    return table([[[p(left[0], bold=True), p(left[1]), p(""), p(SIGNED + "_______________ " + left[2])],
+                   [p(right[0], bold=True), p(right[1]), p(""), p("_______________ " + right[2])]]], w, borders=False)
 
 
 def seller(t):
@@ -103,9 +107,12 @@ def invoice(t):
             + p([(t["buyer"] + ": ", False), ("{Client.FullName}, " + t["inn"] + " {Client.INN}, " + t["kpp"] + " {Client.KPP}, {Client.Address}", True)])
             + p([(t["basis"] + ": ", False), ("{Title}", True)], after=200)
             + products(t, t["goods"]) + totals(t)
-            + p(t["items_total"] + " {ProductsCount}, " + t["amount_of"] + " {Total} {Currency}")
+            + p(t["items_total"] + " {ProductsCount}, " + t["amount_of"] + " {Total} {Currency}", after=0)
+            + p("{TotalWords}", bold=True)
+            + (p("{PaymentQR}", after=0) if t["lang"] == "ru-RU" else "")  # the payment's QR code: GOST R 56042, Russian banks
             + p(t["pay_note"], size=16, after=400)
-            + table([[t["director"], "_______________", "{MyCompany.Director}"]], [3000, 3000, 3638], borders=False))
+            + table([[t["director"], "{MyCompany.DirectorSignature}_______________", "{MyCompany.Stamp}{MyCompany.Director}"],
+                     [t["accountant"], "{MyCompany.AccountantSignature}_______________", ""]], [3000, 3000, 3638], borders=False))
 
 
 def contract(t):
@@ -124,7 +131,7 @@ def contract(t):
 
     def party(role, pre):
         return [p(role, bold=True)] + [p(f"{label}: {{{pre}.{f}}}", after=0) for label, f in s["fields"]] + [
-            p(""), p("_______________ {" + pre + ".Director}")]
+            p(""), p((SIGNED if pre == "MyCompany" else "") + "_______________ {" + pre + ".Director}")]
     x += table([[party(s["seller"], "MyCompany"), party(s["buyer"], "Client")]], [PAGE // 2, PAGE - PAGE // 2], borders=False)
     return x
 
@@ -136,7 +143,8 @@ def act(t):
             + p([(a["buyer"] + ": ", False), ("{Client.FullName}, " + t["inn"] + " {Client.INN}, {Client.Address}", True)])
             + p([(t["basis"] + ": ", False), ("{Title}", True)], after=200)
             + products(t, a["works"]) + totals(t)
-            + p(a["count"] + " {ProductsCount}, " + t["amount_of"] + " {Total} {Currency}")
+            + p(a["count"] + " {ProductsCount}, " + t["amount_of"] + " {Total} {Currency}", after=0)
+            + p("{TotalWords}", bold=True)
             + p(a["done"], after=400)
             + signs((a["seller"], "{MyCompany.Title}", "{MyCompany.Director}"), (a["buyer"], "{Client.Title}", "{Client.Director}")))
 
@@ -148,7 +156,7 @@ RU = {
     "qty": "Кол-во", "unit": "Ед.", "price": "Цена", "sum": "Сумма",
     "total_net": "Итого без НДС:", "tax_total": "В том числе НДС:", "total": "Всего к оплате:",
     "items_total": "Всего наименований", "amount_of": "на сумму",
-    "pay_note": "Оплата данного счёта означает согласие с условиями поставки товара.", "director": "Руководитель",
+    "pay_note": "Оплата данного счёта означает согласие с условиями поставки товара.", "director": "Руководитель", "accountant": "Главный бухгалтер",
     "c": {
         "title": "Договор", "city": "г. ____________",
         "parties": "{MyCompany.FullName}, именуемое в дальнейшем «Исполнитель», в лице {MyCompany.Director}, с одной стороны, "
@@ -156,7 +164,7 @@ RU = {
         "sections": [
             ("1. Предмет договора", ["1.1. Исполнитель обязуется передать Заказчику товары (выполнить работы, оказать услуги), "
                                      "указанные ниже, а Заказчик — принять и оплатить их.", "@products"]),
-            ("2. Цена и порядок расчётов", ["2.1. Цена договора — {Total} {Currency}, в том числе НДС {TaxTotal}.",
+            ("2. Цена и порядок расчётов", ["2.1. Цена договора — {Total} {Currency} ({TotalWords}), в том числе НДС {TaxTotal}.",
                                            "2.2. Заказчик оплачивает счёт Исполнителя в течение 5 (пяти) банковских дней с даты его получения."]),
             ("3. Сроки", ["3.1. Исполнитель исполняет обязательства до {CloseDate}."]),
             ("4. Ответственность сторон", ["4.1. За неисполнение или ненадлежащее исполнение обязательств стороны несут ответственность "
@@ -182,7 +190,7 @@ EN = {
     "qty": "Qty", "unit": "Unit", "price": "Price", "sum": "Amount",
     "total_net": "Total excl. VAT:", "tax_total": "VAT:", "total": "Total due:",
     "items_total": "Items", "amount_of": "total",
-    "pay_note": "Payment of this invoice means acceptance of the terms of delivery.", "director": "Director",
+    "pay_note": "Payment of this invoice means acceptance of the terms of delivery.", "director": "Director", "accountant": "Chief accountant",
     "c": {
         "title": "Agreement", "city": "____________",
         "parties": "{MyCompany.FullName} (the «Contractor»), represented by {MyCompany.Director}, and {Client.FullName} "
@@ -190,7 +198,7 @@ EN = {
         "sections": [
             ("1. Subject", ["1.1. The Contractor shall deliver to the Customer the goods (works, services) listed below, "
                             "and the Customer shall accept and pay for them.", "@products"]),
-            ("2. Price and payment", ["2.1. The price of the agreement is {Total} {Currency}, including VAT {TaxTotal}.",
+            ("2. Price and payment", ["2.1. The price of the agreement is {Total} {Currency} ({TotalWords}), including VAT {TaxTotal}.",
                                      "2.2. The Customer pays the Contractor's invoice within 5 (five) business days of receiving it."]),
             ("3. Terms", ["3.1. The Contractor fulfils its obligations by {CloseDate}."]),
             ("4. Liability", ["4.1. The parties are liable for failure to perform their obligations in accordance with the applicable law."]),

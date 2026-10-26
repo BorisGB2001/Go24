@@ -154,7 +154,8 @@ func TestSignHTTP(t *testing.T) {
 	if code, body, _ := do(bob, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, `action="/sign/`+id+`/sign"`) {
 		t.Fatalf("bob's page: %d", code)
 	}
-	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || strings.Contains(body, `action="/sign/`+id+`/sign"`) {
+	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || strings.Contains(body, `action="/sign/`+id+`/sign"`) ||
+		!strings.Contains(body, "sgev-viewed") || strings.Contains(body, "01.01.0001") {
 		t.Fatalf("anna's page: %d", code)
 	}
 	if code, body, _ := do(bob, "GET", "/sign?f=me", nil); code != http.StatusOK || !strings.Contains(body, "/sign/"+id) {
@@ -162,6 +163,23 @@ func TestSignHTTP(t *testing.T) {
 	}
 	if code, body, _ := do(eve, "GET", "/sign", nil); code != http.StatusOK || strings.Contains(body, "/sign/"+id) {
 		t.Fatalf("eve's list: %d", code)
+	}
+	// how often the signer is reminded: the sender changes it, the signer cannot
+	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, `action="/sign/`+id+`/remind"`) {
+		t.Fatalf("anna's reminders: %d", code)
+	}
+	if code, body, _ := do(bob, "GET", "/sign/"+id, nil); code != http.StatusOK || strings.Contains(body, `/remind"`) {
+		t.Fatalf("bob's reminders: %d", code)
+	}
+	if code, _, _ := do(bob, "POST", "/sign/"+id+"/remind", url.Values{"remind": {"0"}}); code != http.StatusNotFound {
+		t.Fatalf("bob changes reminders: %d", code)
+	}
+	if d, _ := srv.Sign.Get(ctx, id); d.RemindDays != 1 {
+		t.Fatalf("reminders by default: %d", d.RemindDays)
+	}
+	do(anna, "POST", "/sign/"+id+"/remind", url.Values{"remind": {"3"}})
+	if d, _ := srv.Sign.Get(ctx, id); d.RemindDays != 3 {
+		t.Fatalf("reminders changed: %d", d.RemindDays)
 	}
 	if _, _, loc := do(anna, "POST", "/sign/"+id+"/sign", url.Values{"agree": {"1"}}); !strings.Contains(loc, "msg=") {
 		t.Fatalf("anna signs for bob: %s", loc)
@@ -202,6 +220,20 @@ func TestSignHTTP(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("anna notified: %d", n)
 	}
+	// the history: the employee told, opened it, signed; the client told, opened the link, asked for a code, signed
+	evs, err := srv.Sign.Events(ctx, id)
+	must(err)
+	kinds := []string{}
+	for _, e := range evs {
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, ","); got != "created,sent,viewed,signed,sent,viewed,code,signed,done" {
+		t.Fatalf("history: %s", got)
+	}
+	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, "sgev-viewed") ||
+		!strings.Contains(body, "sgev-done") || strings.Contains(body, "01.01.0001") {
+		t.Fatalf("anna's history: %d", code)
+	}
 	code, result, _ := do(anna, "GET", "/sign/"+id+"/file/result", nil)
 	if code != http.StatusOK {
 		t.Fatalf("result: %d", code)
@@ -224,10 +256,15 @@ func TestSignHTTP(t *testing.T) {
 	}
 
 	// a Word file uploaded, signed by the employee alone; then recalled one
-	upload := func(name string, data []byte) (int, string) {
+	upload := func(name string, data []byte, fields ...string) (int, string) {
 		var b bytes.Buffer
 		mw := multipart.NewWriter(&b)
-		mw.WriteField("signer", anna)
+		if fields == nil {
+			fields = []string{"signer", anna}
+		}
+		for i := 0; i+1 < len(fields); i += 2 {
+			mw.WriteField(fields[i], fields[i+1])
+		}
 		fw, _ := mw.CreateFormFile("file", name)
 		fw.Write(data)
 		mw.Close()
@@ -254,5 +291,61 @@ func TestSignHTTP(t *testing.T) {
 	do(anna, "POST", "/sign/"+d2.ID+"/cancel", nil)
 	if d2, _ = srv.Sign.Get(ctx, d2.ID); d2.Status != "cancelled" {
 		t.Fatalf("recalled: %+v", d2)
+	}
+
+	if code, body, _ := do(anna, "GET", "/sign/new", nil); code != http.StatusOK || !strings.Contains(body, `data-add-row="sg-client"`) {
+		t.Fatalf("the form with no card's document: %d", code)
+	}
+	// «Сохранить как шаблон»: the document, the signers and the reminders; sent by the template with a client only
+	_, loc = upload("Договор оферты.docx", src.Bytes(), "signer", anna, "signer", bob, "remind", "3", "save_template", "1")
+	tpls, err := srv.Sign.Templates(ctx)
+	must(err)
+	if !strings.HasPrefix(loc, "/sign/") || len(tpls) != 1 || tpls[0].Title != "Договор оферты" || len(tpls[0].Signers) != 2 ||
+		tpls[0].Signers[1] != bob || tpls[0].RemindDays != 3 || tpls[0].FileName != "Договор оферты.docx" {
+		t.Fatalf("template: %s %+v", loc, tpls)
+	}
+	if code, body, _ := do(bob, "GET", "/sign?f=templates", nil); code != http.StatusOK || !strings.Contains(body, "/sign/new?tpl="+tpls[0].ID) ||
+		strings.Contains(body, "/sign/templates/"+tpls[0].ID+"/delete") {
+		t.Fatalf("bob's templates: %d", code)
+	}
+	if code, body, _ := do(bob, "GET", "/sign/new?tpl="+tpls[0].ID, nil); code != http.StatusOK || !strings.Contains(body, `name="tpl" value="`+tpls[0].ID+`"`) ||
+		!strings.Contains(body, `<option value="3" selected>`) || strings.Contains(body, `name="save_template"`) {
+		t.Fatalf("the form by the template: %d", code)
+	}
+	if code, _, loc := do(bob, "POST", "/sign", url.Values{"tpl": {tpls[0].ID}, "signer": {bob}, "remind": {"3"},
+		"client_name": {"Ольга"}, "client_email": {"olga@t"}}); code != http.StatusSeeOther || !strings.HasPrefix(loc, "/sign/") {
+		t.Fatalf("sent by the template: %d %s", code, loc)
+	} else {
+		d, _ := srv.Sign.Get(ctx, regexp.MustCompile(`^/sign/([0-9a-f-]{36})`).FindStringSubmatch(loc)[1])
+		if d.Title != "Договор оферты" || d.Hash != sign.Hash(src.Bytes()) || len(d.Parties) != 2 || d.Parties[1].Email != "olga@t" || d.RemindDays != 3 {
+			t.Fatalf("by the template: %+v", d)
+		}
+	}
+	if code, _, _ := do(bob, "POST", "/sign/templates/"+tpls[0].ID+"/delete", nil); code != http.StatusNotFound {
+		t.Fatalf("bob deletes anna's template: %d", code)
+	}
+	do(anna, "POST", "/sign/templates/"+tpls[0].ID+"/delete", nil)
+	if tpls, _ = srv.Sign.Templates(ctx); len(tpls) != 0 {
+		t.Fatal("deleted")
+	}
+
+	// several signers of each side, in turn: the employees, then the clients; an empty row of a client left out
+	if _, loc := upload("Договор.docx", src.Bytes(), "client_name", "Иван", "client_email", "ivan@t"); !strings.HasPrefix(loc, "/sign/new?msg=") {
+		t.Fatalf("no employee: %s", loc)
+	}
+	_, loc = upload("Договор.docx", src.Bytes(), "signer", anna, "signer", bob, "signer", anna,
+		"client_name", "Иван", "client_email", "ivan@t", "client_name", "", "client_email", "", "client_name", "Пётр", "client_email", "petr@t")
+	if m = regexp.MustCompile(`^/sign/([0-9a-f-]{36})\?msg=`).FindStringSubmatch(loc); m == nil {
+		t.Fatalf("several: %s", loc)
+	}
+	d3, _ := srv.Sign.Get(ctx, m[1])
+	if len(d3.Parties) != 4 || d3.Parties[0].UserID != anna || d3.Parties[1].UserID != bob || d3.Parties[2].Email != "ivan@t" ||
+		d3.Parties[3].Name != "Пётр" || d3.Current().UserID != anna {
+		t.Fatalf("several: %+v", d3.Parties)
+	}
+	do(anna, "POST", "/sign/"+d3.ID+"/sign", url.Values{"agree": {"1"}})
+	do(bob, "POST", "/sign/"+d3.ID+"/sign", url.Values{"agree": {"1"}})
+	if d3, _ = srv.Sign.Get(ctx, d3.ID); d3.Current().Email != "ivan@t" || d3.Parties[3].Status != "wait" {
+		t.Fatalf("the clients' turn: %+v", d3.Parties)
 	}
 }

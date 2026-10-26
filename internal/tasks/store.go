@@ -1048,7 +1048,9 @@ func (s *Store) TaskIDByKey(ctx context.Context, key string) (string, error) {
 	return id, err
 }
 
-func (s *Store) GetCard(ctx context.Context, userID, taskID string) (TaskCard, error) {
+// RowCard is the head of a card: the task, the viewer's roles and what they may do with it — the menu of a row in
+// task lists.
+func (s *Store) RowCard(ctx context.Context, userID, taskID string) (TaskCard, error) {
 	var c TaskCard
 	a, err := loadAccess(ctx, s.db, userID, taskID, false)
 	if err != nil {
@@ -1061,6 +1063,14 @@ func (s *Store) GetCard(ctx context.Context, userID, taskID string) (TaskCard, e
 	c.CanDelete = a.CanDelete
 	c.Collab, c.Frozen = a.Collab, a.Frozen
 	c.Actions = AllowedActions(c.Status, c.Roles, c.RequiresControl)
+	return c, nil
+}
+
+func (s *Store) GetCard(ctx context.Context, userID, taskID string) (TaskCard, error) {
+	c, err := s.RowCard(ctx, userID, taskID)
+	if err != nil {
+		return c, err
+	}
 
 	rows, err := s.db.Query(ctx, `SELECT u.id, u.name, u.email, tp.role, u.guest FROM task_participants tp
 		JOIN users u ON u.id = tp.user_id WHERE tp.task_id = $1 ORDER BY u.name`, taskID)
@@ -1363,10 +1373,16 @@ func (s *Store) UpdateTask(ctx context.Context, userID, taskID string, u TaskUpd
 		); err != nil {
 			return err
 		}
+		planMoved := false
 		for _, c := range changes {
 			if err := addHistory(ctx, tx, taskID, userID, c.field, c.old, c.new); err != nil {
 				return err
 			}
+			planMoved = planMoved || c.field == "start_plan" || c.field == "end_plan"
+		}
+		if planMoved {
+			_, err := s.shiftSuccessors(ctx, tx, userID, taskID)
+			return err
 		}
 		return nil
 	})

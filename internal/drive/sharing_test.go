@@ -62,9 +62,9 @@ func TestDriveSharing(t *testing.T) {
 	}
 	must(s.SetShare(ctx, anna, my, work, "", "user", ivan, "edit"))
 	must(s.SetShare(ctx, anna, my, "", plan, "user", olga, "read"))
-	_, err = s.SetLink(ctx, anna, my, "folder", reports, "", false, nil)
+	_, err = s.SetLink(ctx, anna, my, "folder", reports, "", false, nil, false, "")
 	must(err)
-	_, err = s.SetLink(ctx, anna, my, "file", plan, "секрет", false, nil)
+	_, err = s.SetLink(ctx, anna, my, "file", plan, "секрет", false, nil, false, "")
 	must(err)
 	sh, err = s.Sharing(ctx, plan)
 	must(err)

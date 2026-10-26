@@ -72,6 +72,11 @@ func (s *Store) SetAudience(ctx context.Context, actorID, postID, projectID stri
 			}
 		}
 		moved = oldProject != projectID || oldLimited != limited
+		if moved && projectID == "" && !limited { // to all employees now: by the rights of the one who changes it
+			if err := s.checkRights(ctx, actorID, true, false); err != nil {
+				return err
+			}
+		}
 		var before []string
 		if err := tx.QueryRow(ctx, `SELECT coalesce(array_agg(u.id::text), '{}') FROM users u JOIN feed_posts p ON p.id = $1
 			WHERE u.active AND `+reader, postID).Scan(&before); err != nil {
@@ -140,6 +145,11 @@ func (s *Store) SetImportant(ctx context.Context, actorID, postID string, import
 			return err
 		}
 		changed = was != important
+		if changed && important {
+			if err := s.checkRights(ctx, actorID, false, true); err != nil {
+				return err
+			}
+		}
 		_, err := tx.Exec(ctx, `UPDATE feed_posts SET important = $2, important_until = $3 WHERE id = $1`, postID, important, at)
 		return err
 	})
@@ -172,7 +182,7 @@ func (s *Store) FileCount(ctx context.Context, postID string) (int, error) {
 }
 
 // EditPoll replaces the post's poll while nobody voted (an empty question removes it).
-func (s *Store) EditPoll(ctx context.Context, postID, question string, options []string, multiple bool) error {
+func (s *Store) EditPoll(ctx context.Context, postID, question string, options []string, kind PollKind) error {
 	question = strings.TrimSpace(question)
 	var opts []string
 	if question != "" {
@@ -195,7 +205,8 @@ func (s *Store) EditPoll(ctx context.Context, postID, question string, options [
 		if question == "" {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO feed_polls (post_id, question, multiple) VALUES ($1, $2, $3)`, postID, question, multiple); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO feed_polls (post_id, question, multiple, anonymous) VALUES ($1, $2, $3, $4)`,
+			postID, question, kind.Multiple, kind.Anonymous); err != nil {
 			return err
 		}
 		for i, o := range opts {

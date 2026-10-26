@@ -15,30 +15,10 @@ import (
 // «Таблица рабочего времени»: everyone's days of a month with the violations, and changes of a day
 // (start, end, pauses) with the reason — an employee's change waits for the manager's approval.
 
-// Violations of the day by the schedule: late, early (left before the time), short (worked less than the minimum),
-// open (a past day not finished).
+// Violations of the day by the company's working time: late, early (left before the time), short (worked less than
+// the minimum), open (a past day not finished); see Norm.Violations.
 func Violations(d Workday, s worktime.Schedule, now time.Time) []string {
-	var out []string
-	if d.Late(s.LateAt()) {
-		out = append(out, "late")
-	}
-	today := now.Format(time.DateOnly)
-	if d.Ended == nil {
-		if d.Day.Format(time.DateOnly) < today {
-			out = append(out, "open")
-		}
-		return out
-	}
-	if m := worktime.Minutes(s.LeaveBefore); m >= 0 {
-		e := d.Ended.Local()
-		if e.Format(time.DateOnly) == d.Day.Format(time.DateOnly) && e.Hour()*60+e.Minute() < m {
-			out = append(out, "early")
-		}
-	}
-	if m := worktime.Minutes(s.MinDuration); m > 0 && d.Worked(now) < m*60 {
-		out = append(out, "short")
-	}
-	return out
+	return Norm{Company: s}.Violations(d, now)
 }
 
 // SheetCell is one person's day in the table.
@@ -50,6 +30,7 @@ type SheetCell struct {
 	Flags   []string
 	Pending bool // a change of the day waits for approval
 	Open    bool // the day is going on (today)
+	Plan    DayPlan
 }
 
 // SheetRow is a person's month.
@@ -61,9 +42,11 @@ type SheetRow struct {
 	Violations int // days with violations
 }
 
-// BuildSheet lays out the month of the people: their days, absences and pending changes ("user|2006-01-02").
-func BuildSheet(people []Person, days []Workday, absences []Absence, pending map[string]bool, s worktime.Schedule,
-	month, now time.Time) []SheetRow {
+// BuildSheet lays out the month of the people: their days, absences and pending changes ("user|2006-01-02"), by
+// their rules (norms; a person without — by the company's working time s). A day off of the schedule is "off", a
+// day of a flexible schedule without work — "free".
+func BuildSheet(people []Person, days []Workday, absences []Absence, pending map[string]bool, norms map[string]Norm,
+	s worktime.Schedule, month, now time.Time) []SheetRow {
 	byKey := map[string]Workday{}
 	for _, d := range days {
 		byKey[d.UserID+"|"+d.Day.Format(time.DateOnly)] = d
@@ -73,16 +56,20 @@ func BuildSheet(people []Person, days []Workday, absences []Absence, pending map
 	rows := make([]SheetRow, 0, len(people))
 	for _, p := range people {
 		row := SheetRow{Person: p}
+		n, ok := norms[p.ID]
+		if !ok {
+			n = Norm{Company: s}
+		}
 		for t := month; t.Before(end); t = t.AddDate(0, 0, 1) {
 			key := t.Format(time.DateOnly)
-			c := SheetCell{Day: t, Pending: pending[p.ID+"|"+key]}
+			c := SheetCell{Day: t, Pending: pending[p.ID+"|"+key], Plan: n.Plan(t)}
 			for _, a := range absences {
 				if a.UserID == p.ID && key >= a.From.Format(time.DateOnly) && key <= a.To.Format(time.DateOnly) {
 					c.Kind, c.Absence = "absence", a.Kind
 				}
 			}
 			if d, ok := byKey[p.ID+"|"+key]; ok {
-				c.Kind, c.Flags = "work", Violations(d, s, now)
+				c.Kind, c.Flags = "work", n.Violations(d, now)
 				c.Open = d.Ended == nil && key == today
 				if d.Ended != nil || c.Open {
 					c.Worked = d.Worked(now)
@@ -94,7 +81,9 @@ func BuildSheet(people []Person, days []Workday, absences []Absence, pending map
 				}
 			} else if c.Kind == "" {
 				switch {
-				case !s.WorkingDay(t):
+				case c.Plan.Free:
+					c.Kind = "free"
+				case !c.Plan.Work:
 					c.Kind = "off"
 				case key > today:
 					c.Kind = "future"

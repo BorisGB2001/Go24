@@ -57,6 +57,7 @@ func TestOperator(t *testing.T) {
 
 	ids := func(f Filter) []string {
 		t.Helper()
+		f.Who = Who{All: true}
 		list, err := s.Sessions(ctx, f)
 		must(err)
 		out := []string{}
@@ -97,7 +98,7 @@ func TestOperator(t *testing.T) {
 	if l := ids(Filter{Tab: "noanswer"}); !same(l, s2) {
 		t.Fatalf("without an answer: %v", l)
 	}
-	if c, _ := s.Counts(ctx, a); c["mine"] != 1 || c["noanswer"] != 1 || c["all"] != 2 {
+	if c, _ := s.Counts(ctx, Who{UserID: a, All: true}); c["mine"] != 1 || c["noanswer"] != 1 || c["all"] != 2 {
 		t.Fatalf("counts: %v", c)
 	}
 
@@ -145,7 +146,7 @@ func TestOperator(t *testing.T) {
 	if l := ids(Filter{}); !same(l, s1) {
 		t.Fatalf("spam out of the open ones: %v", l)
 	}
-	closed, _ := s.Sessions(ctx, Filter{Tab: "closed"})
+	closed, _ := s.Sessions(ctx, Filter{Who: Who{All: true}, Tab: "closed"})
 	if len(closed) != 1 || !closed[0].Spam {
 		t.Fatalf("closed: %+v", closed)
 	}

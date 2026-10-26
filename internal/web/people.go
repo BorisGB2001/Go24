@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,7 @@ type personJSON struct {
 	tasks.PersonHit
 	Photo  string `json:"photo"`
 	Active bool   `json:"active"`
+	Bot    bool   `json:"bot,omitempty"` // a chat bot of an application (the messenger's picker)
 }
 
 func (s *Server) people(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -38,6 +40,25 @@ func (s *Server) people(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	out := make([]personJSON, 0, len(list))
 	for _, p := range list {
 		out = append(out, personJSON{PersonHit: p, Photo: company.PhotoURL(p.ID, p.PhotoKey), Active: p.Active})
+	}
+	// the messenger's picker: the chat bots of applications after the people lists them
+	if q.Get("im") == "1" && s.Matrix != nil && q.Get("collab") == "" && q.Get("dept") == "" && offset == 0 && (q.Get("recent") != "1" || q.Get("q") != "" || len(ids) > 0) {
+		bots, err := s.Matrix.ChatBots(r.Context(), sess.UserID)
+		if err != nil {
+			s.Log.Warn("people: chat bots", "err", err)
+		}
+		find := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(q.Get("q")), "ё", "е"))
+		for _, b := range bots {
+			name := b.FullName()
+			if len(ids) > 0 && !slices.Contains(ids, b.ID) || len(ids) == 0 && !strings.Contains(strings.ToLower(strings.ReplaceAll(name, "ё", "е")), find) {
+				continue
+			}
+			pos := b.WorkPosition
+			if pos == "" {
+				pos = s.I18n.T(s.lang(r), "im.bot")
+			}
+			out = append(out, personJSON{PersonHit: tasks.PersonHit{ID: b.ID, Name: name, Position: pos}, Active: true, Bot: true})
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -37,6 +37,9 @@ func (s *Server) apiFeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/feed/comments/{id}/reaction", s.api("feed:write", s.apiFeedReact))
 	mux.HandleFunc("GET /api/v1/feed/posts/{id}/reactions", s.api("feed:read", s.apiFeedReactors))
 	mux.HandleFunc("POST /api/v1/feed/posts/{id}/vote", s.api("feed:write", s.apiFeedVote))
+	mux.HandleFunc("GET /api/v1/feed/posts/{id}/poll/voters", s.api("feed:read", s.apiFeedPollVoters))
+	mux.HandleFunc("POST /api/v1/feed/posts/{id}/poll/stop", s.api("feed:write", s.apiFeedPollClose))
+	mux.HandleFunc("POST /api/v1/feed/posts/{id}/poll/resume", s.api("feed:write", s.apiFeedPollClose))
 	mux.HandleFunc("POST /api/v1/feed/posts/{id}/read", s.api("feed:write", s.apiFeedRead))
 	mux.HandleFunc("POST /api/v1/feed/posts/{id}/share", s.api("feed:write", s.apiFeedShare))
 	mux.HandleFunc("GET /api/v1/feed/posts/{id}/views", s.api("feed:read", s.apiFeedViews))
@@ -90,11 +93,13 @@ type apiFeedPollOption struct {
 }
 
 type apiFeedPoll struct {
-	Question string              `json:"question"`
-	Multiple bool                `json:"multiple"`
-	Voters   int                 `json:"voters"`
-	Voted    bool                `json:"voted"`
-	Options  []apiFeedPollOption `json:"options"`
+	Question  string              `json:"question"`
+	Multiple  bool                `json:"multiple"`
+	Anonymous bool                `json:"anonymous"` // who voted is not told
+	Closed    bool                `json:"closed"`    // stopped: no more votes
+	Voters    int                 `json:"voters"`
+	Voted     bool                `json:"voted"`
+	Options   []apiFeedPollOption `json:"options"`
 }
 
 type apiGratitude struct {
@@ -168,7 +173,8 @@ func (s *Server) apiFeedPostOf(p *feed.Post) apiFeedPost {
 		out.To = append(out.To, apiFeedRecipient{kind, t.ID, t.Name})
 	}
 	if p.Poll != nil {
-		out.Poll = &apiFeedPoll{Question: p.Poll.Question, Multiple: p.Poll.Multiple, Voters: p.Poll.Voters, Voted: p.Poll.Voted, Options: []apiFeedPollOption{}}
+		out.Poll = &apiFeedPoll{Question: p.Poll.Question, Multiple: p.Poll.Multiple, Anonymous: p.Poll.Anonymous,
+			Closed: p.Poll.Closed, Voters: p.Poll.Voters, Voted: p.Poll.Voted, Options: []apiFeedPollOption{}}
 		for _, o := range p.Poll.Options {
 			out.Poll.Options = append(out.Poll.Options, apiFeedPollOption{o.ID, o.Text, o.Votes, o.Mine})
 		}
@@ -290,9 +296,10 @@ func (s *Server) apiFeedCreate(w http.ResponseWriter, r *http.Request, p apikeys
 		Files          []string   `json:"files"`
 		Tags           []string   `json:"tags"`
 		Poll           *struct {
-			Question string   `json:"question"`
-			Options  []string `json:"options"`
-			Multiple bool     `json:"multiple"`
+			Question  string   `json:"question"`
+			Options   []string `json:"options"`
+			Multiple  bool     `json:"multiple"`
+			Anonymous bool     `json:"anonymous"`
 		} `json:"poll"`
 		Gratitude *struct {
 			Badge  string   `json:"badge"`
@@ -324,7 +331,8 @@ func (s *Server) apiFeedCreate(w http.ResponseWriter, r *http.Request, p apikeys
 		np.Until = d
 	}
 	if in.Poll != nil {
-		np.Poll = &newPoll{Question: in.Poll.Question, Options: in.Poll.Options, Multiple: in.Poll.Multiple}
+		np.Poll = &newPoll{Question: in.Poll.Question, Options: in.Poll.Options,
+			PollKind: feed.PollKind{Multiple: in.Poll.Multiple, Anonymous: in.Poll.Anonymous}}
 	}
 	if in.Gratitude != nil {
 		np.Gratitude = &newGratitude{Badge: in.Gratitude.Badge, People: in.Gratitude.People}
@@ -536,6 +544,40 @@ func (s *Server) apiFeedVote(w http.ResponseWriter, r *http.Request, p apikeys.P
 	}
 	id := r.PathValue("id")
 	if err := s.Feed.Vote(r.Context(), p.UserID, id, in.Options); err != nil {
+		return err
+	}
+	out, err := s.apiFeedPost(r.Context(), p.UserID, id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiFeedPollVoters: who voted for each answer of the post's poll — [{"option", "user": {id, name}}]; not of an
+// anonymous poll.
+func (s *Server) apiFeedPollVoters(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	list, err := s.Feed.PollVoters(r.Context(), p.UserID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	type voter struct {
+		Option string  `json:"option"`
+		User   apiUser `json:"user"`
+	}
+	out := make([]voter, len(list))
+	for i, v := range list {
+		out[i] = voter{v.OptionID, apiUser{v.ID, v.Name}}
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiFeedPollClose stops the post's poll (stop) or resumes it (resume) — its author or an admin; the answer is the
+// post.
+func (s *Server) apiFeedPollClose(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	id := r.PathValue("id")
+	if err := s.Feed.ClosePoll(r.Context(), p.UserID, id, strings.HasSuffix(r.URL.Path, "/stop")); err != nil {
 		return err
 	}
 	out, err := s.apiFeedPost(r.Context(), p.UserID, id)

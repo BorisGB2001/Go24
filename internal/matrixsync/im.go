@@ -35,6 +35,7 @@ type Room struct {
 	Kind      string // dm | notes | feed | project | collab | task | group | channel
 	PeerID    string // go24 user of a private chat
 	PeerPhoto string
+	PeerBot   bool   // the private chat is with a chat bot
 	Photo     bool   // a group chat has its own picture (web: /im/photo)
 	Favorite  bool   // pinned at the top of the list (the m.favourite tag, Element's «Избранное»)
 	Muted     bool   // no notifications (a push rule, as Element mutes)
@@ -57,6 +58,7 @@ type Message struct {
 	SenderName  string
 	SenderPhoto string
 	SenderGuest bool // a guest from outside (in a collab's chat)
+	SenderBot   bool // a chat bot of an application
 	Body        string
 	At          time.Time
 	Mine        bool
@@ -80,6 +82,7 @@ type Message struct {
 	RemindAt    time.Time        // when go24 reminds the employee of it (zero — no reminder)
 	Poll        *Poll            // a poll: its question, answers and votes
 	ToMe        bool             // someone else's message that mentions the employee (m.mentions)
+	Keyboard    [][]Button       // a bot's message: the lines of its buttons
 	plain       bool             // a text of its author (not a file, not a notice): may be edited
 }
 
@@ -135,16 +138,18 @@ func fileOf(content map[string]any) *File {
 type imPerson struct {
 	ID, Name, Photo string
 	Guest           bool
+	Bot             bool // a chat bot of an application (ID is the bot's)
 }
 
-// people maps Matrix IDs to go24 employees.
+// people maps Matrix IDs to go24 employees and the chat bots of applications.
 func (s *Service) people(ctx context.Context, mxids []string) (map[string]imPerson, error) {
 	out := map[string]imPerson{}
 	if len(mxids) == 0 {
 		return out, nil
 	}
-	rows, err := s.DB.Query(ctx, `SELECT m.mxid, u.id::text, u.name, u.photo_key, u.guest FROM matrix_users m JOIN users u ON u.id = m.user_id
-		WHERE m.mxid = ANY($1)`, mxids)
+	rows, err := s.DB.Query(ctx, `SELECT m.mxid, u.id::text, u.name, u.photo_key, u.guest, false FROM matrix_users m JOIN users u ON u.id = m.user_id
+		WHERE m.mxid = ANY($1)
+		UNION ALL SELECT b.mxid, b.id::text, trim(b.name || ' ' || b.last_name), '', false, true FROM im_bots b WHERE b.mxid = ANY($1)`, mxids)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +157,7 @@ func (s *Service) people(ctx context.Context, mxids []string) (map[string]imPers
 	for rows.Next() {
 		var mx string
 		var p imPerson
-		if err := rows.Scan(&mx, &p.ID, &p.Name, &p.Photo, &p.Guest); err != nil {
+		if err := rows.Scan(&mx, &p.ID, &p.Name, &p.Photo, &p.Guest, &p.Bot); err != nil {
 			return nil, err
 		}
 		out[mx] = p
@@ -173,6 +178,9 @@ func (s *Service) token(ctx context.Context, userID string) (string, string, err
 }
 
 func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imPerson) (Message, bool) {
+	if by := autoDeleteBy(ev); by != "" && ev.Sender == s.M.UserID("go24") { // a collab's, as its settings say
+		ev.Sender = by
+	}
 	m := Message{ID: ev.EventID, RoomID: roomID, SenderMXID: ev.Sender, At: time.UnixMilli(ev.TS), Mine: ev.Sender == me}
 	switch ev.Type {
 	case "m.room.encrypted":
@@ -236,7 +244,10 @@ func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imP
 		m.Replies = t.Count
 	}
 	if p, ok := who[ev.Sender]; ok {
-		m.SenderID, m.SenderName, m.SenderPhoto, m.SenderGuest = p.ID, p.Name, p.Photo, p.Guest
+		m.SenderID, m.SenderName, m.SenderPhoto, m.SenderGuest, m.SenderBot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
+		if p.Bot && ev.Type == "m.room.message" {
+			m.Keyboard = keyboardRows(keyboardOf(lastContent(ev)))
+		}
 	} else {
 		m.SenderName = strings.TrimPrefix(strings.SplitN(ev.Sender, ":", 2)[0], "@")
 		if ev.Sender == s.M.UserID("go24") {
@@ -256,7 +267,19 @@ func eventPeople(ev matrix.Event) []string {
 			return []string{ev.Sender, target}
 		}
 	}
+	if by := autoDeleteBy(ev); by != "" {
+		return []string{ev.Sender, by}
+	}
 	return []string{ev.Sender}
+}
+
+// autoDeleteBy is whom go24's change of a collab chat's auto-delete is from ("" — not such a change).
+func autoDeleteBy(ev matrix.Event) string {
+	if ev.Type != autoDeleteType {
+		return ""
+	}
+	by, _ := ev.Content["by"].(string)
+	return by
 }
 
 // chatEvent makes a line of the chat from a change of the chat itself — people added, removed or gone, a new name
@@ -481,7 +504,7 @@ func (s *Service) Rooms(ctx context.Context, userID string) ([]Room, error) {
 		if peer := direct[id]; peer != "" && room.Kind == "" {
 			room.Kind = "dm"
 			if p, ok := who[peer]; ok {
-				room.PeerID, room.PeerPhoto = p.ID, p.Photo
+				room.PeerID, room.PeerPhoto, room.PeerBot = p.ID, p.Photo, p.Bot
 				if room.Name == "" {
 					room.Name = p.Name
 				}
@@ -800,6 +823,11 @@ func (s *Service) Reply(ctx context.Context, userID, roomID, body, root, replyTo
 	if err == nil && replyTo != "" {
 		s.fillQuotes(ctx, []matrix.Event{quoted}, []Message{m})
 	}
+	if err == nil {
+		if err := s.botCommands(ctx, me, tok, roomID, root, m); err != nil {
+			s.Log.Warn("matrix: bot command", "room", roomID, "err", err)
+		}
+	}
 	return m, err
 }
 
@@ -815,12 +843,19 @@ func textContent(body string) map[string]any {
 
 // Edit changes the text of one's own message (m.replace, as Element edits).
 func (s *Service) Edit(ctx context.Context, userID, roomID, eventID, body string) (Message, error) {
+	return s.edit(ctx, userID, roomID, eventID, body, nil)
+}
+
+// BotEdit changes a message of the bot (imbot.message.update): body "" keeps the text, kb nil keeps the buttons
+// (an empty one takes them away).
+func (s *Service) BotEdit(ctx context.Context, botID, roomID, eventID, body string, kb []Button) (Message, error) {
+	return s.edit(ctx, botID, roomID, eventID, body, kb)
+}
+
+func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string, kb []Button) (Message, error) {
 	me, tok, err := s.token(ctx, userID)
 	if err != nil {
 		return Message{}, err
-	}
-	if body = strings.TrimSpace(body); body == "" {
-		return Message{}, i18n.E("err.comment_empty")
 	}
 	ev, err := s.M.EventAs(ctx, tok, roomID, eventID)
 	if err != nil {
@@ -830,7 +865,19 @@ func (s *Service) Edit(ctx context.Context, userID, roomID, eventID, body string
 	if !ok || ev.Sender != me || !orig.plain {
 		return Message{}, i18n.E("err.forbidden")
 	}
+	if body = strings.TrimSpace(body); body == "" && kb != nil {
+		body = orig.Body
+	}
+	if body == "" {
+		return Message{}, i18n.E("err.comment_empty")
+	}
+	if kb == nil {
+		kb = keyboardOf(lastContent(ev))
+	}
 	nc := textContent(body)
+	if len(kb) > 0 {
+		nc["go24.keyboard"] = kb
+	}
 	edit := map[string]any{"msgtype": "m.text", "body": "* " + body, "m.new_content": nc,
 		"m.relates_to": map[string]any{"rel_type": "m.replace", "event_id": eventID}}
 	if f, ok := nc["formatted_body"].(string); ok {
@@ -842,7 +889,10 @@ func (s *Service) Edit(ctx context.Context, userID, roomID, eventID, body string
 	orig.Body, orig.Edited = body, true
 	who, _ := s.people(ctx, []string{me})
 	if p, ok := who[me]; ok {
-		orig.SenderID, orig.SenderName, orig.SenderPhoto, orig.SenderGuest = p.ID, p.Name, p.Photo, p.Guest
+		orig.SenderID, orig.SenderName, orig.SenderPhoto, orig.SenderGuest, orig.SenderBot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
+		if p.Bot {
+			orig.Keyboard = keyboardRows(kb)
+		}
 	}
 	return orig, nil
 }
@@ -1256,15 +1306,15 @@ func (s *Service) DirectChat(ctx context.Context, userID, otherID string) (strin
 	if err != nil {
 		return "", err
 	}
-	var other string
-	// a guest writes only to the people of their collabs, and only they write to the guest (tasks.PeerSQL)
-	err = s.DB.QueryRow(ctx, `SELECT m.mxid FROM matrix_users m JOIN users u ON u.id = m.user_id WHERE m.user_id::text = $1 AND u.active
-		AND `+tasks.PeerSQL("$2", "u"), otherID, userID).Scan(&other)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNoAccount
-	}
+	// a guest writes only to the people of their collabs, and only they write to the guest (tasks.PeerSQL); a chat
+	// bot is the other side as well
+	who, err := s.peers(ctx, userID, []string{otherID})
 	if err != nil {
 		return "", err
+	}
+	other := who[otherID]
+	if other == "" {
+		return "", ErrNoAccount
 	}
 	if other == me {
 		return "", i18n.E("err.forbidden")

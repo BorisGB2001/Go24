@@ -234,6 +234,7 @@ type Message struct {
 	Unsubscribe                                                                                              bool       // a newsletter one can leave («Отказаться от подписки»)
 	Unsubscribed                                                                                             *time.Time // when the user left it
 	Voting, Vote                                                                                             string     // the voting buttons it asks for («A;B»), the choice it votes for (voting.go)
+	SMIMESign, SMIMESigner, SMIMEEnc                                                                         string     // its S/MIME signature and encryption (smime.go)
 }
 
 // From is how the sender is shown.
@@ -267,7 +268,7 @@ const messageCols = `x.id::text, x.mailbox_id::text, m.email, f.id::text, f.name
 
 // messageExtra are a letter's columns after IDs; html is the column of its HTML
 const messageExtra = `, %s, x.bcc_addr, x.importance::int, x.receipt_to, x.receipt_done, d.id IS NOT NULL, d.send_at, coalesce(d.error, ''), x.other, x.answered, x.answered_at, x.flag_remind,
-	x.unsubscribe <> '', x.unsubscribed_at, x.voting, x.vote`
+	x.unsubscribe <> '', x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc`
 
 const messageFrom = ` FROM mail_messages x JOIN mail_folders f ON f.id = x.folder_id JOIN mailboxes m ON m.id = f.mailbox_id
 	LEFT JOIN mail_drafts d ON d.id = x.id`
@@ -419,7 +420,7 @@ func (s *Store) ListBy(ctx context.Context, userID string, o ListOpts) ([]Messag
 	if o.Conv { // the newest letter of each conversation stands for it; it is read, flagged, pinned when any of its letters is
 		sql = `SELECT id, mailbox_id, email, folder_id, name, role, from_addr, from_name, to_addr, cc_addr, subject, body, message_id, thread,
 			sent_at, unread = 0, flagged_any, flag_done, pinned_any, flag_due, snooze_until, categories, lead_id, attached_all, n, unread, ids,
-				body_html, bcc_addr, importance, receipt_to, receipt_done, is_draft, send_at, draft_error, other_, answered, answered_at, flag_remind, unsub, unsubscribed_at, voting, vote FROM (
+				body_html, bcc_addr, importance, receipt_to, receipt_done, is_draft, send_at, draft_error, other_, answered, answered_at, flag_remind, unsub, unsubscribed_at, voting, vote, smime_sign, smime_signer, smime_enc FROM (
 			SELECT ` + strings.NewReplacer("f.id::text,", "f.id::text AS folder_id,", "x.id::text,", "x.id::text AS id,",
 			"x.mailbox_id::text,", "x.mailbox_id::text AS mailbox_id,", "x.flag_due::timestamptz", "x.flag_due::timestamptz AS flag_due",
 			"x.categories::text[]", "x.categories::text[] AS categories", "coalesce(x.lead_id::text, '')", "coalesce(x.lead_id::text, '') AS lead_id", "= '')::int", "= '')::int AS attached").Replace(cols) + `,
@@ -427,7 +428,7 @@ func (s *Store) ListBy(ctx context.Context, userID string, o ListOpts) ([]Messag
 				bool_or(x.flagged) OVER w AS flagged_any, bool_or(x.pinned) OVER w AS pinned_any, coalesce(x.woke_at, x.sent_at) AS at,
 				max(coalesce(x.woke_at, x.sent_at)) OVER w AS last_at, sum(` + sizeExpr + `) OVER w AS size_all, '' AS body_html, x.bcc_addr,
 				x.importance::int AS importance, x.receipt_to, x.receipt_done, d.id IS NOT NULL AS is_draft, d.send_at, coalesce(d.error, '') AS draft_error,
-				x.other AS other_, x.answered, x.answered_at, x.flag_remind, x.unsubscribe <> '' AS unsub, x.unsubscribed_at, x.voting, x.vote, row_number() OVER (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text) ORDER BY coalesce(x.woke_at, x.sent_at) DESC) AS rn` +
+				x.other AS other_, x.answered, x.answered_at, x.flag_remind, x.unsubscribe <> '' AS unsub, x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc, row_number() OVER (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text) ORDER BY coalesce(x.woke_at, x.sent_at) DESC) AS rn` +
 			messageFrom + where + `
 			WINDOW w AS (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text))) c
 			WHERE rn = 1 ORDER BY ` + outerPinned + sort[1] + ` ` + dir + ` NULLS LAST, last_at DESC LIMIT ` + limit

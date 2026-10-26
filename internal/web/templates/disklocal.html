@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+{{/* «Редактировать на компьютере»: the document opened by the program on the computer over a signed WebDAV link */}}
+<div class="row"><a class="button ghost" href="{{$d.Back}}">{{icon "arrow-back-up"}} {{t "office.back"}}</a><span class="spacer"></span></div>
+<div class="card disklocal" data-disk-local>
+  <h2>{{icon "device-desktop"}} {{t "disk.local_title"}}: {{$d.Name}}</h2>
+  {{if not $d.Edit}}<p class="pill">{{t "disk.local_view_only"}}</p>{{end}}
+  <p class="muted">{{t "disk.local_hint"}}</p>
+  <div class="row">{{range $d.Apps}}<a class="button{{if eq .App "msoffice"}} primary{{end}}" {{.Href}} data-local-app="{{.App}}">{{icon "device-desktop"}} {{t (print "disk.local_app_" .App)}}</a>{{end}}</div>
+  <label class="small"><input type="checkbox" data-local-remember> {{t "disk.local_remember"}}</label>
+  <p class="small">{{t "disk.local_link"}}</p>
+  <div class="row"><input type="text" readonly value="{{$d.Link}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>
+  <p class="muted small">{{t "disk.local_ttl" $d.TTL}}</p>
+</div>
+<script src="{{asset "js/disklocal.js"}}"></script>
+{{end}}

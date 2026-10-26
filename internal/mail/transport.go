@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -380,8 +381,14 @@ func (s *Store) save(ctx context.Context, a account, f Folder, m *imap.Message, 
 		}
 	}
 	var p parsed
+	var sec secured
 	if r := m.GetBody(section); r != nil {
-		p = parseFull(r)
+		raw, _ := io.ReadAll(r)
+		raw, sec = s.unsecure(ctx, a.UserID, raw)
+		if sec.of(fromAddr); sec.cert != nil && sec.sign != SignOther && !strings.EqualFold(fromAddr, a.Email) {
+			s.learnPeer(ctx, a.UserID, sec.cert) // as Outlook adds the sender's certificate to the contact
+		}
+		p = parseFull(bytes.NewReader(raw))
 		if len(p.refs) > 0 {
 			refs = p.refs
 		}
@@ -400,11 +407,12 @@ func (s *Store) save(ctx context.Context, a account, f Folder, m *imap.Message, 
 	var id string
 	err := s.db.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, from_name, to_addr, cc_addr, subject, body,
 		sent_at, seen, flagged, message_id, thread, body_html, bcc_addr, importance, receipt_to, other, ics, answered,
-		unsubscribe, unsubscribe_one_click, voting, vote)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) ON CONFLICT DO NOTHING RETURNING id`, a.ID, f.ID, int64(m.Uid),
+		unsubscribe, unsubscribe_one_click, voting, vote, smime_sign, smime_signer, smime_enc)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+		ON CONFLICT DO NOTHING RETURNING id`, a.ID, f.ID, int64(m.Uid),
 		clip(fromAddr, 300), clip(fromName, 300), clip(to, 2000), clip(cc, 2000), clip(subject, 1000), p.body, sent, seen, flagged, msgID(own),
 		threadOf(own, refs), p.html, clip(bcc, 2000), p.importance, p.receiptTo, other, p.ics, answeredOf(m.Flags),
-		p.unsub, p.oneClick, p.voting, p.vote).Scan(&id)
+		p.unsub, p.oneClick, p.voting, p.vote, sec.sign, sec.signer, sec.enc).Scan(&id)
 	files := p.files
 	if errors.Is(err, pgx.ErrNoRows) { // kept already
 		return arrived{}, nil

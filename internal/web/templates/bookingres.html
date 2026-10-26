@@ -11,10 +11,16 @@
     <label>{{t "booking.employee"}}</label><select name="user"><option value="">—</option>{{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $e.UserID}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
     <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{.Description}}</textarea>
     <label>{{t "booking.schedule"}}</label>
-    <div class="row">{{range $d.Days}}<label class="check"><input type="checkbox" name="days" value="{{.}}" {{if hasInt $e.Days (printf "%d" .)}}checked{{end}}> {{t (print "wd." (printf "%d" .))}}</label>{{end}}</div>
     <div class="row"><label>{{t "booking.from"}}<input type="time" name="from" value="{{hhmm .From}}" required></label>
       <label>{{t "booking.to"}}<input type="time" name="to" value="{{hhmm .To}}" required></label>
       <label>{{t "booking.slot"}}<select name="slot">{{range list "15" "20" "30" "45" "60" "90" "120"}}<option value="{{.}}" {{if eq . (printf "%d" $e.Slot)}}selected{{end}}>{{t "booking.slot_n" .}}</option>{{end}}</select></label></div>
+    <table class="bk-days"><tbody>{{range $d.Days}}<tr><td><label class="check"><input type="checkbox" name="days" value="{{.}}" {{if hasInt $e.Days (printf "%d" .)}}checked{{end}}> {{t (print "wd." (printf "%d" .))}}</label></td>
+      <td><input type="time" name="day_from_{{.}}" value="{{$e.OwnFrom .}}" placeholder="{{hhmm $e.From}}" aria-label="{{t "booking.from"}}"> – <input type="time" name="day_to_{{.}}" value="{{$e.OwnTo .}}" placeholder="{{hhmm $e.To}}" aria-label="{{t "booking.to"}}"></td></tr>{{end}}</tbody></table>
+    <p class="small muted">{{t "booking.day_hours_hint"}}</p>
+    <div class="row"><label>{{t "booking.break"}}<span class="row"><input type="time" name="break_from" value="{{if lt .BreakFrom .BreakTo}}{{hhmm .BreakFrom}}{{end}}" aria-label="{{t "booking.from"}}"> – <input type="time" name="break_to" value="{{if lt .BreakFrom .BreakTo}}{{hhmm .BreakTo}}{{end}}" aria-label="{{t "booking.to"}}"></span></label></div>
+    <label>{{t "booking.off_dates"}}</label>
+    <div class="row bk-offdates">{{range .OffDates}}<input type="date" name="off" value="{{.Format "2006-01-02"}}">{{end}}{{range list "1" "2" "3"}}<input type="date" name="off">{{end}}</div>
+    <p class="small muted">{{t "booking.off_dates_hint"}}</p>
     {{if $d.Services}}<label>{{t "booking.services"}}</label>
     <div class="bk-svcs"><p class="small muted">{{t "booking.services_hint"}}</p>
       <table class="list"><tbody>{{range $d.Services}}<tr><td><label class="check"><input type="checkbox" name="svc" value="{{.ProductID}}" {{if .On}}checked{{end}}> {{.Name}}</label></td>
@@ -22,9 +28,13 @@
         <td><label class="row small">{{t "booking.svc_minutes"}}<input type="number" name="svc_min_{{.ProductID}}" value="{{.Minutes}}" min="5" max="1440" step="5" style="width:6em"></label></td></tr>{{end}}</tbody></table></div>
     {{else if $d.Edit}}<p class="small muted">{{t "booking.services_none"}}</p>{{end}}
     <label class="check"><input type="checkbox" name="overbooking" value="1" {{if .Overbooking}}checked{{end}}> {{t "booking.overbooking"}}</label>
+    <label class="check"><input type="checkbox" name="calendar_busy" value="1" {{if .CalendarBusy}}checked{{end}}> {{t "booking.calendar_busy"}}</label>
     <label class="check"><input type="checkbox" name="notify_mail" value="1" {{if .NotifyMail}}checked{{end}}> {{t "booking.notify_mail"}}</label>
+    <label class="check"><input type="checkbox" name="feedback" value="1" {{if .Feedback}}checked{{end}}> {{t "booking.feedback"}}</label>
     <div class="row"><label>{{t "booking.remind"}}<select name="remind_hours">{{range list "0" "1" "2" "3" "6" "12" "24" "48" "72"}}<option value="{{.}}" {{if eq . (printf "%d" $e.RemindHours)}}selected{{end}}>{{if eq . "0"}}{{t "booking.remind_none"}}{{else}}{{t "booking.remind_n" .}}{{end}}</option>{{end}}</select></label>
       <label>{{t "booking.late"}}<select name="late_minutes">{{range list "0" "5" "10" "15" "30" "60"}}<option value="{{.}}" {{if eq . (printf "%d" $e.LateMinutes)}}selected{{end}}>{{if eq . "0"}}{{t "booking.late_none"}}{{else}}{{t "booking.late_n" .}}{{end}}</option>{{end}}</select></label></div>
+    <div class="row"><label>{{t "booking.confirm"}}<select name="confirm_hours">{{range list "0" "2" "3" "6" "12" "24" "48" "72"}}<option value="{{.}}" {{if eq . (printf "%d" $e.ConfirmHours)}}selected{{end}}>{{if eq . "0"}}{{t "booking.confirm_none"}}{{else}}{{t "booking.remind_n" .}}{{end}}</option>{{end}}</select></label>
+      <label>{{t "booking.confirm_alert"}}<select name="confirm_alert">{{range list "0" "1" "2" "3" "6" "12" "24"}}<option value="{{.}}" {{if eq . (printf "%d" $e.ConfirmAlert)}}selected{{end}}>{{if eq . "0"}}{{t "booking.confirm_alert_none"}}{{else}}{{t "booking.confirm_alert_n" .}}{{end}}</option>{{end}}</select></label></div>
     <p class="small muted">{{t "booking.notify_hint"}}</p>
     <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/booking/resources">{{t "common.cancel"}}</a></p>
   </form>
@@ -35,14 +45,14 @@
   <table class="list"><thead><tr><th>{{t "form.name"}}</th><th>{{t "booking.type"}}</th><th>{{t "booking.employee"}}</th><th>{{t "booking.schedule"}}</th><th>{{t "booking.slot"}}</th><th>{{t "booking.services"}}</th></tr></thead><tbody>
   {{range $d.Resources}}{{$r := .}}<tr><td>{{if $d.Admin}}<a href="/booking/resources?edit={{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}{{with .Description}}<div class="small muted">{{.}}</div>{{end}}</td>
     <td>{{if .TypeCode}}{{t (print "booking.type." .TypeCode)}}{{else}}{{.TypeName}}{{end}}</td><td>{{.UserName}}</td>
-    <td>{{range $i, $w := .Days}}{{if $i}}, {{end}}{{t (print "wd." (printf "%d" $w))}}{{end}} · {{hhmm .From}}–{{hhmm .To}}</td><td>{{t "booking.slot_n" (printf "%d" .Slot)}}</td><td class="small">{{range $i, $x := .Services}}{{if $i}}, {{end}}{{$x.Name}}{{end}}</td></tr>
+    <td>{{range $i, $w := .Days}}{{if $i}}, {{end}}{{t (print "wd." (printf "%d" $w))}}{{end}} · {{hhmm .From}}–{{hhmm .To}}{{if lt .BreakFrom .BreakTo}} · {{t "booking.break"}} {{hhmm .BreakFrom}}–{{hhmm .BreakTo}}{{end}}{{with .OffDates}} · {{t "booking.off_dates"}}: {{len .}}{{end}}</td><td>{{t "booking.slot_n" (printf "%d" .Slot)}}</td><td class="small">{{range $i, $x := .Services}}{{if $i}}, {{end}}{{$x.Name}}{{end}}</td></tr>
   {{else}}<tr><td colspan="6" class="muted">{{t "booking.no_resources"}}</td></tr>{{end}}
   </tbody></table>
 </div>
 <div class="card" style="max-width:720px">
   <h2>{{t "booking.types"}}</h2>
   {{range $d.Types}}<div class="row">{{if .Code}}<span>{{t (print "booking.type." .Code)}}</span>{{else if $d.Admin}}<form method="post" action="/booking/types/{{.ID}}" class="row"><input type="text" name="name" value="{{.Name}}" maxlength="100" required><button class="ghost">{{t "common.save"}}</button></form>{{else}}<span>{{.Name}}</span>{{end}}
-    <span class="muted small">{{t "booking.resources_n" .Resources}}</span>
+    <span class="muted small">{{t "booking.resources_n" (printf "%d" .Resources)}}</span>
     {{if and $d.Admin (not .Code) (not .Resources)}}<form method="post" action="/booking/types/{{.ID}}/delete"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>{{end}}
   {{if $d.Admin}}<form method="post" action="/booking/types" class="row"><input type="text" name="name" maxlength="100" placeholder="{{t "booking.new_type"}}" required><button>{{icon "plus"}} {{t "common.create"}}</button></form>{{end}}
 </div>

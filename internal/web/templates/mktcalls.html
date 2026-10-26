@@ -1,0 +1,60 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}
+<div class="crumbs"><a href="/marketing/calls">{{t "mkt.title"}}</a> {{icon "chevron-right"}} {{t "mkt.calls"}}</div>
+<div class="pagehead"><h1>{{if $c.ID}}{{$c.Title}}{{else}}{{t "mkt.new_calls"}}{{end}}</h1>
+  {{if and $c.ID $d.Mine}}<span class="spacer"></span>
+  <form method="post" action="/marketing/calls/{{$c.ID}}/delete" data-confirm="{{t "mkt.calls_delete_confirm" $c.Title}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
+
+{{if $c.Editable}}
+{{if $d.Mine}}<form method="post" action="/marketing/calls/{{if $c.ID}}{{$c.ID}}{{else}}new{{end}}">
+<div class="mkt-cols">
+<div class="card">
+  <label>{{t "mkt.calls_title"}}</label><input type="text" name="title" required maxlength="200" value="{{$c.Title}}" placeholder="{{t "mkt.calls_title_hint"}}">
+  <label>{{t "mkt.calls_script"}}</label><textarea name="script" rows="10" maxlength="10000" placeholder="{{t "mkt.calls_script_hint"}}">{{$c.Script}}</textarea>
+  <p class="small muted">{{t "mkt.calls_script_note"}}</p>
+</div>
+<div>
+<div class="card">
+  <h3>{{icon "users"}} {{t "mkt.calls_whom"}}</h3>
+  {{if $d.Segments}}<select name="segment"><option value="">—</option>{{range $d.Segments}}<option value="{{.ID}}" {{if eq .ID $c.SegmentID}}selected{{end}}>{{.Name}} · {{t (print "mkt.ent." .Entity)}}</option>{{end}}</select>
+  {{else}}<p class="muted">{{t "mkt.no_segments"}}</p>{{end}}
+  <p class="small"><a href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a></p>
+  {{with $d.CountErr}}<div class="form-error">{{.}}</div>{{else}}{{if $c.SegmentID}}<p><b>{{t "mkt.calls_will" $d.Count}}</b></p>{{end}}{{end}}
+  <p class="small muted">{{t "mkt.calls_phone_note"}}</p>
+</div>
+<div class="card">
+  <h3>{{icon "user"}} {{t "mkt.calls_who"}}</h3>
+  <label><input type="radio" name="assign" value="owner" {{if ne $c.Assign "staff"}}checked{{end}}> {{t "mkt.calls_owner"}}</label>
+  <label><input type="radio" name="assign" value="staff" {{if eq $c.Assign "staff"}}checked{{end}}> {{t "mkt.calls_staff"}}</label>
+  <select name="staff" multiple size="6" aria-label="{{t "mkt.calls_staff"}}">{{range $d.Users}}<option value="{{.ID}}" {{if index $d.Staff .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <label>{{t "crm.activity_deadline"}}</label><input type="datetime-local" name="deadline" required value="{{with $c.Deadline}}{{.Format "2006-01-02T15:04"}}{{end}}">
+</div>
+<p class="row"><button class="ghost" name="go" value="save">{{t "common.save"}}</button>
+  <button class="primary" name="go" value="start" data-confirm="{{t "mkt.calls_start_confirm"}}">{{icon "phone"}} {{t "mkt.calls_start"}}</button>
+  <a class="button ghost" href="/marketing/calls">{{t "common.cancel"}}</a></p>
+</div>
+</div>
+</form>
+{{else}}<div class="card"><p class="muted">{{t "mkt.not_yours" $c.AuthorName}}</p></div>{{end}}
+
+{{else}}
+<div class="mkt-stats">
+  {{template "mktcallstat" (dict "N" $c.Total "L" "mkt.calls_cards" "S" "" "ID" $c.ID "On" $d.Done)}}
+  {{template "mktcallstat" (dict "N" $c.Done "L" "mkt.calls_done" "S" "1" "ID" $c.ID "On" $d.Done)}}
+  {{template "mktcallstat" (dict "N" $c.Left "L" "mkt.calls_left" "S" "0" "ID" $c.ID "On" $d.Done)}}
+</div>
+<div class="progress"><span style="width:{{pct $c.Done $c.Total}}%"></span></div>
+<div class="small muted">{{with $c.StartedAt}}{{t "mkt.started_at" (date .)}} · {{end}}{{t "crm.activity_deadline"}}: {{date $c.Deadline}} · {{$c.SegmentName}} · {{$c.AuthorName}}</div>
+<div class="mkt-cols">
+<div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.calls_card"}}</th><th>{{t "mkt.calls_phone"}}</th><th>{{t "crm.f.responsible"}}</th><th>{{t "mkt.status"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/crm/{{if eq .Entity "company"}}companies{{else}}{{.Entity}}s{{end}}/{{.EntityID}}">{{.Name}}</a><div class="small muted">{{t (print "mkt.ent." .Entity)}}</div></td>
+    <td class="nowrap"><a href="tel:{{.Phone}}">{{icon "phone"}} {{.Phone}}</a></td><td class="small">{{.ResponsibleName}}</td>
+    <td>{{if .DoneAt}}<span class="pill mkt-r-sent">{{icon "check"}} {{t "mkt.calls_called"}}</span> <span class="small muted">{{date .DoneAt}}</span>{{else if .ActivityID}}<span class="pill mkt-r-pending">{{t "mkt.calls_todo"}}</span>{{else}}<span class="pill mkt-r-held">{{t "mkt.calls_removed"}}</span>{{end}}</td></tr>{{end}}</tbody>
+</table>
+{{if gt (len $d.Pages) 1}}<div class="row pager" style="padding:10px">{{range $i := $d.Pages}}<a class="chip{{if eq $i $d.Page}} on{{end}}" href="?done={{$d.Done}}&page={{$i}}">{{$i}}</a>{{end}}</div>{{end}}
+{{else}}<div class="empty">{{t "mkt.no_recipients"}}</div>{{end}}</div>
+<div class="card"><h3>{{icon "file-text"}} {{t "mkt.calls_script"}}</h3>{{if $c.Script}}<div class="mkt-script">{{$c.Script}}</div>{{else}}<p class="muted">—</p>{{end}}</div>
+</div>
+{{end}}
+{{end}}

@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"go24/internal/auth"
+	"go24/internal/bp"
 	"go24/internal/drive"
 	"go24/internal/tasks"
 )
@@ -66,6 +67,19 @@ func (s *Server) fileCard(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			users = slices.DeleteFunc(users, func(u tasks.User) bool { return u.ID == sess.UserID || u.Guest })
 		}
 	}
+	// «Бизнес-процессы» of a document of «Общий диск»: those run on it, the templates of files the viewer starts
+	var bpTpls []bp.Template
+	var bpRuns []bp.Instance
+	bpWrite := false
+	if err == nil && s.BP != nil && c.Drive == "company" {
+		if bpTpls, err = s.BP.CardTemplates(r.Context(), bp.EntityFile, id); err == nil {
+			bpTpls, err = s.BP.Startable(bpAdmin(r, sess), sess.UserID, bpTpls)
+		}
+		if err == nil {
+			bpRuns, err = s.BP.Instances(r.Context(), sess.UserID, bp.EntityFile, id)
+		}
+		bpWrite = s.Drive.BPRight(r.Context(), sess.UserID, "write", id) == nil
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/disk/my")
 		return
@@ -73,7 +87,8 @@ func (s *Server) fileCard(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	s.render(w, r, "diskcard", page{Title: c.Name, Nav: "disk", Data: map[string]any{
 		"Card": c, "Type": fileType(c.Name, c.ContentType), "Versions": versions, "At": at, "Me": sess.UserID, "Admin": tasks.IsAdmin(r.Context()),
 		"Sharing": sh, "Drive": dr, "Users": users, "Departments": depts, "FileAccesses": drive.FileAccesses,
-		"LinksOff": lim.NoLinks, "Base": s.BaseURL, "Back": "/files/" + id + "/about#sharing"}})
+		"LinksOff": lim.NoLinks, "Office": s.Office != nil, "Base": s.BaseURL, "Back": "/files/" + id + "/about#sharing",
+		"BPTemplates": bpTpls, "BPInstances": bpRuns, "BPWrite": bpWrite}})
 }
 
 // cardDrive is the drive of the file the viewer changes its «Общий доступ» in ("" — none): their own «Мой диск»,

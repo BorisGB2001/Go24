@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,10 @@ func (s *Server) officeEdit(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	edit := may && office.Editable(m.Name)
+	if err := s.Drive.Opened(r.Context(), sess.UserID, id); err != nil { // «Недавние» of «Документы»
+		s.fail(w, "office opened", err)
+		return
+	}
 	which := driveWhich(d)
 	raw, err := s.officeConfig(r, sess, m.Name, office.Key(id, m.Key), "/onlyoffice/file/"+id+"/"+s.Office.Stamp(id, m.Key),
 		"/onlyoffice/callback/"+id+"?"+url.Values{"u": {sess.UserID}, "w": {which}, "s": {s.Office.Stamp(id, sess.UserID, which)}}.Encode(),
@@ -102,7 +107,7 @@ func (s *Server) officeConfig(r *http.Request, sess auth.Session, title, key, fi
 		"editorConfig": map[string]any{
 			"mode": mode, "lang": lang, "callbackUrl": s.Office.Self + callback,
 			"user":          map[string]any{"id": sess.UserID, "name": name},
-			"customization": map[string]any{"goback": map[string]any{"url": back, "text": s.tr(r, "office.back")}},
+			"customization": map[string]any{"goback": map[string]any{"url": back, "text": s.tr(r, backKey(back))}},
 		},
 	}
 	token, err := s.Office.Sign(cfg)
@@ -112,6 +117,14 @@ func (s *Server) officeConfig(r *http.Request, sess auth.Session, title, key, fi
 	cfg["token"] = token
 	raw, err := json.Marshal(cfg)
 	return string(raw), err
+}
+
+// backKey is what «Назад» of the editor says: back to the drive, or (a document of a public link) back to the link.
+func backKey(back string) string {
+	if strings.HasPrefix(back, "/s/") {
+		return "share.back"
+	}
+	return "office.back"
 }
 
 // officeFS are the empty documents «Создать» starts from (ONLYOFFICE's own, by language: page size, fonts).
@@ -318,6 +331,28 @@ func (s *Server) officeDownload(ctx context.Context, link string) ([]byte, error
 		return nil, errors.New("office: the edited file is too large")
 	}
 	return data, nil
+}
+
+// officeGuestCookie lets one who opened a document by a public link reach the document server through go24 (/office/)
+// without signing in: until the time in it, signed by go24.
+const officeGuestCookie = "go24_office_guest"
+
+// letOfficeGuest gives the browser the cookie of officeGuest for a day.
+func (s *Server) letOfficeGuest(w http.ResponseWriter) {
+	until := strconv.FormatInt(time.Now().Add(24*time.Hour).Unix(), 10)
+	http.SetCookie(w, &http.Cookie{Name: officeGuestCookie, Value: until + "." + s.Office.Stamp("guest", until), Path: "/office/",
+		MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+}
+
+// officeGuest: the request has the cookie of letOfficeGuest, not expired.
+func (s *Server) officeGuest(r *http.Request) bool {
+	c, err := r.Cookie(officeGuestCookie)
+	if err != nil {
+		return false
+	}
+	until, stamp, _ := strings.Cut(c.Value, ".")
+	end, err := strconv.ParseInt(until, 10, 64)
+	return err == nil && time.Now().Unix() < end && s.Office.Stamped(stamp, "guest", until)
 }
 
 // officeProxy is the document server under go24's own address (/office/…), over http and https alike: the editor's

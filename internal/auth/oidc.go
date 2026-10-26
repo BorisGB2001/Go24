@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -31,6 +32,16 @@ type OIDC struct {
 
 func NewOIDC(issuer, clientID, clientSecret, redirectURL string) *OIDC {
 	return &OIDC{issuer: issuer, clientID: clientID, clientSecret: clientSecret, redirectURL: redirectURL}
+}
+
+// AccountURL is the employee's own page in Authentik (password, two-factor authentication, sessions there): the
+// user interface on the issuer's host; "" — the issuer is not an address.
+func (o *OIDC) AccountURL() string {
+	u, err := url.Parse(o.issuer)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + "/if/user/#/settings"
 }
 
 func (o *OIDC) init(ctx context.Context) error {

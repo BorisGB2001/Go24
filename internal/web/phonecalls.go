@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +32,8 @@ func (s *Server) phoneCDR(w http.ResponseWriter, r *http.Request) {
 	c := telephony.CDR{UniqueID: r.FormValue("id"), From: r.FormValue("from"), To: r.FormValue("to"), Dial: r.FormValue("dial"),
 		By: r.FormValue("by"), Line: r.FormValue("line"),
 		Record: r.FormValue("rec"), Start: epoch(r.FormValue("start")), Answer: epoch(r.FormValue("answer")), End: epoch(r.FormValue("end")),
-		Voicemail: r.FormValue("vm") == "1"}
+		Voicemail: r.FormValue("vm") == "1", XFrom: r.FormValue("xfrom"), XTo: r.FormValue("xto")}
+	c.Rating, _ = strconv.Atoi(r.FormValue("rate"))
 	if c.Voicemail && c.Record != "" && !s.phoneMessage(c.Record) { // the client hung up before the beep
 		c.Record = ""
 	}
@@ -50,6 +53,13 @@ func (s *Server) phoneCDR(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.phoneMissed(r.Context(), id); err != nil {
 		s.Log.Error("telephony notify", "err", err, "call", id)
+	}
+	if st := c.Status(); id != "" && c.Record != "" && (st == telephony.StatusAnswered || st == telephony.StatusVoicemail) && s.Speech != nil {
+		if on, err := s.Telephony.Transcribing(r.Context()); err != nil {
+			s.Log.Error("telephony transcribing", "err", err)
+		} else if on {
+			go s.phoneTranscribeLater(id)
+		}
 	}
 	s.Log.Info("telephony call", "id", id, "from", c.From, "to", c.To, "status", c.Status())
 	w.WriteHeader(http.StatusNoContent)
@@ -109,20 +119,29 @@ type phoneCallRow struct {
 	CanListen, HasRecord bool
 	Mine                 bool   // the one looking was on the call (or is an administrator): «Создать лид / сделку»
 	Outside              string // the outside number of the call ("" — between employees)
+	Blocked              bool   // the outside number is on the black list (shown to administrators)
 }
 
-// phoneCalls is «Детализация звонков»: an employee sees their calls, administrators — everyone's (or one's: user=);
-// filters: kind (in, out, missed), the period, a number.
+// phoneCalls is «Детализация звонков»: the calls the right «calls» shows — the employee's own, their departments'
+// or everyone's (or one's: user=); filters: kind (in, out, missed), the period, a number.
 func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if s.Telephony == nil {
 		s.taskErr(w, r, i18n.E("err.telephony_off"), "/my")
 		return
 	}
-	q := r.URL.Query()
-	f := telephony.CallFilter{UserID: q.Get("user"), Kind: q.Get("kind"), Number: q.Get("q"), Limit: 50}
-	if !sess.AdminActive() {
-		f.UserID = sess.UserID
+	perms := s.telPerms(r.Context(), sess)
+	if !perms.Has("calls", "own") {
+		s.taskErr(w, r, i18n.E("err.forbidden"), "/my")
+		return
 	}
+	q := r.URL.Query()
+	f := telephony.CallFilter{Kind: q.Get("kind"), Number: q.Get("q"), Limit: 50}
+	var err error
+	if f.UserID, f.Users, err = s.telScope(r.Context(), sess, perms["calls"], q.Get("user")); err != nil {
+		s.fail(w, "telephony team", err)
+		return
+	}
+	admin := s.telAdmin(r.Context(), sess)
 	switch f.Kind {
 	case "in", "out", "missed":
 	default:
@@ -146,6 +165,20 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 	if me == "" {
 		me = sess.UserID
 	}
+	black := map[string]bool{}
+	if admin {
+		if black, err = s.Telephony.BlackKeys(r.Context()); err != nil {
+			s.fail(w, "telephony black list", err)
+			return
+		}
+	}
+	var team []string // whose records the level «dept» lets hear
+	if perms["records"] == "dept" {
+		if team, err = s.Telephony.Team(r.Context(), sess.UserID); err != nil {
+			s.fail(w, "telephony team", err)
+			return
+		}
+	}
 	rows := make([]phoneCallRow, len(list))
 	for i, c := range list {
 		row := phoneCallRow{Call: c, Kind: "inner", HasRecord: c.Record != "" && s.Telephony.Records != ""}
@@ -164,9 +197,10 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 		if c.ToUser.UserID != "" {
 			row.ToPhoto = company.PhotoURL(c.ToUser.UserID, c.ToUser.PhotoKey)
 		}
-		row.Mine = sess.AdminActive() || c.FromUser.UserID == sess.UserID || c.ToUser.UserID == sess.UserID
-		row.CanListen = row.HasRecord && row.Mine
+		row.Mine = perms["calls"] != "own" || c.FromUser.UserID == sess.UserID || c.ToUser.UserID == sess.UserID
+		row.CanListen = row.HasRecord && phoneHearsBy(perms, sess, c, team, nil)
 		row.Outside, _, _ = c.Outside()
+		row.Blocked = row.Outside != "" && black[telephony.BlackKey(row.Outside)]
 		rows[i] = row
 	}
 	more := ""
@@ -179,9 +213,9 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 		more = "/telephony/calls?" + keep.Encode()
 	}
 	data := map[string]any{"Calls": rows, "Filter": f, "From": q.Get("from"), "To": q.Get("to"), "More": more,
-		"Admin": sess.AdminActive(), "CRM": s.CRM != nil}
-	if sess.AdminActive() {
-		if data["Users"], err = s.Tasks.ListUsers(r.Context()); err != nil {
+		"Admin": admin, "CRM": s.CRM != nil, "Back": r.URL.RequestURI(), "Speech": s.Speech != nil}
+	if perms["calls"] != "own" {
+		if data["Users"], err = s.telUsers(r.Context(), f.Users); err != nil {
 			s.fail(w, "telephony users", err)
 			return
 		}
@@ -204,8 +238,7 @@ func (s *Server) phoneRecord(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.fail(w, "telephony record", err)
 		return
 	}
-	if !sess.AdminActive() && c.FromUser.UserID != sess.UserID && c.ToUser.UserID != sess.UserID &&
-		!s.crmCanRead(r.Context(), sess.UserID, c.CRMEntity, c.CRMID) { // the client's card, in whose timeline the call is
+	if !s.phoneHears(r.Context(), sess, c) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -217,3 +250,101 @@ func (s *Server) phoneRecord(w http.ResponseWriter, r *http.Request, sess auth.S
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFile(w, r, filepath.Join(s.Telephony.Records, name))
 }
+
+// phoneHears tells whether the employee may listen to the call's record (and read its text) by the right «records»:
+// own — they were on the call or see the client's card in whose timeline the call is; dept — or someone of their
+// departments was on it; all — any call. Administrators in admin mode hear all.
+func (s *Server) phoneHears(ctx context.Context, sess auth.Session, c telephony.Call) bool {
+	perms := s.telPerms(ctx, sess)
+	var team []string
+	if perms["records"] == "dept" {
+		team, _ = s.Telephony.Team(ctx, sess.UserID)
+	}
+	return phoneHearsBy(perms, sess, c, team, func() bool { return s.crmCanRead(ctx, sess.UserID, c.CRMEntity, c.CRMID) })
+}
+
+// phoneHearsBy is phoneHears by the rights; team are the people of the level «dept», card (nil — not asked) tells
+// whether the person sees the call's card.
+func phoneHearsBy(perms telephony.Perms, sess auth.Session, c telephony.Call, team []string, card func() bool) bool {
+	switch perms["records"] {
+	case "all":
+		return true
+	case "none":
+		return false
+	case "dept":
+		if c.FromUser.UserID != "" && slices.Contains(team, c.FromUser.UserID) || c.ToUser.UserID != "" && slices.Contains(team, c.ToUser.UserID) {
+			return true
+		}
+	}
+	return c.FromUser.UserID == sess.UserID || c.ToUser.UserID == sess.UserID || (card != nil && card())
+}
+
+// phoneTranscript: «Расшифровать» — the record's text made by Whisper and kept; back to where the button was.
+func (s *Server) phoneTranscript(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/telephony/calls"
+	if ref, err := url.Parse(r.Referer()); err == nil && strings.HasPrefix(ref.Path, "/") && !strings.HasPrefix(ref.Path, "//") {
+		back = ref.RequestURI()
+	}
+	if s.Telephony == nil || s.Telephony.Records == "" {
+		http.NotFound(w, r)
+		return
+	}
+	c, err := s.Telephony.CallByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, telephony.ErrNotFound) || (err == nil && c.Record == "") {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, "telephony transcript", err)
+		return
+	}
+	if !s.phoneHears(r.Context(), sess, c) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if c.Transcript == "" {
+		if err := s.phoneTranscribe(r.Context(), c); err != nil {
+			s.taskErr(w, r, err, back)
+			return
+		}
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// phoneTranscribe makes the text of the call's record by Whisper (in the portal's language) and keeps it.
+func (s *Server) phoneTranscribe(ctx context.Context, c telephony.Call) error {
+	if s.Speech == nil {
+		return i18n.E("err.speech_off")
+	}
+	f, err := os.Open(filepath.Join(s.Telephony.Records, filepath.Base(c.Record)))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	lang, _, _ := strings.Cut(s.portalLang(), "-")
+	text, err := s.Speech.Transcribe(ctx, filepath.Base(c.Record), io.LimitReader(f, maxRecord), lang)
+	if err != nil {
+		s.Log.Error("whisper", "err", err, "call", c.ID)
+		return i18n.E("err.speech_failed")
+	}
+	if text == "" {
+		text = s.portalTr("im.voice_silent")
+	}
+	return s.Telephony.SetTranscript(ctx, c.ID, text)
+}
+
+// phoneTranscribeLater makes the text of a new call's record after Asterisk has been answered (Whisper takes its time).
+func (s *Server) phoneTranscribeLater(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	c, err := s.Telephony.CallByID(ctx, id)
+	if err == nil && c.Record != "" && c.Transcript == "" {
+		err = s.phoneTranscribe(ctx, c)
+	}
+	if err != nil {
+		s.Log.Error("telephony transcript", "err", err, "call", id)
+	}
+}
+
+// maxRecord is the longest record go24 sends to Whisper (about an hour of 8 kHz WAV).
+const maxRecord = 64 << 20

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -137,9 +138,12 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
+	stores := storages.NewStore(pool, rc, store)
+	stores.Apps = map[string]storages.App{"gdrive": {ClientID: cfg.GDriveID, Secret: cfg.GDriveSecret},
+		"dropbox": {ClientID: cfg.DropboxID, Secret: cfg.DropboxSecret}, "onedrive": {ClientID: cfg.OneDriveID, Secret: cfg.OneDriveSecret}}
 	srv := &web.Server{
 		DB:              pool,
-		Storages:        storages.NewStore(pool, rc, store),
+		Storages:        stores,
 		Tasks:           tasks.NewStore(pool),
 		Company:         company.NewStore(pool),
 		Authentik:       authentik.New(cfg.AuthentikURL, cfg.AuthentikToken),
@@ -159,6 +163,7 @@ func run(log *slog.Logger) error {
 	srv.Feed = feed.NewStore(pool, srv.Tasks)
 	srv.Notify = notify.NewStore(pool)
 	srv.Calendar = calendar.NewStore(pool)
+	srv.Calendar.Key = calendar.DavKey(cfg.SessionSecret)
 	srv.KB = kb.NewStore(pool)
 	srv.Sites = sites.NewStore(pool)
 	srv.Booking = booking.NewStore(pool)
@@ -193,6 +198,10 @@ func run(log *slog.Logger) error {
 	srv.BP = bp.NewStore(pool, srv.Tasks, srv.CRM, srv.Company)
 	srv.BP.BaseURL = cfg.BaseURL
 	srv.BP.Feed = srv.Feed // standalone processes started by hand are posts
+	srv.BP.Document = srv.BPDocument // «Создание документа» by the document generator
+	// the processes of the documents of «Общий диск»
+	srv.BP.Files = srv.Drive
+	srv.BP.Tr = func(key string, args ...any) string { return bundle.T(bundle.Match(""), key, args...) } // «Да»/«Нет» of fields in texts
 	srv.Hooks = hooks.NewStore(pool)
 	srv.Apps = apps.NewStore(pool)
 	srv.Audit = audit.NewStore(pool)
@@ -210,6 +219,12 @@ func run(log *slog.Logger) error {
 	}
 	srv.OpenLines = openlines.NewStore(pool, srv.CRM)
 	srv.OpenLines.Tr = func(key string, args ...any) string { return bundle.T(bundle.Match(""), key, args...) } // service lines of dialogues
+	// the lines' Telegram bots: their tokens sealed, the files in the built-in storage
+	srv.OpenLines.Key = []byte(cfg.SessionSecret)
+	srv.OpenLines.PutFile = func(ctx context.Context, key string, r io.Reader, size int64, ct string) error {
+		return srv.Storages.Put(ctx, "", false, "", key, r, size, ct)
+	}
+	srv.OpenLines.OpenFile = func(ctx context.Context, key string) (io.ReadCloser, error) { return srv.Storages.Open(ctx, nil, key) }
 	srv.Mail = mail.NewStore(pool, cfg.SessionSecret)
 	srv.AI = ai.NewStore(pool, cfg.SessionSecret)
 	srv.CRM.SendMail = func(ctx context.Context, userID, to, subject, text string) error { // mail robots: the first mailbox
@@ -324,6 +339,7 @@ func run(log *slog.Logger) error {
 			_, err = srv.Matrix.Send(ctx, fromID, room, text, "")
 			return err
 		}
+		srv.Matrix.BotQueued = srv.Apps.Wake
 		if background {
 			go srv.Matrix.Run(ctx)
 			go srv.Matrix.RemindLoop(ctx, func(m matrixsync.Message) string { return matrixsync.Excerpt(m, 140) }) // «Напомнить» of messages

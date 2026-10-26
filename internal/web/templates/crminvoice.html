@@ -4,7 +4,8 @@
 <div class="pagehead"><h1>{{t (print "crm.doc." $v.Kind)}} № {{$v.Code}}{{if $v.Overdue}} <span class="pill inv-overdue">{{t "crm.inv.overdue"}}</span>{{end}}</h1>
   <div class="row">{{if and $d.CanWrite (eq $v.Kind "quote")}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="to_invoice">
     <button class="ghost">{{icon "file-plus"}} {{t "crm.inv_make_invoice"}}</button></form>{{end}}
-    <a class="button ghost" href="/crm/invoices/{{$v.ID}}/print" target="_blank" rel="noopener">{{icon "printer"}} {{t "crm.inv_print"}}</a></div></div>
+    <a class="button ghost" href="/crm/invoices/{{$v.ID}}/print" target="_blank" rel="noopener">{{icon "printer"}} {{t "crm.inv_print"}}</a>
+    {{template "docmake" (dict "Kind" "invoices" "ID" $v.ID "D" $d)}}</div></div>
 <div class="crmstages">{{range $d.Statuses}}{{if $d.CanWrite}}<form method="post" action="/crm/invoices/{{$v.ID}}"><input type="hidden" name="op" value="status"><input type="hidden" name="status" value="{{.}}">
   <button class="crmst{{if eq . $v.Status}} on{{end}}" style="--c:var(--accent)">{{t (print "crm.inv." .)}}</button></form>{{else}}<span class="crmst{{if eq . $v.Status}} on{{end}}" style="--c:var(--accent)">{{t (print "crm.inv." .)}}</span>{{end}}{{end}}</div>
 {{with $v.SourceID}}<p class="small muted">{{t "crm.inv_of_quote"}} <a href="/crm/invoices/{{.}}">{{t "crm.doc.quote"}} № {{$v.SourceNumber}}</a></p>{{end}}
@@ -39,6 +40,7 @@
     {{with $v.DueDate}}<span class="k">{{t "crm.inv_due"}}</span><span>{{day (deref .)}}</span>{{end}}
     <span class="k">{{t "crm.f.responsible"}}</span><span>{{$v.Responsible.Name}}</span></div>{{with $v.Comment}}<p>{{nl2br .}}</p>{{end}}{{end}}
   </div>
+  {{template "doclist" (dict "Kind" "invoices" "ID" $v.ID "D" $d)}}
   <div class="card"><h2>{{t "crm.inv_client"}}</h2>
     {{if $v.Company.ID}}<div><a href="/crm/companies/{{$v.Company.ID}}">{{$v.Company.Name}}</a></div>{{end}}
     {{if $v.Contact.ID}}<div><a href="/crm/contacts/{{$v.Contact.ID}}">{{$v.Contact.Name}}</a></div>{{end}}

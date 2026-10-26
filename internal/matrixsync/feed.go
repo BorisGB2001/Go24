@@ -278,6 +278,10 @@ func (s *Service) inboundFeed(ctx context.Context, kind, roomID, userID string, 
 			}
 			title, text := splitTitle(plain)
 			id, err := s.Feed.CreatePost(ctx, userID, "", title, text, false, mentions...)
+			if errors.Is(err, feed.ErrNoPostAll) { // not one who may write to all employees: the message leaves the room
+				s.logErr("feed rights", s.M.Redact(ctx, roomID, ev.EventID, "go24"))
+				return true, nil
+			}
 			if err != nil {
 				return true, ignoreRights(err)
 			}

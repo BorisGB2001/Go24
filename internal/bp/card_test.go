@@ -2,10 +2,12 @@ package bp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -79,6 +81,8 @@ func TestCardSteps(t *testing.T) {
 		{Kind: "mail", To: "client"},          // no subject
 		{Kind: "chat", Text: "x", Email: "a"}, // an e-mail of a chat
 		{Kind: "update", Sets: []Assign{{Field: "Нет такого", Value: "1"}}},
+		{Kind: "activity", Text: "x", Deed: "fax"},            // no such kind of deed
+		{Kind: "notify", Text: "x", To: "starter", Note: "y"}, // a description of a notification
 	}
 	for i, st := range bad {
 		if _, err := s.SaveTemplate(ctx, boss, Template{Name: "Плохой", Entity: "deal", Steps: []Step{st}}); !errors.As(err, &ve) {
@@ -87,6 +91,11 @@ func TestCardSteps(t *testing.T) {
 	}
 	if _, err := s.SaveTemplate(ctx, boss, Template{Name: "Без карточки", Steps: []Step{{Kind: "mail", To: "client", Subject: "S"}}}); !errors.As(err, &ve) {
 		t.Fatalf("a letter to the client of no card: %v", err)
+	}
+	for _, st := range []Step{{Kind: "comment", Text: "x"}, {Kind: "activity", Text: "x", Deed: "call"}} {
+		if _, err := s.SaveTemplate(ctx, boss, Template{Name: "Без карточки", Steps: []Step{st}}); !errors.As(err, &ve) {
+			t.Fatalf("a %s of no card: %v", st.Kind, err)
+		}
 	}
 
 	tpl, err := s.SaveTemplate(ctx, boss, Template{Name: "Обработка сделки", Entity: "deal", Active: true, AutoChange: true,
@@ -97,6 +106,8 @@ func TestCardSteps(t *testing.T) {
 			{Kind: "create", Entity: "contact", Text: "{person}", To: "responsible", Sets: []Assign{{Field: "phone", Value: "+7 900"}}},
 			{Kind: "chat", From: "starter", To: "responsible", Users: []string{boss}, Text: "Сделка «{title}» на {sum}: {created_card}"},
 			{Kind: "mail", From: "responsible", To: "client", Email: "buh@romashka.test", Subject: "Счёт по «{title}»", Text: "Сумма {sum}"},
+			{Kind: "comment", From: "responsible", Text: "Выставлен счёт на {sum}"},
+			{Kind: "activity", Deed: "call", To: "responsible", Days: 2, Text: "Позвонить о счёте", Note: "Сумма {sum}"},
 		}})
 	must(err)
 	id, err := s.Start(ctx, boss, tpl, deal, map[string]string{"sum": "1500,5", "person": "Иван Сидоров"})
@@ -140,6 +151,20 @@ func TestCardSteps(t *testing.T) {
 		t.Fatalf("letters: %+v", letters)
 	}
 
+	// the comment of the responsible in the deal's timeline, the call planned for Anna in two days
+	var author string
+	must(pool.QueryRow(ctx, `SELECT author_id::text FROM crm_timeline WHERE entity = 'deal' AND entity_id = $1 AND kind = 'comment' AND body = 'Выставлен счёт на 1500,5'`,
+		deal).Scan(&author))
+	if author != ann {
+		t.Fatalf("comment of %s", author)
+	}
+	acts, err := cs.Activities(ctx, "deal", deal)
+	must(err)
+	if len(acts) != 1 || acts[0].Kind != "call" || acts[0].Subject != "Позвонить о счёте" || acts[0].Description != "Сумма 1500,5" ||
+		acts[0].Responsible.ID != ann || acts[0].CreatedBy != boss || acts[0].Deadline.Before(time.Now().Add(24*time.Hour)) {
+		t.Fatalf("activities: %+v", acts)
+	}
+
 	// the process changed its card and is done: the worker reading those events does not start it again
 	autoLag = 0
 	must(errors.Join(s.AutoStart(ctx)...))
@@ -166,5 +191,124 @@ func TestCardSteps(t *testing.T) {
 	must(err)
 	if x, _ := s.instance(ctx, id); x.Status != "failed" {
 		t.Fatalf("a chat with no messenger: %s", x.Status)
+	}
+}
+
+// TestDocumentStep: «Создание документа» makes a document of the card by a template of its kind, from the employee
+// chosen, with the values of the template's fields; the link to it is {created_document}.
+func TestDocumentStep(t *testing.T) {
+	url := os.Getenv("GO24_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("GO24_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var boss, ann, file string
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('boss', 'boss', 'boss@t') RETURNING id`).Scan(&boss))
+	must(pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('ann', 'Анна', 'ann@t') RETURNING id`).Scan(&ann))
+	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('tpl', 'act.docx', 1, $1) RETURNING id`, boss).Scan(&file))
+	ts := tasks.NewStore(pool)
+	cs := crm.NewStore(pool)
+	cs.Tasks = ts
+	s := NewStore(pool, ts, cs, company.NewStore(pool))
+	act, err := cs.NewDocTemplate(ctx, boss, "Акт", "deal", file)
+	must(err)
+	other, err := cs.NewDocTemplate(ctx, boss, "Анкета", "contact", file)
+	must(err)
+	pipes, err := cs.Pipelines(ctx)
+	must(err)
+	deal, err := cs.SaveDeal(ctx, boss, crm.Deal{Title: "Поставка", PipelineID: pipes[0].ID})
+	must(err)
+
+	var ve *i18n.Error
+	for i, st := range []Step{
+		{Kind: "document"},                     // no template
+		{Kind: "document", Doc: other},         // a template of contacts
+		{Kind: "comment", Text: "x", Doc: act}, // a template of a comment
+		{Kind: "document", Doc: "00000000-0000-0000-0000-000000000000"},
+	} {
+		if _, err := s.SaveTemplate(ctx, boss, Template{Name: "Плохой", Entity: "deal", Steps: []Step{st}}); !errors.As(err, &ve) {
+			t.Fatalf("bad step %d saved: %v", i, err)
+		}
+	}
+	if _, err := s.SaveTemplate(ctx, boss, Template{Name: "Без карточки", Steps: []Step{{Kind: "document", Doc: act}}}); !errors.As(err, &ve) {
+		t.Fatalf("a document of no card: %v", err)
+	}
+
+	tpl, err := s.SaveTemplate(ctx, boss, Template{Name: "Акт по сделке", Entity: "deal", Active: true,
+		Fields: []Field{{Key: "sum", Label: "Сумма", Kind: "number"}},
+		Steps: []Step{
+			{Kind: "document", Doc: act, Text: "Акт", From: ann, Sets: []Assign{{Field: "Total", Value: "{sum} руб."}}},
+			{Kind: "comment", Text: "Акт: {created_document}"},
+		}})
+	must(err)
+	id, err := s.Start(ctx, boss, tpl, deal, map[string]string{"sum": "700"})
+	must(err)
+	if x, err := s.instance(ctx, id); err != nil || x.Status != "failed" { // no document generator
+		t.Fatalf("with no generator: %+v %v", x.Status, err)
+	}
+
+	type made struct {
+		user, entity, entityID, tpl string
+		values                      map[string]string
+	}
+	var docs []made
+	s.Document = func(_ context.Context, userID, entity, entityID, templateID string, values map[string]string) (string, error) {
+		docs = append(docs, made{userID, entity, entityID, templateID, values})
+		return "d1", nil
+	}
+	id, err = s.Start(ctx, boss, tpl, deal, map[string]string{"sum": "700"})
+	must(err)
+	x, err := s.instance(ctx, id)
+	must(err)
+	if x.Status != "done" {
+		lines, _ := s.Log(ctx, id)
+		t.Fatalf("status %s: %+v", x.Status, lines)
+	}
+	if len(docs) != 1 || docs[0].user != ann || docs[0].entity != "deal" || docs[0].entityID != deal || docs[0].tpl != act ||
+		docs[0].values["Total"] != "700 руб." {
+		t.Fatalf("the document: %+v", docs)
+	}
+	if want := "/crm/deals/" + deal + "/documents/d1"; x.Values["created_document"] != want {
+		t.Fatalf("created document: %q", x.Values["created_document"])
+	}
+
+	f, err := s.Export(ctx, tpl)
+	must(err)
+	if f.Docs[act] != "Акт" {
+		t.Fatalf("exported docs: %+v", f.Docs)
+	}
+	f.Steps[0].Doc = "11111111-1111-1111-1111-111111111111" // another portal's id: found by the name
+	f.Docs = map[string]string{f.Steps[0].Doc: "акт"}
+	data, err := json.Marshal(f)
+	must(err)
+	newID, _, err := s.Import(ctx, boss, "", data)
+	must(err)
+	n, err := s.Template(ctx, newID)
+	must(err)
+	if n.Steps[0].Doc != act {
+		t.Fatalf("imported doc: %q", n.Steps[0].Doc)
+	}
+	f.Docs = map[string]string{f.Steps[0].Doc: "Счёт"}
+	data, err = json.Marshal(f)
+	must(err)
+	if _, _, err := s.Import(ctx, boss, "", data); !errors.As(err, &ve) {
+		t.Fatalf("an unknown template of documents imported: %v", err)
 	}
 }

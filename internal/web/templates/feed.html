@@ -1,7 +1,8 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="feed" data-feed data-failed="{{t "common.save_failed"}}"{{if $d.General}} data-general{{end}}>
-<h1>{{t "title.feed"}}</h1>
+<div class="feedwrap">
+<div class="feed" data-feed data-me="{{$d.Me}}" data-failed="{{t "common.save_failed"}}" data-cmore="{{t "feed.comments_earlier"}}"{{if $d.General}} data-general{{end}}>
+<div class="pagehead"><h1>{{t "title.feed"}}</h1>{{if $d.Admin}}<a class="btn" href="/feed/settings" title="{{t "feed.settings"}}">{{icon "settings"}} {{t "feed.settings"}}</a>{{end}}</div>
 <div class="card composer">
   <form method="post" action="/feed" data-post enctype="multipart/form-data">
     <div class="form-error" data-error hidden></div>
@@ -11,9 +12,9 @@
     <textarea name="body" rows="3" required placeholder="{{t "feed.placeholder"}}" data-mention{{if or $d.IM $d.ThankOpen}} autofocus{{end}}>{{$d.IMBody}}</textarea>
     <div class="row">
       <label class="small muted">{{t "feed.to"}}</label>
-      <select name="project" style="width:auto" data-feed-to><option value="">{{t "feed.to_all"}}</option><option value="people">{{t "feed.to_people"}}</option>{{range $d.Projects}}<option value="{{.ID}}"{{if eq .ID $d.IMProject}} selected{{end}}>{{.Name}}</option>{{end}}</select>
-      <div class="feed-to" data-feed-people hidden>{{template "upick" (upick "to" "" $d.Users "multi" "noself" "depts" "ph" (t "feed.to_people_ph"))}}</div>
-      <label class="check"><input type="checkbox" name="important" data-important> {{icon "flame"}} {{t "feed.important"}}</label>
+      <select name="project" style="width:auto" data-feed-to>{{if $d.MayAll}}<option value="">{{t "feed.to_all"}}</option>{{end}}<option value="people">{{t "feed.to_people"}}</option>{{range $d.Projects}}<option value="{{.ID}}"{{if eq .ID $d.IMProject}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <div class="feed-to" data-feed-people{{if or $d.MayAll $d.IMProject}} hidden{{end}}>{{template "upick" (upick "to" "" $d.Users "multi" "noself" "depts" "ph" (t "feed.to_people_ph"))}}</div>
+      {{if $d.MayImportant}}<label class="check"><input type="checkbox" name="important" data-important> {{icon "flame"}} {{t "feed.important"}}</label>{{end}}
       <span class="row" data-important-for hidden><select name="important_for" style="width:auto" title="{{t "feed.until.title"}}" data-until-sel>{{range $d.Untils}}<option value="{{.}}">{{t (print "feed.until." .)}}</option>{{end}}</select>
         <input type="date" name="important_until" style="width:auto" data-until-date hidden></span>
       <details class="fpoll-new fgrat-new"{{if $d.ThankOpen}} open{{end}}><summary class="button ghost" title="{{t "gratitude.add"}}">🏆</summary>
@@ -26,7 +27,8 @@
       <details class="fpoll-new"><summary class="button ghost" title="{{t "poll.add"}}">{{icon "list-check"}}</summary>
         <input type="text" name="poll_question" maxlength="300" placeholder="{{t "poll.question"}}">
         <textarea name="poll_options" rows="3" placeholder="{{t "poll.options"}}"></textarea>
-        <label class="check"><input type="checkbox" name="poll_multiple"> {{t "poll.multiple_allow"}}</label></details>
+        <label class="check"><input type="checkbox" name="poll_multiple"> {{t "poll.multiple_allow"}}</label>
+        <label class="check"><input type="checkbox" name="poll_anonymous"> {{t "poll.anonymous_allow"}}</label></details>
       <button type="button" class="ghost" data-feed-make="/tasks/new" title="{{t "feed.make_task_hint"}}">{{icon "checkbox"}} {{t "feed.make_task"}}</button>
       <button type="button" class="ghost" data-feed-make="/calendar/new" title="{{t "feed.make_event_hint"}}">{{icon "calendar-event"}} {{t "feed.make_event"}}</button>
       {{if not $.Guest}}<details class="fpoll-new"><summary class="button ghost" title="{{t "feed.bp_hint"}}">⚙ {{t "feed.bp"}}</summary>
@@ -64,6 +66,8 @@
 </div>
 {{with $d.More}}<p style="text-align:center"><a class="button" href="/feed?before={{.}}{{with $d.View}}&view={{.}}{{end}}{{with $d.Keep}}&{{.}}{{end}}">{{t "feed.more"}}</a></p>{{end}}
 </div>
+{{if not $.Guest}}{{template "fside" (dict "S" $d.Side "C" $.Counters)}}{{end}}
+</div>
 <template data-react-picker><div class="rpicker" role="menu">{{range $d.Reactions}}<button type="button" data-reaction="{{.Reaction}}" title="{{t (print "feed.react." .Reaction)}}">{{.Emoji}}</button>{{end}}</div></template>
 <template data-share-box><form class="fshare row" data-share-form>
   <div style="flex:1;min-width:200px">{{template "upick" (upick "to" "" $d.Users "multi" "noself" "depts" "ph" (t "feed.share_ph"))}}</div>
@@ -76,7 +80,7 @@
 
 {{define "fitem"}}{{$i := .I}}
 {{with $i.Post}}{{$p := .}}
-<article class="card fpost{{if .Important}} important{{end}}" id="post-{{.ID}}" data-post-id="{{.ID}}">
+<article class="card fpost{{if .Important}} important{{end}}{{if .New}} fnew{{end}}" id="post-{{.ID}}" data-post-id="{{.ID}}">
   <header class="fhead">
     <a href="/u/{{.AuthorID}}" class="person" data-user="{{.AuthorID}}">{{photo .AuthorName (photoURL .AuthorID .AuthorPhoto) false}}<b>{{.AuthorName}}</b></a>
     <span class="muted small">{{icon "chevron-right"}} {{if .ProjectKey}}<a href="/p/{{.ProjectKey}}">{{.ProjectName}}</a>{{if .To}}, {{end}}{{else if not .To}}{{t "feed.to_all"}}{{end}}{{range $i, $r := .To}}{{if $i}}, {{end}}{{if $r.Dept}}🏢 {{$r.Name}}{{else}}<a href="/u/{{$r.ID}}" data-user="{{$r.ID}}">{{$r.Name}}</a>{{end}}{{end}}</span>
@@ -89,34 +93,37 @@
     {{if or .ProjectKey .To}}<button type="button" class="ghost fmark" data-share title="{{t "feed.share"}}">{{icon "share"}}</button>{{end}}
     <a class="button ghost fmark" href="/tasks/new?feed={{.ID}}" title="{{t "feed.post_task"}}">{{icon "checkbox"}}</a>
     <a class="button ghost fmark" href="/calendar/new?feed={{.ID}}" title="{{t "feed.post_event"}}">{{icon "calendar-event"}}</a>
-    {{if or (eq .AuthorID $.Me) $.Admin}}<button type="button" class="ghost" data-edit title="{{t "task.change"}}">{{icon "edit"}}</button>
+    {{if or (eq .AuthorID $.Me) $.Admin}}{{if not .Source}}<button type="button" class="ghost" data-edit title="{{t "task.change"}}">{{icon "edit"}}</button>{{end}}
     <button type="button" class="ghost" data-delete title="{{t "common.delete"}}">{{icon "trash"}}</button>{{end}}
   </header>
   {{if .Important}}<div class="fimp">{{icon "flame"}} {{t "feed.important_badge"}}{{if not .Until.IsZero}} <span class="muted small">· {{t "feed.important_until" (datetime .Until)}}</span>{{end}}</div>{{end}}
-  <div data-view>{{with .Title}}<h3>{{.}}</h3>{{end}}
+  <div data-view>{{if .Source}}{{template "fsource" .}}{{else}}{{with .Title}}<h3>{{.}}</h3>{{end}}
   {{with .Gratitude}}<div class="fgrat"><span class="gbadge big">{{.Emoji}}</span><div><b>{{t "gratitude.title"}}</b>
     <div>{{range $i, $u := .People}}{{if $i}}, {{end}}<a href="/u/{{$u.ID}}" data-user="{{$u.ID}}">{{$u.Name}}</a>{{end}}</div></div></div>{{end}}
-  <div class="fbody">{{feedtext .Body}}</div>
+  <div class="fbody">{{feedtext .Body}}</div>{{end}}
   {{with .ProcessCard}}{{template "bpfeed" (dict "C" . "Post" $p.ID)}}{{end}}
   {{with .Tags}}<div class="ftags">{{range .}}<a class="ftag" href="/feed?tag={{.}}">#{{.}}</a>{{end}}</div>{{end}}
   {{template "ffiles" .Files}}
-  {{with .Poll}}{{$poll := .}}<form class="fpoll" method="post" action="/feed/{{$p.ID}}/vote" data-vote>
+  {{with .Poll}}{{$poll := .}}<form class="fpoll{{if .Closed}} closed{{end}}" method="post" action="/feed/{{$p.ID}}/vote" data-vote>
     <b>{{icon "list-check"}} {{.Question}}</b>
-    {{range .Options}}{{if $poll.Voted}}<div class="fpoll-res{{if .Mine}} mine{{end}}"><span>{{if .Mine}}{{icon "check"}} {{end}}{{.Text}}</span><span class="muted small">{{.Votes}} · {{$poll.Percent .}}%</span>
-      <i style="width:{{$poll.Percent .}}%"></i></div>
-    {{else}}<label class="check"><input type="{{if $poll.Multiple}}checkbox{{else}}radio{{end}}" name="option" value="{{.ID}}"> {{.Text}}</label>{{end}}{{end}}
-    <div class="row small muted">{{t "poll.voters" .Voters}}{{if .Multiple}} · {{t "poll.multiple"}}{{end}}<span style="flex:1"></span>
-      {{if .Voted}}<button class="ghost">{{t "poll.revote"}}</button>{{else}}<button class="primary">{{t "poll.vote"}}</button>{{end}}</div>
+    {{if or .Voted .Closed}}{{template "fpollres" .}}
+    {{else}}{{range .Options}}<label class="check"><input type="{{if $poll.Multiple}}checkbox{{else}}radio{{end}}" name="option" value="{{.ID}}"> {{.Text}}</label>{{end}}
+      <details class="fpoll-peek"><summary class="small">{{t "poll.results"}}</summary>{{template "fpollres" .}}</details>{{end}}
+    <div class="row small muted">{{t "poll.voters" .Voters}}{{if .Multiple}} · {{t "poll.multiple"}}{{end}}{{if .Anonymous}} · {{t "poll.anonymous"}}{{end}}{{if .Closed}} · <b>{{t "poll.closed"}}</b>{{end}}<span style="flex:1"></span>
+      {{if or (eq $p.AuthorID $.Me) $.Admin}}<a class="ghostbtn small" href="/feed/{{$p.ID}}/poll/export" title="{{t "poll.export"}}">{{icon "download"}}</a>
+      {{if .Closed}}<button type="button" class="ghostbtn small" data-poll-close="resume">{{t "poll.resume"}}</button>{{else}}<button type="button" class="ghostbtn small" data-poll-close="stop">{{t "poll.stop"}}</button>{{end}}{{end}}
+      {{if not .Closed}}{{if .Voted}}<button class="ghost">{{t "poll.revote"}}</button>{{else}}<button class="primary">{{t "poll.vote"}}</button>{{end}}{{end}}</div>
   </form>{{end}}</div>
   <div class="row factions">
     {{template "freact" (dict "U" (print "/feed/" .ID) "R" .Reactions)}}
     {{if .Important}}{{if .Read}}<span class="muted small">{{icon "check"}} {{t "feed.read_done"}}</span>{{else if ne .AuthorID $.Me}}<button type="button" class="ghostbtn" data-read>{{icon "check"}} {{t "feed.read"}}</button>{{end}}
       <span class="muted small" data-readers>{{t "feed.readers" .Readers}}</span>{{end}}
+    <button type="button" class="ghostbtn" data-quote="{{.AuthorName}}" title="{{t "feed.quote_hint"}}">{{icon "quote"}} {{t "feed.quote"}}</button>
     <span style="flex:1"></span>
     <span class="freact fviews" data-views-box><button type="button" class="ghostbtn small muted" data-views title="{{t "feed.views"}}">{{icon "eye"}} <span data-views-n>{{.Views}}</span></button></span>
   </div>
   <div class="fcomments" data-comments>{{range .Comments}}{{template "fcomment" .}}{{end}}</div>
-  <form class="fcomment-form" data-comment><input type="text" name="body" maxlength="5000" placeholder="{{t "feed.comment_placeholder"}}" data-mention>
+  <form class="fcomment-form" data-comment><textarea name="body" rows="1" maxlength="5000" placeholder="{{t "feed.comment_placeholder"}}" data-mention data-cinput></textarea>
     <label class="button ghost" title="{{t "feed.attach"}}">{{icon "paperclip"}}<input type="file" name="files" multiple hidden data-files></label>
     {{if not $.Guest}}<button type="button" class="ghost" data-disk-pick data-input="drive_file" {{template "diskPickL"}} title="{{t "disk.pick"}}">{{icon "folders"}}</button>{{end}}
     <button class="ghost" title="{{t "comments.send"}}">{{icon "send"}}</button>
@@ -143,12 +150,12 @@
   <textarea name="body" rows="4" required data-mention>{{$d.Body}}</textarea>
   <div class="row">
     <label class="small muted">{{t "feed.to"}}</label>
-    <select name="project" style="width:auto" data-feed-to><option value="">{{t "feed.to_all"}}</option><option value="people"{{if $d.Limited}} selected{{end}}>{{t "feed.to_people"}}</option>{{range .Projects}}<option value="{{.ID}}"{{if eq .ID $d.ProjectID}} selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <select name="project" style="width:auto" data-feed-to>{{if or .MayAll (and (not $d.Limited) (not $d.ProjectID))}}<option value="">{{t "feed.to_all"}}</option>{{end}}<option value="people"{{if $d.Limited}} selected{{end}}>{{t "feed.to_people"}}</option>{{range .Projects}}<option value="{{.ID}}"{{if eq .ID $d.ProjectID}} selected{{end}}>{{.Name}}</option>{{end}}</select>
     <div class="feed-to" data-feed-people{{if not $d.Limited}} hidden{{end}}>{{template "upick" (upick "to" .To .Users "multi" "noself" "depts" "ph" (t "feed.to_people_ph"))}}</div>
     {{with .Shared}}<span class="small muted" title="{{t "feed.shared_with"}}">{{icon "share"}} {{range $i, $u := .}}{{if $i}}, {{end}}{{$u.Name}}{{end}}</span>{{end}}
   </div>
   <div class="row">
-    <label class="check"><input type="checkbox" name="important" data-important{{if $d.Important}} checked{{end}}> {{icon "flame"}} {{t "feed.important"}}</label>
+    {{if or .MayImportant $d.Important}}<label class="check"><input type="checkbox" name="important" data-important{{if $d.Important}} checked{{end}}> {{icon "flame"}} {{t "feed.important"}}</label>{{end}}
     <input type="hidden" name="important_was" value="{{if not $d.Until.IsZero}}{{.UntilWas}}{{end}}">
     <span class="row" data-important-for{{if not $d.Important}} hidden{{end}}><select name="important_for" style="width:auto" title="{{t "feed.until.title"}}" data-until-sel>{{range .Untils}}<option value="{{.}}"{{if and (eq . "date") $.UntilDate}} selected{{end}}>{{t (print "feed.until." .)}}</option>{{end}}</select>
       <input type="date" name="important_until" value="{{.UntilDate}}" style="width:auto" data-until-date{{if not .UntilDate}} hidden{{end}}></span>
@@ -164,6 +171,7 @@
       <input type="text" name="poll_question" value="{{with $d.Poll}}{{.Question}}{{end}}" maxlength="300" placeholder="{{t "poll.question"}}">
       <textarea name="poll_options" rows="3" placeholder="{{t "poll.options"}}">{{.PollOptions}}</textarea>
       <label class="check"><input type="checkbox" name="poll_multiple"{{with $d.Poll}}{{if .Multiple}} checked{{end}}{{end}}> {{t "poll.multiple_allow"}}</label>
+      <label class="check"><input type="checkbox" name="poll_anonymous"{{with $d.Poll}}{{if .Anonymous}} checked{{end}}{{end}}> {{t "poll.anonymous_allow"}}</label>
       <p class="small muted">{{t "feed.poll_clear"}}</p>{{end}}</details>
     <label class="button ghost" title="{{t "feed.attach"}}">{{icon "paperclip"}}<input type="file" name="files" multiple hidden data-files></label>
     {{if not .Guest}}<button type="button" class="ghost" data-disk-pick data-input="drive_file" {{template "diskPickL"}} title="{{t "disk.pick"}}">{{icon "folders"}}</button>{{end}}
@@ -176,19 +184,26 @@
 {{end}}
 
 {{/* files and pictures of a post or a comment: pictures shown, the others listed */}}
+{{/* the results of a poll: the answers with their votes; the count of an answer opens «Кто голосовал» (not in an
+   anonymous poll) */}}
+{{define "fpollres"}}{{$poll := .}}{{range .Options}}<div class="fpoll-res{{if .Mine}} mine{{end}}"><span>{{if .Mine}}{{icon "check"}} {{end}}{{.Text}}</span>
+  {{if and .Votes (not $poll.Anonymous)}}<button type="button" class="link small muted" data-poll-who="{{.ID}}" title="{{t "poll.who"}}">{{.Votes}} · {{$poll.Percent .}}%</button>{{else}}<span class="muted small">{{.Votes}} · {{$poll.Percent .}}%</span>{{end}}
+  <i style="width:{{$poll.Percent .}}%"></i></div>{{end}}{{end}}
+
 {{define "ffiles"}}{{with .}}<div class="ffiles">{{range .}}{{if .Image}}<a href="/files/{{.ID}}?inline=1" target="_blank" rel="noopener" class="fimg"><img src="/files/{{.ID}}?inline=1" alt="{{.Name}}" loading="lazy"></a>{{end}}{{end}}
     {{range .}}{{if not .Image}}<a href="/files/{{.ID}}" class="ffile">{{icon "paperclip"}} {{.Name}} <span class="muted small">{{size .Size}}</span></a><form method="post" action="/files/{{.ID}}/drive" class="inline"><input type="hidden" name="back" value="/feed"><button class="ghost small" title="{{t "disk.save_to"}}">{{icon "device-floppy"}}</button></form>{{end}}{{end}}</div>{{end}}{{end}}
 
 {{define "fcomment"}}
-{{/* a comment: «Нравится», «Ответить» (mentions the author), «Ссылка», and for the author «Изменить»,
-   for the author or an administrator «Удалить» */}}
-<div class="fc" id="comment-{{.ID}}" data-comment-id="{{.ID}}"><a href="/u/{{.AuthorID}}" data-user="{{.AuthorID}}"><b>{{.AuthorName}}</b></a> <span class="muted small">{{datetime .CreatedAt}}{{if .Edited}} · {{t "feed.edited"}}{{end}}</span>
-  <div data-cview>{{nl2br .Body}}</div>
+{{/* a comment: formatted as a chat message; «Нравится», «Ответить» (mentions the author), «Цитировать»,
+   «Ссылка», and for the author «Изменить», for the author or an administrator «Удалить» */}}
+<div class="fc{{if .New}} fnew{{end}}" id="comment-{{.ID}}" data-comment-id="{{.ID}}"><a href="/u/{{.AuthorID}}" data-user="{{.AuthorID}}"><b>{{.AuthorName}}</b></a> <span class="muted small">{{datetime .CreatedAt}}{{if .Edited}} · {{t "feed.edited"}}{{end}}</span>
+  <div data-cview>{{imtext .Body}}</div>
   {{template "ffiles" .Files}}
-  {{if .CanEdit}}<form class="fcomment-form" data-cedit-form hidden><input type="text" name="body"{{if not .Files}} required{{end}} maxlength="5000" value="{{.Body}}" data-mention>
+  {{if .CanEdit}}<form class="fcomment-form" data-cedit-form hidden><textarea name="body" rows="1"{{if not .Files}} required{{end}} maxlength="5000" data-mention data-cinput>{{.Body}}</textarea>
     <button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button><button type="button" class="ghost" data-cedit-cancel title="{{t "common.cancel"}}">{{icon "x"}}</button></form>{{end}}
   <div class="fc-actions">{{template "freact" (dict "U" (print "/feed/comments/" .ID) "R" .Reactions "Small" true)}}
     <button type="button" class="ghostbtn small" data-creply="{{.AuthorName}}">{{t "feed.reply"}}</button>
+    <button type="button" class="ghostbtn small" data-cquote="{{.AuthorName}}" title="{{t "feed.quote_hint"}}">{{t "feed.quote"}}</button>
     <a class="ghostbtn small" href="/tasks/new?feed_comment={{.ID}}" title="{{t "feed.comment_task_hint"}}">{{t "feed.comment_task"}}</a>
     <button type="button" class="ghostbtn small" data-clink data-copied="{{t "feed.link_copied"}}">{{t "feed.comment_link"}}</button>
     {{if .CanEdit}}<button type="button" class="ghostbtn small" data-cedit>{{t "feed.comment_edit"}}</button>{{end}}
@@ -201,3 +216,31 @@
   <button type="button" class="ghostbtn{{if .R.Mine}} on{{end}}" data-like>{{if .R.Mine}}<span class="remoji">{{.R.MineEmoji}}</span> {{t (print "feed.react." .R.Mine)}}{{else}}{{icon "thumb-up"}} {{t "feed.like"}}{{end}}</button>
   {{if .R.Total}}<button type="button" class="ghostbtn freact-sum" data-reactors title="{{t "feed.reactors"}}">{{range $i, $c := .R.Top}}{{if lt $i 3}}<span class="remoji">{{$c.Emoji}}</span>{{end}}{{end}} {{.R.Total}}</button>{{end}}
 </span>{{end}}
+
+{{/* the event of another section a post is of (feed.Announce): a new employee, a meeting one is
+   invited to, a new page of the knowledge base */}}
+{{define "fsource"}}{{$p := .}}{{$s := .SourceData}}<div class="fsrc">
+{{if eq .Source "welcome"}}<span class="gbadge big">🎉</span><div><b>{{t "feed.src.welcome"}}</b>
+  <div><a href="/u/{{.AuthorID}}" data-user="{{.AuthorID}}">{{.AuthorName}}</a>{{with $s.position}} · {{.}}{{end}}{{with $s.dept}} · <span class="muted">{{.}}</span>{{end}}</div></div>
+{{else if eq .Source "meeting"}}<span class="gbadge big">📅</span><div><b>{{t "feed.src.meeting"}}</b>
+  <div><a href="/calendar/{{.SourceID}}">{{.Title}}</a></div>
+  <div class="small muted">{{if $s.allday}}{{day ($p.SourceTime "start")}}{{else}}{{datetime ($p.SourceTime "start")}}–{{clock ($p.SourceTime "end")}}{{end}}{{with $s.where}} · {{.}}{{end}}</div></div>
+{{else if eq .Source "kb"}}<span class="gbadge big">📖</span><div><b>{{t "feed.src.kb"}}</b>
+  <div><a href="/kb/{{$s.space}}/{{.SourceID}}">{{.Title}}</a>{{with $s.space_name}} · <span class="muted">{{.}}</span>{{end}}</div></div>
+{{end}}</div>{{end}}
+
+
+{{/* the right column of the feed: important posts not confirmed, «Мои задачи», birthdays */}}
+{{define "fside"}}<aside class="fside">
+{{with .S}}{{with .Important}}<div class="card"><h3 class="small">{{icon "flame"}} {{t "feed.side.important"}}</h3>
+  {{range .}}<a class="fside-row" href="/feed?post={{.ID}}"><b>{{.Author}}</b><span class="muted small">{{.Text}}</span></a>{{end}}</div>{{end}}{{end}}
+<div class="card"><h3 class="small">{{icon "checkbox"}} {{t "feed.side.tasks"}}</h3>
+  <a class="fside-row line" href="/my?view=open"><span>{{t "feed.side.tasks_open"}}</span><span class="cnt">{{.C.Open}}</span></a>
+  <a class="fside-row line" href="/my?view=overdue"><span>{{t "counter.overdue"}}</span><span class="cnt{{if .C.Overdue}} red{{end}}">{{.C.Overdue}}</span></a>
+  <a class="fside-row line" href="/my?view=comments"><span>{{t "counter.comments"}}</span><span class="cnt{{if .C.Comments}} green{{end}}">{{.C.Comments}}</span></a>
+  <a class="fside-row line" href="/my?view=control"><span>{{t "counter.to_control"}}</span><span class="cnt">{{.C.ToControl}}</span></a></div>
+{{with .S}}{{with .Birthdays}}<div class="card"><h3 class="small">🎂 {{t "birthdays.title"}}</h3>
+  {{range .}}<div class="fside-row line"><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name (photoURL .ID .PhotoKey) false}}<span><b>{{.Name}}</b><br><span class="muted small">{{if .Today}}{{t "feed.side.today"}}{{else}}{{bday .Date false}}{{end}}</span></span></a>
+    <a class="button ghost small" href="/feed?thank={{.ID}}" title="{{t "feed.side.congratulate"}}">🎉</a></div>{{end}}
+  <a class="small" href="/company/birthdays">{{t "feed.side.all_birthdays"}}</a></div>{{end}}{{end}}
+</aside>{{end}}

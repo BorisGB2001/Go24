@@ -459,7 +459,7 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				f.pins[room] = append(f.pins[room], id.(string))
 			}
 		}
-		if who != "@go24:t.lan" && (typ == "m.room.name" || typ == "m.room.avatar" || typ == "go24.autodelete") {
+		if (who != "@go24:t.lan" || body["by"] != nil) && (typ == "m.room.name" || typ == "m.room.avatar" || typ == "go24.autodelete") {
 			f.chatEvent(room, who, typ, "", body)
 		}
 		f.state = append(f.state, stateEvent{Path: strings.TrimPrefix(path, "/_matrix/client/v3/rooms/"), Sender: who, Content: body})

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go24/internal/auth"
+	"go24/internal/i18n"
 	"go24/internal/tasks"
 )
 
@@ -115,8 +116,12 @@ func (s *Server) joinAccept(w http.ResponseWriter, r *http.Request, sess auth.Se
 	http.Redirect(w, r, "/p/"+key, http.StatusSeeOther)
 }
 
-// guestInviteCreate makes an invitation into the collab: a link, or one for a person by e-mail (sent from the
-// inviter's mailbox when they have one in go24) or by phone (the link to pass on in a message).
+// maxGuestInvites: guests invited by one form at once.
+const maxGuestInvites = 50
+
+// guestInviteCreate makes an invitation into the collab: a link, or personal ones by e-mail (sent from the inviter's
+// mailbox when they have one in go24) or by phone (the link to pass on in a message) — for several people at once,
+// one a line or by commas; the contacts that are not right are named, the rest are invited.
 func (s *Server) guestInviteCreate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/p/" + r.PathValue("key")
 	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
@@ -126,19 +131,67 @@ func (s *Server) guestInviteCreate(w http.ResponseWriter, r *http.Request, sess 
 	}
 	days, _ := strconv.Atoi(r.FormValue("days"))
 	kind := r.FormValue("kind")
-	inv, err := s.Tasks.CreateGuestInvite(r.Context(), p, sess.UserID, kind, r.FormValue("contact"), r.FormValue("name"),
-		time.Duration(days)*24*time.Hour)
+	contacts, name := []string{""}, r.FormValue("name")
+	if kind != "link" {
+		if contacts = tasks.SplitContacts(r.FormValue("contact")); len(contacts) == 0 {
+			contacts = []string{""} // the store names the error
+		}
+		if len(contacts) > maxGuestInvites {
+			s.taskErr(w, r, i18n.E("err.guest_invite_many", maxGuestInvites), back)
+			return
+		}
+		if len(contacts) > 1 {
+			name = "" // one name is for one person
+		}
+	}
+	var made, sent, bad []string
+	for _, c := range contacts {
+		inv, err := s.Tasks.CreateGuestInvite(r.Context(), p, sess.UserID, kind, c, name, time.Duration(days)*24*time.Hour)
+		var ie *i18n.Error
+		if err != nil && len(contacts) > 1 && errors.As(err, &ie) && strings.HasPrefix(ie.Key, "err.guest_invite_") {
+			bad = append(bad, c)
+			continue
+		}
+		if err != nil {
+			s.taskErr(w, r, err, back)
+			return
+		}
+		made = append(made, inv.Email+inv.Phone)
+		if kind == "email" && r.FormValue("send") == "1" && s.sendGuestInvite(r, sess.UserID, sess.Name, p, inv) {
+			sent = append(sent, inv.Email)
+		}
+	}
+	s.Log.Info("guest invite", "user_id", sess.UserID, "collab", p.Key, "kind", kind, "n", len(made))
+	msg := s.tr(r, "guests.created")
+	switch {
+	case kind == "link":
+	case len(sent) > 0:
+		msg = s.tr(r, "guests.email_sent", strings.Join(sent, ", "))
+	default:
+		msg = s.tr(r, "guests.email_link")
+	}
+	if len(bad) > 0 {
+		msg = s.tr(r, "guests.invited_n", len(made)) + " " + s.tr(r, "guests.bad_contacts", strings.Join(bad, ", "))
+	}
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg)+"#guests", http.StatusSeeOther)
+}
+
+// guestInviteResend: «Пригласить повторно» — a personal invitation not used yet works another week and goes out
+// again (by e-mail from the inviter's mailbox; for a phone — the link to pass on, as before).
+func (s *Server) guestInviteResend(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/p/" + r.PathValue("key")
+	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	var inv tasks.GuestInvite
+	if err == nil {
+		inv, err = s.Tasks.RenewGuestInvite(r.Context(), p, sess.UserID, r.PathValue("id"), tasks.GuestInviteTTL)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	s.Log.Info("guest invite", "user_id", sess.UserID, "collab", p.Key, "kind", kind)
-	msg := s.tr(r, "guests.created")
-	if kind == "email" {
-		msg = s.tr(r, "guests.email_link")
-		if r.FormValue("send") == "1" && s.sendGuestInvite(r, sess.UserID, sess.Name, p, inv) {
-			msg = s.tr(r, "guests.email_sent", inv.Email)
-		}
+	msg := s.tr(r, "guests.renewed", inv.Expires.In(time.Local).Format("02.01.2006"))
+	if inv.Kind == "email" && s.sendGuestInvite(r, sess.UserID, sess.Name, p, inv) {
+		msg = s.tr(r, "guests.email_sent", inv.Email)
 	}
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg)+"#guests", http.StatusSeeOther)
 }

@@ -5,7 +5,7 @@
 <div class="sub">{{t "docs.subtitle"}}</div>
 <div class="card flush">{{if $d.Templates}}<table class="tlist">
   <thead><tr><th>{{t "form.name"}}</th><th>{{t "docs.for"}}</th><th>{{t "docs.file"}}</th><th title="{{t "docs.numerator_hint"}}">{{t "docs.numerator"}}</th><th title="{{t "docs.access_hint"}}">{{t "docs.access"}}</th><th></th></tr></thead>
-  <tbody>{{range $d.Templates}}<tr><td>{{.Name}}</td><td>{{t (print "crm." .Entity)}}</td><td><a href="/files/{{.FileID}}">{{icon "download"}} {{.FileName}}</a>{{if $d.Office}} <a class="button ghost" href="/crm/documents/{{.ID}}/edit" title="{{t "docs.edit_hint"}}">{{icon "edit"}} {{t "office.edit"}}</a>{{end}}</td>
+  <tbody>{{range $d.Templates}}<tr><td>{{.Name}}</td><td>{{t (print "docs.entity." .Entity)}}</td><td><a href="/files/{{.FileID}}">{{icon "download"}} {{.FileName}}</a>{{if $d.Office}} <a class="button ghost" href="/crm/documents/{{.ID}}/edit" title="{{t "docs.edit_hint"}}">{{icon "edit"}} {{t "office.edit"}}</a>{{end}}</td>
     <td><form method="post" action="/crm/documents/{{.ID}}/numerator" class="row"><input type="text" name="numerator" value="{{.Numerator}}" maxlength="100" required size="16" title="{{t "docs.numerator_hint"}}"><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/access" class="row" style="min-width:240px"><div style="flex:1">{{template "upick" (upick "to" (index $d.Access .ID) nil "multi" "depts" "ph" (t "docs.access_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/delete" data-confirm="{{t "docs.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody>
@@ -18,7 +18,7 @@
   </form>
   <p class="small muted">{{t "docs.builtin_hint"}}</p>
 </div>
-<div class="card" style="max-width:720px">
+<div class="card" style="max-width:720px" id="my-company">
   <h2>{{t "docs.my_company"}}</h2>
   <form method="post" action="/crm/documents/my-company" class="row">
     <select name="company" aria-label="{{t "docs.my_company"}}" style="flex:1"><option value="">{{t "docs.my_company_none"}}</option>
@@ -26,13 +26,22 @@
     <button class="primary">{{t "common.save"}}</button>
   </form>
   <p class="small muted">{{t "docs.my_company_hint"}}</p>
+  <h3>{{t "docs.images"}}</h3>
+  <div class="docimages">{{range $d.ImageKinds}}{{$f := index $d.Images .}}<div class="docimage">
+    <div class="small"><b>{{t (print "docs.p." .)}}</b> <code>{{"{"}}MyCompany.{{.}}{{"}"}}</code></div>
+    <div class="docimage-pic">{{if $f}}<img src="/files/{{$f}}?inline=1" alt="{{t (print "docs.p." .)}}">{{else}}<span class="small muted">{{t "docs.image_none"}}</span>{{end}}</div>
+    <form method="post" action="/crm/documents/image" enctype="multipart/form-data" class="row"><input type="hidden" name="kind" value="{{.}}">
+      <input type="file" name="file" accept="image/png,image/jpeg" required aria-label="{{t (print "docs.p." .)}}" style="flex:1;min-width:0"><button class="ghost" title="{{t "files.upload"}}">{{icon "cloud-upload"}}</button></form>
+    {{if $f}}<form method="post" action="/crm/documents/image"><input type="hidden" name="kind" value="{{.}}"><input type="hidden" name="remove" value="1"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+  </div>{{end}}</div>
+  <p class="small muted">{{t "docs.images_hint"}}</p>
 </div>
 <div class="card" style="max-width:720px">
   <h2>{{icon "plus"}} {{t "docs.new"}}</h2>
   <form method="post" action="/crm/documents" enctype="multipart/form-data">
     <div class="grid">
       <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" placeholder="{{t "docs.name_hint"}}"></div>
-      <div><label>{{t "docs.for"}}</label><select name="entity">{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}">{{t (print "crm." .)}}</option>{{end}}</select></div>
+      <div><label>{{t "docs.for"}}</label><select name="entity">{{range list "deal" "lead" "contact" "company" "invoice" "employee"}}<option value="{{.}}">{{t (print "docs.entity." .)}}</option>{{end}}</select></div>
     </div>
     <label>{{t "docs.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>
     <p><button class="primary">{{icon "cloud-upload"}} {{t "files.upload"}}</button></p>
@@ -44,19 +53,23 @@
   <p class="small muted">{{t "docs.fields_hint"}}</p>
   {{range $e := list "deal" "lead" "contact" "company"}}<details><summary>{{t (print "crm." $e)}}</summary><div class="docfields">
     {{range index $d.Fields $e}}{{template "docfield" (list . (t (print "docs.f." .)))}}{{end}}</div></details>{{end}}
+  <details><summary>{{t "docs.entity.invoice"}}</summary><div class="docfields">
+    {{range index $d.Fields "invoice"}}{{template "docfield" (list . (t (print "docs.i." .)))}}{{end}}</div>
+    <p class="small muted">{{t "docs.invoice_hint"}}</p></details>
+  <details><summary>{{t "crm.employee"}}</summary><div class="docfields">
+    {{range index $d.Fields "employee"}}{{template "docfield" (list . (t (print "docs.e." .)))}}{{end}}</div>
+    <p class="small muted">{{t "docs.employee_hint"}}</p></details>
   <details><summary>{{t "docs.fields_all"}}</summary><div class="docfields">
     {{range list "DocumentNumber" "DocumentDate"}}{{template "docfield" (list . (t (print "docs.f." .)))}}{{end}}</div></details>
   <details><summary>{{t "docs.fields_my"}}</summary><div class="docfields">
-    {{range $d.PartyFields}}{{template "docfield" (list (print "MyCompany." .) (t (print "docs.p." .)))}}{{end}}{{template "docfield" (list "MyCompany.Details" (t "docs.p.Details"))}}</div></details>
+    {{range $d.PartyFields}}{{template "docfield" (list (print "MyCompany." .) (t (print "docs.p." .)))}}{{end}}{{template "docfield" (list "MyCompany.Details" (t "docs.p.Details"))}}
+    {{range $d.ImageKinds}}{{template "docfield" (list (print "MyCompany." .) (t (print "docs.p." .)))}}{{end}}</div></details>
   <details><summary>{{t "docs.fields_client"}}</summary><div class="docfields">
     {{range $d.PartyFields}}{{template "docfield" (list (print "Client." .) (t (print "docs.p." .)))}}{{end}}</div></details>
   <details><summary>{{t "docs.fields_products"}}</summary><div class="docfields">
     {{range $d.ProductFields}}{{template "docfield" (list (print "Product." .) (t (print "docs.pr." .)))}}{{end}}
-    {{range list "Total" "TaxTotal" "TotalNet" "ProductsCount"}}{{template "docfield" (list . (t (print "docs.f." .)))}}{{end}}</div>
-    <p class="small muted">{{t "docs.fields_products_hint"}}</p></details>
+    {{range list "Total" "TotalWords" "TaxTotal" "TotalNet" "ProductsCount" "PaymentQR"}}{{template "docfield" (list . (t (print "docs.f." .)))}}{{end}}</div>
+    <p class="small muted">{{t "docs.fields_products_hint"}} {{t "docs.qr_hint"}}</p></details>
   <p class="small muted">{{t "docs.fields_custom"}}</p>
 </div>
-{{end}}
-
-{{define "docfield"}}<button type="button" class="ghost" data-copy="{{"{"}}{{index . 0}}{{"}"}}" title="{{t "docs.copy"}}"><code>{{"{"}}{{index . 0}}{{"}"}}</code></button><span class="small muted">{{index . 1}}</span>
 {{end}}

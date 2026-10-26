@@ -357,14 +357,58 @@ func TestBookingLinksHTTP(t *testing.T) {
 	}
 	// the resource's form keeps the letters' settings
 	res := url.Values{"name": {"Врач Иванова"}, "type": {types[0].ID}, "user": {ann}, "slot": {"30"}, "from": {"09:00"}, "to": {"11:00"},
-		"days": {"1", "2", "3", "4", "5", "6", "7"}, "remind_hours": {"3"}, "late_minutes": {"30"}}
+		"days": {"1", "2", "3", "4", "5", "6", "7"}, "remind_hours": {"3"}, "late_minutes": {"30"},
+		"confirm_hours": {"48"}, "confirm_alert": {"6"}}
 	do(boss, "POST", "/booking/resources/"+doc, res, 200)
-	if r, _ := srv.Booking.Resource(ctx, doc); r.NotifyMail || r.RemindHours != 3 || r.LateMinutes != 30 {
+	if r, _ := srv.Booking.Resource(ctx, doc); r.NotifyMail || r.RemindHours != 3 || r.LateMinutes != 30 || r.ConfirmHours != 48 || r.ConfirmAlert != 6 {
 		t.Fatalf("the resource's letters: %+v", r)
 	}
-	if page, _ := do(boss, "GET", "/booking/resources?edit="+doc, nil, 200); !strings.Contains(page, `<option value="3" selected>`) {
+	if page, _ := do(boss, "GET", "/booking/resources?edit="+doc, nil, 200); !strings.Contains(page, `<option value="3" selected>`) ||
+		!strings.Contains(page, `<option value="48" selected>`) || !strings.Contains(page, `<option value="6" selected>`) {
 		t.Fatalf("the resource's form: %s", page)
 	}
+
+	// on a website (GO24DEV-688): the page in a frame — no go24 menu even for an employee, everything stays embedded
+	day2 := time.Now().AddDate(0, 0, 2).Format("2006-01-02")
+	page, _ = do(boss, "GET", "/bk/"+tok+"?embed=1&date="+day2, nil, 200)
+	if !strings.Contains(page, "bkembed.js") || !strings.Contains(page, "bk-embed") || strings.Contains(page, "data-bell") ||
+		!strings.Contains(page, "&t=09%3a00&amp;embed=1#form") {
+		t.Fatalf("the embedded page: %s", page)
+	}
+	if page, _ := do("", "GET", "/bk/"+tok+"?date="+day2, nil, 200); strings.Contains(page, "bkembed.js") || strings.Contains(page, "embed=1") {
+		t.Fatal("the page out of a frame is embedded")
+	}
+	if page, _ := do("", "GET", "/bk/"+tok+"?embed=1&date="+day2+"&t=09:00", nil, 200); !strings.Contains(page, `name="embed" value="1"`) {
+		t.Fatal("the form in a frame does not keep it")
+	}
+	emb := url.Values{"r": {doc}, "date": {day2}, "t": {"09:00"}, "name": {"Ольга"}, "phone": {"+7 900 555-00-00"}, "embed": {"1"}}
+	_, loc = do("", "POST", "/bk/"+tok, emb, 303)
+	if !strings.HasPrefix(loc, "/bk/b/") || !strings.HasSuffix(loc, "?embed=1") {
+		t.Fatalf("after booking in a frame: %s", loc)
+	}
+	if page, _ := do("", "GET", loc, nil, 200); !strings.Contains(page, "bkembed.js") || !strings.Contains(page, `name="embed" value="1"`) {
+		t.Fatalf("the client's page in a frame: %s", page)
+	}
+	if _, l2 := do("", "POST", "/bk/"+tok, emb, 303); !strings.Contains(l2, "embed=1") || !strings.HasPrefix(l2, "/bk/"+tok+"?") {
+		t.Fatalf("a refusal in a frame: %s", l2)
+	}
+	cli2 := strings.TrimSuffix(strings.TrimPrefix(loc, "/bk/b/"), "?embed=1")
+	if _, l2 := do("", "POST", "/bk/b/"+cli2+"/status", url.Values{"status": {"cancelled"}, "embed": {"1"}}, 303); l2 != "/bk/b/"+cli2+"?embed=1" {
+		t.Fatalf("cancelled in a frame: %s", l2)
+	}
+	if page, _ := do("", "GET", "/bk/nope?embed=1", nil, 404); strings.Contains(page, "data-bell") {
+		t.Fatal("a gone link in a frame shows go24's menu")
+	}
+	// «Код для сайта» and the QR code
+	if page, _ := do(ann, "GET", "/booking/links", nil, 200); !strings.Contains(page, "https://go24.test/bk/"+tok+"?embed=1") ||
+		!strings.Contains(page, "data-go24-booking") || !strings.Contains(page, "/booking/links/"+links[0].ID+"/qr") {
+		t.Fatalf("no code for a website: %s", page)
+	}
+	if png, _ := do(ann, "GET", "/booking/links/"+links[0].ID+"/qr", nil, 200); !strings.HasPrefix(png, "\x89PNG") {
+		t.Fatal("the QR code is not a PNG")
+	}
+	do(ann, "GET", "/booking/links/00000000-0000-0000-0000-000000000000/qr", nil, 404)
+	do("", "GET", "/booking/links/"+links[0].ID+"/qr", nil, 302)
 
 	// switched off — the page is gone
 	link.Del("active")

@@ -29,6 +29,10 @@ func (s *Server) feedEditForm(w http.ResponseWriter, r *http.Request, sess auth.
 	if err == nil {
 		projects, err = s.Tasks.ListProjects(ctx, sess.UserID)
 	}
+	var mayAll, mayImportant bool
+	if err == nil {
+		mayAll, mayImportant, err = s.Feed.May(ctx, sess.UserID)
+	}
 	if err != nil {
 		s.jsonErr(w, r, err)
 		return
@@ -76,7 +80,7 @@ func (s *Server) feedEditForm(w http.ResponseWriter, r *http.Request, sess auth.
 		"D": &d, "Users": users, "Projects": mine, "To": to, "Shared": shared, "Thank": thank, "Badge": badge,
 		"Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji, "PollOptions": strings.Join(options, "\n"),
 		"Untils": []string{"always", "day", "week", "month", "date"}, "UntilDate": untilDate,
-		"UntilWas": d.Until.Format(time.RFC3339Nano), "Guest": tasks.IsGuestCtx(ctx),
+		"UntilWas": d.Until.Format(time.RFC3339Nano), "Guest": tasks.IsGuestCtx(ctx), "MayAll": mayAll, "MayImportant": mayImportant,
 	})
 	if err != nil {
 		s.jsonErr(w, r, err)
@@ -128,7 +132,7 @@ func (s *Server) readPostChange(r *http.Request, id string, files []*multipart.F
 		}
 	}
 	if q := r.FormValue("poll_question"); ch.PollEdit && strings.TrimSpace(q) != "" {
-		ch.Poll = &newPoll{Question: q, Options: strings.Split(r.FormValue("poll_options"), "\n"), Multiple: r.FormValue("poll_multiple") == "on"}
+		ch.Poll = formPoll(r)
 		if err := feed.CheckPoll(ch.Poll.Question, ch.Poll.Options); err != nil {
 			return ch, err
 		}
@@ -183,7 +187,7 @@ func (s *Server) reworkPost(r *http.Request, sess auth.Session, id string, ch po
 		if ch.Poll != nil {
 			p = *ch.Poll
 		}
-		if err := s.Feed.EditPoll(ctx, id, p.Question, p.Options, p.Multiple); err != nil {
+		if err := s.Feed.EditPoll(ctx, id, p.Question, p.Options, p.PollKind); err != nil {
 			return err
 		}
 	}

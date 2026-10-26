@@ -66,7 +66,7 @@ var registered []Channel
 func Register(c Channel) { registered = append(registered, c) }
 
 // order is how the messengers are offered; one not named here goes after them.
-var order = []string{"telegram", "max", "slack", "mattermost"}
+var order = []string{"telegram", "max", "matrix", "vk", "slack", "mattermost"}
 
 // Registered are the messengers in the order they are offered.
 func Registered() []Channel {

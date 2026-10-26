@@ -1,6 +1,8 @@
 package web
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -170,12 +172,85 @@ func (s *Server) storagesPage(w http.ResponseWriter, r *http.Request, sess auth.
 		return
 	}
 	s.render(w, r, "storages", page{TitleKey: "title.storages", Nav: "storages", Data: map[string]any{
-		"Storages": list, "Types": storages.Types, "Enabled": s.Storages.Enabled(), "CanShare": sess.AdminActive(),
+		"Storages": list, "Types": storages.Types, "Clouds": s.Storages.Clouds(), "Enabled": s.Storages.Enabled(),
+		"CanShare": sess.AdminActive(), "Redirect": s.absURL(r, storageOAuthPath),
 	}})
+}
+
+// storageOAuthPath is where a cloud service sends the user back after signing in: the address its application is
+// registered with.
+const storageOAuthPath = "/settings/storages/oauth"
+
+// storageState is the form of a cloud storage while the user signs in at the service; it goes there and back signed.
+type storageState struct {
+	User, Type, Name, Root string
+	Shared                 bool
+	Exp                    int64
+}
+
+func (s *Server) storageStateOf(st storageState) string {
+	raw, _ := json.Marshal(st)
+	p := base64.RawURLEncoding.EncodeToString(raw)
+	return p + "." + s.Sessions.Stamp("storage-oauth", p)
+}
+
+func (s *Server) storageStateFrom(state, userID string) (storageState, bool) {
+	var st storageState
+	p, stamp, ok := strings.Cut(state, ".")
+	if !ok || !s.Sessions.Stamped(stamp, "storage-oauth", p) {
+		return st, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(p)
+	if err != nil || json.Unmarshal(raw, &st) != nil || st.User != userID || time.Now().Unix() > st.Exp {
+		return st, false
+	}
+	return st, true
+}
+
+// storageSignIn is «Подключить» of a cloud service: the user signs in there and lets go24 in.
+func (s *Server) storageSignIn(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	st := storageState{User: sess.UserID, Type: r.FormValue("type"), Name: strings.TrimSpace(r.FormValue("name")),
+		Root: r.FormValue("root"), Shared: r.FormValue("shared") == "on", Exp: time.Now().Add(15 * time.Minute).Unix()}
+	switch {
+	case st.Name == "":
+		s.taskErr(w, r, i18n.E("err.storage_name_required"), "/settings/storages")
+		return
+	case st.Shared && !tasks.IsAdmin(r.Context()):
+		s.taskErr(w, r, storages.ErrForbidden, "/settings/storages")
+		return
+	}
+	to, err := s.Storages.SignInURL(st.Type, s.absURL(r, storageOAuthPath), s.storageStateOf(st))
+	if err != nil {
+		s.taskErr(w, r, err, "/settings/storages")
+		return
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// storageOAuth is the way back from the cloud service: the account the user has signed in to becomes the storage.
+func (s *Server) storageOAuth(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/settings/storages"
+	st, ok := s.storageStateFrom(r.FormValue("state"), sess.UserID)
+	if !ok || r.FormValue("code") == "" {
+		s.taskErr(w, r, i18n.E("err.storage_signin"), back)
+		return
+	}
+	_, err := s.Storages.CreateCloud(r.Context(), sess.UserID, tasks.IsAdmin(r.Context()),
+		storages.Input{Name: st.Name, Type: st.Type, Shared: st.Shared, Root: st.Root}, s.absURL(r, storageOAuthPath), r.FormValue("code"))
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("storage connected", "user_id", sess.UserID, "type", st.Type, "shared", st.Shared)
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "storages.connected")), http.StatusSeeOther)
 }
 
 func (s *Server) createStorage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/settings/storages"
+	if storages.IsCloud(r.FormValue("type")) {
+		s.storageSignIn(w, r, sess)
+		return
+	}
 	_, err := s.Storages.Create(r.Context(), sess.UserID, tasks.IsAdmin(r.Context()), storages.Input{
 		Name: r.FormValue("name"), Type: r.FormValue("type"), Shared: r.FormValue("shared") == "on",
 		URL: r.FormValue("url"), Vendor: r.FormValue("vendor"), Host: r.FormValue("host"), Port: r.FormValue("port"),

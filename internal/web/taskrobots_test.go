@@ -126,4 +126,34 @@ func TestTaskRobotsHTTP(t *testing.T) {
 	if robots, _ = ts.Robots(ctx, p.ID); len(robots) != 0 {
 		t.Fatal("the robot is still there")
 	}
+
+	// «Мои задачи» → «Роботы»: the person's own robots on the statuses; guests have none
+	if code, body, _ := do(member, "GET", "/my", nil); code != 200 || !strings.Contains(body, `href="/tasks/robots"`) {
+		t.Fatalf("my tasks: %d, robots link %v", code, strings.Contains(body, `href="/tasks/robots"`))
+	}
+	code, _, loc = do(member, "POST", "/tasks/robots", url.Values{"op": {"add"}, "stage": {"completed"}, "kind": {"notify"},
+		"text": {"Готово: {title}"}, "to": {"creator"}, "delay": {"0"}})
+	if code != http.StatusSeeOther || loc != "/tasks/robots" {
+		t.Fatalf("add a status robot: %d %s", code, loc)
+	}
+	if _, _, loc := do(member, "POST", "/tasks/robots", url.Values{"op": {"add"}, "stage": {"pending"}, "kind": {"stage"}}); !strings.Contains(loc, "msg=") {
+		t.Fatalf("a stage robot on a status: %s", loc)
+	}
+	code, body, _ = do(member, "GET", "/tasks/robots", nil)
+	if code != 200 || !strings.Contains(body, "Готово: {title}") || !strings.Contains(body, `value="awaiting_control"`) || strings.Contains(body, `value="stage"`) {
+		t.Fatalf("my robots page: %d", code)
+	}
+	if _, body, _ := do(owner, "GET", "/tasks/robots", nil); strings.Contains(body, "Готово: {title}") {
+		t.Fatal("another's robots are seen")
+	}
+	if code, _, _ := do(guest, "GET", "/tasks/robots", nil); code != http.StatusNotFound {
+		t.Fatalf("guest's robots page: %d", code)
+	}
+	mine, err := ts.StatusRobots(ctx, member)
+	must(err)
+	do(owner, "POST", "/tasks/robots", url.Values{"op": {"delete"}, "id": {mine[0].ID}})
+	do(member, "POST", "/tasks/robots", url.Values{"op": {"off"}, "id": {mine[0].ID}})
+	if mine, _ = ts.StatusRobots(ctx, member); len(mine) != 1 || mine[0].Active {
+		t.Fatalf("my robots after off: %+v", mine)
+	}
 }

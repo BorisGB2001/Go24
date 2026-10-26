@@ -38,8 +38,9 @@ const (
 	CodeAgain = time.Minute
 )
 
-// Filters of the list of «Подпись»: all, waiting for my signature, being signed, signed, refused or cancelled.
-var Filters = []string{"", "me", "signing", "done", "closed"}
+// Filters of the list of «Подпись»: all, waiting for my signature, mine to sign («Мои документы»), being signed,
+// signed, refused or cancelled; hr — the sendings of HR documents.
+var Filters = []string{"", "me", "mine", "signing", "done", "closed", "templates", "hr"}
 
 type Store struct{ db *pgxpool.Pool }
 
@@ -49,6 +50,9 @@ func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 type Doc struct {
 	ID, Title, Entity, EntityID, CRMDocID string
 	FileID, Hash, PDFFileID, ResultFile   string
+	BatchID                               string // the sending of an HR document it is of
+	ProjectID                             string // the collab it was sent from
+	RemindDays                            int    // the signer is reminded every so many days (0 — never)
 	Status                                string // signing | done | refused | cancelled
 	AuthorID, Author                      string
 	CreatedAt                             time.Time
@@ -59,12 +63,17 @@ type Doc struct {
 // Party is a signer: an employee (UserID) or the client (Email, Token).
 type Party struct {
 	ID, UserID, Name, Email, Token string
+	Side                           string // "" | employee (the employee an HR document is for)
 	Ord                            int
 	Status                         string // wait | ready | signed | refused
 	CodeSent                       bool
-	SignedAt                       *time.Time
+	Reminders                      int // the reminders sent by themselves
+	SignedAt, RemindedAt           *time.Time
 	IP, UserAgent, Reason          string
 }
+
+// SideMax: no more signers than this of a side, the company's or the client's.
+const SideMax = 10
 
 // Employee: the signer signs in go24, not by a link.
 func (p Party) Employee() bool { return p.UserID != "" }
@@ -134,9 +143,9 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 	}
 	defer tx.Rollback(ctx)
 	var id string
-	if err := tx.QueryRow(ctx, `INSERT INTO sign_docs (title, entity, entity_id, crm_doc_id, file_id, hash, created_by)
-		VALUES ($1, nullif($2, ''), nullif($3, '')::uuid, nullif($4, '')::uuid, $5, $6, $7) RETURNING id`,
-		d.Title, d.Entity, d.EntityID, d.CRMDocID, d.FileID, d.Hash, d.AuthorID).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO sign_docs (title, entity, entity_id, crm_doc_id, file_id, hash, created_by, batch_id, remind_days, project_id)
+		VALUES ($1, nullif($2, ''), nullif($3, '')::uuid, nullif($4, '')::uuid, $5, $6, $7, nullif($8, '')::uuid, $9, nullif($10, '')::uuid) RETURNING id`,
+		d.Title, d.Entity, d.EntityID, d.CRMDocID, d.FileID, d.Hash, d.AuthorID, d.BatchID, RemindOf(d.RemindDays), d.ProjectID).Scan(&id); err != nil {
 		return "", err
 	}
 	for i, p := range parties {
@@ -147,24 +156,27 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 		if p.UserID == "" {
 			tok = token()
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status)
-			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7)`,
-			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status, side, ready_at)
+			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7, $8, CASE WHEN $7 = 'ready' THEN now() END)`,
+			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status, p.Side); err != nil {
 			return "", err
 		}
+	}
+	if err := logTx(ctx, tx, id, "", d.AuthorID, EvCreated, "", ""); err != nil {
+		return "", err
 	}
 	return id, tx.Commit(ctx)
 }
 
 const docCols = `d.id, d.title, coalesce(d.entity, ''), coalesce(d.entity_id::text, ''), coalesce(d.crm_doc_id::text, ''),
 	d.file_id::text, d.hash, coalesce(d.pdf_file_id::text, ''), coalesce(d.result_file_id::text, ''), d.status,
-	d.created_by::text, u.name, d.created_at, d.done_at
+	d.created_by::text, u.name, d.created_at, d.done_at, coalesce(d.batch_id::text, ''), d.remind_days, coalesce(d.project_id::text, '')
 	FROM sign_docs d JOIN users u ON u.id = d.created_by`
 
 func scanDoc(r pgx.CollectableRow) (Doc, error) {
 	var d Doc
 	return d, r.Scan(&d.ID, &d.Title, &d.Entity, &d.EntityID, &d.CRMDocID, &d.FileID, &d.Hash, &d.PDFFileID, &d.ResultFile,
-		&d.Status, &d.AuthorID, &d.Author, &d.CreatedAt, &d.DoneAt)
+		&d.Status, &d.AuthorID, &d.Author, &d.CreatedAt, &d.DoneAt, &d.BatchID, &d.RemindDays, &d.ProjectID)
 }
 
 // parties puts the signers into the documents.
@@ -177,8 +189,8 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 	for i, d := range docs {
 		ids[i], at[d.ID] = d.ID, i
 	}
-	rows, err := s.db.Query(ctx, `SELECT doc_id::text, id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), ord,
-			status, code_until IS NOT NULL, signed_at, ip, user_agent, reason
+	rows, err := s.db.Query(ctx, `SELECT doc_id::text, id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), side, ord,
+			status, code_until IS NOT NULL, reminders, signed_at, reminded_at, ip, user_agent, reason
 		FROM sign_parties WHERE doc_id::text = ANY($1) ORDER BY doc_id, ord`, ids)
 	if err != nil {
 		return err
@@ -187,8 +199,8 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 	for rows.Next() {
 		var doc string
 		var p Party
-		if err := rows.Scan(&doc, &p.ID, &p.UserID, &p.Name, &p.Email, &p.Token, &p.Ord, &p.Status, &p.CodeSent, &p.SignedAt,
-			&p.IP, &p.UserAgent, &p.Reason); err != nil {
+		if err := rows.Scan(&doc, &p.ID, &p.UserID, &p.Name, &p.Email, &p.Token, &p.Side, &p.Ord, &p.Status, &p.CodeSent, &p.Reminders, &p.SignedAt,
+			&p.RemindedAt, &p.IP, &p.UserAgent, &p.Reason); err != nil {
 			return err
 		}
 		docs[at[doc]].Parties = append(docs[at[doc]].Parties, p)
@@ -241,10 +253,14 @@ func (s *Store) List(ctx context.Context, userID, filter string, admin bool) ([]
 	switch filter {
 	case "me":
 		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1 AND p.status = 'ready') AND d.status = 'signing' AND $2::bool IS NOT NULL`
+	case "mine":
+		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1) AND $2::bool IS NOT NULL`
 	case "signing", "done":
 		where += ` AND d.status = '` + filter + `'`
 	case "closed":
 		where += ` AND d.status IN ('refused', 'cancelled')`
+	case "hr", "templates":
+		return nil, nil // the sendings, Batches; the templates, Templates
 	}
 	rows, _ := s.db.Query(ctx, `SELECT `+docCols+` WHERE `+where+` ORDER BY d.created_at DESC LIMIT 500`, userID, admin)
 	docs, err := pgx.CollectRows(rows, scanDoc)
@@ -348,13 +364,19 @@ func (s *Store) Sign(ctx context.Context, docID, partyID, code, ip, ua string) (
 			code_hash = '', code_until = NULL WHERE id::text = $1`, partyID, ip, truncate(ua, 300)); err != nil {
 		return nil, false, err
 	}
+	if err := logTx(ctx, tx, docID, partyID, "", EvSigned, ip, ""); err != nil {
+		return nil, false, err
+	}
 	var n Party
-	err = tx.QueryRow(ctx, `UPDATE sign_parties SET status = 'ready' WHERE doc_id::text = $1 AND ord = $2
+	err = tx.QueryRow(ctx, `UPDATE sign_parties SET status = 'ready', ready_at = now() WHERE doc_id::text = $1 AND ord = $2
 		RETURNING id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), ord, status`, docID, ord+1).
 		Scan(&n.ID, &n.UserID, &n.Name, &n.Email, &n.Token, &n.Ord, &n.Status)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if _, err := tx.Exec(ctx, `UPDATE sign_docs SET status = 'done', done_at = now() WHERE id::text = $1`, docID); err != nil {
+			return nil, false, err
+		}
+		if err := logTx(ctx, tx, docID, "", "", EvDone, "", ""); err != nil {
 			return nil, false, err
 		}
 		return nil, true, tx.Commit(ctx)
@@ -383,12 +405,16 @@ func (s *Store) Refuse(ctx context.Context, docID, partyID, reason, ip, ua strin
 	if _, err := tx.Exec(ctx, `UPDATE sign_docs SET status = 'refused', done_at = now() WHERE id::text = $1`, docID); err != nil {
 		return err
 	}
+	if err := logTx(ctx, tx, docID, partyID, "", EvRefused, ip, strings.TrimSpace(reason)); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
-// Cancel: the sender recalls the document while it is being signed.
-func (s *Store) Cancel(ctx context.Context, docID string) error {
-	tag, err := s.db.Exec(ctx, `UPDATE sign_docs SET status = 'cancelled', done_at = now() WHERE id::text = $1 AND status = 'signing'`, docID)
+// Cancel: the sender (actorID) recalls the document while it is being signed.
+func (s *Store) Cancel(ctx context.Context, docID, actorID string) error {
+	tag, err := s.db.Exec(ctx, `WITH c AS (UPDATE sign_docs SET status = 'cancelled', done_at = now() WHERE id::text = $1 AND status = 'signing' RETURNING id)
+		INSERT INTO sign_events (doc_id, actor_id, kind) SELECT id, nullif($2, '')::uuid, 'cancelled' FROM c`, docID, actorID)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrTurn
 	}
@@ -404,6 +430,96 @@ func (s *Store) SetPDF(ctx context.Context, id, fileID string) error {
 func (s *Store) SetResult(ctx context.Context, id, fileID string) error {
 	_, err := s.db.Exec(ctx, `UPDATE sign_docs SET result_file_id = $2 WHERE id::text = $1`, id, fileID)
 	return err
+}
+
+// ---------- «Подпись для сотрудников» (КЭДО): an HR document sent to many employees, each their own copy ----------
+
+// Batch is a sending of an HR document with how its copies stand.
+type Batch struct {
+	ID, Title, TemplateID     string
+	SignerID, Signer          string // the company's representative signing first ("" — none)
+	AuthorID, Author          string
+	CreatedAt                 time.Time
+	Total, Signed, Refused    int
+	Cancelled, Signing, Ready int // Ready — copies waiting for the representative
+}
+
+// NewBatch keeps a sending; its copies are made by Create with Doc.BatchID.
+func (s *Store) NewBatch(ctx context.Context, b Batch) (string, error) {
+	b.Title = strings.TrimSpace(b.Title)
+	if b.Title == "" || len([]rune(b.Title)) > 300 {
+		return "", ErrTitle
+	}
+	var id string
+	err := s.db.QueryRow(ctx, `INSERT INTO sign_batches (title, template_id, signer_id, created_by)
+		VALUES ($1, nullif($2, '')::uuid, nullif($3, '')::uuid, $4) RETURNING id`, b.Title, b.TemplateID, b.SignerID, b.AuthorID).Scan(&id)
+	return id, err
+}
+
+// DropBatch removes a sending none of whose copies could be made.
+func (s *Store) DropBatch(ctx context.Context, id string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM sign_batches WHERE id::text = $1`, id)
+	return err
+}
+
+const batchCols = `b.id, b.title, coalesce(b.template_id::text, ''), coalesce(b.signer_id::text, ''), coalesce(su.name, ''),
+	b.created_by::text, u.name, b.created_at,
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id),
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'done'),
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'refused'),
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'cancelled'),
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'signing'),
+	(SELECT count(*) FROM sign_docs d JOIN sign_parties p ON p.doc_id = d.id AND p.status = 'ready' AND p.user_id = b.signer_id
+		WHERE d.batch_id = b.id AND d.status = 'signing')
+	FROM sign_batches b JOIN users u ON u.id = b.created_by LEFT JOIN users su ON su.id = b.signer_id`
+
+func scanBatch(r pgx.CollectableRow) (Batch, error) {
+	var b Batch
+	return b, r.Scan(&b.ID, &b.Title, &b.TemplateID, &b.SignerID, &b.Signer, &b.AuthorID, &b.Author, &b.CreatedAt,
+		&b.Total, &b.Signed, &b.Refused, &b.Cancelled, &b.Signing, &b.Ready)
+}
+
+// Batches are the sendings the user made or signs for the company, the newest first; admin — everyone's.
+func (s *Store) Batches(ctx context.Context, userID string, admin bool) ([]Batch, error) {
+	rows, _ := s.db.Query(ctx, `SELECT `+batchCols+` WHERE b.created_by = $1 OR b.signer_id = $1 OR $2
+		ORDER BY b.created_at DESC LIMIT 500`, userID, admin)
+	return pgx.CollectRows(rows, scanBatch)
+}
+
+// Batch is the sending with its copies, by the employees' names.
+func (s *Store) Batch(ctx context.Context, id string) (Batch, []Doc, error) {
+	rows, _ := s.db.Query(ctx, `SELECT `+batchCols+` WHERE b.id::text = $1`, id)
+	b, err := pgx.CollectExactlyOneRow(rows, scanBatch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Batch{}, nil, ErrNotFound
+	}
+	if err != nil {
+		return Batch{}, nil, err
+	}
+	rows, _ = s.db.Query(ctx, `SELECT `+docCols+` WHERE d.batch_id::text = $1
+		ORDER BY (SELECT lower(p.name) FROM sign_parties p WHERE p.doc_id = d.id AND p.side = 'employee')`, id)
+	docs, err := pgx.CollectRows(rows, scanDoc)
+	if err == nil {
+		err = s.parties(ctx, docs)
+	}
+	return b, docs, err
+}
+
+// CancelBatch: actorID recalls the copies still being signed; how many.
+func (s *Store) CancelBatch(ctx context.Context, id, actorID string) (int, error) {
+	tag, err := s.db.Exec(ctx, `WITH c AS (UPDATE sign_docs SET status = 'cancelled', done_at = now() WHERE batch_id::text = $1 AND status = 'signing' RETURNING id)
+		INSERT INTO sign_events (doc_id, actor_id, kind) SELECT id, nullif($2, '')::uuid, 'cancelled' FROM c`, id, actorID)
+	return int(tag.RowsAffected()), err
+}
+
+// Employee is the employee an HR document is for (nil — not an HR document).
+func (d Doc) Employee() *Party {
+	for i := range d.Parties {
+		if d.Parties[i].Side == "employee" {
+			return &d.Parties[i]
+		}
+	}
+	return nil
 }
 
 func truncate(s string, n int) string {

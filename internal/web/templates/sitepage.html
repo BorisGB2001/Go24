@@ -1,7 +1,49 @@
 {{/* «Добавить блок»: the library of blocks, a new block goes to position .At. */}}
-{{define "siteadd"}}{{$a := .}}<details class="siteadd"><summary>{{icon "plus"}} {{t "site.add_block"}}</summary>
-  <form method="post" action="{{.Base}}/blocks" class="sitelib"><input type="hidden" name="at" value="{{.At}}">
+{{define "siteadd"}}{{$a := .}}<details class="siteadd"><summary>{{icon "plus"}} {{t (or .Label "site.add_block")}}</summary>
+  <form method="post" action="{{.Base}}/blocks" class="sitelib"><input type="hidden" name="at" value="{{.At}}"><input type="hidden" name="from" value="{{.From}}">
     {{range .Types}}<button class="ghost" name="type" value="{{.Type}}">{{icon .Icon}} {{t (print "site.block." .Type)}}</button>{{end}}</form></details>{{end}}
+
+{{/* The blocks of a page or of an area of its site (.Area: header, footer — on every page), each with its tools and
+its form; .From — the page being edited. */}}
+{{define "siteblocks"}}{{$a := .}}{{$d := .D}}{{$base := .Base}}{{$ed := $d.Site.CanEdit}}
+<div class="sitearea{{with .Area}} sitearea-{{.}}{{end}}">
+      {{if and $ed (or $a.Blocks (not $a.Area))}}{{template "siteadd" (dict "Base" $base "At" 0 "Types" $d.Types "From" $a.From)}}{{end}}
+      {{range $i, $b := $a.Blocks}}{{$t := index $d.TypeOf .Type}}
+      <div class="siteblk{{if .Hidden}} off{{end}}" id="b-{{.ID}}">
+        {{if $ed}}<div class="sitetools">
+          <span class="muted small">{{with $a.Area}}{{t (print "site.area." .)}} · {{end}}{{t (print "site.block." .Type)}}{{if .Hidden}} · {{t "site.hidden"}}{{end}}</span>
+          <button type="button" class="ghost small" data-toggle="e-{{.ID}}">{{icon "edit"}} {{t "task.change"}}</button>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/up"><input type="hidden" name="from" value="{{$a.From}}"><button class="ghost small" title="{{t "kb.up"}}" {{if eq $i 0}}disabled{{end}}>{{icon "arrow-up"}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/down"><input type="hidden" name="from" value="{{$a.From}}"><button class="ghost small" title="{{t "kb.down"}}">{{icon "arrow-down"}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/hide"><input type="hidden" name="from" value="{{$a.From}}"><button class="ghost small" title="{{if .Hidden}}{{t "site.show"}}{{else}}{{t "site.hide"}}{{end}}">{{if .Hidden}}{{icon "eye"}}{{else}}{{icon "eye-off"}}{{end}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/delete" data-confirm="{{t "site.delete_block_confirm"}}"><input type="hidden" name="from" value="{{$a.From}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
+          {{if $a.Area}}<form method="post" action="{{$base}}/blocks/{{.ID}}/topage"><input type="hidden" name="from" value="{{$a.From}}"><button class="ghost small" title="{{t "site.to_page"}}">{{icon "file-text"}}</button></form>
+          {{else}}<form method="post" action="{{$base}}/blocks/{{.ID}}/toheader"><button class="ghost small" title="{{t "site.to_header"}}">{{icon "menu-2"}}</button></form>
+          <form method="post" action="{{$base}}/blocks/{{.ID}}/tofooter"><button class="ghost small" title="{{t "site.to_footer"}}">{{icon "layout-bottombar"}}</button></form>{{end}}
+        </div>
+        <form method="post" action="{{$base}}/blocks/{{.ID}}" class="card siteform" id="e-{{.ID}}" hidden><input type="hidden" name="from" value="{{$a.From}}">
+          {{range $t.Fields}}<label>{{t (print "site.f." .Name)}}</label>
+          {{if or (eq .Kind "textarea") (eq .Kind "pairs")}}<textarea name="{{.Name}}" rows="4">{{$b.Get .Name}}</textarea>{{if eq .Kind "pairs"}}<div class="small muted">{{t (print "site.hint." .Name)}}</div>{{end}}
+          {{else if eq .Kind "image"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" placeholder="https://…" style="flex:1" data-site-image>
+            <label class="button ghost small">{{icon "cloud-upload"}} {{t "site.upload"}}<input type="file" accept="image/*" hidden data-site-file></label></div>
+          {{else if eq .Kind "show"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.ask.off"}}</option>
+            <option value="on" {{if eq $v "on"}}selected{{end}}>{{t "site.ask.on"}}</option><option value="req" {{if eq $v "req"}}selected{{end}}>{{t "site.ask.req"}}</option></select>
+          {{else if eq .Kind "user"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.responsible_creator"}}</option>
+            {{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+          {{else if eq .Kind "booking"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">—</option>
+            {{range $d.BookingLinks}}<option value="{{.Token}}" {{if eq .Token $v}}selected{{end}}>{{.Name}}{{if not .Active}} · {{t "booking.link_off"}}{{end}}</option>{{end}}</select>
+            <div class="small muted">{{t "site.hint.booking"}} <a href="/booking/links" target="_blank" rel="noopener">{{t "booking.links"}}</a></div>
+          {{else if eq .Kind "color"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" pattern="#[0-9a-fA-F]{6}" placeholder="#1f6feb" style="width:120px" data-site-color>
+            <input type="color" value="{{or ($b.Get .Name) "#1f6feb"}}" data-site-picker></div>
+          {{else}}<input type="text" name="{{.Name}}" value="{{$b.Get .Name}}"{{if eq .Kind "url"}} placeholder="https://…"{{end}}>{{end}}
+          {{end}}
+          <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="e-{{.ID}}">{{t "common.cancel"}}</button></p>
+        </form>{{end}}
+        {{template "siteblock" .}}
+      </div>
+      {{if $ed}}{{template "siteadd" (dict "Base" $base "At" (add $i 1) "Types" $d.Types "From" $a.From)}}{{end}}
+      {{else}}{{if $a.Area}}{{if $ed}}{{template "siteadd" (dict "Base" $base "At" 0 "Types" $d.Types "From" $a.From "Label" (print "site.area_add." $a.Area))}}{{end}}{{else}}<p class="muted siteempty">{{t "site.no_blocks"}}</p>{{end}}{{end}}
+</div>{{end}}
 
 {{define "content"}}
 {{$d := .Data}}{{$s := $d.Site}}{{$p := $d.Page}}{{$base := print "/sites/" $s.ID "/p/" $p.ID}}
@@ -11,68 +53,86 @@
   <nav class="card sitenav">
     <b>{{$s.Name}}</b>
     <div class="small">{{if $s.Published}}<span class="sitepub on">{{t "site.published"}}</span> <a href="/site/{{$s.Slug}}" target="_blank" rel="noopener">{{icon "external-link"}} {{t "site.open"}}</a>{{else}}<span class="sitepub">{{t "site.draft"}}</span>{{end}}</div>
-    <form method="post" action="/sites/{{$s.ID}}/publish">{{if $s.Published}}<button class="ghost small" name="on" value="0">{{icon "eye-off"}} {{t "site.unpublish_site"}}</button>{{else}}<button class="primary small" name="on" value="1">{{icon "world"}} {{t "site.publish_site"}}</button>{{end}}</form>
+    {{if $s.CanPublish}}<form method="post" action="/sites/{{$s.ID}}/publish">{{if $s.Published}}<button class="ghost small" name="on" value="0">{{icon "eye-off"}} {{t "site.unpublish_site"}}</button>{{else}}<button class="primary small" name="on" value="1">{{icon "world"}} {{t "site.publish_site"}}</button>{{end}}</form>{{end}}
     <h3>{{t "site.pages"}}</h3>
     <ul class="sitepages">{{range $d.Pages}}<li><a href="/sites/{{$s.ID}}/p/{{.ID}}" {{if eq .ID $p.ID}}class="on"{{end}}>{{if .Home}}{{icon "home"}} {{end}}{{.Title}}{{if not .Published}} <span class="muted small" title="{{t "site.draft"}}">{{icon "eye-off"}}</span>{{end}}</a></li>{{end}}</ul>
-    <details><summary class="button ghost small">{{icon "plus"}} {{t "site.new_page"}}</summary>
-      <form method="post" action="/sites/{{$s.ID}}/pages"><input type="text" name="title" maxlength="200" required placeholder="{{t "site.page_title"}}">
+    {{if $s.CanEdit}}<details><summary class="button ghost small">{{icon "plus"}} {{t "site.new_page"}}</summary>
+      <form method="post" action="/sites/{{$s.ID}}/pages">
+        <div class="sitetpls small">{{range $i, $t := $d.PageTemplates}}<label class="sitetpl"><input type="radio" name="tpl" value="{{.Key}}" {{if eq $i 0}}checked{{end}}>
+          <b>{{t (print "site.ptpl." .Key)}}</b><span class="small muted">{{t (print "site.ptpl." .Key ".desc")}}</span></label>{{end}}</div>
+        <input type="text" name="title" maxlength="200" placeholder="{{t "site.page_title_auto"}}">
         <input type="text" name="slug" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" placeholder="{{t "site.address_auto"}}">
-        <button class="primary small">{{t "common.create"}}</button></form></details>
-    <details><summary class="button ghost small">{{icon "settings"}} {{t "site.settings"}}</summary>
-      <form method="post" action="/sites/{{$s.ID}}/settings">
-        <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$s.Name}}" maxlength="200" required>
-        <label>{{t "site.address"}}</label><input type="text" name="slug" value="{{$s.Slug}}" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" required>
-        <label>{{t "form.description"}}</label><textarea name="description" rows="2">{{$s.Description}}</textarea>
-        <button class="primary small">{{t "common.save"}}</button></form>
-      {{if $d.CanDelete}}<form method="post" action="/sites/{{$s.ID}}/delete" data-confirm="{{t "site.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "site.delete"}}</button></form>{{end}}</details>
+        <button class="primary small">{{t "common.create"}}</button></form></details>{{end}}
+    <div class="sitenavtools">
+      {{if $s.CanManage}}<button type="button" class="ghost small" data-toggle="sitesetform">{{icon "settings"}} {{t "site.settings"}}</button>
+      <button type="button" class="ghost small" data-toggle="siteaccessform">{{icon "lock"}} {{t "site.access"}}</button>{{end}}
+      <form method="post" action="/sites/{{$s.ID}}/copy"><button class="ghost small">{{icon "copy"}} {{t "site.copy"}}</button></form>
+      {{if $s.CanManage}}<form method="post" action="/sites/{{$s.ID}}/delete" data-confirm="{{t "site.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "site.delete"}}</button></form>{{end}}
+    </div>
   </nav>
   <div>
     <div class="card row sitehead">
       <div style="flex:1"><h1 class="sitetitle">{{$p.Title}}</h1>{{if $p.Home}} <span class="muted small">{{icon "home"}} {{t "site.home"}}</span>{{end}}
         <div class="small muted">/site/{{$s.Slug}}{{if not $p.Home}}/{{$p.Slug}}{{end}} · {{if $p.Published}}{{t "site.published"}}{{else}}{{t "site.draft"}}{{end}}{{with $p.Editor}} · {{t "site.edited" . (datetime $p.Updated)}}{{end}}</div></div>
       <a class="button ghost" href="{{$base}}/preview" target="_blank" rel="noopener">{{icon "eye"}} {{t "site.preview"}}</a>
-      <form method="post" action="{{$base}}/{{if $p.Published}}unpublish{{else}}publish{{end}}">{{if $p.Published}}<button class="ghost">{{icon "eye-off"}} {{t "site.unpublish"}}</button>{{else}}<button class="primary">{{icon "world"}} {{t "site.publish"}}</button>{{end}}</form>
+      {{if $s.CanPublish}}<form method="post" action="{{$base}}/{{if $p.Published}}unpublish{{else}}publish{{end}}">{{if $p.Published}}<button class="ghost">{{icon "eye-off"}} {{t "site.unpublish"}}</button>{{else}}<button class="primary">{{icon "world"}} {{t "site.publish"}}</button>{{end}}</form>{{end}}
       <details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
-        <button type="button" class="ghost" data-toggle="sitepageform">{{icon "edit"}} {{t "site.page_settings"}}</button>
+        <a class="button ghost" href="{{$base}}/history">{{icon "history"}} {{t "site.history"}}</a>
+        <a class="button ghost" href="/sites/{{$s.ID}}/p/header/history?from={{$p.ID}}">{{icon "history"}} {{t "site.history_header"}}</a>
+        <a class="button ghost" href="/sites/{{$s.ID}}/p/footer/history?from={{$p.ID}}">{{icon "history"}} {{t "site.history_footer"}}</a>
+        {{if $s.CanEdit}}<button type="button" class="ghost" data-toggle="sitepageform">{{icon "edit"}} {{t "site.page_settings"}}</button>
+        <button type="button" class="ghost" data-toggle="sitecopyform">{{icon "copy"}} {{t "site.copy_page"}}</button>
+        {{if and (not $p.Home) (gt (len $d.Sites) 1)}}<button type="button" class="ghost" data-toggle="sitemoveform">{{icon "arrows-exchange"}} {{t "site.move_page"}}</button>{{end}}
         {{if not $p.Home}}<form method="post" action="{{$base}}/home"><button class="ghost">{{icon "home"}} {{t "site.make_home"}}</button></form>
-        <form method="post" action="{{$base}}/delete" data-confirm="{{t "site.delete_page_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "site.delete_page"}}</button></form>{{end}}
+        <form method="post" action="{{$base}}/delete" data-confirm="{{t "site.delete_page_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "site.delete_page"}}</button></form>{{end}}{{end}}
       </div></details>
     </div>
-    <form method="post" action="{{$base}}" class="card" id="sitepageform" hidden>
+    {{if $s.CanManage}}<form method="post" action="/sites/{{$s.ID}}/settings" class="card sitesettings" id="sitesetform" hidden><input type="hidden" name="from" value="{{$p.ID}}">
+      <h2>{{t "site.settings"}}</h2>
+      <div class="sitecols"><div>
+        <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$s.Name}}" maxlength="200" required>
+        <label>{{t "site.address"}}</label><input type="text" name="slug" value="{{$s.Slug}}" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" required>
+        <label>{{t "site.seo_description_site"}}</label><textarea name="description" rows="2" maxlength="500">{{$s.Description}}</textarea>
+        <label>{{t "site.page404"}}</label><select name="page404"><option value="">{{t "site.page404_none"}}</option>
+          {{range $d.Pages}}<option value="{{.ID}}" {{if eq .ID $s.Page404}}selected{{end}}>{{.Title}}</option>{{end}}</select>
+        <label>{{t "site.favicon"}}</label><div class="row">{{with $s.Favicon}}<img src="{{.}}" alt="" class="sitefav">{{end}}<input type="text" name="favicon" value="{{$s.Favicon}}" placeholder="https://…" style="flex:1" data-site-image>
+          <label class="button ghost small">{{icon "cloud-upload"}} {{t "site.upload"}}<input type="file" accept="image/*" hidden data-site-file></label></div>
+      </div><div>
+        <label>{{t "site.accent"}}</label><div class="row"><input type="text" name="accent" value="{{$s.Accent}}" pattern="#[0-9a-fA-F]{6}" placeholder="#1f6feb" style="width:120px" data-site-color>
+          <input type="color" value="{{or $s.Accent "#1f6feb"}}" data-site-picker></div>
+        <label>{{t "site.font"}}</label><select name="font">{{range $d.Fonts}}<option value="{{.}}" {{if eq . $s.Font}}selected{{end}}>{{t (print "site.font." (or . "system"))}}</option>{{end}}</select>
+        <label>{{t "site.metrika"}}</label><input type="text" name="metrika" value="{{$s.Metrika}}" inputmode="numeric" pattern="[0-9]{1,12}" placeholder="12345678">
+        <label>{{t "site.analytics"}}</label><input type="text" name="analytics" value="{{$s.Analytics}}" placeholder="G-XXXXXXXXXX">
+        <label>{{t "site.domain"}}</label><input type="text" name="domain" value="{{$s.Domain}}" placeholder="www.example.ru">
+        <div class="small muted">{{t "site.domain_hint" $d.Domain}}</div>
+      </div></div>
+      <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="sitesetform">{{t "common.cancel"}}</button></p></form>
+    <form method="post" action="/sites/{{$s.ID}}/access" class="card sitesettings" id="siteaccessform" hidden><input type="hidden" name="from" value="{{$p.ID}}">
+      <h2>{{t "site.access"}}</h2>
+      <p class="small muted">{{t "site.access_hint"}}</p>
+      <label>{{t "site.access_everyone"}}</label><select name="everyone">{{range $d.Roles}}<option value="{{.}}" {{if eq . $s.Everyone}}selected{{end}}>{{t (print "site.role." .)}}</option>{{end}}</select>
+      {{range slice $d.Roles 1}}<label>{{t (print "site.role." .)}} <span class="muted small">— {{t (print "site.role." . ".hint")}}</span></label>
+      {{template "upick" (upick (print "role" .) (index $d.Access (print .)) nil "multi" "depts" "ph" (t "site.access_nobody"))}}{{end}}
+      <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="siteaccessform">{{t "common.cancel"}}</button></p></form>{{end}}
+    {{if $s.CanEdit}}<form method="post" action="{{$base}}" class="card" id="sitepageform" hidden>
       <label>{{t "site.page_title"}}</label><input type="text" name="title" value="{{$p.Title}}" maxlength="200" required>
       <label>{{t "site.address"}}</label><input type="text" name="slug" value="{{$p.Slug}}" maxlength="63" pattern="[a-z0-9][a-z0-9\-]*" required>
+      <h3>{{t "site.seo"}}</h3>
+      <label>{{t "site.seo_title"}}</label><input type="text" name="seo_title" value="{{$p.SEO.Title}}" maxlength="200" placeholder="{{$p.Title}} · {{$s.Name}}">
+      <label>{{t "site.seo_description"}}</label><textarea name="seo_description" rows="2" maxlength="500" placeholder="{{$s.Description}}">{{$p.SEO.Description}}</textarea>
+      <label>{{t "site.seo_keywords"}}</label><input type="text" name="seo_keywords" value="{{$p.SEO.Keywords}}" maxlength="500">
+      <label class="check"><input type="checkbox" name="noindex" value="1" {{if $p.SEO.NoIndex}}checked{{end}}> {{t "site.noindex"}}</label>
       <p><button class="primary">{{t "common.save"}}</button></p></form>
-    <div class="siteedit lp" data-site-upload="/sites/{{$s.ID}}/files" data-site-failed="{{t "site.upload_failed"}}">
-      {{template "siteadd" (dict "Base" $base "At" 0 "Types" $d.Types)}}
-      {{range $i, $b := $p.Blocks}}{{$t := index $d.TypeOf .Type}}
-      <div class="siteblk{{if .Hidden}} off{{end}}" id="b-{{.ID}}">
-        <div class="sitetools">
-          <span class="muted small">{{t (print "site.block." .Type)}}{{if .Hidden}} · {{t "site.hidden"}}{{end}}</span>
-          <button type="button" class="ghost small" data-toggle="e-{{.ID}}">{{icon "edit"}} {{t "task.change"}}</button>
-          <form method="post" action="{{$base}}/blocks/{{.ID}}/up"><button class="ghost small" title="{{t "kb.up"}}" {{if eq $i 0}}disabled{{end}}>{{icon "arrow-up"}}</button></form>
-          <form method="post" action="{{$base}}/blocks/{{.ID}}/down"><button class="ghost small" title="{{t "kb.down"}}">{{icon "arrow-down"}}</button></form>
-          <form method="post" action="{{$base}}/blocks/{{.ID}}/hide"><button class="ghost small" title="{{if .Hidden}}{{t "site.show"}}{{else}}{{t "site.hide"}}{{end}}">{{if .Hidden}}{{icon "eye"}}{{else}}{{icon "eye-off"}}{{end}}</button></form>
-          <form method="post" action="{{$base}}/blocks/{{.ID}}/delete" data-confirm="{{t "site.delete_block_confirm"}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
-        </div>
-        <form method="post" action="{{$base}}/blocks/{{.ID}}" class="card siteform" id="e-{{.ID}}" hidden>
-          {{range $t.Fields}}<label>{{t (print "site.f." .Name)}}</label>
-          {{if or (eq .Kind "textarea") (eq .Kind "pairs")}}<textarea name="{{.Name}}" rows="4">{{$b.Get .Name}}</textarea>{{if eq .Kind "pairs"}}<div class="small muted">{{t (print "site.hint." .Name)}}</div>{{end}}
-          {{else if eq .Kind "image"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" placeholder="https://…" style="flex:1" data-site-image>
-            <label class="button ghost small">{{icon "cloud-upload"}} {{t "site.upload"}}<input type="file" accept="image/*" hidden data-site-file></label></div>
-          {{else if eq .Kind "show"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.ask.off"}}</option>
-            <option value="on" {{if eq $v "on"}}selected{{end}}>{{t "site.ask.on"}}</option><option value="req" {{if eq $v "req"}}selected{{end}}>{{t "site.ask.req"}}</option></select>
-          {{else if eq .Kind "user"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.responsible_creator"}}</option>
-            {{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
-          {{else if eq .Kind "color"}}<div class="row"><input type="text" name="{{.Name}}" value="{{$b.Get .Name}}" pattern="#[0-9a-fA-F]{6}" placeholder="#1f6feb" style="width:120px" data-site-color>
-            <input type="color" value="{{or ($b.Get .Name) "#1f6feb"}}" data-site-picker></div>
-          {{else}}<input type="text" name="{{.Name}}" value="{{$b.Get .Name}}"{{if eq .Kind "url"}} placeholder="https://…"{{end}}>{{end}}
-          {{end}}
-          <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-toggle="e-{{.ID}}">{{t "common.cancel"}}</button></p>
-        </form>
-        {{template "siteblock" .}}
-      </div>
-      {{template "siteadd" (dict "Base" $base "At" (add $i 1) "Types" $d.Types)}}
-      {{else}}<p class="muted siteempty">{{t "site.no_blocks"}}</p>{{end}}
+    <form method="post" action="{{$base}}/copy" class="card row" id="sitecopyform" hidden>
+      <label>{{t "site.copy_to"}}</label><select name="to">{{range $d.Sites}}<option value="{{.ID}}" {{if eq .ID $s.ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <button class="primary">{{t "site.copy_page"}}</button><button type="button" class="ghost" data-toggle="sitecopyform">{{t "common.cancel"}}</button></form>
+    {{if and (not $p.Home) (gt (len $d.Sites) 1)}}<form method="post" action="{{$base}}/move" class="card row" id="sitemoveform" hidden>
+      <label>{{t "site.move_to"}}</label><select name="to">{{range $d.Sites}}{{if ne .ID $s.ID}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>
+      <button class="primary">{{t "site.move_page"}}</button><button type="button" class="ghost" data-toggle="sitemoveform">{{t "common.cancel"}}</button></form>{{end}}{{end}}
+    <div class="siteedit lp{{with $s.Font}} lp-font-{{.}}{{end}}"{{with $s.Accent}} style="--lp-accent:{{.}}"{{end}} data-site-upload="/sites/{{$s.ID}}/files" data-site-failed="{{t "site.upload_failed"}}">
+      {{template "siteblocks" (dict "Base" (print "/sites/" $s.ID "/p/header") "Area" "header" "Blocks" $s.Header "From" $p.ID "D" $d)}}
+      {{template "siteblocks" (dict "Base" $base "Area" "" "Blocks" $p.Blocks "From" $p.ID "D" $d)}}
+      {{template "siteblocks" (dict "Base" (print "/sites/" $s.ID "/p/footer") "Area" "footer" "Blocks" $s.Footer "From" $p.ID "D" $d)}}
     </div>
   </div>
 </div>

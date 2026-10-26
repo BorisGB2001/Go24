@@ -92,6 +92,11 @@ func (s *Server) worksheet(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, err, "/worktime")
 		return
 	}
+	norms, err := s.Company.Norms(r.Context(), ids, sched, month, end)
+	if err != nil {
+		s.taskErr(w, r, err, "/worktime")
+		return
+	}
 	_, depts, err := s.Company.Tree(r.Context())
 	if err != nil {
 		s.taskErr(w, r, err, "/worktime")
@@ -106,7 +111,7 @@ func (s *Server) worksheet(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		off[t.Format(time.DateOnly)] = !sched.WorkingDay(t)
 	}
 	s.render(w, r, "worksheet", page{TitleKey: "worksheet.title", Nav: "timeman", Data: map[string]any{
-		"Rows": company.BuildSheet(people, days, absences, pending, sched, month, now), "Dates": dates, "Off": off,
+		"Rows": company.BuildSheet(people, days, absences, pending, norms, sched, month, now), "Dates": dates, "Off": off,
 		"Today": now.Format(time.DateOnly), "Month": month, "Dept": dept, "Depts": depts,
 		"Prev": month.AddDate(0, -1, 0).Format("2006-01"), "Next": month.AddDate(0, 1, 0).Format("2006-01"),
 		"Sched": sched,
@@ -157,11 +162,21 @@ func (s *Server) workdayPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.taskErr(w, r, err, "/worktime")
 		return
 	}
+	dayTasks, err := s.Tasks.DayTasks(r.Context(), sess.UserID, userID, day)
+	if err != nil {
+		s.taskErr(w, r, err, "/worktime")
+		return
+	}
+	norm, err := s.Company.NormOf(r.Context(), userID, sched, day, day.AddDate(0, 0, 1))
+	if err != nil {
+		s.taskErr(w, r, err, "/worktime")
+		return
+	}
 	now := time.Now()
 	var flags []string
 	start, end, pause := "", "", 0
 	if d != nil {
-		flags = company.Violations(*d, sched, now)
+		flags = norm.Violations(*d, now)
 		start, pause = d.Started.Local().Format("15:04"), d.PauseSecs/60
 		if d.Ended != nil {
 			end = d.Ended.Local().Format("15:04")
@@ -174,10 +189,10 @@ func (s *Server) workdayPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		}
 	}
 	s.render(w, r, "workday", page{TitleKey: "workday.day_title", Nav: "timeman", Data: map[string]any{
-		"Person": prof, "Day": day, "D": d, "Flags": flags, "Changes": changes, "Pending": pending, "Manager": manager,
+		"Person": prof, "Day": day, "D": d, "Tasks": dayTasks, "Flags": flags, "Changes": changes, "Pending": pending, "Manager": manager,
 		"Own": userID == sess.UserID, "Approval": !manager && !sched.FreeEdit, "Now": now,
 		"CanEdit": day.Format(time.DateOnly) <= now.Format(time.DateOnly),
-		"Start":   start, "End": end, "Pause": pause, "Path": dayPath(userID, day),
+		"Start":   start, "End": end, "Pause": pause, "Path": dayPath(userID, day), "Norm": norm, "Plan": norm.Plan(day),
 	}})
 }
 

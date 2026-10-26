@@ -52,7 +52,7 @@
       {{if $d.Office}}<button name="kind" value="docx" class="ghost">{{icon "file-text"}} {{t "office.new_docx"}}</button>
       <button name="kind" value="xlsx" class="ghost">{{icon "table"}} {{t "office.new_xlsx"}}</button>
       <button name="kind" value="pptx" class="ghost">{{icon "presentation"}} {{t "office.new_pptx"}}</button>{{end}}
-      <button formaction="{{$dr.Path}}/new-board" class="ghost" data-new-board>{{icon "brush"}} {{t "dboard.new_board"}}</button></form></div></details>
+      {{template "boardTemplate"}}<button formaction="{{$dr.Path}}/new-board" class="ghost" data-new-board>{{icon "brush"}} {{t "dboard.new_board"}}</button></form></div></details>
 </div>{{end}}
 <div class="card flush disk" data-disk="{{$dr.Path}}" data-folder="{{$d.Folder}}" data-write="{{$dr.CanWrite}}"
   data-l-upload="{{t "disk.uploading"}}" data-l-failed="{{t "disk.upload_failed"}}" data-l-move="{{t "disk.move_here"}}" data-l-copy="{{t "disk.copy_here"}}"
@@ -153,6 +153,7 @@
           <label class="small">{{t "disk.link_expires"}} <input type="date" name="expires" value="{{with $l.ExpiresAt}}{{dinput .}}{{end}}"></label>
           <label class="small">{{t "disk.link_password"}} <input type="password" name="password" autocomplete="new-password" placeholder="{{if $l.Password}}{{t "disk.link_password_kept"}}{{end}}"></label>
           {{if $l.Password}}<label class="small"><input type="checkbox" name="clear_password" value="1"> {{t "disk.link_password_clear"}}</label>{{end}}
+          {{if and $d.Office (officeEditable .Name)}}<label class="small"><input type="checkbox" name="edit" value="1"{{if $l.Edit}} checked{{end}}> {{t "disk.link_edit"}}</label>{{end}}
           <div class="row"><button>{{if $l.Token}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l.Token}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form>{{end}}</td>
       <td class="small meta">{{size .Size}}</td>
       <td class="small meta">{{if .StorageName}}{{.StorageName}}{{else}}{{t "storages.builtin"}}{{end}}</td>
@@ -160,6 +161,7 @@
       <td><details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
         {{if isBoard .Name}}<a class="button ghost" href="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}">{{if $mine}}{{icon "brush"}} {{t "office.edit"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>{{end}}
         {{if and $d.Office (officeKind .Name)}}<a class="button ghost" href="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}">{{if and $mine (officeEditable .Name)}}{{icon "file-pencil"}} {{t "office.edit"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>{{end}}
+        {{if and $d.Local (localEdit .Name)}}<a class="button ghost" href="{{$dr.Path}}/local/{{.ID}}?folder={{$d.Folder}}">{{icon "device-desktop"}} {{t "disk.local_edit"}}</a>{{end}}
         <a class="button ghost" href="/files/{{.ID}}">{{icon "download"}} {{t "disk.download"}}</a>
         <button type="button" class="ghost" data-copy="{{$d.Base}}/files/{{.ID}}/about">{{icon "copy"}} {{t "disk.internal_link"}}</button>
         {{if $d.Users}}<button type="button" class="ghost" data-toggle="sh-{{.ID}}">{{icon "users"}} {{t "disk.share"}}</button>{{end}}

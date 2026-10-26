@@ -158,8 +158,15 @@ func TestOpenLinesAPI(t *testing.T) {
 	if visitor == nil || visitor.Text != "Есть доставка?" || operator == nil || operator.Operator.ID != anna || one.CanRate {
 		t.Fatalf("dialog %+v", one)
 	}
+	// Анна's dialogue: Ева, an operator of the line too, does not see it
+	call("GET", "/api/v1/openlines/dialogs/"+sid, eveKey, nil, 404)
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/messages", eveKey, map[string]string{"text": "Я тоже"}, 404)
+	decode(call("GET", "/api/v1/openlines/dialogs?tab=all", eveKey, nil, 200), &found)
+	if len(found) != 0 {
+		t.Fatalf("Ева sees %+v", found)
+	}
 	var after []apiOLMessage
-	decode(call("GET", "/api/v1/openlines/dialogs/"+sid+"/messages?after="+strconv.FormatInt(visitor.ID, 10), eveKey, nil, 200), &after)
+	decode(call("GET", "/api/v1/openlines/dialogs/"+sid+"/messages?after="+strconv.FormatInt(visitor.ID, 10), annaKey, nil, 200), &after)
 	if len(after) == 0 || after[0].ID <= visitor.ID {
 		t.Fatalf("after %+v", after)
 	}
@@ -173,12 +180,49 @@ func TestOpenLinesAPI(t *testing.T) {
 	if d.Operator == nil || d.Operator.ID != eve {
 		t.Fatalf("transfer %+v", d)
 	}
-	call("POST", "/api/v1/openlines/dialogs/"+sid+"/rate", annaKey, map[string]any{"vote": 1}, 403)
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/rate", eveKey, map[string]any{"vote": 1}, 403)
+	call("GET", "/api/v1/openlines/dialogs/"+sid, annaKey, nil, 404) // transferred: no longer Анна's
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/pin", eveKey, nil, 200), &d)
+	if !d.Pinned {
+		t.Fatalf("pin %+v", d)
+	}
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/pin", eveKey, nil, 422)
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/unpin", eveKey, nil, 200), &d)
+	if d.Pinned {
+		t.Fatalf("unpin %+v", d)
+	}
+	// a hidden message (no webhook: the visitor does not get it) and «Перехватить»: Босс takes Ева's dialogue and gives it back
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/messages", bossKey, map[string]any{"text": "Предложи скидку", "hidden": true}, 201), &d)
+	if d.Operator == nil || d.Operator.ID != eve {
+		t.Fatalf("hidden message took the dialogue %+v", d)
+	}
+	var all []apiOLMessage
+	decode(call("GET", "/api/v1/openlines/dialogs/"+sid+"/messages", eveKey, nil, 200), &all)
+	if m := all[len(all)-1]; m.From != "hidden" || m.Text != "Предложи скидку" || m.Operator == nil || m.Operator.ID != boss {
+		t.Fatalf("hidden message %+v", m)
+	}
+	if events("openline.message") != 2 {
+		t.Fatal("a hidden message went to the webhook")
+	}
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/intercept", eveKey, nil, 422) // her own
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/intercept", bossKey, nil, 200), &d)
+	if d.Operator == nil || d.Operator.ID != boss {
+		t.Fatalf("intercept %+v", d)
+	}
+	call("GET", "/api/v1/openlines/dialogs/"+sid, eveKey, nil, 404)
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/transfer", bossKey, map[string]string{"to": eve}, 200)
+	var pause map[string]bool
+	decode(call("POST", "/api/v1/openlines/pause", annaKey, map[string]bool{"paused": true}, 200), &pause)
+	decode(call("GET", "/api/v1/openlines/pause", annaKey, nil, 200), &pause)
+	if !pause["paused"] {
+		t.Fatal("Анна is not on a pause")
+	}
+	call("POST", "/api/v1/openlines/pause", readOnly, map[string]bool{"paused": false}, 403)
 	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/rate", bossKey, map[string]any{"vote": 1, "comment": "Хорошо"}, 200), &d)
 	if d.HeadVote != 1 {
 		t.Fatalf("rate %+v", d)
 	}
-	call("POST", "/api/v1/openlines/dialogs/"+sid+"/lead", annaKey, nil, 403)
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/lead", annaKey, nil, 404)
 	var lead map[string]string
 	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/lead", eveKey, nil, 200), &lead)
 	if lead["kind"] != "lead" || lead["id"] == "" || lead["url"] != "/crm/leads/"+lead["id"] {

@@ -124,7 +124,19 @@ func (s *Server) crmInvoiceData(r *http.Request, sess auth.Session) (map[string]
 		}
 	}
 	data["CanWrite"] = s.invoiceCheck(r, sess, v, "write") == nil
-	return data, nil
+	if sess.Admin { // «Генератор документов»: the print forms of quotes and invoices
+		data["Docs"], err = s.CRM.DocTemplates(r.Context(), crm.TemplateInvoice)
+	} else {
+		data["Docs"], err = s.CRM.DocTemplatesFor(r.Context(), crm.TemplateInvoice, sess.UserID)
+	}
+	if err == nil {
+		data["Documents"], err = s.CRM.Documents(r.Context(), crm.TemplateInvoice, v.ID)
+		data["PDF"] = s.Office != nil
+	}
+	if err == nil && s.Sign != nil { // «Подпись»: the latest sending of each document
+		data["Signs"], err = s.Sign.OfCard(r.Context(), crm.TemplateInvoice, v.ID)
+	}
+	return data, err
 }
 
 // invoiceDoc is what the document for the client shows: its products, payments, the seller and the buyer.

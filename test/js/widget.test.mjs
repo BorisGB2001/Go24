@@ -1,6 +1,7 @@
 // «Виджет на сайт» in jsdom, as on a stranger's page: the button opens the chat, a message starts the dialogue
 // (token kept in the site's storage), the operator's answer shows, the visitor rates it and gets the conversation by
-// e-mail, the contact form sends. node test/js/widget.test.mjs
+// e-mail, the contact form sends; files both ways, the operator's name and photo, «печатает…» and «прочитано».
+// node test/js/widget.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -8,14 +9,18 @@ import assert from 'node:assert/strict';
 const src = readFileSync(new URL('../../internal/web/widget/widget.js', import.meta.url), 'utf8');
 const cfg = { id: 'w1', base: 'https://go24.test', color: '2FC6F6', name: 'Магазин', greeting: 'Здравствуйте!',
   t: { open: 'Напишите', chat: 'Чат', contact: 'Контакты', placeholder: '…', contact_note: 'note', name: 'Имя', phone: 'Тел', email: 'Почта', question: 'Вопрос', send: 'Отправить', thanks: 'Спасибо!',
-  vote: 'Оцените', vote_comment: 'Комментарий', vote_thanks: 'Спасибо за оценку', history: 'На почту', history_note: 'Пришлём', history_sent: 'Отправлено' } };
+  vote: 'Оцените', vote_comment: 'Комментарий', vote_thanks: 'Спасибо за оценку', history: 'На почту', history_note: 'Пришлём', history_sent: 'Отправлено',
+  attach: 'Файл', typing: 'печатает…', read: 'Прочитано', file_big: 'Большой' }, max_file: 1000 };
 const dom = new JSDOM('<!doctype html><body><h1>Магазин</h1></body>', { runScripts: 'outside-only', url: 'https://shop.example/catalog', pretendToBeVisual: true });
 const w = dom.window;
 const calls = [];
+let next = null; // the next answer of «messages»
 w.fetch = async (url, opts) => {
   const op = url.split('/api/')[1].split('?')[0];
-  calls.push({ op, headers: opts.headers, body: opts.body ? JSON.parse(opts.body) : null });
-  const answers = { visit: { token: 'tok123' }, say: {}, contact: {}, vote: {}, history: {},
+  const form = opts.body instanceof w.FormData;
+  calls.push({ op, url, headers: opts.headers, body: opts.body && !form ? JSON.parse(opts.body) : null, form: form ? opts.body : null });
+  if (op === 'messages' && next) { const n = next; next = null; return { ok: true, json: async () => n }; }
+  const answers = { file: {}, typing: {}, visit: { token: 'tok123' }, say: {}, contact: {}, vote: {}, history: {},
     messages: { messages: [{ id: 1, operator: '', body: 'Есть доставка?' }, { id: 2, operator: 'Анна', body: 'Да' }],
       state: { closed: true, vote: 0, can_vote: true, vote_text: 'Оцените ответ', history: true, email: 'ivan@shop.example' } } };
   return { ok: true, json: async () => answers[op] };
@@ -26,6 +31,7 @@ const host = w.document.body.lastElementChild;
 const root = host.shadowRoot;
 assert.ok(root, 'the widget lives in a shadow root');
 assert.equal(root.querySelector('.box').hidden, true);
+assert.equal(root.querySelector('.head .tg'), null, 'no Telegram without a bot');
 assert.match(root.querySelector('.msgs').textContent, /Здравствуйте!/, 'the greeting');
 root.querySelector('.btn').click();
 assert.equal(root.querySelector('.box').hidden, false);
@@ -80,5 +86,81 @@ f.dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
 await tick();
 assert.deepEqual(calls.filter(c => c.op === 'contact').at(-1).body, { name: 'Иван', phone: '+7 900', email: '', text: '' });
 assert.match(root.querySelector('.contact').textContent, /Спасибо!/);
-console.log('widget.js: chat, rating, conversation by e-mail and contact form passed');
+// files, the operator, «печатает…», «прочитано»
+root.querySelector('[data-tab="chat"]').click();
+next = { messages: [{ id: 3, operator: '', body: '', file: { name: 'a.png', url: 'https://go24.test/w/w1/file/3/s3', image: true } },
+  { id: 4, operator: 'Анна', body: 'Счёт', file: { name: 'bill.pdf', url: 'https://go24.test/w/w1/file/4/s4', image: false } }],
+  operator: { name: 'Анна', photo: 'https://go24.test/w/w1/photo/u1', typing: true, read: 3 } };
+const att = root.querySelector('.att input');
+Object.defineProperty(att, 'files', { value: [new w.File(['x'], 'a.png', { type: 'image/png' })], configurable: true });
+ta.value = 'подпись';
+att.dispatchEvent(new w.Event('change'));
+await tick();
+const sent = calls.filter(c => c.op === 'file').at(-1);
+assert.equal(sent.form.get('file').name, 'a.png');
+assert.equal(sent.form.get('body'), 'подпись', 'the text goes with the file');
+assert.equal(sent.headers['Content-Type'], undefined, 'the browser sets the multipart boundary');
+assert.equal(ta.value, '');
+assert.match(calls.filter(c => c.op === 'messages').at(-1).url, /seen=1/, 'the open widget tells the visitor has seen it');
+const pic = root.querySelector('.m.v[data-id="3"] img');
+assert.equal(pic?.src, 'https://go24.test/w/w1/file/3/s3', 'the visitor\'s picture is shown');
+const pdf = root.querySelector('.m.o[data-id="4"] a');
+assert.equal(pdf.textContent, '📎 bill.pdf');
+assert.equal(pdf.href, 'https://go24.test/w/w1/file/4/s4');
+const head = root.querySelector('.op');
+assert.equal(head.hidden, false);
+assert.equal(head.textContent, 'Анна');
+assert.equal(head.querySelector('img').src, 'https://go24.test/w/w1/photo/u1', 'the operator\'s photo');
+assert.equal(root.querySelector('.typing').hidden, false);
+assert.equal(root.querySelector('.typing').textContent, 'Анна печатает…');
+assert.equal(root.querySelector('.m.v[data-id="3"]').nextElementSibling.className, 'read', '«прочитано» under the message read');
+assert.equal(root.querySelectorAll('.read').length, 1);
+att.value = '';
+Object.defineProperty(att, 'files', { value: [new w.File(['x'.repeat(2000)], 'big.zip')], configurable: true });
+let warned = '';
+w.alert = m => { warned = m; };
+const before = calls.length;
+att.dispatchEvent(new w.Event('change'));
+await tick();
+assert.equal(warned, 'Большой', 'a file over the limit is not sent');
+assert.equal(calls.length, before);
+ta.value = 'пишу';
+ta.dispatchEvent(new w.Event('input'));
+ta.dispatchEvent(new w.Event('input'));
+await tick();
+assert.equal(calls.filter(c => c.op === 'typing').length, 1, '«печатает…» once in a while');
+assert.match(root.innerHTML, /@media \(max-width:480px\)/, 'the whole screen on a phone');
+
+// «Согласие на обработку персональных данных»: the first message waits for «Принимаю», then goes; asked once
+{
+  const d2 = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only', url: 'https://shop.example/', pretendToBeVisual: true });
+  const w2 = d2.window, ops = [];
+  w2.fetch = async (url, opts) => {
+    const op = url.split('/api/')[1].split('?')[0];
+    ops.push(op);
+    return { ok: true, json: async () => (op === 'visit' ? { token: 't2' } : op === 'messages' ? { messages: [], consent: true } : {}) };
+  };
+  w2.eval(src.replace('/*CONFIG*/{}', JSON.stringify({ ...cfg, consent: 'Даю согласие на обработку данных', telegram: 'shop_bot' })));
+  const r2 = w2.document.body.lastElementChild.shadowRoot, agree = r2.querySelector('.agree');
+  assert.equal(agree.hidden, true);
+  assert.match(agree.textContent, /Даю согласие/);
+  assert.equal(r2.querySelector('.head .tg').href, 'https://t.me/shop_bot', 'the line\'s Telegram bot as another way in');
+  r2.querySelector('.say textarea').value = 'Здравствуйте';
+  r2.querySelector('.say').dispatchEvent(new w2.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(agree.hidden, false, 'the agreement is asked first');
+  assert.deepEqual(ops, [], 'nothing goes before the consent');
+  agree.querySelector('.send').click();
+  await tick();
+  assert.equal(agree.hidden, true);
+  assert.deepEqual(ops.slice(0, 3), ['visit', 'consent', 'say']);
+  r2.querySelector('.say textarea').value = 'Ещё';
+  r2.querySelector('.say').dispatchEvent(new w2.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(agree.hidden, true, 'asked once');
+  assert.equal(ops.filter(o => o === 'consent').length, 1);
+  assert.equal(ops.filter(o => o === 'say').length, 2);
+  assert.match(r2.innerHTML, /\[hidden\]\{display:none!important\}/, 'hidden blocks stay hidden whatever their display');
+}
+console.log('widget.js: chat, rating, conversation by e-mail, contact form, files, typing, read and consent passed');
 process.exit(0);

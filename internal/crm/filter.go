@@ -17,6 +17,7 @@ type Filter struct {
 	Q, Stage, Responsible string
 	Source                string // the id of the «Источник» item
 	Observer              string // the cards this person observes («Я наблюдатель»)
+	Repeat                string // leads: "1" — only the repeated ones («Повторный лид»), "0" — only the first ones
 	Semantic              string // process | success | failure | closed (success or failure)
 	From, To              *time.Time
 	AmountMin, AmountMax  *float64
@@ -50,6 +51,9 @@ func (f Filter) where(entity, alias string, args *[]any) string {
 	}
 	if f.Observer != "" {
 		w += ` AND ` + observerSQL(entity, alias, arg(f.Observer))
+	}
+	if entity == "lead" && (f.Repeat == "1" || f.Repeat == "0") {
+		w += ` AND ` + map[string]string{"1": "", "0": "NOT "}[f.Repeat] + alias + `.is_repeat`
 	}
 	if f.From != nil {
 		w += ` AND ` + alias + `.created_at >= ` + arg(*f.From)
@@ -102,8 +106,21 @@ func (s *Store) LeadList(ctx context.Context, viewer string, f Filter) ([]Lead, 
 	}
 	args := []any{like(f.Q), viewer}
 	cond := f.where("lead", "l", &args)
-	return scanLeads(s.db.Query(ctx, leadSQL+` WHERE (l.title ILIKE $1 OR l.name ILIKE $1 OR l.phone ILIKE $1 OR l.email ILIKE $1
+	return scanLeads(s.db.Query(ctx, leadSQL+` WHERE (l.title ILIKE $1 OR l.name ILIKE $1 OR `+commLike("lead", "l", "$1")+`
 		OR l.company_title ILIKE $1) AND (`+sc+`)`+cond+f.order("l")+` LIMIT 500`, args...))
+}
+
+// Responsible is the id of the card's responsible ("" — none or no such card).
+func (s *Store) Responsible(ctx context.Context, entity, id string) (string, error) {
+	if plural[entity] == "" {
+		return "", nil
+	}
+	var r string
+	err := s.db.QueryRow(ctx, `SELECT coalesce(responsible_id::text, '') FROM crm_`+plural[entity]+` WHERE id::text = $1`, id).Scan(&r)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return r, err
 }
 
 // SetResponsible gives a deal or a lead another responsible.

@@ -10,12 +10,12 @@ import (
 
 func contains(list []string, v string) bool { return slices.Contains(list, v) }
 
-// queue is the line's operators in their order (active users only); an empty queue is the widget's creator.
+// queue is the line's operators in their order (active users not on a pause only); an empty queue is the widget's creator.
 func (s *Store) queue(ctx context.Context, q dbtx, widgetID string) ([]string, error) {
 	var ids []string
 	err := q.QueryRow(ctx, `SELECT coalesce(array_agg(u.id::text ORDER BY o.n), '{}') FROM ol_widgets w,
 		unnest(CASE WHEN cardinality(w.operators) > 0 THEN w.operators ELSE ARRAY[w.created_by] END) WITH ORDINALITY o(id, n)
-		JOIN users u ON u.id = o.id WHERE w.id::text = $1 AND u.active`, widgetID).Scan(&ids)
+		JOIN users u ON u.id = o.id WHERE w.id::text = $1 AND u.active AND NOT EXISTS (SELECT 1 FROM ol_paused p WHERE p.user_id = u.id)`, widgetID).Scan(&ids)
 	return ids, err
 }
 
@@ -73,12 +73,13 @@ func (s *Store) assign(ctx context.Context, q dbtx, w Widget, sessionID, keep st
 	return next, err
 }
 
-// notifyOperators: the dialogue's operator, while nobody has it — the line's queue (or its creator); one unread
-// notification per dialogue and person.
+// notifyOperators: the dialogue's operator, while nobody has it — the line's queue (or its creator) but those on a pause;
+// one unread notification per dialogue and person.
 func notifyOperators(ctx context.Context, q dbtx, sessionID, body string) error {
 	_, err := q.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url)
-		SELECT u.id, 'openline', left($2, 300), '/openlines?s=' || $1 FROM users u, ol_sessions s JOIN ol_widgets w ON w.id = s.widget_id
+		SELECT u.id, 'openline', left($2, 300), '/openlines?s=' || $1 FROM users u, ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
 		WHERE s.id::text = $1 AND u.active AND CASE WHEN s.operator_id IS NOT NULL THEN u.id = s.operator_id
+			WHEN EXISTS (SELECT 1 FROM ol_paused p WHERE p.user_id = u.id) THEN false
 			WHEN cardinality(w.operators) > 0 THEN u.id = ANY(w.operators) ELSE u.id = w.created_by END
 		AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = u.id AND n.kind = 'openline' AND n.url = '/openlines?s=' || $1 AND n.read_at IS NULL)`,
 		sessionID, body)
@@ -132,7 +133,8 @@ func (s *Store) closeSession(ctx context.Context, id, by string) error {
 
 // Due is the line's clock (go24-worker, every half a minute): a dialogue its operator has not answered in time goes
 // to the next one; the visitor waiting too long gets «all operators are busy»; a dialogue the visitor left after an
-// answer is closed. It returns how many dialogues changed.
+// answer is closed; a dialogue waiting longer than the line's KPI is a violation told to its operator and the heads.
+// It returns how many dialogues changed.
 func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 	n := 0
 	widgets := map[string]Widget{}
@@ -154,8 +156,8 @@ func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 	}
 
 	// not answered in time — the next operator
-	late, err := list(`SELECT s.id::text, s.widget_id::text, s.operator_id::text FROM ol_sessions s JOIN ol_widgets w ON w.id = s.widget_id
-		WHERE s.status = 'open' AND w.active AND w.queue_mode <> 'all' AND s.operator_id IS NOT NULL AND s.answered_at IS NULL
+	late, err := list(`SELECT s.id::text, w.id::text, s.operator_id::text FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
+		WHERE s.status = 'open' AND w.active AND w.queue_mode <> 'all' AND s.operator_id IS NOT NULL AND s.answered_at IS NULL AND NOT s.pinned
 		AND s.waiting_since IS NOT NULL AND s.assigned_at < $1::timestamptz - make_interval(mins => w.answer_wait)`)
 	if err != nil {
 		return n, err
@@ -190,6 +192,28 @@ func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 		}
 		if _, err := s.db.Exec(ctx, `WITH m AS (INSERT INTO ol_messages (session_id, body, kind) VALUES ($1::uuid, $2, 'noanswer'))
 			UPDATE ol_sessions SET noanswer_sent = true WHERE id = $1::uuid`, d.ID, w.NoanswerText); err != nil {
+			return n, err
+		}
+		n++
+	}
+
+	// waits longer than the line's KPI — a violation, once per wait
+	kpi, err := list(`SELECT s.id::text, w.id::text, '' FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
+		WHERE s.status = 'open' AND NOT s.spam AND s.waiting_since IS NOT NULL AND s.kpi_wait IS DISTINCT FROM s.waiting_since
+		AND CASE WHEN s.answered_at IS NULL THEN w.kpi_first ELSE w.kpi_further END > 0
+		AND s.waiting_since < $1::timestamptz - make_interval(mins => CASE WHEN s.answered_at IS NULL THEN w.kpi_first ELSE w.kpi_further END)`)
+	if err != nil {
+		return n, err
+	}
+	for _, d := range kpi {
+		w, err := line(d.Widget)
+		if err != nil {
+			return n, err
+		}
+		if !w.InHours(now) {
+			continue
+		}
+		if err := s.kpiLate(ctx, d.ID); err != nil {
 			return n, err
 		}
 		n++
@@ -261,4 +285,45 @@ func (s *Store) passOn(ctx context.Context, w Widget, id, from string) error {
 		return err
 	}
 	return s.follow(ctx, id)
+}
+
+// kpiLate marks the dialogue's wait as a violation of the line's KPI: a service line and a notification to its
+// operator (while nobody has it — to the line's queue) and to the heads of the lines, as the line says.
+func (s *Store) kpiLate(ctx context.Context, id string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var first bool
+	var mins int
+	var name string
+	err = tx.QueryRow(ctx, `UPDATE ol_sessions s SET kpi_wait = s.waiting_since, kpi_late = s.kpi_late + 1,
+		kpi_first_late = s.kpi_first_late OR s.answered_at IS NULL FROM ol_widgets w
+		WHERE w.id = coalesce(s.queue_id, s.widget_id) AND s.id::text = $1 AND s.waiting_since IS NOT NULL
+		RETURNING s.answered_at IS NULL, CASE WHEN s.answered_at IS NULL THEN w.kpi_first ELSE w.kpi_further END, s.name`, id).Scan(&first, &mins, &name)
+	if err == pgx.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	key := "ol.kpi_further"
+	if first {
+		key = "ol.kpi_first"
+	}
+	if err := s.note(ctx, tx, id, key, mins); err != nil {
+		return err
+	}
+	if name == "" {
+		name = "#" + id[:6]
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url)
+		SELECT u.id, 'openline', left($2, 300), '/openlines?s=' || $1 FROM users u, ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
+		WHERE s.id::text = $1 AND u.active AND ((w.kpi_operator AND CASE WHEN s.operator_id IS NOT NULL THEN u.id = s.operator_id
+			WHEN cardinality(w.operators) > 0 THEN u.id = ANY(w.operators) ELSE u.id = w.created_by END)
+			OR (w.kpi_heads AND u.id IN (SELECT user_id FROM ol_heads)))`, id, s.tr("ol.kpi_notify", name, s.tr(key, mins))); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

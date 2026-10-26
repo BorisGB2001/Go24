@@ -33,7 +33,7 @@
       {{if $sh.Shares}}<div class="muted">{{icon "files"}} {{t "disk.sharing_file"}}</div>{{end}}
       {{range $sh.Shares}}<div class="row">{{if eq .Kind "department"}}{{icon "hierarchy-2"}}{{else}}{{icon "user"}}{{end}} {{.Whom}}<span class="spacer"></span><span class="muted">{{t (print "disk.access_" .Access)}}</span>
         {{if $own}}<form method="post" action="{{$dr.Path}}/share"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small" name="off" value="{{.ID}}" title="{{t "disk.share_off"}}">{{icon "x"}}</button></form>{{end}}</div>{{end}}
-      {{with $sh.Link}}<div class="row">{{icon "link"}} <a href="/s/{{.Token}}" target="_blank">{{t "disk.link"}}</a><span class="spacer"></span><span class="muted">{{with .ExpiresAt}}{{t "disk.sharing_link_until" (date .)}} · {{end}}{{if .Password}}{{t "disk.sharing_link_password"}} · {{end}}{{t "disk.link_downloads" .Downloads}}</span></div>{{end}}
+      {{with $sh.Link}}<div class="row">{{icon "link"}} <a href="/s/{{.Token}}" target="_blank">{{t "disk.link"}}</a><span class="spacer"></span><span class="muted">{{with .ExpiresAt}}{{t "disk.sharing_link_until" (date .)}} · {{end}}{{if .Password}}{{t "disk.sharing_link_password"}} · {{end}}{{if .Edit}}{{t "disk.link_editable"}} · {{end}}{{t "disk.link_downloads" .Downloads}}</span></div>{{end}}
       {{if and (eq $c.Drive "user") (not $sh.Folders) (not $sh.Shares) (not $sh.Link)}}<div class="muted">{{t "disk.sharing_nobody"}}</div>{{end}}
       {{if and $own $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="row" style="flex-wrap:wrap"><input type="hidden" name="back" value="{{$d.Back}}"><input type="hidden" name="file" value="{{$c.ID}}">
         <select name="whom" required><option value="">{{t "disk.share_whom"}}</option>
@@ -47,12 +47,17 @@
           <label>{{t "disk.link_expires"}} <input type="date" name="expires" value="{{if $l}}{{with $l.ExpiresAt}}{{dinput .}}{{end}}{{end}}"></label>
           <label>{{t "disk.link_password"}} <input type="password" name="password" autocomplete="new-password" placeholder="{{if and $l $l.Password}}{{t "disk.link_password_kept"}}{{end}}"></label>
           {{if and $l $l.Password}}<label><input type="checkbox" name="clear_password" value="1"> {{t "disk.link_password_clear"}}</label>{{end}}
+          {{if and $d.Office (officeEditable $c.Name)}}<label><input type="checkbox" name="edit" value="1"{{if and $l $l.Edit}} checked{{end}}> {{t "disk.link_edit"}}</label>{{end}}
           <div class="row"><button>{{if $l}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form></details>{{end}}
     </div>
     <h3>{{icon "history"}} {{t "disk.versions"}}</h3>
     <table class="list small"><thead><tr><th>{{t "disk.version"}}</th><th>{{t "col.uploaded"}}</th><th>{{t "col.size"}}</th><th></th></tr></thead>
       <tbody>{{range $d.Versions}}<tr><td>{{.No}}{{if not .ID}} · {{t "disk.version_current"}}{{end}}</td><td>{{datetime .CreatedAt}}<div class="muted">{{.Author}}</div></td><td>{{size .Size}}</td>
         <td><a class="button ghost small" href="/files/{{$c.ID}}{{with .ID}}/versions/{{.}}{{end}}">{{icon "download"}}</a></td></tr>{{end}}</tbody></table>
+    {{if or $d.BPTemplates $d.BPInstances}}<h3 id="bp">⚙ {{t "bp.title"}}</h3>
+    {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>
+      {{if and (eq .Status "running") $d.BPWrite}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="/files/{{$c.ID}}/about"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}</div>{{end}}
+    {{range $d.BPTemplates}}<div><a class="button ghost small" href="/bp/start/{{.ID}}?entity_id={{$c.ID}}">{{icon "player-play"}} {{.Name}}</a></div>{{end}}{{end}}
   </div>
   <div class="card stack" id="comments">
     <h3>{{icon "messages"}} {{t "disk.comments"}}{{with len $c.Comments}} <span class="muted">{{.}}</span>{{end}}</h3>

@@ -170,4 +170,63 @@ func TestHRRights(t *testing.T) {
 	if _, body := do(admin, "GET", "/company", nil); strings.Contains(body, "vacation-remind-off") {
 		t.Errorf("the reminder after «не напоминать» in %d", time.Now().Year())
 	}
+
+	// «Команды» (GO24DEV-689): an administrator adds one under the company, the head changes its people (not its
+	// head), an employee — nothing; it shows in the structure, the list by team and the profile
+	root, _, err := cs.Tree(ctx)
+	must(err)
+	if st, _ := do(plain, "POST", "/company/teams", url.Values{"op": {"add"}, "department": {root.ID}, "name": {"Альфа"}}); st != http.StatusForbidden {
+		t.Errorf("an employee adds a team: %d", st)
+	}
+	if st, _ := do(admin, "POST", "/company/teams", url.Values{"op": {"add"}, "department": {root.ID}, "name": {"Альфа"}}); st != http.StatusSeeOther {
+		t.Fatalf("a team added: %d", st)
+	}
+	teams, err := cs.Teams(ctx, "")
+	must(err)
+	if len(teams) != 1 {
+		t.Fatalf("teams: %+v", teams)
+	}
+	team := teams[0].ID
+	edit := func(who string, v url.Values) int {
+		t.Helper()
+		v.Set("op", "update")
+		v.Set("id", team)
+		st, _ := do(who, "POST", "/company/teams", v)
+		return st
+	}
+	if st := edit(admin, url.Values{"department": {root.ID}, "name": {"Альфа"}, "head": {hr}, "members": {plain}}); st != http.StatusSeeOther {
+		t.Fatalf("the administrator saves the team: %d", st)
+	}
+	if st := edit(plain, url.Values{"name": {"Моя"}}); st != http.StatusForbidden {
+		t.Errorf("a member saves the team: %d", st)
+	}
+	if st := edit(hr, url.Values{"name": {"Альфа"}, "description": {"Новый продукт"}, "head": {plain}, "members": {plain, admin}}); st != http.StatusSeeOther {
+		t.Fatalf("the head saves the team: %d", st)
+	}
+	tm, err := cs.Team(ctx, team)
+	must(err)
+	if tm.Head == nil || tm.Head.ID != hr || len(tm.Members) != 2 || tm.Description != "Новый продукт" {
+		t.Fatalf("the team: %+v", tm)
+	}
+	_, body = do(hr, "GET", "/company/structure", nil)
+	if !strings.Contains(body, `data-team="`+team+`"`) || !strings.Contains(body, "Новый продукт") || !strings.Contains(body, `name="members"`) ||
+		strings.Contains(body, `<select name="department">`) {
+		t.Error("the structure for the team's head: the team with its form, without the department")
+	}
+	if _, body = do(plain, "GET", "/company/structure", nil); !strings.Contains(body, "Альфа") || strings.Contains(body, `action="/company/teams"`) {
+		t.Error("the structure for an employee: the team without forms")
+	}
+	if _, body = do(admin, "GET", "/company/structure", nil); !strings.Contains(body, `<select name="department">`) || !strings.Contains(body, `value="delete"`) {
+		t.Error("the structure for an administrator: the department and «Удалить команду»")
+	}
+	if _, body = do(plain, "GET", "/company?team="+team, nil); !strings.Contains(body, "Админов") || !strings.Contains(body, "Кадрова") ||
+		!strings.Contains(body, `name="team" value="`+team+`"`) {
+		t.Error("the list by team")
+	}
+	if _, body = do(plain, "GET", "/u/"+plain, nil); !strings.Contains(body, `href="/company?team=`+team+`"`) {
+		t.Error("no team in the profile")
+	}
+	if st, _ := do(admin, "POST", "/company/teams", url.Values{"op": {"delete"}, "id": {team}}); st != http.StatusSeeOther {
+		t.Fatalf("the team deleted: %d", st)
+	}
 }

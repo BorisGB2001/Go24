@@ -1,5 +1,15 @@
 {{/* «Приложения» in a card: the tabs of the applications bound to its place; the frame opens when the tab does */}}
 {{define "apptabs"}}{{$id := .ID}}{{range .Tabs}}<details class="card apptab" data-app-tab>
   <summary><h2>{{icon "layout-grid"}} {{.Tab}}</h2>{{with .Description}} <span class="muted small">{{.}}</span>{{end}}</summary>
-  <iframe title="{{.Tab}}" data-src="/apps/tab/{{.ID}}?id={{$id}}" allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
-</details>{{end}}{{end}}
+  <iframe title="{{.Tab}}" data-src="/apps/tab/{{.ID}}?id={{$id}}" data-tab="{{.ID}}" data-card="{{$id}}" allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
+</details>{{end}}{{if .Tabs}}{{template "appsel"}}<script src="{{asset "js/apphost.js"}}"></script>{{end}}{{end}}
+
+{{/* the people picker go24.js of an application opens (selectUser, selectUsers; static/js/apphost.js) */}}
+{{define "appsel"}}<dialog class="disk-dlg appsel" data-app-select>
+  <form method="dialog">
+    <h3 data-title-one="{{t "apps.select_user"}}" data-title-many="{{t "apps.select_users"}}"></h3>
+    <div data-one hidden>{{template "upick" (upick "user" nil nil)}}</div>
+    <div data-many hidden>{{template "upick" (upick "users" nil nil "multi")}}</div>
+    <div class="row"><span class="spacer"></span><button value="" class="ghost">{{t "common.cancel"}}</button><button value="ok" class="primary">{{t "apps.select"}}</button></div>
+  </form>
+</dialog>{{end}}

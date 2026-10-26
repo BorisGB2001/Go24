@@ -18,7 +18,11 @@
   <label>{{t "mkt.from"}}</label>{{if $d.Boxes}}<select name="box">{{range $d.Boxes}}<option value="{{.ID}}" {{if eq .ID $c.MailboxID}}selected{{end}}>{{.Email}}</option>{{end}}</select>
     {{else}}<div class="form-error">{{t "mkt.no_box"}} <a href="/mail/settings">{{t "mkt.no_box_link"}}</a></div>{{end}}
   <label>{{t "crm.mailsend.subject"}}</label><input type="text" name="subject" maxlength="1000" value="{{$c.Subject}}">
-  <label>{{t "crm.mailsend.text"}}</label>{{template "crmeditor" $c.Body}}
+  <label>{{t "crm.mailsend.text"}}</label>
+  <div class="tabs mkt-ab-tabs" data-ab-tabs {{if not $c.AB}}hidden{{end}}><button type="button" class="on" data-ab-tab="a">{{t "mkt.ab.variant" "A"}}</button><button type="button" data-ab-tab="b">{{t "mkt.ab.variant" "B"}}</button>
+    <span class="small muted" data-ab-hint hidden>{{t "mkt.ab.b_hint"}}</span></div>
+  <textarea name="ab_html" hidden data-ab-html>{{$c.ABBody}}</textarea>
+  {{template "mktblocks"}}{{template "crmeditor" $c.Body}}
   <p class="small muted">{{t "mkt.fields_hint"}} <code>{Name}</code> <code>{Email}</code> <code>{Unsubscribe}</code></p>
 </div>
 <div>
@@ -40,6 +44,17 @@
   <input type="datetime-local" name="send_at" value="{{with $c.SendAt}}{{.Format "2006-01-02T15:04"}}{{end}}">
   <p class="small muted">{{t "mkt.rate_hint"}}</p>
 </div>
+<div class="card mkt-ab" data-ab>
+  <h3>{{icon "arrows-split"}} {{t "mkt.ab.title"}}</h3>
+  <label><input type="checkbox" name="ab" value="1" data-ab-on {{if $c.AB}}checked{{end}}> {{t "mkt.ab.on"}}</label>
+  <div data-ab-fields {{if not $c.AB}}hidden{{end}}>
+    <label>{{t "mkt.ab.subject"}}</label><input type="text" name="ab_subject" maxlength="1000" value="{{$c.ABSubject}}" placeholder="{{t "mkt.ab.same"}}">
+    <p class="small muted">{{t "mkt.ab.letter_hint"}}</p>
+    <label>{{t "mkt.ab.share"}}</label><select name="ab_share">{{range $n := list "10" "20" "30" "40" "50" "100"}}<option value="{{$n}}" {{if eq $n (print (or $c.ABShare 20))}}selected{{end}}>{{t (print "mkt.ab.share_" $n)}}</option>{{end}}</select>
+    <label>{{t "mkt.ab.metric"}}</label><select name="ab_metric"><option value="opened">{{t "mkt.ab.by_opened"}}</option><option value="clicked" {{if eq $c.ABMetric "clicked"}}selected{{end}}>{{t "mkt.ab.by_clicked"}}</option></select>
+    <label>{{t "mkt.ab.hours"}}</label><select name="ab_hours">{{range $n := list "1" "2" "4" "8" "12" "24" "48" "72"}}<option value="{{$n}}" {{if eq $n (print (or $c.ABHours 4))}}selected{{end}}>{{t "mkt.ab.hours_n" $n}}</option>{{end}}</select>
+  </div>
+</div>
 <div class="card">
   <h3>{{icon "send"}} {{t "mkt.test"}}</h3>
   <div class="row"><input type="email" name="test_to" value="{{$d.Me.Email}}"><button class="ghost" name="go" value="test">{{t "mkt.test_btn"}}</button></div>
@@ -52,6 +67,7 @@
 </div>
 </form>
 <script src="{{asset "js/compose.js"}}"></script>
+<script src="{{asset "js/mktletter.js"}}"></script>
 {{else}}<div class="card"><p class="muted">{{t "mkt.not_yours" $c.AuthorName}}</p><h3>{{$c.Subject}}</h3><div class="mkt-letter">{{$d.Letter}}</div></div>{{end}}
 
 {{else}}
@@ -65,17 +81,27 @@
   {{template "mktstat" (dict "N" $c.Clicked "L" "mkt.clicked" "S" "clicked" "ID" $c.ID "On" $d.Status "Of" $c.Sent)}}
   {{template "mktstat" (dict "N" $c.Unsubscribed "L" "mkt.unsubscribed" "S" "unsubscribed" "ID" $c.ID "On" $d.Status "Of" $c.Sent)}}
 </div>
+{{if $d.AB}}<div class="card mkt-ab-res">
+  <h3>{{icon "arrows-split"}} {{t "mkt.ab.title"}}</h3>
+  <table class="tlist"><thead><tr><th></th><th>{{t "crm.mailsend.subject"}}</th><th>{{t "mkt.sent"}}</th><th>{{t "mkt.opened"}}</th><th>{{t "mkt.clicked"}}</th></tr></thead><tbody>
+  {{$L := dict "a" "A" "b" "B"}}{{range $v := list "a" "b"}}{{$x := index $d.AB $v}}<tr {{if eq $c.ABWinner $v}}class="mkt-ab-win"{{end}}><td class="nowrap"><b>{{t "mkt.ab.variant" (index $L $v)}}</b>{{if eq $c.ABWinner $v}} <span class="pill mkt-r-sent">{{icon "trophy"}} {{t "mkt.ab.winner"}}</span>{{end}}</td>
+    <td>{{($c.Variant $v).Subject}}</td><td>{{$x.Sent}}</td><td>{{$x.Opened}}{{if $x.Sent}} <span class="small muted">{{pct $x.Opened $x.Sent}}%</span>{{end}}</td><td>{{$x.Clicked}}{{if $x.Sent}} <span class="small muted">{{pct $x.Clicked $x.Sent}}%</span>{{end}}</td></tr>{{end}}
+  </tbody></table>
+  {{if $c.Testing}}<div class="row"><span class="small muted">{{t "mkt.ab.due" (date (ptr $c.ABDue)) (t (print "mkt.ab.by_" $c.ABMetric))}}</span>
+    {{if $d.Mine}}<span class="spacer"></span>{{range $v := list "A" "B"}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/winner-{{if eq $v "A"}}a{{else}}b{{end}}" data-confirm="{{t "mkt.ab.choose_confirm" $v}}"><button class="ghost small">{{t "mkt.ab.choose" $v}}</button></form>{{end}}{{end}}</div>{{end}}
+</div>{{end}}
 <div class="small muted">{{if $c.Planned}}{{t "mkt.planned_at" (date $c.SendAt)}}{{else}}{{with $c.StartedAt}}{{t "mkt.started_at" (date .)}}{{end}}{{end}}{{with $c.FinishedAt}} · {{t "mkt.finished_at" (date .)}}{{end}} · {{$c.AuthorName}}</div>
 <div class="mkt-cols">
 <div class="card flush">{{if $d.Recipients}}<table class="tlist">
   <thead><tr><th>{{t "mkt.email"}}</th><th>{{t "mkt.status"}}</th><th>{{t "mkt.sent_at"}}</th><th>{{t "mkt.opened"}}</th><th>{{t "mkt.clicked"}}</th><th>{{t "mkt.unsubscribed"}}</th></tr></thead>
   <tbody>{{range $d.Recipients}}<tr><td>{{if .EntityID}}<a href="/crm/{{.Entity}}s/{{.EntityID}}">{{.Email}}</a>{{else}}{{.Email}}{{end}}{{with .Name}}<div class="small muted">{{.}}</div>{{end}}</td>
-    <td><span class="pill mkt-r-{{.Status}}" {{with .Error}}title="{{.}}"{{end}}>{{t (print "mkt.r." .Status)}}</span>{{if and .Error (ne .Error "stoplist")}}<div class="small red">{{.Error}}</div>{{end}}</td>
+    <td><span class="pill mkt-r-{{.Status}}" {{with .Error}}title="{{.}}"{{end}}>{{t (print "mkt.r." .Status)}}</span>{{with .Variant}} <span class="pill" title="{{t "mkt.ab.title"}}">{{if eq . "a"}}A{{else}}B{{end}}</span>{{end}}{{if and .Error (ne .Error "stoplist")}}<div class="small red">{{.Error}}</div>{{end}}</td>
     <td class="small nowrap">{{date .SentAt}}</td><td class="small nowrap">{{date .OpenedAt}}</td><td class="small nowrap">{{date .ClickedAt}}</td><td class="small nowrap">{{date .Unsub}}</td></tr>{{end}}</tbody>
 </table>
 {{if gt (len $d.Pages) 1}}<div class="row pager" style="padding:10px">{{range $i := $d.Pages}}<a class="chip{{if eq $i $d.Page}} on{{end}}" href="?status={{$d.Status}}&page={{$i}}">{{$i}}</a>{{end}}</div>{{end}}
 {{else}}<div class="empty">{{t "mkt.no_recipients"}}</div>{{end}}</div>
-<div class="card"><h3>{{$c.Subject}}</h3><div class="mkt-letter">{{$d.Letter}}</div></div>
+<div><div class="card">{{if $d.AB}}<div class="small muted">{{t "mkt.ab.variant" "A"}}</div>{{end}}<h3>{{$c.Subject}}</h3><div class="mkt-letter">{{$d.Letter}}</div></div>
+{{if $d.AB}}<div class="card"><div class="small muted">{{t "mkt.ab.variant" "B"}}</div><h3>{{($c.Variant "b").Subject}}</h3><div class="mkt-letter">{{$d.LetterB}}</div></div>{{end}}</div>
 </div>
 {{if eq $c.Status "sending"}}<script>setTimeout(() => location.reload(), 30000);</script>{{end}}
 {{end}}

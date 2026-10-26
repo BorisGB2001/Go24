@@ -73,7 +73,7 @@ type querier interface {
 // roomEvents: the meetings (but except) that book the room between from and to, with their exceptions.
 func (s *Store) roomEvents(ctx context.Context, q querier, room, except string, from, to time.Time) ([]Event, error) {
 	rows, err := q.Query(ctx, `SELECT e.id::text, e.title, e.private, e.starts_at, e.ends_at, e.all_day, e.repeat, e.repeat_every, e.repeat_until,
-			coalesce((SELECT array_agg(x.at) FROM event_exceptions x WHERE x.event_id = e.id), '{}')
+			e.repeat_days, e.repeat_count, coalesce((SELECT array_agg(x.at) FROM event_exceptions x WHERE x.event_id = e.id), '{}')
 		FROM events e WHERE e.room_id::text = $1 AND e.id::text <> $2 AND e.starts_at < $4
 		  AND ((e.repeat = '' AND e.ends_at > $3) OR (e.repeat <> '' AND (e.repeat_until IS NULL OR e.repeat_until >= $3::date)))`,
 		room, except, from, to)
@@ -82,7 +82,7 @@ func (s *Store) roomEvents(ctx context.Context, q querier, room, except string, 
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Event, error) {
 		e := Event{Kind: "event"}
-		err := r.Scan(&e.ID, &e.Title, &e.Private, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Skip)
+		err := r.Scan(&e.ID, &e.Title, &e.Private, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Days, &e.Count, &e.Skip)
 		return e, err
 	})
 }

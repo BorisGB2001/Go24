@@ -3,6 +3,7 @@
 {{$d := .Data}}
 <div class="pagehead"><h1>{{t "mkt.title"}}</h1>
   {{if eq $d.Tab "campaigns"}}<a class="button create" href="/marketing/templates">{{icon "plus"}} {{t "mkt.new_campaign"}}</a>
+  {{else if eq $d.Tab "calls"}}<a class="button create" href="/marketing/calls/new">{{icon "plus"}} {{t "mkt.new_calls"}}</a>
   {{else if eq $d.Tab "templates"}}<a class="button create" href="/marketing/templates?edit=new#edit">{{icon "plus"}} {{t "mkt.new_template"}}</a>
   {{else if eq $d.Tab "segments"}}<a class="button create" href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a>
   {{else if and (eq $d.Tab "ads") $d.Admin}}<a class="button create" href="/marketing/ads?edit=new#edit">{{icon "plus"}} {{t "mkt.new_ad"}}</a>{{end}}</div>
@@ -19,6 +20,17 @@
     <td>{{if .Unsubscribed}}{{.Unsubscribed}}{{else}}—{{end}}</td><td class="small">{{.AuthorName}}</td></tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">{{icon "speakerphone"}} {{t "mkt.no_campaigns"}}</div>{{end}}</div>
 
+{{else if eq $d.Tab "calls"}}
+<div class="sub">{{t "mkt.calls_hint"}}</div>
+<div class="card flush">{{if $d.Calls}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.calls_one"}}</th><th>{{t "mkt.status"}}</th><th>{{t "mkt.segment"}}</th><th>{{t "mkt.calls_progress"}}</th><th>{{t "crm.activity_deadline"}}</th><th>{{t "crm.mailtpl.author"}}</th></tr></thead>
+  <tbody>{{range $d.Calls}}<tr><td><a href="/marketing/calls/{{.ID}}" class="ttitle">{{.Title}}</a></td>
+    <td><span class="pill mkt-{{if .Editable}}draft{{else if eq .Done .Total}}done{{else}}sending{{end}}">{{if .Editable}}{{t "mkt.st.draft"}}{{else if eq .Done .Total}}{{t "mkt.calls_all_done"}}{{else}}{{t "mkt.calls_going"}}{{end}}</span></td>
+    <td class="small">{{.SegmentName}}</td>
+    <td>{{if .Total}}{{.Done}} / {{.Total}}<div class="progress"><span style="width:{{pct .Done .Total}}%"></span></div>{{else}}—{{end}}</td>
+    <td class="small nowrap">{{date .Deadline}}</td><td class="small">{{.AuthorName}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{icon "phone"}} {{t "mkt.no_calls"}}</div>{{end}}</div>
+
 {{else if eq $d.Tab "templates"}}
 <div class="sub">{{t "mkt.templates_hint"}} <a href="/marketing/campaigns/new">{{t "mkt.no_template"}}</a></div>
 {{with $d.Edit}}<div class="card" id="edit">
@@ -26,12 +38,13 @@
   <form method="post" action="/marketing/templates/{{if .ID}}{{.ID}}{{else}}new{{end}}" data-snippet-editor>
     <label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" value="{{.Name}}">
     <label>{{t "crm.mailsend.subject"}}</label><input type="text" name="subject" maxlength="1000" value="{{.Subject}}">
-    <label>{{t "crm.mailsend.text"}}</label>{{template "crmeditor" .Body}}
+    <label>{{t "crm.mailsend.text"}}</label>{{template "mktblocks"}}{{template "crmeditor" .Body}}
     <p class="small muted">{{t "mkt.fields_hint"}} <code>{Name}</code> <code>{Email}</code> <code>{Unsubscribe}</code></p>
     <p class="row"><button class="primary">{{t "common.save"}}</button> <a class="button ghost" href="/marketing/templates">{{t "common.cancel"}}</a></p>
   </form>
 </div>
-<script src="{{asset "js/compose.js"}}"></script>{{end}}
+<script src="{{asset "js/compose.js"}}"></script>
+<script src="{{asset "js/mktletter.js"}}"></script>{{end}}
 {{template "mkttpls" (dict "D" $d "List" $d.Base "Title" "mkt.tpl_base")}}
 {{if $d.Templates}}{{template "mkttpls" (dict "D" $d "List" $d.Templates "Title" "mkt.tpl_mine")}}{{end}}
 

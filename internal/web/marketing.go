@@ -29,10 +29,15 @@ import (
 
 // mktAllowed: the user reads some CRM cards (contacts, companies or leads).
 func (s *Server) mktAllowed(r *http.Request, sess auth.Session) error {
+	return s.mktAllowedUser(r.Context(), sess.UserID)
+}
+
+// mktAllowedUser is mktAllowed of a user, as REST checks the key's owner.
+func (s *Server) mktAllowedUser(ctx context.Context, userID string) error {
 	if s.Marketing == nil {
 		return crm.ErrNotFound
 	}
-	p, err := s.CRM.PermsOf(r.Context(), sess.UserID)
+	p, err := s.CRM.PermsOf(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -89,6 +94,14 @@ func (s *Server) mktCampaignPage(w http.ResponseWriter, r *http.Request, sess au
 		data["Boxes"] = boxes
 	}
 	data["Letter"] = template.HTML(mailpkg.Sanitize(c.Body)) // the letter as its addressees see it
+	if c.AB() && !c.Editable() {
+		res, err := s.Marketing.ABResults(ctx, c.ID)
+		if err != nil {
+			s.taskErr(w, r, err, "/marketing")
+			return
+		}
+		data["AB"], data["LetterB"] = res, template.HTML(mailpkg.Sanitize(c.Variant("b").Body))
+	}
 	if c.ID != "" && c.Editable() && len(c.Segments) > 0 {
 		if list, err := s.Marketing.Addressees(ctx, sess.UserID, c); err == nil {
 			data["Count"] = len(list)
@@ -136,6 +149,12 @@ func (s *Server) mktCampaignForm(r *http.Request) marketing.Campaign {
 	if t, err := time.ParseInLocation("2006-01-02T15:04", r.FormValue("send_at"), time.Local); err == nil && r.FormValue("planned") == "1" {
 		c.SendAt = &t
 	}
+	// the A/B test: variant B is kept with the test off too
+	c.ABSubject, c.ABBody, c.ABMetric = r.FormValue("ab_subject"), mailpkg.Sanitize(r.FormValue("ab_html")), r.FormValue("ab_metric")
+	c.ABHours, _ = strconv.Atoi(r.FormValue("ab_hours"))
+	if r.FormValue("ab") == "1" {
+		c.ABShare, _ = strconv.Atoi(r.FormValue("ab_share"))
+	}
 	return c
 }
 
@@ -174,6 +193,9 @@ func (s *Server) mktCampaignSave(w http.ResponseWriter, r *http.Request, sess au
 				err = i18n.E("err.mkt_incomplete")
 			} else {
 				err = s.mktSend(r.Context(), sess.UserID, saved, marketing.Addressee{Email: to, Name: sess.Name, Token: "test"})
+			}
+			if err == nil && saved.AB() { // and variant B
+				err = s.mktSend(r.Context(), sess.UserID, saved.Variant("b"), marketing.Addressee{Email: to, Name: sess.Name, Token: "test"})
 			}
 		}
 		if err != nil {
@@ -216,6 +238,8 @@ func (s *Server) mktCampaignAction(w http.ResponseWriter, r *http.Request, sess 
 		err = s.Marketing.SetState(ctx, sess.UserID, admin, id, "sending")
 	case "stop":
 		err = s.Marketing.SetState(ctx, sess.UserID, admin, id, "stopped")
+	case "winner-a", "winner-b":
+		err = s.Marketing.ChooseWinner(ctx, sess.UserID, admin, id, strings.TrimPrefix(a, "winner-"))
 	case "copy":
 		var c marketing.Campaign
 		if c, err = s.Marketing.Campaign(ctx, id); err == nil {

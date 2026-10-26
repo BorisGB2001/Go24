@@ -1,19 +1,39 @@
 // go24 task lists: the gear in the header picks columns. They show or hide at once in every list on the page,
 // and the choice is saved on the server for this user (it follows them to other browsers).
 (() => {
-  // the list scrolls sideways, which would clip a normal dropdown: the picker floats above the page instead
-  document.querySelectorAll('details.colpick').forEach(d => {
-    d.addEventListener('toggle', () => {
+  // the list scrolls sideways, which would clip a normal dropdown: the picker, the menu of a row (☰) and the deadline
+  // editor float above the page instead. The last two come from the server when first opened (data-lazy — the
+  // address of the menu: only what the user may do with the task).
+  const POPS = 'details.colpick, details.trowmenu, details.tdl';
+  const place = d => {
+    const r = d.querySelector('summary').getBoundingClientRect();
+    const pop = d.querySelector('.pop');
+    pop.style.position = 'fixed';
+    pop.style.top = (r.bottom + 4) + 'px';
+    pop.style.left = Math.max(4, Math.min(r.left, document.documentElement.clientWidth - pop.offsetWidth - 12)) + 'px';
+  };
+  document.querySelectorAll(POPS).forEach(d => {
+    d.addEventListener('toggle', async () => {
       if (!d.open) return;
-      const r = d.querySelector('summary').getBoundingClientRect();
+      document.querySelectorAll(POPS).forEach(o => { if (o !== d && o.open) o.open = false; });
+      place(d);
+      if (!d.dataset.lazy || d.dataset.loaded) return;
       const pop = d.querySelector('.pop');
-      pop.style.position = 'fixed';
-      pop.style.top = (r.bottom + 4) + 'px';
-      pop.style.left = r.left + 'px';
+      pop.innerHTML = '<span class="muted small">…</span>';
+      try {
+        const res = await fetch(d.dataset.lazy, { headers: { Accept: 'text/html' } });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        pop.innerHTML = await res.text();
+        d.dataset.loaded = '1';
+      } catch (err) {
+        pop.textContent = err.message;
+      }
+      place(d);
+      pop.querySelector('input:not([type=hidden])')?.focus();
     });
   });
   document.addEventListener('click', e => {
-    document.querySelectorAll('details.colpick[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+    document.querySelectorAll(POPS).forEach(d => { if (d.open && !d.contains(e.target)) d.open = false; });
   });
   // a box belongs to its picker's form, inside it or by form="…" (a picker inside another form, as the CRM lists)
   document.addEventListener('change', async e => {

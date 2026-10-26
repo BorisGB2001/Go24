@@ -15,6 +15,7 @@
       <div class="muted">{{with $p.Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</div>
       {{if not $p.Active}}<span class="pill st-deferred">{{t "profile.dismissed"}}</span>{{end}}
     </div>
+    <a class="button ghost small" href="/u/{{$p.ID}}/vcard" title="{{t "vcard.download_hint"}}">{{icon "address-book"}} {{t "vcard.download"}}</a>
     {{if $d.CanEdit}}<button type="button" class="link" data-show="pedit">{{icon "edit"}} {{t "task.change"}}</button>{{end}}
   </div>
   <div class="tabs">
@@ -22,6 +23,7 @@
     <a href="/u/{{$p.ID}}?tab=tasks" {{if eq $d.Tab "tasks"}}class="on"{{end}}>{{icon "list-check"}} {{t "profile.tasks"}} <span class="cnt">{{len $d.Tasks}}</span></a>
     {{if not $d.Guest}}<a href="/u/{{$p.ID}}?tab=thanks" {{if eq $d.Tab "thanks"}}class="on"{{end}}>{{icon "star"}} {{t "gratitude.received"}} <span class="cnt">{{len $d.Thanks}}</span></a>{{end}}
     {{if and (not $d.Guest) (not $p.Guest) $p.Active}}<a href="/calendar?user={{$p.ID}}">{{icon "calendar-event"}} {{t "calendar.title"}}</a>{{end}}
+    {{if and $d.Security (not $p.Guest)}}<a href="/u/{{$p.ID}}?tab=security" {{if eq $d.Tab "security"}}class="on"{{end}}>{{icon "shield-lock"}} {{t "sessions.tab"}}</a>{{end}}
     {{if $d.Me}}<a href="/settings/notifications#channels">{{icon "bell"}} {{t "notifyout.my"}}</a>{{end}}
   </div>
 
@@ -94,6 +96,27 @@
       <span>{{.Text}}<span class="muted small"> · {{.From}} · {{day .At}}</span></span></a>{{else}}<p class="muted">{{t "gratitude.none"}}</p>{{end}}</div>
   </div>{{end}}
 
+  {{if eq $d.Tab "security"}}<div class="card" id="psessions">
+    <h2>{{icon "device-desktop"}} {{t "sessions.title"}} <span class="muted small">{{len $d.Devices}}</span></h2>
+    <p class="muted small">{{if $d.Me}}{{t "sessions.hint_me"}}{{else}}{{t "sessions.hint_admin"}}{{end}}</p>
+    {{if $d.Devices}}<table class="list">
+      <tr><th>{{t "audit.col.agent"}}</th><th>{{t "audit.col.ip"}}</th><th>{{t "sessions.started"}}</th><th>{{t "sessions.seen"}}</th><th></th></tr>
+      {{range $d.Devices}}<tr data-session="{{.ID}}">
+        <td>{{with .Browser}}{{.}}{{else}}<span class="muted">—</span>{{end}}{{if .Current}} <span class="pill">{{t "sessions.current"}}</span>{{end}}</td>
+        <td>{{.IP}}</td><td>{{datetime .Created}}</td><td>{{datetime .Seen}}</td>
+        <td><form method="post" action="/u/{{$p.ID}}/sessions/{{.ID}}/end"{{if .Current}} data-confirm="{{t "sessions.end_current_confirm"}}"{{end}}>
+          <button class="link danger small">{{t "sessions.end"}}</button></form></td>
+      </tr>{{end}}
+    </table>{{else}}<p class="muted">{{t "sessions.none"}}</p>{{end}}
+    <form method="post" action="/u/{{$p.ID}}/sessions/end" data-confirm="{{if $d.Me}}{{t "sessions.end_all_confirm_me"}}{{else}}{{t "sessions.end_all_confirm" $p.Name}}{{end}}">
+      <p><button class="ghost danger">{{icon "logout"}} {{t "sessions.end_all"}}</button></p></form>
+  </div>
+  {{if and $d.Me $d.AccountURL}}<div class="card" id="paccount">
+    <h2>{{icon "lock"}} {{t "sessions.account"}}</h2>
+    <p class="muted small">{{t "sessions.account_hint"}}</p>
+    <p><a class="button ghost" href="{{$d.AccountURL}}" target="_blank" rel="noopener">{{icon "external-link"}} {{t "sessions.account_open"}}</a></p>
+  </div>{{end}}{{end}}
+
   {{if eq $d.Tab "tasks"}}<div class="card">
     <h2>{{icon "list-check"}} {{t "profile.tasks"}} <span class="muted small">{{len $d.Tasks}}</span></h2>
     {{template "tasklist" (tl $d.Tasks $.Cols false)}}
@@ -106,6 +129,8 @@
   <div class="card">
     <h2>{{icon "hierarchy-2"}} {{t "profile.department"}}</h2>
     {{range $p.Departments}}<div><a href="/company?dept={{.ID}}">{{icon "folders"}} {{.Name}}</a></div>{{else}}<p class="muted small">{{t "profile.no_department"}}</p>{{end}}
+    {{with $p.Teams}}<label>{{t "team.title"}}</label>
+    {{range .}}<div><a href="/company?team={{.ID}}">{{icon "users-group"}} {{.Name}}</a></div>{{end}}{{end}}
     {{if $d.Admin}}
     <details style="margin-top:10px"><summary>{{icon "edit"}} {{t "profile.change_departments"}}</summary>
       <form method="post" action="/u/{{$p.ID}}/departments">

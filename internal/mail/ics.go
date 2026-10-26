@@ -38,6 +38,7 @@ type Invite struct {
 	Comment                        string // an answer's words (REPLY)
 	Start, End                     time.Time
 	AllDay                         bool
+	TZ                             string // the IANA zone of its DTSTART ("" — UTC, a floating time or one go24 does not know)
 	Organizer                      Person
 	Attendees                      []Person
 	Cancelled                      bool   // STATUS:CANCELLED
@@ -46,6 +47,8 @@ type Invite struct {
 	Repeat  string
 	Every   int
 	Until   *time.Time
+	Days    []int       // weekly: the days of the week (1 — Monday … 7 — Sunday, BYDAY); none — the day of its start
+	Count   int         // the series ends after so many meetings (COUNT; Until is then the day of the last one)
 	Skip    []time.Time // the deleted occurrences of a series (EXDATE)
 	Alarms  []int       // the reminders: minutes before the start (VALARM)
 	Private bool        // CLASS:PRIVATE or CONFIDENTIAL
@@ -182,6 +185,18 @@ func zoneOf(tzid string, zones map[string]*icsZone, wall time.Time) *time.Locati
 		}
 	}
 	return time.Local
+}
+
+// zoneName is the IANA name of a TZID (an IANA or a Windows one; "" — another).
+func zoneName(tzid string) string {
+	tzid = strings.Trim(tzid, `"/ `)
+	if name, ok := windowsZones[tzid]; ok {
+		tzid = name
+	}
+	if _, err := time.LoadLocation(tzid); err != nil || tzid == "" || tzid == "Local" {
+		return ""
+	}
+	return tzid
 }
 
 // icsZone is a VTIMEZONE of a name go24 does not know (Outlook's «Customized Time Zone», Lotus…): its STANDARD and
@@ -507,7 +522,7 @@ func inviteOf(ev []icsLine, zones map[string]*icsZone, method string) (Invite, b
 			in.Cancelled = strings.EqualFold(strings.TrimSpace(v), "CANCELLED")
 		case "DTSTART":
 			if t, day, ok := icsTime(l, zones); ok {
-				in.Start, in.AllDay = t, day
+				in.Start, in.AllDay, in.TZ = t, day, zoneName(l.params["TZID"])
 			}
 		case "DTEND":
 			x := l
@@ -523,7 +538,7 @@ func inviteOf(ev []icsLine, zones map[string]*icsZone, method string) (Invite, b
 		case "ATTENDEE":
 			in.Attendees = append(in.Attendees, icsPerson(l))
 		case "RRULE":
-			in.Repeat, in.Every, in.Until, count = parseRRule(v)
+			in.Repeat, in.Every, in.Until, count, in.Days = parseRRule(v)
 		case "EXDATE":
 			for _, x := range strings.Split(v, ",") {
 				if t, _, ok := icsTime(icsLine{name: l.name, params: l.params, value: x}, zones); ok {
@@ -553,11 +568,8 @@ func inviteOf(ev []icsLine, zones map[string]*icsZone, method string) (Invite, b
 		return in, false
 	}
 	if count > 0 && in.Repeat != "" && in.Until == nil {
-		n := (count - 1) * in.Every
-		last := map[string]time.Time{"daily": in.Start.AddDate(0, 0, n), "weekly": in.Start.AddDate(0, 0, 7*n),
-			"monthly": in.Start.AddDate(0, n, 0), "yearly": in.Start.AddDate(n, 0, 0)}[in.Repeat].In(time.Local)
-		d := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.Local)
-		in.Until = &d
+		in.Count = min(count, 999)
+		in.Until = lastOccurrence(in)
 	}
 	switch {
 	case dtend != nil:
@@ -590,11 +602,13 @@ var joinLink = func() func(string) string {
 	return func(text string) string { return re.FindString(text) }
 }()
 
-// parseRRule maps the usual rules (FREQ, INTERVAL, UNTIL, COUNT) to go24's repetition; others — once.
-func parseRRule(v string) (string, int, *time.Time, int) {
+// parseRRule maps the usual rules (FREQ, INTERVAL, UNTIL, COUNT, BYDAY of a week) to go24's repetition; others — once.
+// «Every weekday» (DAILY with BYDAY) is a weekly one on those days.
+func parseRRule(v string) (string, int, *time.Time, int, []int) {
 	var freq string
 	every, count := 1, 0
 	var until *time.Time
+	var days []int
 	for _, p := range strings.Split(v, ";") {
 		k, val, _ := strings.Cut(p, "=")
 		switch strings.ToUpper(k) {
@@ -613,9 +627,54 @@ func parseRRule(v string) (string, int, *time.Time, int) {
 				d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
 				until = &d
 			}
+		case "BYDAY":
+			for _, code := range strings.Split(strings.ToUpper(val), ",") {
+				// a plain day only: a numbered one (2TU — the second Tuesday) is of a month or a year
+				if d := slices.Index([]string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}, strings.TrimSpace(code)); d >= 0 && !slices.Contains(days, d+1) {
+					days = append(days, d+1)
+				}
+			}
 		}
 	}
-	return freq, every, until, count
+	if freq == "daily" && len(days) > 0 && every == 1 {
+		freq = "weekly"
+	}
+	if freq != "weekly" {
+		days = nil
+	}
+	slices.Sort(days)
+	return freq, every, until, count, days
+}
+
+// lastOccurrence is the day of the last meeting of a series that ends after Count meetings.
+func lastOccurrence(in Invite) *time.Time {
+	every := max(in.Every, 1)
+	first := in.Start
+	if l, err := time.LoadLocation(in.TZ); err == nil && in.TZ != "" && !in.AllDay {
+		first = first.In(l)
+	}
+	var last time.Time
+	for k, n := 0, 0; n < in.Count && k < 5000*max(len(in.Days), 1); k++ {
+		var t time.Time
+		switch {
+		case in.Repeat == "weekly" && len(in.Days) > 0:
+			week, day := k/len(in.Days), in.Days[k%len(in.Days)]
+			if t = first.AddDate(0, 0, 7*week*every+day-((int(first.Weekday())+6)%7+1)); t.Before(first) {
+				continue
+			}
+		case in.Repeat == "daily":
+			t = first.AddDate(0, 0, k*every)
+		case in.Repeat == "weekly":
+			t = first.AddDate(0, 0, 7*k*every)
+		case in.Repeat == "monthly":
+			t = first.AddDate(0, k*every, 0)
+		default:
+			t = first.AddDate(k*every, 0, 0)
+		}
+		n, last = n+1, t.In(time.Local)
+	}
+	d := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.Local)
+	return &d
 }
 
 // ---------- writing ----------
@@ -697,7 +756,18 @@ func BuildICS(in Invite, method string, now time.Time) string {
 	}
 	if in.Repeat != "" && method != "REPLY" {
 		rule := "RRULE:FREQ=" + strings.ToUpper(in.Repeat) + ";INTERVAL=" + strconv.Itoa(max(in.Every, 1))
-		if in.Until != nil {
+		if len(in.Days) > 0 && in.Repeat == "weekly" {
+			var codes []string
+			for _, d := range in.Days {
+				if d >= 1 && d <= 7 {
+					codes = append(codes, [...]string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}[d-1])
+				}
+			}
+			rule += ";BYDAY=" + strings.Join(codes, ",")
+		}
+		if in.Count > 0 {
+			rule += ";COUNT=" + strconv.Itoa(in.Count)
+		} else if in.Until != nil {
 			rule += ";UNTIL=" + icsUTC(time.Date(in.Until.Year(), in.Until.Month(), in.Until.Day(), 23, 59, 59, 0, time.Local))
 		}
 		w(rule)

@@ -1,0 +1,2 @@
+{{/* a person's day by their work schedule (company.DayPlan): «Дневная, 08:00–20:00 (перерыв 60 мин)», «Выходной» */}}
+{{define "wsplan"}}{{if .Free}}{{t "wschedule.free_day"}}{{else if .Work}}{{with .Shift}}{{.}}, {{end}}{{.Start}}–{{.End}}{{if .Break}} ({{t "wschedule.break_n" .Break}}){{end}}{{else}}{{t "wschedule.day_off"}}{{end}}{{end}}

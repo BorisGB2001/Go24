@@ -115,6 +115,29 @@ func TestDiskBoardHTTP(t *testing.T) {
 		t.Fatal("the drive does not open the board in the editor")
 	}
 
+	// a board by a template: its areas are labelled in the user's language; an unknown template is the empty board
+	if _, list := do(anna, "GET", "/disk/company", "", "", nil, 200); !strings.Contains(list, `<option value="swot">SWOT-анализ</option>`) {
+		t.Error("«Создать» has no board templates")
+	}
+	res, _ = do(anna, "POST", "/disk/company/new-board", form, url.Values{"name": {"Анализ"}, "template": {"swot"}}.Encode(), nil, http.StatusSeeOther)
+	tid := strings.TrimPrefix(strings.SplitN(res.Header.Get("Location"), "?", 2)[0], "/disk/company/board/")
+	_, swot := do(anna, "GET", "/disk/company/board/"+tid+"?scene", "", "", nil, 200)
+	var tscene struct{ Elements []map[string]any }
+	must(json.Unmarshal([]byte(swot), &tscene))
+	for _, want := range []string{"SWOT-анализ", "Сильные стороны", "Слабые стороны", "Возможности", "Угрозы"} {
+		if !strings.Contains(swot, `"text":"`+want+`"`) {
+			t.Errorf("the SWOT board has no %q", want)
+		}
+	}
+	if len(tscene.Elements) != 9 {
+		t.Errorf("the SWOT board: %d elements", len(tscene.Elements))
+	}
+	res, _ = do(anna, "POST", "/disk/company/new-board", form, url.Values{"name": {"Пустая"}, "template": {"nope"}}.Encode(), nil, http.StatusSeeOther)
+	_, nope := do(anna, "GET", strings.Replace(res.Header.Get("Location"), "?folder=", "?scene&folder=", 1), "", "", nil, 200)
+	if !strings.Contains(nope, `"elements":[]`) {
+		t.Errorf("an unknown template: %.200s", nope)
+	}
+
 	scene := "/disk/company/board/" + id + "?scene"
 	res, blank := do(anna, "GET", scene, "", "", nil, 200)
 	s0 := res.Header.Get("X-Board-Stamp")
@@ -210,7 +233,7 @@ func TestDiskBoardHTTP(t *testing.T) {
 	}
 	co, err := srv.Drive.Open(ctx, anna, "company")
 	must(err)
-	token, err := srv.Drive.SetLink(ctx, anna, co, "file", id, "", false, nil)
+	token, err := srv.Drive.SetLink(ctx, anna, co, "file", id, "", false, nil, false, "")
 	must(err)
 	pub, err := http.Get(hs.URL + "/s/" + token)
 	must(err)

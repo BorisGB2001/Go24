@@ -68,11 +68,11 @@ func bpAdmin(r *http.Request, sess auth.Session) context.Context {
 	return r.Context()
 }
 
-// bpStop: «Остановить» with a reason; back to the process, or to a CRM card or the list (back=…).
+// bpStop: «Остановить» with a reason; back to the process, or to a CRM card, a file's card or the list (back=…).
 func (s *Server) bpStop(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
 	back := r.FormValue("back")
-	if !strings.HasPrefix(back, "/bp") && !strings.HasPrefix(back, "/crm/") {
+	if !strings.HasPrefix(back, "/bp") && !strings.HasPrefix(back, "/crm/") && !reCardBack.MatchString(back) {
 		back = "/bp/i/" + id
 	}
 	if err := s.BP.Stop(bpAdmin(r, sess), sess.UserID, id, r.FormValue("reason")); err != nil {
@@ -164,10 +164,10 @@ func (s *Server) bpInstance(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	card := ""
 	if x.Entity != "none" {
-		card = "/crm/" + map[string]string{"deal": "deals", "lead": "leads", "contact": "contacts", "company": "companies"}[x.Entity] + "/" + x.EntityID
+		card = bp.CardPath(x.Entity, x.EntityID)
 	}
 	s.render(w, r, "bpinstance", page{Title: x.Name, Nav: "bp", Data: map[string]any{"X": x, "Approvals": approvals, "Log": lines,
-		"Mine": mine, "Fields": bp.AllFields(t.Fields, x.Steps), "Card": card, "Users": users, "CanStop": s.BP.CanStop(bpAdmin(r, sess), sess.UserID, x)}})
+		"Mine": mine, "Fields": s.bpLabels(r, x.Form(t.Fields)), "Card": card, "Users": users, "CanStop": s.BP.CanStop(bpAdmin(r, sess), sess.UserID, x)}})
 }
 
 // bpDecide: a decision on an approval or a review, or (decision=answer) the answer to a request with its fields f_<key>.
@@ -184,6 +184,21 @@ func (s *Server) bpDecide(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	} else {
 		err = s.BP.Decide(r.Context(), sess.UserID, r.PathValue("id"), r.FormValue("decision"), r.FormValue("comment"))
 	}
+	back := r.FormValue("back")
+	if !strings.HasPrefix(back, "/bp/") && !strings.HasPrefix(back, "/feed?") {
+		back = "/bp?tab=approvals"
+	}
+	if err != nil {
+		http.Redirect(w, r, back+sepFor(back)+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// bpDelegate: «Делегировать» — the approval (a review, a request) handed to the employee "to"; an administrator hands
+// anyone's from the process's page.
+func (s *Server) bpDelegate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	_, err := s.BP.Delegate(bpAdmin(r, sess), sess.UserID, r.PathValue("id"), r.FormValue("to"))
 	back := r.FormValue("back")
 	if !strings.HasPrefix(back, "/bp/") && !strings.HasPrefix(back, "/feed?") {
 		back = "/bp?tab=approvals"
@@ -291,6 +306,22 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 		s.taskErr(w, r, err, "/bp")
 		return
 	}
+	// «Запуск бизнес-процесса»: a standalone template or one of the same kind of card (started for that card)
+	all, err := s.BP.Templates(r.Context(), "", false)
+	if err != nil {
+		s.taskErr(w, r, err, "/bp")
+		return
+	}
+	var others []bp.Template
+	for _, o := range all {
+		if o.Entity == "none" || o.Entity == t.Entity {
+			others = append(others, o)
+		}
+	}
+	var docs []crm.DocTemplate // the templates of documents «Создание документа» makes, of the card's kind
+	if crm.Entities[t.Entity] {
+		docs, _ = s.CRM.DocTemplates(r.Context(), t.Entity)
+	}
 	var stages []crm.Stage
 	if t.Entity == "deal" { // the stages of the deals' pipelines, or of the smart process's
 		pipes, _ := s.CRM.PipelinesOf(r.Context(), t.TypeID)
@@ -300,13 +331,12 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 	} else if t.Entity == "lead" {
 		stages, _ = s.CRM.LeadStages(r.Context())
 	}
-	var fields []string
-	for _, f := range t.Fields {
-		line := f.Key + " | " + f.Label + " | " + f.Kind
-		if f.Required {
-			line += " | *"
+	var userFields []tasks.User // the steps' «field:KEY» people
+	fields := s.bpLabels(r, bp.AllFields(t.Fields, t.Steps))
+	for _, f := range fields {
+		if f.Kind == "user" {
+			userFields = append(userFields, tasks.User{ID: bp.FieldPrefix + f.Key, Name: s.tr(r, "bp.to.field", f.Label)})
 		}
-		fields = append(fields, line)
 	}
 	types, err := s.CRM.Types(r.Context())
 	if err != nil {
@@ -331,26 +361,70 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 			starters = append(starters, tasks.User{ID: ref.ID, Name: ref.Name})
 		}
 	}
-	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldsText": strings.Join(fields, "\n"), "Types": types,
-		"AllFields": bp.AllFields(t.Fields, t.Steps), "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps)), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
+	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldRows": bpFieldRows(t.Fields, users), "NewRows": bpFieldRows(nil, users), "FieldKinds": bp.FieldKinds, "UserFields": userFields, "Types": types,
+		"AllFields": fields, "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date"), "TimeFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date", "datetime"), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "Delegations": bp.Delegations, "Deeds": crm.ActivityKinds, "Docs": docs, "Scopes": bp.FieldScopes, "Others": others, "MaxLoops": bp.MaxLoops, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
 }
 
-// parseFields reads «key | label | kind | *» lines.
-func parseFields(text string) []bp.Field {
+// bpFieldRow is a row of the fields' editor (template "bpfields"): the options joined, a user's default as a name.
+type bpFieldRow struct {
+	Key, Label, Kind, Options, Default, Scope string
+	Required                                  bool
+}
+
+// bpFieldRows are the rows of the fields and an empty one to add a field.
+func bpFieldRows(fields []bp.Field, users []tasks.User) []bpFieldRow {
+	var out []bpFieldRow
+	for _, f := range fields {
+		row := bpFieldRow{Key: f.Key, Label: f.Label, Kind: f.Kind, Options: strings.Join(f.Options, "; "), Default: f.Default, Required: f.Required, Scope: f.Scope}
+		if f.Kind == "user" {
+			for _, u := range users {
+				if u.ID == f.Default {
+					row.Default = u.Name
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	return append(out, bpFieldRow{Kind: "string"})
+}
+
+// parseFields reads the rows of the fields' editor with the prefix: a row without a key is left out; the options of
+// a select are split by «;», a user's default is an employee's name, e-mail or id.
+func parseFields(r *http.Request, prefix string, users []tasks.User) []bp.Field {
 	var out []bp.Field
-	for _, line := range strings.Split(text, "\n") {
-		parts := strings.Split(line, "|")
-		if strings.TrimSpace(line) == "" {
+	keys := r.Form[prefix+"_key"]
+	at := func(name string, i int) string {
+		if list := r.Form[prefix+"_"+name]; i < len(list) {
+			return strings.TrimSpace(list[i])
+		}
+		return ""
+	}
+	for i, key := range keys {
+		if key = strings.TrimSpace(key); key == "" {
 			continue
 		}
-		f := bp.Field{Key: strings.TrimSpace(parts[0]), Kind: "string"}
-		if len(parts) > 1 {
-			f.Label = strings.TrimSpace(parts[1])
+		f := bp.Field{Key: key, Label: at("label", i), Kind: at("kind", i), Required: at("req", i) == "1", Default: at("def", i), Scope: at("scope", i)}
+		if f.Scope == "param" {
+			f.Scope = ""
 		}
-		if len(parts) > 2 && strings.TrimSpace(parts[2]) != "" {
-			f.Kind = strings.TrimSpace(parts[2])
+		if f.Kind == "" {
+			f.Kind = "string"
 		}
-		f.Required = len(parts) > 3 && strings.TrimSpace(parts[3]) == "*"
+		if f.Kind == "select" {
+			for _, o := range strings.Split(at("opts", i), ";") {
+				if o = strings.TrimSpace(o); o != "" {
+					f.Options = append(f.Options, o)
+				}
+			}
+		}
+		if f.Kind == "user" && f.Default != "" {
+			name := f.Default
+			for _, u := range users {
+				if u.ID == name || strings.EqualFold(u.Name, name) || u.Email != "" && strings.EqualFold(u.Email, name) {
+					f.Default = u.ID
+				}
+			}
+		}
 		out = append(out, f)
 	}
 	return out
@@ -403,6 +477,11 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 			return
 		}
 	}
+	users, err := s.Tasks.ListUsers(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/bp/templates")
+		return
+	}
 	n, _ := strconv.Atoi(r.FormValue("n"))
 	switch r.FormValue("op") {
 	case "meta":
@@ -410,7 +489,7 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 		t.AutoCreate, t.AutoChange = r.FormValue("auto_create") == "on", r.FormValue("auto_change") == "on"
 		// a smart process is «deal:<its type>»: its cards are deals of its pipelines
 		t.Entity, t.TypeID, _ = strings.Cut(r.FormValue("entity"), ":")
-		t.Fields = parseFields(r.FormValue("fields"))
+		t.Fields = parseFields(r, "f", users)
 		if len(t.Steps) == 0 { // a new template starts with a notification to the starter, to be changed
 			t.Steps = []bp.Step{{Kind: "notify", To: "starter", Text: s.tr(r, "bp.first_step")}}
 		}
@@ -423,17 +502,30 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 		switch st.Kind {
 		case "approve", "review", "request":
 			st.Users = r.Form["users"]
+			if d := r.FormValue("delegate"); d != "sub" {
+				st.Delegate = d
+			}
 			if st.Kind == "approve" {
 				st.Mode, st.Goto = r.FormValue("mode"), jump
 			}
 			if st.Kind == "request" {
-				st.Fields, st.Reject = parseFields(r.FormValue("request_fields")), r.FormValue("reject") == "on"
+				st.Fields, st.Reject = parseFields(r, "rf", users), r.FormValue("reject") == "on"
 				if st.Reject {
 					st.Goto = jump
 				}
 			}
-		case "if":
-			st.Field, st.Op, st.Value, st.Goto = r.FormValue("field"), r.FormValue("op"), r.FormValue("value"), jump
+		case "wait":
+			st.Field = r.FormValue("until")
+			if st.Field != "" {
+				st.Days = 0
+			}
+		case "if", "loop":
+			st.Field, st.Op, st.Value, st.Goto = r.FormValue("field"), r.FormValue("cmp"), r.FormValue("value"), jump
+		case "start": // the name is the step's text: the list of steps shows it
+			st.Template, st.Sets = r.FormValue("template"), parseSets(r.FormValue("sets"))
+			if o, err := s.BP.Template(r.Context(), st.Template); err == nil {
+				st.Text = o.Name
+			}
 		case "set":
 			st.Field, st.Value = r.FormValue("field"), r.FormValue("value")
 		case "goto":
@@ -446,9 +538,22 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 			}
 		case "chat":
 			st.From, st.Users = r.FormValue("from"), r.Form["users"]
+		case "post":
+			st.From, st.Users, st.Subject = r.FormValue("from"), r.Form["users"], strings.TrimSpace(r.FormValue("subject"))
 		case "mail":
 			st.From, st.To, st.Email, st.Subject = r.FormValue("from"), r.FormValue("mail_to"), strings.TrimSpace(r.FormValue("email")),
 				strings.TrimSpace(r.FormValue("subject"))
+		case "comment":
+			st.To, st.From = "", r.FormValue("from")
+		case "log":
+			st.To = ""
+		case "document":
+			st.To, st.From, st.Doc, st.Sets = "", r.FormValue("from"), r.FormValue("doc"), parseSets(r.FormValue("sets"))
+			if d, err := s.CRM.DocTemplate(r.Context(), st.Doc); err == nil {
+				st.Text = d.Name
+			}
+		case "activity":
+			st.Deed, st.Note = r.FormValue("deed"), strings.TrimSpace(r.FormValue("note"))
 		case "update":
 			st.To, st.Sets = "", parseSets(r.FormValue("sets"))
 		case "create":
@@ -510,11 +615,21 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 	http.Redirect(w, r, "/bp/templates/"+nid, http.StatusSeeOther)
 }
 
-// dateFields are the date fields of a process: an absence's dates.
-func dateFields(list []bp.Field) []bp.Field {
+// bpLabels: the fields of «Информация о сотруднике» get their labels in the user's language.
+func (s *Server) bpLabels(r *http.Request, list []bp.Field) []bp.Field {
+	for i, f := range list {
+		if k := bp.UserInfoLabel(f.Key); k != "" && f.Label == "" {
+			list[i].Label = s.tr(r, k)
+		}
+	}
+	return list
+}
+
+// dateFields are the fields of a process of the kinds: an absence's dates, the end of a pause.
+func dateFields(list []bp.Field, kinds ...string) []bp.Field {
 	var out []bp.Field
 	for _, f := range list {
-		if f.Kind == "date" {
+		if slices.Contains(kinds, f.Kind) {
 			out = append(out, f)
 		}
 	}

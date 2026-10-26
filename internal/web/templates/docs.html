@@ -16,9 +16,12 @@
     <button name="kind" value="xlsx" class="ghost">{{icon "table"}} {{t "office.new_xlsx"}}</button>
     <button name="kind" value="pptx" class="ghost">{{icon "presentation"}} {{t "office.new_pptx"}}</button></form>
   <span class="small muted">{{t "docs.new_hint"}}</span></div>{{end}}
+<form method="post" action="/disk/my/upload" enctype="multipart/form-data" class="card row diskbar" data-docs-upload><input type="hidden" name="from" value="docs">{{with $d.Scope}}<input type="hidden" name="scope" value="{{.}}">{{end}}
+  <b>{{t "docs.upload"}}</b><input type="file" name="file" multiple required accept="{{$d.Accept}}" style="flex:1">
+  <button class="ghost">{{icon "cloud-upload"}} {{t "docs.upload_go"}}</button><span class="small muted">{{t "docs.upload_hint"}}</span></form>
 <div class="card flush disk" data-docs>
   {{if $d.Docs}}<table class="disk-list">
-    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "docs.changed_by"}}</th><th>{{t "docs.changed"}}</th><th>{{t "col.size"}}</th></tr></thead>
+    <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "docs.changed_by"}}</th><th>{{if eq $d.Scope "recent"}}{{t "docs.opened"}}{{else}}{{t "docs.changed"}}{{end}}</th><th>{{t "col.size"}}</th><th></th></tr></thead>
     <tbody>{{range $d.Docs}}{{$k := docKind .Name}}{{$ic := "file-text"}}{{if eq $k "sheet"}}{{$ic = "table"}}{{else if eq $k "slides"}}{{$ic = "presentation"}}{{end}}
     {{$open := print .Base "/edit/" .ID "?folder=" .FolderID "&from=docs"}}{{if not $d.Office}}{{$open = print "/files/" .ID}}{{end}}
     <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">
@@ -26,9 +29,22 @@
       <td><a href="{{$open}}" title="{{t "office.open"}}" class="ttitle">{{icon $ic}} {{.Name}}</a>{{if .LockerID}} <span class="dlock" title="{{t "disk.locked_by" .Locker (datetime .LockedAt)}}" data-locked>{{icon "lock"}}</span>{{end}}{{with .Editors}} <span class="pill dediting" title="{{t "disk.editing_by" .}}" data-editing>{{icon "file-pencil"}} {{t "disk.editing"}}</span>{{end}}{{if $d.Snippets}}{{with index $d.Snippets .ID}}<div class="dsnip small" title="{{t "disk.found_in_text"}}">{{icon "search"}} {{.}}</div>{{end}}{{end}}</td>
       <td class="small"><a href="{{if .Single}}/disk/shared{{else}}{{.Base}}{{with .FolderID}}?folder={{.}}{{end}}{{end}}">{{if .Owner}}{{t "docs.disk_of" .Owner}}{{else if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
       <td class="small">{{.Changer}}</td>
-      <td class="small meta">{{datetime .CreatedAt}}</td>
-      <td class="small meta">{{size .Size}}<a class="button ghost" href="/files/{{.ID}}" title="{{t "disk.download"}}" download>{{icon "download"}}</a></td></tr>{{end}}
+      <td class="small meta">{{if and (eq $d.Scope "recent") .Opened}}{{datetime .Opened}}{{else}}{{datetime .CreatedAt}}{{end}}</td>
+      <td class="small meta">{{size .Size}}</td>
+      {{$mine := and (eq .UploaderID $d.Me) (not .Single) (or (not .LockerID) (eq .LockerID $d.Me))}}
+      <td><details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
+        <a class="button ghost" href="{{$open}}">{{if $d.Office}}{{icon "file-pencil"}} {{t "office.open"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>
+        <a class="button ghost" href="/files/{{.ID}}" download>{{icon "download"}} {{t "disk.download"}}</a>
+        <button type="button" class="ghost" data-copy="{{$d.Base}}/files/{{.ID}}/about">{{icon "copy"}} {{t "disk.internal_link"}}</button>
+        <a class="button ghost" href="/files/{{.ID}}/about#comments">{{icon "message-circle"}} {{t "docs.discuss"}}</a>
+        <a class="button ghost" href="/files/{{.ID}}/about">{{icon "history"}} {{t "docs.about"}}</a>
+        <a class="button ghost" href="{{if .Single}}/disk/shared{{else}}{{.Base}}{{with .FolderID}}?folder={{.}}{{end}}{{end}}">{{icon "folders"}} {{t "docs.where"}}</a>
+        {{if $mine}}<button type="button" class="ghost" data-toggle="rn-{{.ID}}">{{icon "edit"}} {{t "disk.rename"}}</button>
+        <form method="post" action="{{.Base}}/delete" data-confirm="{{t "disk.delete_file_confirm"}}"><input type="hidden" name="from" value="docs">{{with $d.Scope}}<input type="hidden" name="scope" value="{{.}}">{{end}}<input type="hidden" name="folder" value="{{.FolderID}}"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "common.remove"}}</button></form>{{end}}
+      </div></details>
+      {{if $mine}}<form method="post" action="{{.Base}}/rename" class="row" id="rn-{{.ID}}" hidden><input type="hidden" name="from" value="docs">{{with $d.Scope}}<input type="hidden" name="scope" value="{{.}}">{{end}}<input type="hidden" name="folder" value="{{.FolderID}}"><input type="hidden" name="file" value="{{.ID}}">
+        <input type="text" name="name" value="{{.Name}}" maxlength="200" required><button>{{t "common.save"}}</button></form>{{end}}</td></tr>{{end}}
     </tbody></table>
-  {{else}}<div class="empty">{{if or $d.Q $d.Type}}{{t "docs.not_found"}}{{else}}{{t "docs.empty"}}{{end}}</div>{{end}}
+  {{else}}<div class="empty">{{if or $d.Q $d.Type}}{{t "docs.not_found"}}{{else if eq $d.Scope "recent"}}{{t "docs.recent_empty"}}{{else}}{{t "docs.empty"}}{{end}}</div>{{end}}
 </div>
 {{end}}

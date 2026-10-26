@@ -1,0 +1,40 @@
+{{define "content"}}{{$d := .Data}}{{$f := $d.F}}
+<div class="crumbs"><a href="/booking">{{t "booking.title"}}</a> {{icon "chevron-right"}}</div>
+<div class="pagehead"><h1>{{t "booking.list"}}</h1><span style="flex:1"></span>
+  <a href="/booking" class="button ghost">{{icon "calendar-event"}} {{t "booking.grid"}}</a></div>
+<div class="tabs bk-presets">
+  <a href="/booking/list" {{if and (not $f.Status) (not $f.Mine) (not $f.ByLink) (not $f.Query) (not $f.ResourceID)}}class="on"{{end}}>{{t "booking.f_all"}}</a>
+  <a href="/booking/list?status=attention&amp;mine=1" {{if and (eq $f.Status "attention") $f.Mine}}class="on"{{end}}>{{t "booking.f_attention"}}</a>
+  <a href="/booking/list?status=unconfirmed" {{if and (eq $f.Status "unconfirmed") (not $f.Mine)}}class="on"{{end}}>{{t "booking.f_unconfirmed"}}</a>
+  <a href="/booking/list?status=late" {{if and (eq $f.Status "late") (not $f.Mine)}}class="on"{{end}}>{{t "booking.late_now"}}</a>
+  <a href="/booking/list?mine=1" {{if and $f.Mine (not $f.Status)}}class="on"{{end}}>{{t "booking.f_mine"}}</a>
+  <a href="/booking/list?link=1" {{if and $f.ByLink (not $f.Status)}}class="on"{{end}}>{{t "booking.f_link"}}</a>
+</div>
+<form method="get" action="/booking/list" class="row crmtools bk-filter">
+  <input type="search" name="q" value="{{$f.Query}}" placeholder="{{t "booking.f_search"}}">
+  <select name="status" style="width:auto"><option value="">{{t "booking.f_any_status"}}</option>
+    <option value="attention" {{if eq $f.Status "attention"}}selected{{end}}>{{t "booking.f_attention"}}</option>
+    {{range $d.Statuses}}<option value="{{.}}" {{if eq . $f.Status}}selected{{end}}>{{t (print "booking.st." .)}}</option>{{end}}
+    <option value="late" {{if eq $f.Status "late"}}selected{{end}}>{{t "booking.late_now"}}</option></select>
+  <select name="resource" style="width:auto"><option value="">{{t "booking.all_resources"}}</option>{{range $d.All}}<option value="{{.ID}}" {{if eq .ID $f.ResourceID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}"></span></span>
+  <label class="check"><input type="checkbox" name="mine" value="1" {{if $f.Mine}}checked{{end}}> {{t "booking.f_mine"}}</label>
+  <label class="check"><input type="checkbox" name="link" value="1" {{if $f.ByLink}}checked{{end}}> {{t "booking.f_link"}}</label>
+  <button>{{t "booking.stats_show"}}</button>
+</form>
+<div class="card flush bk-list-wrap">
+  <table class="list bk-list"><thead><tr><th>{{t "booking.f_when"}}</th><th>{{t "booking.resource"}}</th><th>{{t "booking.client_name"}}</th><th>{{t "booking.services"}}</th>
+    <th>{{t "booking.status"}}</th><th>CRM</th><th>{{t "booking.f_by"}}</th></tr></thead><tbody>
+  {{range $d.Rows}}{{$b := .B}}<tr class="bk-{{$b.Status}}{{if .Late}} bk-late{{end}}">
+    <td><a href="/booking?date={{$b.Start.Local.Format "2006-01-02"}}&amp;b={{$b.ID}}">{{day $b.Start.Local}}, {{clock $b.Start}}–{{clock $b.End}}</a></td>
+    <td>{{$b.ResourceName}}{{with $b.ExtraNames}} <span class="small muted">+ {{join . ", "}}</span>{{end}}</td>
+    <td><b>{{$b.ClientName}}</b>{{with $b.ClientPhone}}<div class="small bk-phone">{{.}}</div>{{end}}{{with $b.ClientEmail}}<div class="small muted">{{.}}</div>{{end}}</td>
+    <td>{{with $b.Services}}{{range $i, $x := .}}{{if $i}}, {{end}}{{$x.Name}}{{end}}<div class="small muted">{{bookingSum .}}</div>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td><span class="pill bk-st bk-{{$b.Status}}">{{t (print "booking.st." $b.Status)}}</span>{{if .Late}} <span class="pill bk-st bk-late">{{t "booking.late_now"}}</span>{{end}}{{with $b.Rating}}<div class="bk-stars" title="{{t "booking.rating"}}{{with $b.RatingNote}}: {{.}}{{end}}">{{stars .}}</div>{{end}}</td>
+    <td class="small">{{with $b.ContactID}}<div><a href="/crm/contacts/{{.}}">{{$b.ContactName}}</a></div>{{end}}{{with $b.CompanyID}}<div><a href="/crm/companies/{{.}}">{{$b.CompanyName}}</a></div>{{end}}{{with $b.DealID}}<div><a href="/crm/deals/{{.}}">{{$b.DealTitle}}</a></div>{{end}}</td>
+    <td class="small">{{if $b.LinkName}}{{t "booking.by_link" $b.LinkName}}{{else}}{{$b.CreatedByName}}{{end}}</td>
+  </tr>{{end}}</tbody></table>
+  {{if not $d.Rows}}<p class="empty">{{t "booking.f_empty"}}</p>{{end}}
+</div>
+{{if $d.Limit}}<p class="muted small">{{t "booking.f_limit"}}</p>{{end}}
+{{end}}

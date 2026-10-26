@@ -1,2 +1,4 @@
 {{/* diskPickL: the texts of «Файл с Диска» (drivepick.js) on its button */}}
 {{define "diskPickL"}}data-l-title="{{t "disk.pick"}}" data-l-top="{{t "disk.top"}}" data-l-empty="{{t "disk.empty"}}" data-l-close="{{t "disk.close"}}" data-l-remove="{{t "common.remove"}}" data-l-failed="{{t "err.internal"}}"{{end}}
+{{/* the template of a new board: «Создать доску» offers them */}}
+{{define "boardTemplate"}}<select name="template" title="{{t "dboard.template"}}" data-board-template><option value="">{{t "dboard.tpl_blank"}}</option>{{range boardTemplates}}<option value="{{.}}">{{t (print "dboard.tpl_" .)}}</option>{{end}}</select>{{end}}

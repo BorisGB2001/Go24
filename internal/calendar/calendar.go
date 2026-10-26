@@ -23,7 +23,10 @@ var (
 	ErrForbidden = i18n.E("err.forbidden")
 )
 
-type Store struct{ db *pgxpool.Pool }
+type Store struct {
+	db  *pgxpool.Pool
+	Key []byte // the key the passwords of CalDAV servers are sealed with (see DavKey); nil — none can be connected
+}
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
@@ -31,7 +34,8 @@ type Attendee struct {
 	ID, Name, Status string // invited | accepted | tentative | declined
 }
 
-// Event is a meeting, or (Kind "task") a task deadline shown in the calendar.
+// Event is a meeting, or (Kind "task") a task deadline shown in the calendar, or (Kind "crm") the deadline of a CRM
+// activity of the viewer, or (Kind "booking") a client's booking of «Онлайн-запись» on the viewer.
 type Event struct {
 	ID, Kind                  string // event | task
 	OwnerID, OwnerName        string
@@ -50,6 +54,8 @@ type Event struct {
 	Repeat      string
 	Every       int
 	Until       *time.Time
+	Days        []int     // weekly: the days of the week it repeats on, 1 (Monday) … 7 (Sunday); none — the day of its start
+	Count       int       // the series ends after so many meetings (0 — by Until or never); Until is the day of the last
 	Reminds     []int     // minutes before the start of each reminder, ascending (none = no reminder)
 	SeriesStart time.Time // a repeated meeting: the first occurrence (Start is this occurrence)
 	// how the meeting shows the time of its people to others (see Accessibilities); a private meeting is seen in full
@@ -70,6 +76,92 @@ type Event struct {
 	CalColor                 string // the colour of the calendar it is in for the viewer ("" — that of its kind)
 	Of                       string // shown from a colleague's calendar: whose (see PersonRange)
 	UID                      string // the UID a calendar program or file gave it ("" — its own, ID@go24); CalDAV only
+	// the time zone its time is entered in and its repetitions go by (an IANA name, "" — the portal's)
+	TZ string
+	// an open event (see OpenEvents): its category ("" — an ordinary meeting)
+	CategoryID, CategoryName string
+	// Kind crm: the activity's kind (todo | call | meeting) and its card (the card's title is in Where)
+	ActKind  string
+	Card     *CRMRef
+	ChatRoom string // «Чат встречи»: its messenger room ("" — none yet)
+	ReadOnly bool   // of a calendar connected by its link: changed there only (see SyncLink)
+	Status   string // Kind booking: the booking's status (its client is the Title, the resource — Where)
+}
+
+// TimeZones offered in the meeting's form (any other IANA zone is taken too).
+var TimeZones = []string{"Europe/Kaliningrad", "Europe/Moscow", "Europe/Samara", "Asia/Yekaterinburg", "Asia/Omsk",
+	"Asia/Novosibirsk", "Asia/Krasnoyarsk", "Asia/Irkutsk", "Asia/Yakutsk", "Asia/Vladivostok", "Asia/Magadan",
+	"Asia/Kamchatka", "Europe/Minsk", "Europe/Kyiv", "Asia/Almaty", "Asia/Tashkent", "Asia/Tbilisi", "Asia/Yerevan",
+	"Asia/Baku", "Europe/London", "Europe/Amsterdam", "Europe/Berlin", "Europe/Paris", "Europe/Istanbul", "Asia/Dubai",
+	"Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "America/New_York", "America/Chicago",
+	"America/Denver", "America/Los_Angeles", "UTC"}
+
+// Zone is a time zone of the form: its IANA name and «(UTC+03:00) Europe/Moscow».
+type Zone struct{ Name, Label string }
+
+// Zones are TimeZones (and tz, when it is another one) with their offsets at t.
+func Zones(t time.Time, tz string) []Zone {
+	names := TimeZones
+	if tz != "" && !slices.Contains(names, tz) {
+		names = append([]string{tz}, names...)
+	}
+	var out []Zone
+	for _, n := range names {
+		if l, err := time.LoadLocation(n); err == nil {
+			out = append(out, Zone{n, "(UTC" + t.In(l).Format("-07:00") + ") " + n})
+		}
+	}
+	slices.SortStableFunc(out, func(a, b Zone) int {
+		_, x := t.In(mustLoc(a.Name)).Zone()
+		_, y := t.In(mustLoc(b.Name)).Zone()
+		return x - y
+	})
+	return out
+}
+
+func mustLoc(n string) *time.Location {
+	l, _ := time.LoadLocation(n)
+	return l
+}
+
+// InZone is t by the clock of the meeting's zone.
+func (e Event) InZone(t time.Time) time.Time { return t.In(e.Loc()) }
+
+// ValidTZ: "" or a time zone Go knows.
+func ValidTZ(tz string) bool {
+	if tz == "" {
+		return true
+	}
+	_, err := time.LoadLocation(tz)
+	return err == nil && tz != "Local"
+}
+
+// Loc is the meeting's time zone (the portal's when it has none or an unknown one).
+func (e Event) Loc() *time.Location {
+	if e.TZ != "" {
+		if l, err := time.LoadLocation(e.TZ); err == nil {
+			return l
+		}
+	}
+	return time.Local
+}
+
+// OtherTZ: the meeting's zone is not the portal's (its time is then shown in both).
+func (e Event) OtherTZ() bool {
+	return e.TZ != "" && !e.AllDay && !sameZone(e.Loc(), e.Start)
+}
+
+// sameZone: l keeps the portal's offsets all year round (another name of the same clock).
+func sameZone(l *time.Location, t time.Time) bool {
+	for _, m := range []int{0, 3, 6, 9} {
+		x := t.AddDate(0, m, 0)
+		_, a := x.In(l).Zone()
+		_, b := x.In(time.Local).Zone()
+		if a != b {
+			return false
+		}
+	}
+	return true
 }
 
 // Paint is the colour the meeting is drawn with for the viewer: its own, else that of its calendar.
@@ -91,24 +183,50 @@ var colorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 // Repeats is the meeting's period terms.
 var Repeats = []string{"daily", "weekly", "monthly", "yearly"}
 
-// occurrence k of a repeated meeting.
-func (e Event) occurrence(k int) (time.Time, time.Time) {
-	n := k * max(e.Every, 1)
-	var start time.Time
-	switch e.Repeat {
-	case "daily":
-		start = e.SeriesStart.AddDate(0, 0, n)
-	case "weekly":
-		start = e.SeriesStart.AddDate(0, 0, 7*n)
-	case "monthly":
-		start = e.SeriesStart.AddDate(0, n, 0)
-	case "yearly":
-		start = e.SeriesStart.AddDate(n, 0, 0)
-	default:
-		start = e.SeriesStart
+// occurrence k of a repeated meeting; ok is false for a day of a weekly meeting's first week before its start.
+func (e Event) occurrence(k int) (start, end time.Time, ok bool) {
+	first := e.SeriesStart // by the clock of the meeting's zone: 10:00 there stays 10:00 over its daylight saving
+	if !e.AllDay {
+		first = first.In(e.Loc())
 	}
-	return start, start.Add(e.End.Sub(e.Start))
+	every := max(e.Every, 1)
+	switch {
+	case e.Repeat == "weekly" && len(e.Days) > 0: // its days, week by week from the week of the start (from Monday)
+		week, day := k/len(e.Days), e.Days[k%len(e.Days)]
+		start = first.AddDate(0, 0, 7*week*every+day-WeekDay(first))
+	case e.Repeat == "daily":
+		start = first.AddDate(0, 0, k*every)
+	case e.Repeat == "weekly":
+		start = first.AddDate(0, 0, 7*k*every)
+	case e.Repeat == "monthly":
+		start = first.AddDate(0, k*every, 0)
+	case e.Repeat == "yearly":
+		start = first.AddDate(k*every, 0, 0)
+	default:
+		start = first
+	}
+	start = start.In(time.Local)
+	return start, start.Add(e.End.Sub(e.Start)), !start.Before(e.SeriesStart)
 }
+
+// OnDay: a weekly meeting repeats on the day of the week d (1 — Monday … 7 — Sunday); with no days chosen — on the
+// day of its start.
+func (e Event) OnDay(d int) bool {
+	if len(e.Days) > 0 {
+		return slices.Contains(e.Days, d)
+	}
+	start := e.Start
+	if !e.AllDay {
+		start = start.In(e.Loc())
+	}
+	return WeekDay(start) == d
+}
+
+// WeekDays are the days of a week to choose for a weekly meeting, from Monday.
+func (Event) WeekDays() []int { return []int{1, 2, 3, 4, 5, 6, 7} }
+
+// WeekDay is the day of the week of t: 1 (Monday) … 7 (Sunday).
+func WeekDay(t time.Time) int { return (int(t.Weekday())+6)%7 + 1 }
 
 // expand turns a meeting into its occurrences that touch [from, to).
 func (e Event) expand(from, to time.Time) []Event {
@@ -120,9 +238,13 @@ func (e Event) expand(from, to time.Time) []Event {
 		return nil
 	}
 	var out []Event
-	for k := 0; k < 5000; k++ {
-		st, en := e.occurrence(k)
-		if !st.Before(to) || (e.Until != nil && st.After(e.Until.AddDate(0, 0, 1))) {
+	n := 0 // the meetings of the series so far: Count ends it (deleted ones count too, as RFC 5545 has it)
+	for k := 0; k < 5000*max(len(e.Days), 1); k++ {
+		st, en, ok := e.occurrence(k)
+		if !ok {
+			continue
+		}
+		if n++; !st.Before(to) || (e.Until != nil && st.After(e.Until.AddDate(0, 0, 1))) || (e.Count > 0 && n > e.Count) {
 			break
 		}
 		if en.Before(from) || slices.ContainsFunc(e.Skip, st.Equal) {
@@ -133,6 +255,52 @@ func (e Event) expand(from, to time.Time) []Event {
 		out = append(out, o)
 	}
 	return out
+}
+
+// repetition checks a meeting's repetition and puts it in order: the days of a weekly one (with that of its start;
+// its start's day alone is no list), the day of the last meeting of one that ends after Count.
+func (e *Event) repetition() error {
+	if e.Repeat != "" && !slices.Contains(Repeats, e.Repeat) || e.Count < 0 || e.Count > 999 {
+		return i18n.E("err.bad_form")
+	}
+	if e.Every < 1 || e.Every > 365 {
+		e.Every = 1
+	}
+	if e.Repeat == "" {
+		e.Until, e.Count = nil, 0
+	}
+	var days []int
+	if e.Repeat == "weekly" && len(e.Days) > 0 {
+		start := e.Start
+		if !e.AllDay {
+			start = start.In(e.Loc())
+		}
+		for _, d := range append(e.Days, WeekDay(start)) {
+			if d < 1 || d > 7 {
+				return i18n.E("err.bad_form")
+			}
+			if !slices.Contains(days, d) {
+				days = append(days, d)
+			}
+		}
+		if slices.Sort(days); len(days) == 1 {
+			days = nil
+		}
+	}
+	e.Days = days
+	if e.Count > 0 {
+		x := *e
+		x.Until, x.Skip = nil, nil
+		x.SeriesStart = x.Start
+		for k, n := 0, 0; n < e.Count && k < 5000*max(len(days), 1); k++ {
+			if st, _, ok := x.occurrence(k); ok {
+				n++
+				d := time.Date(st.Year(), st.Month(), st.Day(), 0, 0, 0, 0, time.Local)
+				e.Until = &d
+			}
+		}
+	}
+	return nil
 }
 
 // Occurrence is the occurrence of a repeated meeting that starts at t (nil — there is none).
@@ -156,19 +324,21 @@ const visible = `(e.owner_id = $1 OR (e.company AND NOT EXISTS (SELECT 1 FROM us
 
 const selectSQL = `SELECT e.id::text, e.owner_id::text, u.name, coalesce(e.project_id::text, ''), coalesce(p.key, ''), coalesce(p.name, ''),
 		e.company, e.title, e.description, e.location, e.starts_at, e.ends_at, e.all_day,
-		e.repeat, e.repeat_every, e.repeat_until, e.reminds, e.accessibility, e.private,
+		e.repeat, e.repeat_every, e.repeat_until, e.repeat_days, e.repeat_count, e.reminds, e.accessibility, e.private,
 		coalesce(e.series_id::text, ''), e.series_at, coalesce(e.room_id::text, ''), coalesce(mr.name, ''), e.video, e.color, e.important,
-		coalesce(e.calendar_id::text, ''), coalesce(uc.name, ''), coalesce(uc.color, '')
+		coalesce(e.calendar_id::text, ''), coalesce(uc.name, ''), coalesce(uc.color, ''), e.timezone,
+		coalesce(e.category_id::text, ''), coalesce(ec.name, ''), e.chat_room, coalesce(uc.source_url, '') <> ''
 	FROM events e JOIN users u ON u.id = e.owner_id LEFT JOIN projects p ON p.id = e.project_id
-		LEFT JOIN meeting_rooms mr ON mr.id = e.room_id LEFT JOIN user_calendars uc ON uc.id = e.calendar_id`
+		LEFT JOIN meeting_rooms mr ON mr.id = e.room_id LEFT JOIN user_calendars uc ON uc.id = e.calendar_id
+		LEFT JOIN event_categories ec ON ec.id = e.category_id`
 
 // scanEvent reads a row of selectSQL.
 func scanEvent(r pgx.CollectableRow) (Event, error) {
 	e := Event{Kind: "event"}
 	err := r.Scan(&e.ID, &e.OwnerID, &e.OwnerName, &e.ProjectID, &e.ProjectKey, &e.ProjectName, &e.Company,
-		&e.Title, &e.Description, &e.Where, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Reminds,
+		&e.Title, &e.Description, &e.Where, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Days, &e.Count, &e.Reminds,
 		&e.Accessibility, &e.Private, &e.SeriesID, &e.SeriesAt, &e.RoomID, &e.RoomName, &e.Video, &e.Color, &e.Important,
-		&e.CalendarID, &e.CalendarName, &e.CalColor)
+		&e.CalendarID, &e.CalendarName, &e.CalColor, &e.TZ, &e.CategoryID, &e.CategoryName, &e.ChatRoom, &e.ReadOnly)
 	e.SeriesStart = e.Start
 	return e, err
 }
@@ -213,7 +383,7 @@ func (s *Store) scan(ctx context.Context, viewer string, rows pgx.Rows) ([]Event
 	}
 	for i := range list { // a private meeting: others (but admin mode) see only that its people are busy
 		if e := &list[i]; e.Private && e.OwnerID != viewer && e.MyStatus == "" && !tasks.IsAdmin(ctx) {
-			e.Hidden, e.Title, e.Description, e.Where, e.Attendees = true, "", "", "", nil
+			e.Hidden, e.Title, e.Description, e.Where, e.Attendees, e.ChatRoom = true, "", "", "", nil, ""
 		}
 		// one's own calendars are one's own: for others the meeting is in their main calendar
 		if e := &list[i]; e.OwnerID != viewer {
@@ -263,6 +433,33 @@ func (s *Store) Range(ctx context.Context, viewer string, from, to time.Time) ([
 	if err := trows.Err(); err != nil {
 		return nil, err
 	}
+	// the open CRM activities the viewer is responsible for, by their deadlines shows calls and meetings
+	// of the CRM); one of a card that is gone (the recycle bin) is not shown
+	crows, err := s.db.Query(ctx, `SELECT id::text, kind, subject, deadline, entity, entity_id::text, title FROM (
+		SELECT c.id, c.kind, c.subject, c.deadline, c.entity, c.entity_id, `+crmTitle+` AS title FROM crm_activities c
+		WHERE c.responsible_id = $1 AND c.done_at IS NULL AND c.deadline >= $2 AND c.deadline < $3) x
+		WHERE title IS NOT NULL ORDER BY deadline`, viewer, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer crows.Close()
+	for crows.Next() {
+		e, card := Event{Kind: "crm"}, CRMRef{}
+		if err := crows.Scan(&e.ID, &e.ActKind, &e.Title, &e.Start, &card.Entity, &card.ID, &card.Title); err != nil {
+			return nil, err
+		}
+		e.End, e.Overdue, e.Card, e.Where = e.Start, e.Start.Before(now), &card, card.Title
+		list = append(list, e)
+	}
+	if err := crows.Err(); err != nil {
+		return nil, err
+	}
+	// the bookings of «Онлайн-запись» on the viewer as a resource
+	books, err := s.bookingsOf(ctx, []string{viewer}, from, to)
+	if err != nil {
+		return nil, err
+	}
+	list = append(list, books...)
 	// absences of the company and birthdays: all-day items every employee sees (a guest — none of them)
 	var guest bool
 	if err := s.db.QueryRow(ctx, `SELECT guest FROM users WHERE id = $1`, viewer).Scan(&guest); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -408,7 +605,7 @@ func (s *Store) ProjectRange(ctx context.Context, viewer, projectID string, from
 
 // Get loads an event the viewer may see.
 func (s *Store) Get(ctx context.Context, viewer, id string) (Event, error) {
-	rows, err := s.db.Query(ctx, selectSQL+` WHERE e.id::text = $3 AND (`+visible+` OR `+shared+`)`, viewer, tasks.IsAdmin(ctx), id)
+	rows, err := s.db.Query(ctx, selectSQL+` WHERE e.id::text = $3 AND (`+visible+` OR `+shared+` OR `+openEvent+`)`, viewer, tasks.IsAdmin(ctx), id)
 	if err != nil {
 		return Event{}, err
 	}
@@ -438,15 +635,6 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 	if e.End.Before(e.Start) {
 		return "", i18n.E("err.event_end")
 	}
-	if e.Repeat != "" && !slices.Contains(Repeats, e.Repeat) {
-		return "", i18n.E("err.bad_form")
-	}
-	if e.Every < 1 || e.Every > 365 {
-		e.Every = 1
-	}
-	if e.Repeat == "" {
-		e.Until = nil
-	}
 	e.Reminds = Reminds(e.Reminds)
 	if e.Accessibility == "" {
 		e.Accessibility = "busy"
@@ -457,8 +645,24 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 	if e.Color = strings.ToLower(strings.TrimSpace(e.Color)); e.Color != "" && !colorRe.MatchString(e.Color) {
 		return "", i18n.E("err.bad_form")
 	}
-	if e.ProjectID != "" || e.Company { // one's own calendars hold personal meetings
-		e.CalendarID = ""
+	if e.TZ = strings.TrimSpace(e.TZ); !ValidTZ(e.TZ) {
+		return "", i18n.E("err.bad_form")
+	}
+	if e.TZ == time.Local.String() || e.AllDay { // the portal's own zone, whole days: by the portal's clock
+		e.TZ = ""
+	}
+	if err := e.repetition(); err != nil {
+		return "", err
+	}
+	if e.ProjectID != "" || e.Company { // one's own calendars hold personal meetings, and so do open events
+		e.CalendarID, e.CategoryID = "", ""
+	}
+	var category any
+	if e.CategoryID != "" {
+		if err := s.mayOpen(ctx, viewer, e); err != nil {
+			return "", err
+		}
+		e.Private, category = false, e.CategoryID // everyone sees an open event
 	}
 	var project any
 	if e.ProjectID != "" {
@@ -513,14 +717,15 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 				return i18n.E("err.room_busy", clash.Start.Format("02.01.2006 15:04"), clash.End.Format("15:04"))
 			}
 		}
-		moved := false
+		moved, opened := false, false // opened: it became an open event, its category hears of it
 		// the calendar is one of the organizer's own; someone else (admin mode) does not move it there
 		section := func(owner string) (any, error) {
 			if e.CalendarID == "" {
 				return nil, nil
 			}
-			var ok bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM user_calendars WHERE id::text = $1 AND owner_id::text = $2)`, e.CalendarID, owner).Scan(&ok)
+			var ok bool // a connected calendar takes the meetings of its link only
+			err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM user_calendars WHERE id::text = $1 AND owner_id::text = $2
+				AND (source_url = '') <> $3)`, e.CalendarID, owner, syncing(ctx)).Scan(&ok)
 			if err == nil && !ok {
 				err = i18n.E("err.bad_form")
 			}
@@ -532,26 +737,33 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 				return err
 			}
 			if err := tx.QueryRow(ctx, `INSERT INTO events (owner_id, project_id, company, title, description, location, starts_at, ends_at, all_day,
-				repeat, repeat_every, repeat_until, reminds, accessibility, private, room_id, video, color, important, calendar_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`, viewer, project, e.Company, e.Title,
+				repeat, repeat_every, repeat_until, reminds, accessibility, private, room_id, video, color, important, calendar_id, timezone, category_id,
+				repeat_days, repeat_count)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, coalesce($23::integer[], '{}'), $24) RETURNING id`, viewer, project, e.Company, e.Title,
 				strings.TrimSpace(e.Description), strings.TrimSpace(e.Where), e.Start, e.End, e.AllDay,
-				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal).Scan(&id); err != nil {
+				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal, e.TZ, category,
+				e.Days, e.Count).Scan(&id); err != nil {
 				return err
 			}
+			opened = category != nil
 		} else {
-			var owner string
+			var owner, was string
 			var start, end time.Time
-			err := tx.QueryRow(ctx, `SELECT owner_id::text, starts_at, ends_at FROM events WHERE id::text = $1 FOR UPDATE`, e.ID).Scan(&owner, &start, &end)
+			var linked bool // of a connected calendar
+			err := tx.QueryRow(ctx, `SELECT owner_id::text, starts_at, ends_at, coalesce(category_id::text, ''),
+				EXISTS (SELECT 1 FROM user_calendars c WHERE c.id = events.calendar_id AND c.source_url <> '')
+				FROM events WHERE id::text = $1 FOR UPDATE`, e.ID).Scan(&owner, &start, &end, &was, &linked)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			if err != nil {
 				return err
 			}
-			if owner != viewer && !tasks.IsAdmin(ctx) {
+			if owner != viewer && !tasks.IsAdmin(ctx) || linked != syncing(ctx) {
 				return ErrForbidden
 			}
 			moved = !start.Equal(e.Start) || !end.Equal(e.End)
+			opened = was == "" && category != nil
 			id = e.ID
 			cal, err := section(owner)
 			if err != nil {
@@ -562,9 +774,10 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 				starts_at = $7, ends_at = $8, all_day = $9, repeat = $10, repeat_every = $11, repeat_until = $12, reminds = $13,
 				accessibility = $14, private = $15, room_id = $16, video = $17, color = $18, important = $19,
 				calendar_id = CASE WHEN owner_id::text = $21 OR $2::uuid IS NOT NULL OR $3 THEN $20::uuid ELSE calendar_id END,
-				updated_at = now() WHERE id = $1`, id, project, e.Company, e.Title,
+				timezone = $22, category_id = $23, repeat_days = coalesce($24::integer[], '{}'), repeat_count = $25, updated_at = now() WHERE id = $1`, id, project, e.Company, e.Title,
 				strings.TrimSpace(e.Description), strings.TrimSpace(e.Where), e.Start, e.End, e.AllDay,
-				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal, viewer); err != nil {
+				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal, viewer, e.TZ, category,
+				e.Days, e.Count); err != nil {
 				return err
 			}
 		}
@@ -595,9 +808,11 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 		if moved {
 			notifyOf = want
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, event_id, body)
-			SELECT u, $2, 'event', $1, $4 FROM unnest($3::uuid[]) u WHERE NOT go24_quiet()`, id, viewer, notifyOf, e.Title)
-		return err
+		if _, err = tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, event_id, body)
+			SELECT u, $2, 'event', $1, $4 FROM unnest($3::uuid[]) u WHERE NOT go24_quiet()`, id, viewer, notifyOf, e.Title); err != nil || !opened {
+			return err
+		}
+		return s.announceOpen(ctx, tx, id, viewer, e.CategoryID, e.Title)
 	})
 	return id, err
 }
@@ -642,6 +857,17 @@ func (s *Store) SaveOccurrence(ctx context.Context, viewer, id string, at time.T
 		length, shift := e.End.Sub(e.Start), e.Start.Sub(at)
 		e.ID, e.Start = id, series.Start.Add(shift)
 		e.End = e.Start.Add(length)
+		if slices.Equal(e.Days, series.Days) { // a weekly series moved to another day: its days move with it
+			was, now := series.Start, e.Start
+			if !e.AllDay {
+				was, now = was.In(e.Loc()), now.In(e.Loc())
+			}
+			by := WeekDay(now) - WeekDay(was)
+			e.Days = slices.Clone(e.Days)
+			for i, d := range e.Days {
+				e.Days[i] = (d-1+by+7)%7 + 1
+			}
+		}
 		if _, err := s.Save(ctx, viewer, e, invite); err != nil || shift == 0 {
 			return id, err
 		}
@@ -670,13 +896,16 @@ func (s *Store) SaveOccurrence(ctx context.Context, viewer, id string, at time.T
 		_, err = s.db.Exec(ctx, `UPDATE events SET series_id = $2, series_at = $3 WHERE id = $1`, nid, id, at)
 		return nid, err
 	case ScopeFollowing:
-		if _, err := s.db.Exec(ctx, `UPDATE events SET repeat_until = $2::date, updated_at = now() WHERE id = $1`, id, dayBefore(at)); err != nil {
+		if _, err := s.db.Exec(ctx, `UPDATE events SET repeat_until = $2::date, repeat_count = 0, updated_at = now() WHERE id = $1`, id, dayBefore(at)); err != nil {
 			return "", err
+		}
+		if e.Count > 0 && e.Count == series.Count { // the new series ends where the old one did
+			e.Count, e.Until = 0, series.Until
 		}
 		e.ID = ""
 		nid, err := s.Save(ctx, viewer, e, invite)
 		if err != nil { // the series as it was
-			_, _ = s.db.Exec(ctx, `UPDATE events SET repeat_until = $2 WHERE id = $1`, id, series.Until)
+			_, _ = s.db.Exec(ctx, `UPDATE events SET repeat_until = $2, repeat_count = $3 WHERE id = $1`, id, series.Until, series.Count)
 		}
 		return nid, err
 	}
@@ -703,7 +932,7 @@ func (s *Store) DeleteOccurrence(ctx context.Context, viewer, id string, at time
 		_, err := s.db.Exec(ctx, `INSERT INTO event_exceptions (event_id, at) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, at)
 		return err
 	case ScopeFollowing:
-		_, err := s.db.Exec(ctx, `UPDATE events SET repeat_until = $2::date, updated_at = now() WHERE id = $1`, id, dayBefore(at))
+		_, err := s.db.Exec(ctx, `UPDATE events SET repeat_until = $2::date, repeat_count = 0, updated_at = now() WHERE id = $1`, id, dayBefore(at))
 		return err
 	}
 	return i18n.E("err.bad_form")
@@ -801,4 +1030,14 @@ func Reminds(list []int) []int {
 		out = out[:10]
 	}
 	return out
+}
+
+// SetChat keeps the meeting's chat room unless it has one already; returns the room it has.
+func (s *Store) SetChat(ctx context.Context, id, room string) (string, error) {
+	err := s.db.QueryRow(ctx, `UPDATE events SET chat_room = CASE WHEN chat_room = '' THEN $2 ELSE chat_room END
+		WHERE id::text = $1 RETURNING chat_room`, id, room).Scan(&room)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return room, err
 }

@@ -22,7 +22,7 @@ import (
 
 // TestCalDAVHTTP: the calendars over CalDAV — only with an API key that may «calendar:read»; the top is the person
 // and their calendar home with the main calendar and their own ones; a meeting a program puts (a series with a
-// changed occurrence) is kept with its name and UID, read back by multiget and query, changed under If-Match only,
+// changed occurrence) is kept with its name and UID, read back as one resource by multiget and query, changed under If-Match only,
 // moved into another calendar by its UID and deleted; someone else's meeting is not changed, deleting it declines it.
 func TestCalDAVHTTP(t *testing.T) {
 	dbURL := os.Getenv("GO24_TEST_DATABASE_URL")
@@ -130,10 +130,13 @@ func TestCalDAVHTTP(t *testing.T) {
 	do(writeKey, "PUT", "/caldav/main/abc.ics", map[string]string{"If-None-Match": "*"}, series, 412)
 
 	list, _ := do(readKey, "PROPFIND", "/caldav/main/", depth1, "", 207)
-	has("the main calendar", list, "/caldav/main/abc.ics", "/caldav/main/"+child+".ics", "/caldav/main/"+theirs+".ics", "<d:getetag>")
+	has("the main calendar", list, "/caldav/main/abc.ics", "/caldav/main/"+theirs+".ics", "<d:getetag>")
+	if strings.Contains(list, child) { // the changed occurrence is in the series' resource
+		t.Errorf("the changed occurrence is a resource of its own: %s", list)
+	}
 	got, _ := do(readKey, "REPORT", "/caldav/main/", depth1, `<c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
 		<d:prop><d:getetag/><c:calendar-data/></d:prop><d:href>/caldav/main/abc.ics</d:href><d:href>/caldav/main/gone.ics</d:href></c:calendar-multiget>`, 207)
-	has("multiget", got, "UID:abc@phone", "RRULE:FREQ=WEEKLY", "EXDATE:20300311T090000Z", "TRIGGER:-PT15M", "<d:href>/caldav/main/gone.ics</d:href><d:status>HTTP/1.1 404")
+	has("multiget", got, "UID:abc@phone", "RRULE:FREQ=WEEKLY", "RECURRENCE-ID:20300311T090000Z", "SUMMARY:Йога позже", "TRIGGER:-PT15M", "<d:href>/caldav/main/gone.ics</d:href><d:status>HTTP/1.1 404")
 	query := func(from, to string) string {
 		out, _ := do(readKey, "REPORT", "/caldav/main/", depth1, `<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/></d:prop>
 			<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="`+from+`" end="`+to+`"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 207)

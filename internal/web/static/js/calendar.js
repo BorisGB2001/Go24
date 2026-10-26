@@ -329,3 +329,86 @@
   });
   box.addEventListener('click', e => e.target.closest('[data-remind-del]')?.closest('.remind').remove());
 })();
+
+// The meeting's time zone ([data-ev-tz]): a meeting of whole days has none.
+(() => {
+  const tz = document.querySelector('[data-ev-tz]'), day = tz?.form.querySelector('[name="all_day"]');
+  day?.addEventListener('change', () => { tz.hidden = day.checked; });
+})();
+
+// «CRM» of the meeting form ([data-ev-crm]): deals, leads, contacts and companies found by typing
+// (/mail/crm/search) become chips the form sends (crm=kind:id); the cross unlinks one.
+(() => {
+  const box = document.querySelector('[data-ev-crm]');
+  if (!box) return;
+  const q = box.querySelector('[data-ev-crm-q]'), found = box.querySelector('[data-ev-crm-res]'), chips = box.querySelector('[data-ev-crm-chips]');
+  let timer = 0, seq = 0;
+  const search = async () => {
+    const text = q.value.trim(), n = ++seq;
+    if (text.length < 2) { found.replaceChildren(); return; }
+    let list = [];
+    try {
+      const res = await fetch('/mail/crm/search?q=' + encodeURIComponent(text), { headers: { Accept: 'application/json' } });
+      if (res.ok) list = await res.json();
+    } catch { list = []; }
+    if (n !== seq) return; // a later search is on its way
+    found.replaceChildren(...list.map(it => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost small';
+      b.setAttribute('role', 'option');
+      b.dataset.value = it.kind + ':' + it.path.split('/').pop();
+      b.dataset.path = it.path;
+      b.dataset.label = it.kind_name + ': ' + it.title;
+      b.textContent = b.dataset.label + (it.sub ? ' · ' + it.sub : '');
+      return b;
+    }));
+  };
+  q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 250); });
+  q.addEventListener('keydown', e => { // Enter picks the first card found, not sends the form
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    found.querySelector('button')?.click();
+  });
+  found.addEventListener('click', e => {
+    const b = e.target.closest('button[data-value]');
+    if (!b) return;
+    if (![...chips.querySelectorAll('input')].some(i => i.value === b.dataset.value)) {
+      const chip = document.createElement('span');
+      chip.className = 'pill bk-chip';
+      const v = document.createElement('input');
+      v.type = 'hidden';
+      v.name = 'crm';
+      v.value = b.dataset.value;
+      const a = document.createElement('a');
+      a.href = b.dataset.path;
+      a.target = '_blank';
+      a.textContent = b.dataset.label;
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'ghost small';
+      x.dataset.unbind = '';
+      x.title = box.dataset.unbind;
+      x.textContent = '×';
+      chip.append(v, a, x);
+      chips.append(chip);
+    }
+    q.value = '';
+    found.replaceChildren();
+  });
+  chips.addEventListener('click', e => e.target.closest('[data-unbind]')?.closest('.bk-chip').remove());
+})();
+
+// The meeting's repetition: the days of a weekly one, its end — never, after N meetings, on a day.
+(() => {
+  const box = document.querySelector('[data-ev-repeat]');
+  if (!box) return;
+  const repeat = box.closest('form').querySelector('[name="repeat"]'), ends = box.querySelector('[data-ev-ends]');
+  const show = () => {
+    box.hidden = !repeat.value;
+    box.querySelector('[data-ev-days]').hidden = repeat.value !== 'weekly';
+    box.querySelectorAll('[data-ev-end]').forEach(x => { x.hidden = x.dataset.evEnd !== ends.value; });
+  };
+  repeat.addEventListener('change', show);
+  ends.addEventListener('change', show);
+})();

@@ -46,6 +46,7 @@ type Company struct {
 	CreatedBy                                          string
 	CreatedAt                                          time.Time
 	Contacts, Deals                                    int
+	Comms                                              []Comm // all its phones and e-mails (a single card)
 }
 
 type Contact struct {
@@ -55,6 +56,7 @@ type Contact struct {
 	Responsible                               Ref
 	CreatedBy                                 string
 	CreatedAt                                 time.Time
+	Comms                                     []Comm // all its phones and e-mails (a single card)
 }
 
 // Stage of a pipeline or of leads; built-in ones have a Code (the name is in the locales).
@@ -96,7 +98,9 @@ type Lead struct {
 	Stage                                                          Stage
 	Responsible                                                    Ref
 	Observers                                                      []Ref  // «Наблюдатели», as Deal's
-	DealID, ContactID, CompanyID                                   string // converted into
+	DealID, ContactID, CompanyID                                   string // converted into (a repeated lead: its client)
+	Repeat                                                         bool   // «Повторный лид»: from a client already known
+	Comms                                                          []Comm // all its phones and e-mails (a single card)
 	CreatedBy                                                      string
 	CreatedAt                                                      time.Time
 }
@@ -329,7 +333,7 @@ func (s *Store) Companies(ctx context.Context, viewer, q string) ([]Company, err
 	if err != nil {
 		return nil, err
 	}
-	return scanCompanies(s.db.Query(ctx, companySQL+` WHERE (c.title ILIKE $1 OR c.phone ILIKE $1 OR c.email ILIKE $1 OR `+innSQL("company", "c")+`) AND `+sc+`
+	return scanCompanies(s.db.Query(ctx, companySQL+` WHERE (c.title ILIKE $1 OR `+commLike("company", "c", "$1")+` OR `+innSQL("company", "c")+`) AND `+sc+`
 		ORDER BY c.created_at DESC LIMIT 200`, like(q), viewer))
 }
 
@@ -341,7 +345,9 @@ func (s *Store) Company(ctx context.Context, id string) (Company, error) {
 	if len(list) == 0 {
 		return Company{}, ErrNotFound
 	}
-	return list[0], nil
+	c := list[0]
+	c.Comms, err = s.Comms(ctx, "company", c.ID)
+	return c, err
 }
 
 // SaveCompany creates (ID "") or changes a company; it gives the id.
@@ -368,12 +374,24 @@ func (s *Store) SaveCompany(ctx context.Context, userID string, c Company) (stri
 	if err != nil {
 		return "", err
 	}
+	var oldComms []Comm
+	if c.ID != "" {
+		if oldComms, err = s.Comms(ctx, "company", c.ID); err != nil {
+			return "", err
+		}
+	}
+	if c.Phone, c.Email, c.Comms, err = normComms(oldComms, c.Phone, c.Email, c.Comms); err != nil {
+		return "", err
+	}
 	if c.ID == "" {
 		err := s.db.QueryRow(ctx, `INSERT INTO crm_companies (title, phone, email, website, address, comment, responsible_id, created_by,
 				company_type_id, industry_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, c.Title, c.Phone, c.Email, c.Website, c.Address, c.Comment,
 			c.Responsible.ID, userID, typ, industry).Scan(&c.ID)
 		if err != nil {
+			return "", err
+		}
+		if err := s.setComms(ctx, "company", c.ID, c.Comms); err != nil {
 			return "", err
 		}
 		return c.ID, s.event(ctx, s.db, "company", c.ID, userID, "created", "")
@@ -387,6 +405,9 @@ func (s *Store) SaveCompany(ctx context.Context, userID string, c Company) (stri
 		c.Website, c.Address, c.Comment, c.Responsible.ID, typ, industry)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
+	}
+	if err == nil {
+		err = s.setComms(ctx, "company", c.ID, c.Comms)
 	}
 	if err == nil {
 		var nc Company
@@ -406,7 +427,7 @@ func (s *Store) DeleteCompany(ctx context.Context, userID, id string) error {
 		return err
 	}
 	return s.trash(ctx, userID, "company", id, c.Title, "", c.Responsible.ID, `WITH q AS (DELETE FROM crm_requisites
-		WHERE entity = 'company' AND entity_id::text = $1) DELETE FROM crm_companies WHERE id::text = $1`)
+		WHERE entity = 'company' AND entity_id::text = $1), m AS (DELETE FROM crm_comms WHERE entity = 'company' AND entity_id::text = $1) DELETE FROM crm_companies WHERE id::text = $1`)
 }
 
 // ---------- contacts ----------
@@ -435,7 +456,7 @@ func (s *Store) Contacts(ctx context.Context, viewer, q, companyID string) ([]Co
 	if err != nil {
 		return nil, err
 	}
-	return scanContacts(s.db.Query(ctx, contactSQL+` WHERE (x.name ILIKE $1 OR x.phone ILIKE $1 OR x.email ILIKE $1 OR `+innSQL("contact", "x")+`)
+	return scanContacts(s.db.Query(ctx, contactSQL+` WHERE (x.name ILIKE $1 OR `+commLike("contact", "x", "$1")+` OR `+innSQL("contact", "x")+`)
 		AND ($2 = '' OR x.company_id::text = $2) AND `+sc+` ORDER BY x.created_at DESC LIMIT 200`, like(q), companyID, viewer))
 }
 
@@ -447,7 +468,9 @@ func (s *Store) Contact(ctx context.Context, id string) (Contact, error) {
 	if len(list) == 0 {
 		return Contact{}, ErrNotFound
 	}
-	return list[0], nil
+	x := list[0]
+	x.Comms, err = s.Comms(ctx, "contact", x.ID)
+	return x, err
 }
 
 func optional(id string) *string {
@@ -501,12 +524,24 @@ func (s *Store) SaveContact(ctx context.Context, userID string, x Contact) (stri
 	if err != nil {
 		return "", err
 	}
+	var oldComms []Comm
+	if x.ID != "" {
+		if oldComms, err = s.Comms(ctx, "contact", x.ID); err != nil {
+			return "", err
+		}
+	}
+	if x.Phone, x.Email, x.Comms, err = normComms(oldComms, x.Phone, x.Email, x.Comms); err != nil {
+		return "", err
+	}
 	if x.ID == "" {
 		err := s.db.QueryRow(ctx, `INSERT INTO crm_contacts (name, position, phone, email, company_id, comment, responsible_id, created_by,
 				contact_type_id, source_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, x.Name, x.Position, x.Phone, x.Email, optional(x.Company.ID), x.Comment,
 			x.Responsible.ID, userID, typ, origin).Scan(&x.ID)
 		if err != nil {
+			return "", err
+		}
+		if err := s.setComms(ctx, "contact", x.ID, x.Comms); err != nil {
 			return "", err
 		}
 		return x.ID, s.event(ctx, s.db, "contact", x.ID, userID, "created", "")
@@ -520,6 +555,9 @@ func (s *Store) SaveContact(ctx context.Context, userID string, x Contact) (stri
 		x.Email, optional(x.Company.ID), x.Comment, x.Responsible.ID, typ, origin)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
+	}
+	if err == nil {
+		err = s.setComms(ctx, "contact", x.ID, x.Comms)
 	}
 	if err == nil {
 		var nx Contact
@@ -539,7 +577,7 @@ func (s *Store) DeleteContact(ctx context.Context, userID, id string) error {
 		return err
 	}
 	if err = s.trash(ctx, userID, "contact", id, x.Name, "", x.Responsible.ID, `WITH q AS (DELETE FROM crm_requisites
-		WHERE entity = 'contact' AND entity_id::text = $1) DELETE FROM crm_contacts WHERE id::text = $1`); err != nil {
+		WHERE entity = 'contact' AND entity_id::text = $1), m AS (DELETE FROM crm_comms WHERE entity = 'contact' AND entity_id::text = $1) DELETE FROM crm_contacts WHERE id::text = $1`); err != nil {
 		return err
 	}
 	return s.promoteContacts(ctx)
@@ -850,7 +888,7 @@ func (s *Store) DeleteDeal(ctx context.Context, userID, id string) error {
 
 var leadSQL = `SELECT l.id, l.title, l.name, l.company_title, l.phone, l.email, l.source, l.currency, l.comment, l.amount::float8,
 		` + stageCols + `, l.responsible_id, r.name, coalesce(l.deal_id::text, ''), coalesce(l.contact_id::text, ''),
-		coalesce(l.company_id::text, ''), l.created_by::text, l.created_at, ` + dictCols("js") + `
+		coalesce(l.company_id::text, ''), l.is_repeat, l.created_by::text, l.created_at, ` + dictCols("js") + `
 	FROM crm_leads l JOIN crm_stages st ON st.id = l.stage_id JOIN users r ON r.id = l.responsible_id` + dictJoin("js", "l.source_id")
 
 func scanLeads(rows pgx.Rows, err error) ([]Lead, error) {
@@ -861,7 +899,7 @@ func scanLeads(rows pgx.Rows, err error) ([]Lead, error) {
 		var l Lead
 		err := r.Scan(&l.ID, &l.Title, &l.Name, &l.CompanyTitle, &l.Phone, &l.Email, &l.Source, &l.Currency, &l.Comment, &l.Amount,
 			&l.Stage.ID, &l.Stage.Code, &l.Stage.Name, &l.Stage.Color, &l.Stage.Semantic, &l.Responsible.ID, &l.Responsible.Name,
-			&l.DealID, &l.ContactID, &l.CompanyID, &l.CreatedBy, &l.CreatedAt, &l.Origin.ID, &l.Origin.Code, &l.Origin.Name)
+			&l.DealID, &l.ContactID, &l.CompanyID, &l.Repeat, &l.CreatedBy, &l.CreatedAt, &l.Origin.ID, &l.Origin.Code, &l.Origin.Name)
 		return l, err
 	})
 }
@@ -880,7 +918,9 @@ func (s *Store) Lead(ctx context.Context, id string) (Lead, error) {
 		return Lead{}, ErrNotFound
 	}
 	l := list[0]
-	l.Observers, err = s.Observers(ctx, "lead", l.ID)
+	if l.Observers, err = s.Observers(ctx, "lead", l.ID); err == nil {
+		l.Comms, err = s.Comms(ctx, "lead", l.ID)
+	}
 	return l, err
 }
 
@@ -909,6 +949,15 @@ func (s *Store) SaveLead(ctx context.Context, userID string, l Lead) (string, er
 	if err != nil {
 		return "", err
 	}
+	var oldComms []Comm
+	if l.ID != "" {
+		if oldComms, err = s.Comms(ctx, "lead", l.ID); err != nil {
+			return "", err
+		}
+	}
+	if l.Phone, l.Email, l.Comms, err = normComms(oldComms, l.Phone, l.Email, l.Comms); err != nil {
+		return "", err
+	}
 	if l.ID == "" {
 		if l.Stage.ID != "" { // the kanban's «+» of a column; a lead becomes «Качественный» only by conversion
 			st, err := s.stage(ctx, "lead", "", l.Stage.ID)
@@ -931,7 +980,13 @@ func (s *Store) SaveLead(ctx context.Context, userID string, l Lead) (string, er
 		if err := s.setObservers(ctx, userID, "lead", l.ID, l.Title, l.Observers); err != nil {
 			return "", err
 		}
+		if err := s.setComms(ctx, "lead", l.ID, l.Comms); err != nil {
+			return "", err
+		}
 		if err := s.event(ctx, s.db, "lead", l.ID, userID, "created", ""); err != nil {
+			return "", err
+		}
+		if err := s.markRepeat(ctx, userID, l.ID, l.Comms); err != nil {
 			return "", err
 		}
 		if nl, err := s.Lead(ctx, l.ID); err == nil {
@@ -953,12 +1008,67 @@ func (s *Store) SaveLead(ctx context.Context, userID string, l Lead) (string, er
 		err = s.setObservers(ctx, userID, "lead", l.ID, l.Title, l.Observers)
 	}
 	if err == nil {
+		err = s.setComms(ctx, "lead", l.ID, l.Comms)
+	}
+	if err == nil {
 		var nl Lead
 		if nl, err = s.Lead(ctx, l.ID); err == nil {
 			err = s.LogChanges(ctx, userID, "lead", l.ID, leadChanges(old, nl))
 		}
 	}
 	return l.ID, err
+}
+
+// Converted tells whether the lead was converted: into a deal, it reached the success stage (as converting puts it),
+// or (not a repeated one) into a contact or a company.
+func (l Lead) Converted() bool {
+	return l.DealID != "" || l.Stage.Semantic == "success" || (!l.Repeat && (l.ContactID != "" || l.CompanyID != ""))
+}
+
+// markRepeat makes a new lead «Повторный лид» when a contact or a company has its phone or e-mail: the lead is linked
+// to the client (the contact's company too), and both timelines tell of it.
+func (s *Store) markRepeat(ctx context.Context, userID, id string, comms []Comm) error {
+	var contact, company string
+	for _, c := range comms { // the lead's phones and e-mails in their order: the first one known finds the client
+		key := commKey(c.Kind, c.Value)
+		if key == "" {
+			continue
+		}
+		err := s.db.QueryRow(ctx, `SELECT coalesce((SELECT x.id::text FROM crm_contacts x WHERE `+commHas("contact", "x", c.Kind, "$1")+`
+			ORDER BY x.created_at, x.id LIMIT 1), '')`, key).Scan(&contact)
+		if err == nil && contact != "" {
+			err = s.db.QueryRow(ctx, `SELECT coalesce(company_id::text, '') FROM crm_contacts WHERE id::text = $1`, contact).Scan(&company)
+		}
+		if err == nil && company == "" {
+			err = s.db.QueryRow(ctx, `SELECT coalesce((SELECT co.id::text FROM crm_companies co WHERE `+commHas("company", "co", c.Kind, "$1")+`
+				ORDER BY co.created_at, co.id LIMIT 1), '')`, key).Scan(&company)
+		}
+		if err != nil {
+			return err
+		}
+		if contact != "" || company != "" {
+			break
+		}
+	}
+	if contact == "" && company == "" {
+		return nil
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE crm_leads SET is_repeat = true, contact_id = nullif($2, '')::uuid, company_id = nullif($3, '')::uuid
+		WHERE id::text = $1`, id, contact, company); err != nil {
+		return err
+	}
+	for _, c := range []struct{ entity, id string }{{"contact", contact}, {"company", company}} {
+		if c.id == "" {
+			continue
+		}
+		if err := s.event(ctx, s.db, "lead", id, userID, "repeat", c.entity+":"+c.id); err != nil {
+			return err
+		}
+		if err := s.event(ctx, s.db, c.entity, c.id, userID, "repeat", "lead:"+id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MoveLead puts the lead into another stage. The success stage is reached by converting it (ConvertLead).
@@ -998,7 +1108,8 @@ func (s *Store) DeleteLead(ctx context.Context, userID, id string) error {
 	if err := s.Check(ctx, userID, "lead", "delete", l.Responsible.ID); err != nil && may(ctx, userID, l.Responsible.ID, l.CreatedBy) != nil {
 		return err
 	}
-	return s.trash(ctx, userID, "lead", id, l.Title, "", l.Responsible.ID, `DELETE FROM crm_leads WHERE id::text = $1`)
+	return s.trash(ctx, userID, "lead", id, l.Title, "", l.Responsible.ID, `WITH m AS (DELETE FROM crm_comms WHERE entity = 'lead' AND entity_id::text = $1)
+		DELETE FROM crm_leads WHERE id::text = $1`)
 }
 
 // Amount formats a sum: 1 500 000,50 (a loss: −1 500,50).

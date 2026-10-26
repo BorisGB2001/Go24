@@ -31,6 +31,7 @@ import (
 	"go24/internal/msgfmt"
 	"go24/internal/office"
 	"go24/internal/portal"
+	"go24/internal/sign"
 	"go24/internal/sites"
 	"go24/internal/tasks"
 )
@@ -130,6 +131,8 @@ func avatar(name string, large bool) template.HTML {
 var baseFuncs = template.FuncMap{
 	// menuLabels are the texts menu.js needs (menu.<key>) for «Настроить меню»
 	"menuLabels": func() []string { return menuLabels },
+	// remindDays are the choices of «Напоминать подписанту» of «Подпись»
+	"remindDays": func() []int { return sign.RemindDays },
 	// asset is a /static/ URL with the build's version, e.g. {{asset "css/app.css"}}.
 	"asset": func(name string) string { return "/static/" + name + "?v=" + assetVersion },
 	// icon renders <i class="i i-NAME">; the picture itself is set in CSS (icons.css or a theme).
@@ -189,6 +192,7 @@ var baseFuncs = template.FuncMap{
 	"now":   time.Now,
 	// hms shows seconds as hours and minutes of a working day, "8:05"
 	"hms":        func(secs int) string { return fmt.Sprintf("%d:%02d", secs/3600, secs/60%60) },
+	"talk":       talkTime,  // seconds of a conversation, "2:05"
 	"md":         kb.Render, // a knowledge base page
 	"mark":       kb.Mark,   // a found snippet with the query marked
 	"money":      crm.Amount,
@@ -236,15 +240,51 @@ var baseFuncs = template.FuncMap{
 	},
 	// deptCtx passes a structure node and the page data to the recursive "dept" template.
 	"deptCtx": func(n *company.Department, data any) map[string]any { return map[string]any{"Node": n, "Data": data} },
+	"teamCtx": func(t *company.Team, data any) map[string]any { return map[string]any{"Team": t, "Data": data} },
+	// teamHead: the id of a team's head ("" — none), for its picker
+	"teamHead": func(t *company.Team) string {
+		if t.Head == nil {
+			return ""
+		}
+		return t.Head.ID
+	},
 	// tl bundles a task list with the user's columns; gear adds the column picker to the header.
-	"tl": func(list []tasks.Task, cols map[string]bool, gear bool) taskList {
+	// tl is a task list for the "tasklist" template; a list with the gear of the page p is sorted by the user's sort
+	// (headers sort it, rows have their menu).
+	"tl": func(list []tasks.Task, cols map[string]bool, gear bool, p ...page) taskList {
 		if cols == nil {
 			cols = map[string]bool{}
 			for _, c := range tasks.DefaultColumns {
 				cols[c] = true
 			}
 		}
-		return taskList{Tasks: list, Cols: cols, All: tasks.ListColumns, Gear: gear}
+		l := taskList{Tasks: list, Cols: cols, All: tasks.ListColumns, Gear: gear}
+		if gear && len(p) > 0 {
+			l.Sort, l.Back = p[0].Sort, p[0].Path
+			if u, err := url.Parse(l.Back); err == nil { // the message of the last action is not shown again
+				q := u.Query()
+				q.Del("msg")
+				u.RawQuery = q.Encode()
+				l.Back = u.RequestURI()
+			}
+			if l.Sort != "" {
+				l.Tasks = slices.Clone(list)
+				tasks.SortTasks(l.Tasks, l.Sort)
+			}
+		}
+		return l
+	},
+	// tsorth is a header of a task list: the column, its name, where a click goes, the arrow of the current sort.
+	"tsorth": func(l taskList, col, label string) map[string]any {
+		h := map[string]any{"Label": label, "Back": l.Back, "Sortable": l.Gear && l.Back != "" && slices.Contains(tasks.SortColumns, col),
+			"Next": tasks.NextSort(l.Sort, col), "Dir": ""}
+		switch l.Sort {
+		case col:
+			h["Dir"] = "asc"
+		case "-" + col:
+			h["Dir"] = "desc"
+		}
+		return h
 	},
 	// hm renders optional minutes as "1:30" for an input field.
 	"hm": func(m *int) string {
@@ -268,6 +308,11 @@ var baseFuncs = template.FuncMap{
 	// implain: a chat message without its formatting marks, for a one-line preview
 	"implain": msgfmt.Plain,
 	"list":    func(v ...string) []string { return v },
+	// stars: a rating 1–5 as «★★★★☆»
+	"stars": func(n int) string {
+		n = max(0, min(n, 5))
+		return strings.Repeat("★", n) + strings.Repeat("☆", 5-n)
+	},
 	"secs":    func(minutes int) int { return minutes * 60 },
 	"add":     func(a, b int) int { return a + b },
 	"share":   share,
@@ -420,6 +465,15 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 		},
 		// crmConv links the card a lead conversion line of the timeline names ("deal:id", "lead:id"; once a bare id —
 		// the deal on a lead's card, the lead on a deal's)
+		// commRows are a card's phones or e-mails (kind); blank — with an empty one when it has none, for the form
+		"commRows": func(list []crm.Comm, kind string, blank bool) []crm.Comm {
+			rows := crm.CommsOf(list, kind)
+			if len(rows) == 0 && blank {
+				rows = []crm.Comm{{Kind: kind}}
+			}
+			return rows
+		},
+		"commTypes": func(kind string) []string { return crm.CommTypes[kind] },
 		"crmConv": func(kind, v string) template.HTML {
 			entity, id, ok := strings.Cut(v, ":")
 			if !ok {
@@ -446,7 +500,7 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			case "activity":
 				kind, subject, _ := strings.Cut(rest, ":")
 				return tr("robots.made_activity") + " " + tr("crm.act."+kind) + ": " + subject
-			case "mail", "responsible":
+			case "mail", "responsible", "webhook":
 				return tr("robots.did."+what) + " " + rest
 			case "trigger":
 				return tr("robots.did.trigger") + " " + tr("triggers.kind."+rest)
@@ -461,6 +515,8 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 		"docKind":        docKind,
 		"officeEditable": office.Editable,
 		"isBoard":        drive.IsBoard, // «Доски»
+		"boardTemplates": func() []string { return boardTemplates },
+		"localEdit":      func(name string) bool { return davEditApps(name) != nil }, // «Редактировать на компьютере»
 		"ext":            func(name string) string { return strings.ToUpper(strings.TrimPrefix(path.Ext(name), ".")) },
 		"mmss":           func(ms int) string { return fmt.Sprintf("%d:%02d", ms/60000, ms/1000%60) },
 		// callDur is how long a call went on: "45 с", "12 мин"
@@ -598,6 +654,8 @@ type taskList struct {
 	Cols  map[string]bool
 	All   []string
 	Gear  bool
+	Sort  string // the user's sort (tasks.SortColumns, "" — the usual order)
+	Back  string // the page the list is on: the sort and the row menus return to it
 }
 
 type keptField struct{ Name, Value string }
@@ -721,10 +779,12 @@ type page struct {
 	Counters tasks.Counters
 	Timer    *tasks.Timer    // the user's running timer, shown in the top bar
 	Cols     map[string]bool // the user's task list columns (the gear in list headers)
+	Sort     string          // the user's sort of task lists (a click on a column header)
 	// left menu: the user's projects under «Проекты», and the project of the current page
 	NavProjects    []tasks.Project
 	NavProject     string
 	FeedUnread     int              // important feed posts not confirmed yet
+	FeedNews       int              // new posts and comments in the feed since the person last opened it
 	ActingFor      []company.Person // people the user acts for today (menu «Задачи за …»)
 	Unread         int              // unread notifications (the bell)
 	MailUnread     int              // unread letters of the inboxes («Почта» in the menu)
@@ -733,6 +793,8 @@ type page struct {
 	WorkdayOn      bool             // the top bar shows the working day (signed-in pages)
 	ReportDue      *company.ReportPeriod // a work report whose day has come is not sent yet
 	Forgotten      *company.Workday // a past day left unfinished («Вы не завершили рабочий день»)
+	DayPlan        []tasks.DayPlanItem // «План на день» in the working day window
+	DayPlanChoices []tasks.Task        // the user's open tasks to add to it
 	HR             company.HR       // the user's role «Сотрудник кадров»
 	CanInvite      bool             // «Пригласить сотрудника»: an administrator or an HR officer let invite
 	VacationRemind bool             // no vacation in this year's plan («Укажите план отпуска»)
@@ -743,9 +805,12 @@ type page struct {
 	MenuHidden     []menuEntry      // its hidden items («Скрытые»)
 	MenuOwn        bool             // the employee has set up a menu of their own
 	Telephony      bool             // go24 has its Asterisk («Телефония» in the settings)
+	TelAdmin       bool             // may change telephony's settings (an administrator or by a role)
 	Phone          string           // the user's inner number: «Позвонить» goes through the softphone ("" — none)
 	PhoneURL       string           // the softphone window (/phone at go24's https address)
 	Bare           bool             // a window of its own (the softphone): no menu, no top bar, no common scripts
+	// «Онлайн-запись» in the menu: the user's bookings not confirmed or with a late client
+	BookingAttention int
 	// messenger section of the menu (when Matrix is on)
 	Messenger      string // Element URL
 	MessengerSpace string
@@ -787,12 +852,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 			if c, err := s.Tasks.Columns(r.Context(), sess.UserID); err == nil {
 				p.Cols = c
 			}
+			p.Sort, _ = s.Tasks.Sort(r.Context(), sess.UserID)
 			if s.Feed != nil && !p.Guest {
 				p.FeedUnread, _ = s.Feed.Unread(r.Context(), sess.UserID)
+				p.FeedNews, _ = s.Feed.News(r.Context(), sess.UserID)
 			}
 			p.Presence = s.myPresence(r.Context(), sess.UserID)
 			if s.Telephony != nil && !p.Guest {
 				p.Phone, _ = s.Telephony.NumberOf(r.Context(), sess.UserID)
+				p.TelAdmin = s.telAdmin(r.Context(), sess)
 				p.PhoneURL = s.phoneURL()
 			}
 			if s.Notify != nil {
@@ -800,6 +868,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 			}
 			if s.Mail != nil && !p.Guest {
 				p.MailUnread, _ = s.Mail.Unread(r.Context(), sess.UserID)
+			}
+			if s.Booking != nil && !p.Guest {
+				p.BookingAttention, _ = s.Booking.Attention(r.Context(), sess.UserID, time.Now())
 			}
 			if s.Calendar != nil && !p.Guest {
 				p.CalInvites, _ = s.Calendar.Invitations(r.Context(), sess.UserID)
@@ -812,6 +883,8 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 					p.ReportDue, _ = s.Company.ReportDue(r.Context(), sess.UserID, sched, time.Now())
 				}
 				p.WorkdayOn = true
+				p.DayPlan, _ = s.Tasks.DayPlan(r.Context(), sess.UserID, time.Now())
+				p.DayPlanChoices, _ = s.Tasks.DayPlanChoices(r.Context(), sess.UserID)
 				p.HR, _ = s.Company.HROf(r.Context(), sess.UserID)
 				p.CanInvite = sess.Admin || p.HR.Can("invite")
 				p.VacationRemind, _ = s.Company.VacationRemind(r.Context(), sess.UserID, time.Now())

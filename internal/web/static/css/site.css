@@ -2,6 +2,10 @@
 body.lp { margin: 0; }
 .lp { --lp-accent: #1f6feb; --lp-text: #1d2330; --lp-muted: #5b6474; --lp-soft: #f4f6fa;
   font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--lp-text); background: #fff; }
+.lp.lp-font-serif { font-family: Georgia, "Times New Roman", serif; }
+.lp.lp-font-sans { font-family: Arial, Helvetica, sans-serif; }
+.lp.lp-font-rounded { font-family: "Trebuchet MS", Verdana, sans-serif; }
+.lp.lp-font-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; }
 .lp .lp-wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 .lp section, .lp header, .lp footer { padding: 48px 0; }
 .lp h1 { font-size: 44px; line-height: 1.15; margin: 0 0 16px; }
@@ -47,3 +51,5 @@ body.lp { margin: 0; }
 .lp .lp-trap { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
 .lp .lp-req, .lp .lp-err { color: #c62828; }
 .lp .lp-thanks { margin-top: 20px; padding: 20px; border-radius: 10px; background: #e6f4ea; color: #1e5631; max-width: 560px; }
+/* «Онлайн-запись»: the page of a booking link in a frame; bkembed.js inside sets its height */
+.lp .lp-bkframe { display: block; width: 100%; max-width: 760px; min-height: 480px; margin: 16px auto 0; border: 0; background: transparent; }

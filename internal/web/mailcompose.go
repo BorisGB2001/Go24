@@ -81,6 +81,7 @@ type mailComposeData struct {
 	Importance []int
 	Voting     []string // the voting buttons offered (mail.VotingPresets)
 	FolderID   string
+	SMIME      bool // the user has a certificate: «Подписать» and «Зашифровать» are offered
 	Inline     bool // under the letter in the reading pane
 	ShowCC     bool
 	ShowBCC    bool
@@ -116,6 +117,11 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 	if c.Froms, err = s.Mail.FromAddresses(ctx, sess.UserID); err != nil {
 		return nil, err
 	}
+	certs, err := s.Mail.Certs(ctx, sess.UserID)
+	if err != nil {
+		return nil, err
+	}
+	c.SMIME = len(certs) > 0
 	if id := q.Get("draft"); id != "" {
 		if c.Draft, err = s.Mail.Draft(ctx, sess.UserID, id); err != nil {
 			return nil, err
@@ -126,6 +132,11 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 		c.HTML = c.Draft.HTML
 	} else {
 		c.Draft = mail.Draft{MailboxID: boxes[0].ID, To: q.Get("to"), Subject: q.Get("subject")}
+		sec, err := s.Mail.Security(ctx, sess.UserID)
+		if err != nil {
+			return nil, err
+		}
+		c.Draft.Sign, c.Draft.Encrypt = sec.Sign, sec.Encrypt
 		for _, b := range boxes {
 			if b.ID == q.Get("box") {
 				c.Draft.MailboxID = b.ID
@@ -142,6 +153,7 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 				return nil, err
 			}
 			c.Draft.MailboxID, c.Draft.ReplyTo = m.MailboxID, m.ID
+			c.Draft.Encrypt = c.Draft.Encrypt || m.SMIMEEnc == mail.EncYes // as Outlook: an encrypted letter is answered encrypted
 			c.Draft.Mode = map[string]string{"all": "all", "fwd": "fwd", "fwdatt": "fwdatt", "resend": "resend"}[q.Get("mode")]
 			if c.Draft.Mode == "resend" && m.FolderRole != "sent" {
 				c.Draft.Mode = ""
@@ -361,7 +373,7 @@ func draftOf(r *http.Request) mail.Draft {
 	return mail.Draft{ID: r.FormValue("draft"), MailboxID: r.FormValue("box"), From: r.FormValue("from"), To: r.FormValue("to"), CC: r.FormValue("cc"), BCC: r.FormValue("bcc"),
 		Subject: r.FormValue("subject"), HTML: r.FormValue("html"), Importance: imp, Receipt: r.FormValue("receipt") != "",
 		Voting: r.FormValue("voting"), Vote: r.FormValue("vote"),
-		Delivery: r.FormValue("delivery") != "", ReplyTo: r.FormValue("reply_to"), Mode: r.FormValue("mode")}
+		Delivery: r.FormValue("delivery") != "", Sign: r.FormValue("sign") != "", Encrypt: r.FormValue("encrypt") != "", ReplyTo: r.FormValue("reply_to"), Mode: r.FormValue("mode")}
 }
 
 // mailDraftSave keeps the letter being written (the editor calls it a few seconds after a change).

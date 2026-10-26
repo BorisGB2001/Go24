@@ -187,7 +187,7 @@ func TestAppsHTTP(t *testing.T) {
 
 	// the page in a frame: a form with Анна's tokens to the handler
 	page = send(anna, "GET", "/apps/"+a.ID, "", 200)
-	if last.Header.Get("Cache-Control") != "no-store" || !strings.Contains(page, `target="go24app"`) || !strings.Contains(page, `action="`+app.URL+`/page?APP_SID=`) ||
+	if last.Header.Get("Cache-Control") != "no-store" || !strings.Contains(page, `data-app="`+a.ID+`"`) || !strings.Contains(page, "data-app-post") || !strings.Contains(page, `action="`+app.URL+`/page?APP_SID=`) ||
 		!strings.Contains(page, "DOMAIN=go24.example") || !strings.Contains(page, `name="PLACEMENT" value="DEFAULT"`) {
 		t.Fatalf("app page: %.2000s", page)
 	}

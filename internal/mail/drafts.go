@@ -30,6 +30,7 @@ type Draft struct {
 	Importance                 int
 	Voting, Vote               string // the voting buttons it asks for («A;B»); the choice an answer votes for (voting.go)
 	Receipt, Delivery          bool
+	Sign, Encrypt              bool   // S/MIME (smime.go)
 	ReplyTo, Mode              string // the letter answered (reply, all), forwarded (fwd; fwdatt — as an attachment) or sent again (resend)
 	SendAt                     *time.Time
 	Scheduled                  bool // SendAt is the user's time («Отправить позже»), not the undo delay
@@ -114,7 +115,8 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 		if tag.RowsAffected() == 0 {
 			return "", ErrNotFound
 		}
-		_, err = s.db.Exec(ctx, `UPDATE mail_drafts SET receipt = $2, delivery = $3, updated_at = now() WHERE id::text = $1`, d.ID, d.Receipt, d.Delivery)
+		_, err = s.db.Exec(ctx, `UPDATE mail_drafts SET receipt = $2, delivery = $3, sign = $4, encrypt = $5, updated_at = now() WHERE id::text = $1`,
+			d.ID, d.Receipt, d.Delivery, d.Sign, d.Encrypt)
 		return d.ID, err
 	}
 	var refs []string
@@ -139,8 +141,8 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 	if refs == nil {
 		refs = []string{}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO mail_drafts (id, user_id, reply_to, mode, refs, receipt, delivery) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, userID, d.ReplyTo, d.Mode, refs, d.Receipt, d.Delivery); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO mail_drafts (id, user_id, reply_to, mode, refs, receipt, delivery, sign, encrypt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, userID, d.ReplyTo, d.Mode, refs, d.Receipt, d.Delivery, d.Sign, d.Encrypt); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -182,7 +184,7 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 }
 
 const draftSQL = `SELECT x.id::text, x.mailbox_id::text, x.from_addr, x.to_addr, x.cc_addr, x.bcc_addr, x.subject, x.body_html, x.importance::int,
-		x.voting, x.vote, d.receipt, d.delivery, d.reply_to, d.mode, d.send_at, d.scheduled, d.error, d.updated_at
+		x.voting, x.vote, d.receipt, d.delivery, d.sign, d.encrypt, d.reply_to, d.mode, d.send_at, d.scheduled, d.error, d.updated_at
 	FROM mail_drafts d JOIN mail_messages x ON x.id = d.id`
 
 // Draft is a draft of the user.
@@ -336,7 +338,7 @@ func (s *Store) draftLetter(ctx context.Context, userID, id string) (d Draft, l 
 		return d, l, err
 	}
 	l = Letter{From: d.From, To: d.To, CC: d.CC, BCC: d.BCC, Subject: d.Subject, HTML: d.HTML, Importance: d.Importance, Receipt: d.Receipt,
-		Delivery: d.Delivery, Refs: refs, Voting: d.Voting, Vote: d.Vote}
+		Delivery: d.Delivery, Sign: d.Sign, Encrypt: d.Encrypt, Refs: refs, Voting: d.Voting, Vote: d.Vote}
 	if d.Voting != "" { // the choices in words too, for those who see no buttons
 		l.HTML += s.votingText(d.Voting)
 	}

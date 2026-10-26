@@ -32,9 +32,10 @@ const (
 	nsCal  = "urn:ietf:params:xml:ns:caldav"
 	nsCS   = "http://calendarserver.org/ns/"
 	nsICal = "http://apple.com/ns/ical/"
+	nsCard = "urn:ietf:params:xml:ns:carddav"
 )
 
-var davPrefixes = map[string]string{nsDAV: "d", nsCal: "c", nsCS: "cs", nsICal: "ic"}
+var davPrefixes = map[string]string{nsDAV: "d", nsCal: "c", nsCS: "cs", nsICal: "ic", nsCard: "card"}
 
 // davBody is a PROPFIND or REPORT: the properties asked for, the meetings of a multiget, the filter of a query.
 type davBody struct {
@@ -170,12 +171,14 @@ func (q *caldavReq) fail(err error) {
 	}
 }
 
-// body reads the XML of a PROPFIND or REPORT (none — all properties).
-func (q *caldavReq) body() (davBody, bool) {
+func (q *caldavReq) body() (davBody, bool) { return davReadBody(q.w, q.r) }
+
+// davReadBody reads the XML of a PROPFIND or REPORT (none — all properties).
+func davReadBody(w http.ResponseWriter, r *http.Request) (davBody, bool) {
 	var b davBody
-	data, err := io.ReadAll(io.LimitReader(q.r.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		http.Error(q.w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return b, false
 	}
 	if strings.TrimSpace(string(data)) == "" {
@@ -183,7 +186,7 @@ func (q *caldavReq) body() (davBody, bool) {
 		return b, true
 	}
 	if err := xml.Unmarshal(data, &b); err != nil {
-		http.Error(q.w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return b, false
 	}
 	return b, true
@@ -231,10 +234,13 @@ func props(href string, b davBody, all []string, have map[xml.Name]string) davRe
 	return resp
 }
 
-func (q *caldavReq) multistatus(list []davResp) {
+func (q *caldavReq) multistatus(list []davResp) { davMultistatus(q.w, list) }
+
+// davMultistatus writes the answer of a PROPFIND or REPORT, of CalDAV and CardDAV alike.
+func davMultistatus(w http.ResponseWriter, list []davResp) {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
-	b.WriteString(`<d:multistatus xmlns:d="DAV:" xmlns:c="` + nsCal + `" xmlns:cs="` + nsCS + `" xmlns:ic="` + nsICal + `">`)
+	b.WriteString(`<d:multistatus xmlns:d="DAV:" xmlns:c="` + nsCal + `" xmlns:cs="` + nsCS + `" xmlns:ic="` + nsICal + `" xmlns:card="` + nsCard + `">`)
 	for _, r := range list {
 		b.WriteString("<d:response>" + hrefEl(r.href))
 		if r.status != 0 {
@@ -258,9 +264,9 @@ func (q *caldavReq) multistatus(list []davResp) {
 		b.WriteString("</d:response>")
 	}
 	b.WriteString("</d:multistatus>")
-	q.w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	q.w.WriteHeader(http.StatusMultiStatus)
-	_, _ = io.WriteString(q.w, b.String())
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.WriteHeader(http.StatusMultiStatus)
+	_, _ = io.WriteString(w, b.String())
 }
 
 // the properties allprop answers, by the kind of resource
@@ -358,7 +364,7 @@ func itemHref(cal, name string) string { return calHref(cal) + url.PathEscape(na
 
 // items are the meetings of the request's collection.
 func (q *caldavReq) items() ([]calendar.DavItem, error) {
-	return q.s.Calendar.DavEvents(q.r.Context(), q.user, *q.calendarID(q.cal))
+	return q.s.Calendar.DavResources(q.r.Context(), q.user, *q.calendarID(q.cal))
 }
 
 func (q *caldavReq) propfind() {
@@ -576,16 +582,7 @@ func (q *caldavReq) put() {
 		http.Error(q.w, q.s.tr(q.r, "err.file_too_big"), http.StatusRequestEntityTooLarge)
 		return
 	}
-	var master *calendar.Imported
-	var overrides []calendar.Override
-	for _, in := range mail.ParseResource(string(text)) {
-		switch {
-		case in.RecurrenceID == nil && master == nil:
-			master = &calendar.Imported{UID: in.UID, Event: eventOfInvite(in)}
-		case in.RecurrenceID != nil:
-			overrides = append(overrides, calendar.Override{At: *in.RecurrenceID, Cancelled: in.Cancelled, Event: eventOfInvite(in)})
-		}
-	}
+	master, overrides := davObject(string(text))
 	if master == nil { // a changed occurrence alone: of a meeting go24 does not have
 		http.Error(q.w, q.s.tr(q.r, "err.ics_empty"), http.StatusForbidden)
 		return
@@ -601,6 +598,21 @@ func (q *caldavReq) put() {
 	} else {
 		q.w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// davObject is the meeting of a calendar object resource and its changed occurrences (nil — none: a task, a journal).
+func davObject(text string) (*calendar.Imported, []calendar.Override) {
+	var master *calendar.Imported
+	var overrides []calendar.Override
+	for _, in := range mail.ParseResource(text) {
+		switch {
+		case in.RecurrenceID == nil && master == nil:
+			master = &calendar.Imported{UID: in.UID, Event: eventOfInvite(in)}
+		case in.RecurrenceID != nil:
+			overrides = append(overrides, calendar.Override{At: *in.RecurrenceID, Cancelled: in.Cancelled, Event: eventOfInvite(in)})
+		}
+	}
+	return master, overrides
 }
 
 func (q *caldavReq) delete() {

@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"go24/internal/auth"
@@ -38,14 +40,16 @@ func crmCall(body string) *phoneEvent {
 }
 
 // portalTr is a text in the portal's language (for what go24 writes by itself, with nobody's request).
-func (s *Server) portalTr(key string, args ...any) string {
-	lang := s.I18n.Match("")
+func (s *Server) portalTr(key string, args ...any) string { return s.I18n.T(s.portalLang(), key, args...) }
+
+// portalLang is the portal's language ("ru-RU").
+func (s *Server) portalLang() string {
 	if s.Portal != nil {
 		if l := s.Portal.Current().Lang; s.I18n.Supported(l) {
-			lang = l
+			return l
 		}
 	}
-	return s.I18n.T(lang, key, args...)
+	return s.I18n.Match("")
 }
 
 // phoneClient is the client's CRM card with the phone: a contact, then a company, then a lead not converted yet.
@@ -65,6 +69,34 @@ func (s *Server) phoneClient(ctx context.Context, number string) (entity, id, na
 		}
 	}
 	return "", "", "", nil
+}
+
+// phoneOwner: Asterisk asks whose client calls a line with «Звонок клиента из CRM — сначала ответственному» (go24-owner;
+// the key is ASTERISK_SECRET) — the inner number of the client's card's responsible ("" — none).
+func (s *Server) phoneOwner(w http.ResponseWriter, r *http.Request) {
+	if s.Telephony == nil || s.Telephony.Key == "" || subtle.ConstantTimeCompare([]byte(r.FormValue("key")), []byte(s.Telephony.Key)) != 1 {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	n, err := s.phoneOwnerNumber(r.Context(), r.FormValue("from"))
+	if err != nil {
+		s.Log.Error("telephony owner", "err", err)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, n)
+}
+
+// phoneOwnerNumber is the inner number of the responsible for the client with the phone ("" — none).
+func (s *Server) phoneOwnerNumber(ctx context.Context, number string) (string, error) {
+	entity, id, _, err := s.phoneClient(ctx, number)
+	if err != nil || entity == "" {
+		return "", err
+	}
+	owner, err := s.CRM.Responsible(ctx, entity, id)
+	if err != nil || owner == "" {
+		return "", err
+	}
+	return s.Telephony.NumberOf(ctx, owner)
 }
 
 // phoneToCRM puts a call with an outside number into the client's card; an unknown number calling makes a lead (the
@@ -135,7 +167,7 @@ func (s *Server) phoneCallCRM(w http.ResponseWriter, r *http.Request, sess auth.
 		s.fail(w, "telephony call", err)
 		return
 	}
-	if !sess.AdminActive() && c.FromUser.UserID != sess.UserID && c.ToUser.UserID != sess.UserID {
+	if !s.phoneSees(ctx, sess, c) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}

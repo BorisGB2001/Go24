@@ -106,8 +106,8 @@ func leadChanges(a, b Lead) []Change {
 	d.add("title", a.Title, b.Title)
 	d.add("name", a.Name, b.Name)
 	d.add("company_title", a.CompanyTitle, b.CompanyTitle)
-	d.add("phone", a.Phone, b.Phone)
-	d.add("email", a.Email, b.Email)
+	d.add("phone", commsText(a.Comms, "phone", a.Phone), commsText(b.Comms, "phone", b.Phone))
+	d.add("email", commsText(a.Comms, "email", a.Email), commsText(b.Comms, "email", b.Email))
 	d.add("origin", dictValue(a.Origin), dictValue(b.Origin))
 	d.add("source_info", a.Source, b.Source)
 	d.add("amount", Amount(a.Amount), Amount(b.Amount))
@@ -122,8 +122,8 @@ func contactChanges(a, b Contact) []Change {
 	var d differ
 	d.add("name", a.Name, b.Name)
 	d.add("position", a.Position, b.Position)
-	d.add("phone", a.Phone, b.Phone)
-	d.add("email", a.Email, b.Email)
+	d.add("phone", commsText(a.Comms, "phone", a.Phone), commsText(b.Comms, "phone", b.Phone))
+	d.add("email", commsText(a.Comms, "email", a.Email), commsText(b.Comms, "email", b.Email))
 	d.add("company", a.Company.Name, b.Company.Name)
 	d.add("contact_type", dictValue(a.ContactType), dictValue(b.ContactType))
 	d.add("origin", dictValue(a.Origin), dictValue(b.Origin))
@@ -135,8 +135,8 @@ func contactChanges(a, b Contact) []Change {
 func companyChanges(a, b Company) []Change {
 	var d differ
 	d.add("title", a.Title, b.Title)
-	d.add("phone", a.Phone, b.Phone)
-	d.add("email", a.Email, b.Email)
+	d.add("phone", commsText(a.Comms, "phone", a.Phone), commsText(b.Comms, "phone", b.Phone))
+	d.add("email", commsText(a.Comms, "email", a.Email), commsText(b.Comms, "email", b.Email))
 	d.add("website", a.Website, b.Website)
 	d.add("address", a.Address, b.Address)
 	d.add("company_type", dictValue(a.CompanyType), dictValue(b.CompanyType))

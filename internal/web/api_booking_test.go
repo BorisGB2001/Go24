@@ -118,6 +118,14 @@ func TestBookingAPI(t *testing.T) {
 		t.Fatalf("room: %+v", room)
 	}
 	decode(call("PUT", "/api/v1/booking/resources/"+room.ID, bossKey, map[string]any{"to": "18:00", "description": "2 этаж"}, 200), &room)
+	if room.ConfirmHours != 0 || room.ConfirmAlert != 0 {
+		t.Fatalf("room's confirmation: %+v", room)
+	}
+	call("PUT", "/api/v1/booking/resources/"+room.ID, bossKey, map[string]any{"confirm_hours": 24, "confirm_alert_hours": 24}, 422)
+	decode(call("PUT", "/api/v1/booking/resources/"+room.ID, bossKey, map[string]any{"confirm_hours": 24, "confirm_alert_hours": 3}, 200), &room)
+	if room.ConfirmHours != 24 || room.ConfirmAlert != 3 || room.To != "18:00" {
+		t.Fatalf("room's confirmation: %+v", room)
+	}
 	if room.To != "18:00" || room.Description != "2 этаж" || room.Name != "Кабинет" || room.Slot != 30 {
 		t.Fatalf("room changed: %+v", room)
 	}

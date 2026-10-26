@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,19 +17,23 @@ import (
 // Section is one of the person's own calendars.
 type Section struct {
 	ID, Name, Color string
+	// a calendar connected by its iCal link (see SyncLink): the link, when it was loaded last and how that went
+	URL       string
+	SyncedAt  *time.Time
+	SyncError string
+	OwnerID   string
+	// a calendar of a CalDAV server connected two ways (see DavResources): the server's collection and the login
+	DAV, Login string
 }
 
 // Sections are the viewer's own calendars by name.
 func (s *Store) Sections(ctx context.Context, viewer string) ([]Section, error) {
-	rows, err := s.db.Query(ctx, `SELECT id::text, name, color FROM user_calendars WHERE owner_id = $1 ORDER BY lower(name), created_at`, viewer)
+	rows, err := s.db.Query(ctx, `SELECT id::text, name, color, source_url, synced_at, sync_error, owner_id::text, dav_url, dav_login FROM user_calendars
+		WHERE owner_id = $1 ORDER BY lower(name), created_at`, viewer)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Section, error) {
-		var x Section
-		err := r.Scan(&x.ID, &x.Name, &x.Color)
-		return x, err
-	})
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Section])
 }
 
 // SaveSection creates (empty ID) or changes one of the viewer's calendars; returns its ID. A new one without a colour

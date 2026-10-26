@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const script = readFileSync(new URL('../../internal/web/static/js/booking.js', import.meta.url), 'utf8');
 const dom = new JSDOM(`<!doctype html><body>
 <div data-booking data-date="2026-10-26" data-hour0="9" data-hour-px="48">
-  <div class="cg-col" data-resource="r1" data-slot="30" data-from="540" data-to="1080">
+  <div class="cg-col" data-resource="r1" data-slot="30" data-from="540" data-to="1080" data-break-from="780" data-break-to="840">
     <a href="#" data-bk="b1" data-time="10:00" data-minutes="60" data-name="Иван" data-phone="+7 900" data-email="" data-note="первый"
       data-status="confirmed" data-by="Анна">10:00</a></div>
   <div class="cg-col" data-resource="r2" data-slot="60" data-from="600" data-to="720"></div>
@@ -54,6 +54,11 @@ click(c2, 10);
 assert.equal(dlg.open, false);
 click(c3, 100); // a day off
 assert.equal(dlg.open, false);
+click(c1, 48 * 4 + 16); // 13:20 — the break of 13:00–14:00
+assert.equal(dlg.open, false);
+click(c1, 48 * 5 + 2); // 14:00 — after it
+assert.equal(f('time').value, '14:00');
+dlg.open = false;
 
 // a booking: its card
 click(c1.querySelector('[data-bk]'), 50);

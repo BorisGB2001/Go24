@@ -1,12 +1,17 @@
 package web
 
 import (
+	"context"
 	_ "embed"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -59,21 +64,20 @@ func (s *Server) widgetScript(w http.ResponseWriter, r *http.Request) {
 	lang := s.lang(r)
 	t := map[string]string{}
 	for _, k := range []string{"open", "chat", "contact", "placeholder", "contact_note", "name", "phone", "email", "question", "send", "thanks",
-		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent"} {
+		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram"} {
 		t[k] = s.I18n.T(lang, "widget."+k)
 	}
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	cfg, _ := json.Marshal(map[string]any{"id": wd.ID, "base": scheme + "://" + r.Host, "color": wd.Color, "name": wd.Name,
-		"greeting": wd.Greeting, "t": t})
+	bot, _ := s.OpenLines.Telegram(r.Context(), wd.ID) // the line's other channel: «Написать в Telegram»
+	cfg, _ := json.Marshal(map[string]any{"id": wd.ID, "base": s.widgetBase(r), "color": wd.Color, "name": wd.Name,
+		"greeting": wd.Greeting, "t": t, "max_file": openlines.MaxFile, "consent": map[bool]string{true: wd.ConsentText}[wd.ConsentOn],
+		"telegram": bot.Name})
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	_, _ = w.Write([]byte(strings.Replace(widgetJS, "/*CONFIG*/{}", string(cfg), 1)))
 }
 
-// widgetAPI: visit | messages (with the dialogue's state) | say | contact | vote | history, for the visitor whose token is in X-Go24-Visitor.
+// widgetAPI: visit | messages (with the dialogue's state; seen=1 — the widget is open) | say | file | typing | contact |
+// vote | history, for the visitor whose token is in X-Go24-Visitor.
 func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 	wd, ok := s.widgetCORS(w, r)
 	if !ok {
@@ -81,6 +85,10 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.PathValue("op") == "file" && r.Method == http.MethodPost {
+		s.widgetFile(w, r, wd)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
@@ -93,19 +101,47 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.Header.Get("X-Go24-Visitor")
 	var err error
+	if op := r.PathValue("op"); wd.ConsentOn && (op == "say" || op == "contact") {
+		err = s.widgetConsented(r, wd, token)
+	}
 	out := map[string]any{}
 	switch op := r.PathValue("op"); {
+	case err != nil:
 	case op == "visit" && r.Method == http.MethodPost:
 		_, out["token"], err = s.OpenLines.Visit(r.Context(), wd.ID, token, in.Page)
 	case op == "messages" && r.Method == http.MethodGet:
 		after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 		var list []openlines.Message
+		if r.URL.Query().Get("seen") == "1" {
+			if err = s.OpenLines.VisitorSeen(r.Context(), wd.ID, token); err != nil {
+				break
+			}
+		}
 		if list, err = s.OpenLines.VisitorMessages(r.Context(), wd.ID, token, after); err == nil {
+			base := s.widgetBase(r)
 			msgs := make([]map[string]any, 0, len(list))
 			for _, m := range list {
-				msgs = append(msgs, map[string]any{"id": m.ID, "operator": m.Operator, "body": m.Body})
+				x := map[string]any{"id": m.ID, "operator": m.Operator, "body": m.Body}
+				if m.FileName != "" {
+					x["file"] = map[string]any{"name": m.FileName, "size": m.FileSize, "image": m.Image(), "url": openlines.FileLink(base, wd.ID, m)}
+				}
+				msgs = append(msgs, x)
 			}
 			out["messages"] = msgs
+			var seen openlines.Seen
+			if seen, err = s.OpenLines.VisitorSeenState(r.Context(), wd.ID, token); err != nil {
+				break
+			}
+			op := map[string]any{"name": seen.Operator, "typing": seen.Typing, "read": seen.Read}
+			if seen.Photo {
+				op["photo"] = base + "/w/" + wd.ID + "/photo/" + seen.OperatorID
+			}
+			out["operator"] = op
+			if wd.ConsentOn {
+				if out["consent"], err = s.OpenLines.Consented(r.Context(), wd.ID, token); err != nil {
+					break
+				}
+			}
 			var st openlines.State
 			if st, err = s.OpenLines.VisitorState(r.Context(), wd.ID, token); err == nil {
 				if st.VoteText == "" {
@@ -115,6 +151,10 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 					"history": st.History, "email": st.Email}
 			}
 		}
+	case op == "typing" && r.Method == http.MethodPost:
+		err = s.OpenLines.VisitorTyping(r.Context(), wd.ID, token)
+	case op == "consent" && r.Method == http.MethodPost:
+		err = s.OpenLines.VisitorConsent(r.Context(), wd.ID, token, clientIP(r))
 	case op == "say" && r.Method == http.MethodPost:
 		err = s.OpenLines.VisitorSay(r.Context(), wd.ID, token, in.Body)
 	case op == "contact" && r.Method == http.MethodPost:
@@ -134,6 +174,130 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// widgetConsented: has the visitor accepted the line's agreement (err.ol_consent — not yet)?
+func (s *Server) widgetConsented(r *http.Request, wd openlines.Widget, token string) error {
+	ok, err := s.OpenLines.Consented(r.Context(), wd.ID, token)
+	if err == nil && !ok {
+		err = i18n.E("err.ol_consent")
+	}
+	return err
+}
+
+// widgetBase is go24's address as the site's page reaches it.
+func (s *Server) widgetBase(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+// olUpload stores the form's «file» (if any) in the built-in storage for a message of a dialogue.
+func (s *Server) olUpload(r *http.Request) (*openlines.File, error) {
+	f, hdr, err := r.FormFile("file")
+	if errors.Is(err, http.ErrMissingFile) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, i18n.E("err.ol_file")
+	}
+	defer f.Close()
+	if hdr.Size > openlines.MaxFile {
+		return nil, i18n.E("err.ol_file")
+	}
+	name := openlines.CleanName(hdr.Filename)
+	ct := hdr.Header.Get("Content-Type")
+	if ct == "" || ct == "application/octet-stream" {
+		ct = mime.TypeByExtension(path.Ext(name))
+	}
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	key := path.Join("openlines", time.Now().Format("2006/01"), randomHex(16), name)
+	if err := s.Storages.Put(r.Context(), "", false, "", key, f, hdr.Size, ct); err != nil {
+		return nil, err
+	}
+	return &openlines.File{Key: key, Name: name, Type: ct, Size: hdr.Size}, nil
+}
+
+// widgetFile is the visitor's file (with the text «body», if any).
+func (s *Server) widgetFile(w http.ResponseWriter, r *http.Request, wd openlines.Widget) {
+	r.Body = http.MaxBytesReader(w, r.Body, openlines.MaxFile+1<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		s.jsonErr(w, r, i18n.E("err.ol_file"))
+		return
+	}
+	var err error
+	if wd.ConsentOn {
+		err = s.widgetConsented(r, wd, r.Header.Get("X-Go24-Visitor"))
+	}
+	var f *openlines.File
+	if err == nil {
+		f, err = s.olUpload(r)
+	}
+	if err == nil && f == nil {
+		err = i18n.E("err.ol_file")
+	}
+	if err == nil {
+		err = s.OpenLines.VisitorSend(r.Context(), wd.ID, r.Header.Get("X-Go24-Visitor"), r.FormValue("body"), f)
+	}
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// olServe gives a dialogue's file: a picture is shown, anything else is downloaded.
+func (s *Server) olServe(w http.ResponseWriter, r *http.Request, f openlines.StoredFile) {
+	obj, err := s.Storages.Open(r.Context(), nil, f.Key)
+	if err != nil {
+		s.fail(w, "open openlines file", err)
+		return
+	}
+	defer obj.Close()
+	disposition := "attachment"
+	if (openlines.Message{FileType: f.Type}).Image() {
+		disposition = "inline"
+	}
+	w.Header().Set("Content-Type", f.Type)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; sandbox")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename*=UTF-8''%s", disposition, url.PathEscape(f.Name)))
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	_, _ = io.Copy(w, obj)
+}
+
+// widgetFileGet: a file of the visitor's dialogue by its link (/w/{id}/file/{msg}/{secret}).
+func (s *Server) widgetFileGet(w http.ResponseWriter, r *http.Request) {
+	msg, _ := strconv.ParseInt(r.PathValue("msg"), 10, 64)
+	f, err := s.OpenLines.FileOf(r.Context(), msg)
+	if err != nil || f.WidgetID != r.PathValue("id") || !f.Secret(r.PathValue("secret")) {
+		http.NotFound(w, r)
+		return
+	}
+	s.olServe(w, r, f)
+}
+
+// widgetPhoto is the photo of an operator who has answered in the line.
+func (s *Server) widgetPhoto(w http.ResponseWriter, r *http.Request) {
+	key, typ, err := s.OpenLines.OperatorPhoto(r.Context(), r.PathValue("id"), r.PathValue("user"))
+	if err != nil || key == "" {
+		http.NotFound(w, r)
+		return
+	}
+	obj, err := s.Storages.Open(r.Context(), nil, key)
+	if err != nil {
+		s.fail(w, "open photo", err)
+		return
+	}
+	defer obj.Close()
+	w.Header().Set("Content-Type", typ)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = io.Copy(w, obj)
+}
+
 // ---------- «Открытые линии»: the operators' side ----------
 
 // olTabs are the tabs of the dialogue list.
@@ -148,12 +312,17 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 	if !slices.Contains(olTabs, tab) {
 		tab = "all"
 	}
-	list, err := s.OpenLines.Sessions(r.Context(), openlines.Filter{Tab: tab, Q: q.Get("q"), UserID: sess.UserID})
+	who, err := s.olWho(r.Context(), sess.UserID, sess.Admin)
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
 	}
-	counts, err := s.OpenLines.Counts(r.Context(), sess.UserID)
+	list, err := s.OpenLines.Sessions(r.Context(), openlines.Filter{Tab: tab, Q: q.Get("q"), UserID: sess.UserID, Who: who})
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	counts, err := s.OpenLines.Counts(r.Context(), who)
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
@@ -191,7 +360,15 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 		tabs = append(tabs, tabLink{t, link, counts[t]})
 	}
 	data := map[string]any{"Sessions": list, "Tab": tab, "Tabs": tabs, "Q": q.Get("q"), "Keep": keep.Encode(), "Quick": quick}
+	if data["Paused"], err = s.OpenLines.Paused(r.Context(), sess.UserID); err != nil {
+		s.taskErr(w, r, err, "/")
+		return
+	}
 	if id := q.Get("s"); id != "" {
+		if err := s.OpenLines.See(r.Context(), who, id); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
 		x, msgs, err := s.OpenLines.Open(r.Context(), sess.UserID, id)
 		if err != nil {
 			s.taskErr(w, r, err, "/openlines")
@@ -203,15 +380,64 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 			return
 		}
 		data["Current"], data["Messages"], data["Users"] = x, msgs, users
+		if data["Lines"], err = s.OpenLines.Widgets(r.Context()); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+		var read int64 // «Прочитано» under the last operator's message the visitor has seen
+		for _, m := range msgs {
+			if m.AuthorID != "" && m.ID <= x.VisRead {
+				read = m.ID
+			}
+		}
+		data["Read"] = read
 		data["CanRate"] = s.olHead(r, sess, x.OperatorID)
+		if data["Past"], data["PastOpen"], err = s.OpenLines.ClientDialogues(r.Context(), who, id); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
 	}
 	s.render(w, r, "openlines", page{TitleKey: "ol.title", Nav: "openlines", Data: data})
 }
 
-// olHead: may the user rate the operator's work in a dialogue — administrators and the operator's managers, as the
-// heads of the open lines.
+// olPause: the operator's pause — «Не принимать новые диалоги» (on=1) or back to the queue.
+func (s *Server) olPause(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if err := s.OpenLines.Pause(r.Context(), sess.UserID, r.FormValue("on") == "1"); err != nil {
+		s.taskErr(w, r, err, "/openlines")
+		return
+	}
+	http.Redirect(w, r, "/openlines", http.StatusSeeOther)
+}
+
+// olWho is whose dialogues the user sees, as the roles of the open lines: administrators and the lines' heads —
+// every one; the others — their own, the unassigned ones of their lines' queue and those of their people.
+func (s *Server) olWho(ctx context.Context, userID string, admin bool) (openlines.Who, error) {
+	x := openlines.Who{UserID: userID, All: admin}
+	if !x.All {
+		var err error
+		if x.All, err = s.OpenLines.IsHead(ctx, userID); err != nil {
+			return x, err
+		}
+	}
+	if !x.All && s.Company != nil {
+		team, err := s.Company.Subordinates(ctx, userID)
+		if err != nil {
+			return x, err
+		}
+		for _, p := range team {
+			x.Team = append(x.Team, p.ID)
+		}
+	}
+	return x, nil
+}
+
+// olHead: may the user rate the operator's work in a dialogue — administrators, the lines' heads and the operator's
+// managers, as the heads of the open lines.
 func (s *Server) olHead(r *http.Request, sess auth.Session, operator string) bool {
 	if sess.Admin {
+		return true
+	}
+	if head, err := s.OpenLines.IsHead(r.Context(), sess.UserID); err == nil && head {
 		return true
 	}
 	if operator == "" || operator == sess.UserID || s.Company == nil {
@@ -224,9 +450,10 @@ func (s *Server) olHead(r *http.Request, sess auth.Session, operator string) boo
 	return slices.ContainsFunc(heads, func(p company.Person) bool { return p.ID == sess.UserID })
 }
 
-// openlinesAction: reply (body), close, reopen, lead, transfer (to), spam, rate (vote, comment). back — the list's tab and search.
+// openlinesAction: reply (body, file), close, reopen, lead, transfer (to), spam, rate (vote, comment). back — the list's tab and search.
 func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, openlines.MaxFile+1<<20)
 	list := "/openlines"
 	if v, err := url.ParseQuery(r.FormValue("back")); err == nil && len(v) > 0 {
 		list += "?" + url.Values{"tab": v["tab"], "q": v["q"]}.Encode()
@@ -236,20 +463,43 @@ func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess au
 		sep = "&"
 	}
 	back := list + sep + "s=" + url.QueryEscape(id)
-	var err error
+	who, err := s.olWho(r.Context(), sess.UserID, sess.Admin)
+	if err == nil {
+		err = s.OpenLines.See(r.Context(), who, id)
+	}
+	if err != nil {
+		http.Redirect(w, r, list+sep+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
 	switch r.FormValue("op") {
 	case "reply":
-		err = s.OpenLines.Reply(r.Context(), sess.UserID, id, r.FormValue("body"))
+		var f *openlines.File
+		if f, err = s.olUpload(r); err == nil && r.FormValue("hidden") != "" {
+			err = s.OpenLines.Hide(r.Context(), sess.UserID, id, r.FormValue("body"), f)
+		} else if err == nil {
+			err = s.OpenLines.ReplyWith(r.Context(), sess.UserID, id, r.FormValue("body"), f)
+		}
 	case "close":
 		err = s.OpenLines.SetStatus(r.Context(), sess.UserID, id, false)
 		back = list
 	case "reopen":
 		err = s.OpenLines.SetStatus(r.Context(), sess.UserID, id, true)
 	case "transfer":
-		err = s.OpenLines.Transfer(r.Context(), sess.UserID, id, r.FormValue("to"))
+		if line := r.FormValue("line"); line != "" {
+			err = s.OpenLines.TransferLine(r.Context(), sess.UserID, id, line)
+		} else {
+			err = s.OpenLines.Transfer(r.Context(), sess.UserID, id, r.FormValue("to"))
+		}
+		if err == nil && s.OpenLines.See(r.Context(), who, id) != nil { // passed on to someone else's: back to the list
+			back = list
+		}
+	case "intercept":
+		err = s.OpenLines.Intercept(r.Context(), sess.UserID, id)
 	case "spam":
 		err = s.OpenLines.Spam(r.Context(), sess.UserID, id)
 		back = list
+	case "pin", "unpin":
+		err = s.OpenLines.Pin(r.Context(), sess.UserID, id, r.FormValue("op") == "pin")
 	case "rate":
 		var x openlines.Session
 		if x, _, err = s.OpenLines.Open(r.Context(), sess.UserID, id); err == nil {
@@ -305,10 +555,47 @@ func (s *Server) openlinesLive(w http.ResponseWriter, r *http.Request, sess auth
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case id := <-events:
-			fmt.Fprintf(w, "event: session\ndata: %s\n\n", id)
+			if t, ok := strings.CutPrefix(id, "t:"); ok { // the visitor is typing
+				fmt.Fprintf(w, "event: typing\ndata: %s\n\n", t)
+			} else {
+				fmt.Fprintf(w, "event: session\ndata: %s\n\n", id)
+			}
 			flusher.Flush()
 		}
 	}
+}
+
+// openlinesTyping: the operator is typing in the dialogue (the visitor's widget shows it).
+func (s *Server) openlinesTyping(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	who, err := s.olWho(r.Context(), sess.UserID, sess.Admin)
+	if err == nil {
+		err = s.OpenLines.See(r.Context(), who, r.PathValue("id"))
+	}
+	if err == nil {
+		err = s.OpenLines.Typing(r.Context(), sess.UserID, r.PathValue("id"))
+	}
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// openlinesFile: a file of a dialogue, for the operators.
+func (s *Server) openlinesFile(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	msg, _ := strconv.ParseInt(r.PathValue("msg"), 10, 64)
+	f, err := s.OpenLines.FileOf(r.Context(), msg)
+	if err == nil {
+		var who openlines.Who
+		if who, err = s.olWho(r.Context(), sess.UserID, sess.Admin); err == nil {
+			err = s.OpenLines.See(r.Context(), who, f.SessionID)
+		}
+	}
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.olServe(w, r, f)
 }
 
 // olQuickPage: «Быстрые ответы» — one's own and the company's (administrators change those).
@@ -363,10 +650,36 @@ func (s *Server) widgetsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	if s.CallURL != "" { // the https address: a site on https loads only https scripts
 		base = s.CallURL
 	}
-	fresh := openlines.Widget{QueueMode: "all", AnswerWait: 3, HoursDays: []int32{1, 2, 3, 4, 5}, HoursFrom: "09:00", HoursTo: "18:00", NoanswerAfter: 5,
+	bots := map[string]openlines.TelegramBot{} // the channel Telegram of each line
+	for _, wd := range list {
+		if bots[wd.ID], err = s.OpenLines.Telegram(r.Context(), wd.ID); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+	}
+	heads, err := s.OpenLines.Heads(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/openlines")
+		return
+	}
+	fresh := openlines.Widget{QueueMode: "all", AnswerWait: 3, HoursDays: []int32{1, 2, 3, 4, 5}, HoursFrom: "09:00", HoursTo: "18:00", NoanswerAfter: 5, KPIOperator: true,
 		VoteOn: true, HistoryOn: true, CRMAuto: true}
 	s.render(w, r, "widgets", page{TitleKey: "ol.widgets", Nav: "openlines", Data: map[string]any{"Widgets": list, "Users": users, "Base": base,
-		"New": fresh, "Days": []int{1, 2, 3, 4, 5, 6, 0}}})
+		"New": fresh, "Days": []int{1, 2, 3, 4, 5, 6, 0}, "Bots": bots, "Heads": heads}})
+}
+
+// olHeadsSave sets the heads of the open lines: they see every dialogue and everyone's statistics (administrators).
+func (s *Server) olHeadsSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	if err := s.OpenLines.SetHeads(r.Context(), sess.UserID, r.Form["heads"]); err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
 }
 
 func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -396,7 +709,27 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 		WelcomeText: r.FormValue("welcome_text"), NoanswerText: r.FormValue("noanswer_text"), NoanswerAfter: num("noanswer_after"),
 		CloseText: r.FormValue("close_text"), Autoclose: num("autoclose"),
 		VoteOn: r.FormValue("vote_on") == "on", VoteText: r.FormValue("vote_text"), HistoryOn: r.FormValue("history_on") == "on",
-		CRMAuto: r.FormValue("crm_auto") == "on"})
+		CRMAuto: r.FormValue("crm_auto") == "on", ConsentOn: r.FormValue("consent_on") == "on", ConsentText: r.FormValue("consent_text"),
+		KPIFirst: num("kpi_first"), KPIFurther: num("kpi_further"), KPIOperator: r.FormValue("kpi_operator") == "on", KPIHeads: r.FormValue("kpi_heads") == "on"})
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetTelegram connects the line's Telegram bot by its token (op=connect, token) or disconnects it (administrators).
+func (s *Server) widgetTelegram(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectTelegram(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectTelegram(r.Context(), r.PathValue("id"), r.FormValue("token"))
+	}
 	if err != nil {
 		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
 		return
@@ -436,7 +769,7 @@ var olStatsBy = []string{"days", "lines", "operators"}
 
 // openlinesStats is the report of the lines for the days ?from= (the month's first day) to ?to= (today), by days, lines
 // or operators (?by=), of a line (?line=) and an operator (?operator=); ?csv=1 gives the table as a CSV file. An
-// administrator sees every operator; the others — their own dialogues.
+// administrator or a head of the lines sees every operator; the others — their own dialogues.
 func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	q := r.URL.Query()
 	now := time.Now()
@@ -453,7 +786,15 @@ func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess aut
 	if f.To.Sub(f.From) > 366*24*time.Hour { // a year at most: the days' table stays a page
 		f.From = f.To.AddDate(-1, 0, 0)
 	}
-	if !sess.Admin {
+	all := sess.Admin // administrators and the lines' heads see everyone's
+	if !all {
+		var err error
+		if all, err = s.OpenLines.IsHead(r.Context(), sess.UserID); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+	}
+	if !all {
 		f.OperatorID = sess.UserID
 	}
 	by := q.Get("by")
@@ -476,7 +817,7 @@ func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 	data := map[string]any{"F": f, "By": by, "BySet": olStatsBy, "Stats": st, "Rows": rows, "Widgets": widgets}
-	if sess.Admin {
+	if all {
 		if data["Users"], err = s.Tasks.ListUsers(r.Context()); err != nil {
 			s.taskErr(w, r, err, "/openlines")
 			return
@@ -502,11 +843,11 @@ func (s *Server) openlinesStatsCSV(w http.ResponseWriter, r *http.Request, by st
 	secs := func(d time.Duration) string { return strconv.Itoa(int(d / time.Second)) }
 	first := map[string]string{"days": "ol.stats_day", "lines": "ol.stats_line", "operators": "ol.operator"}[by]
 	head := []string{tr(first)}
-	for _, k := range []string{"ol.stats_new", "ol.stats_closed", "ol.stats_noanswer", "ol.stats_answer_s", "ol.stats_close_s", "ol.stats_up", "ol.stats_down", "ol.stats_spam"} {
+	for _, k := range []string{"ol.stats_new", "ol.stats_closed", "ol.stats_noanswer", "ol.stats_kpi", "ol.stats_answer_s", "ol.stats_close_s", "ol.stats_up", "ol.stats_down", "ol.stats_spam"} {
 		head = append(head, tr(k))
 	}
 	line := func(name string, x openlines.StatsRow) []string {
-		return []string{name, strconv.Itoa(x.New), strconv.Itoa(x.Closed), strconv.Itoa(x.NoAnswer), secs(x.FirstAnswer()), secs(x.ToClose()),
+		return []string{name, strconv.Itoa(x.New), strconv.Itoa(x.Closed), strconv.Itoa(x.NoAnswer), strconv.Itoa(x.KPI), secs(x.FirstAnswer()), secs(x.ToClose()),
 			strconv.Itoa(x.Up), strconv.Itoa(x.Down), strconv.Itoa(x.Spam)}
 	}
 	out := [][]string{}
@@ -528,4 +869,69 @@ func (s *Server) openlinesStatsCSV(w http.ResponseWriter, r *http.Request, by st
 	cw.Comma = ';'
 	_ = cw.Write(head)
 	_ = cw.WriteAll(out)
+}
+
+// taskFromDialogue fills the new task's form of an open line's dialogue the user sees, as «Создать задачу» of
+// the portal: the client in the title, the link to the dialogue and its last messages in the description, the CRM card.
+func (s *Server) taskFromDialogue(r *http.Request, sess auth.Session, id string, f *taskForm) {
+	who, err := s.olWho(r.Context(), sess.UserID, sess.Admin)
+	if err == nil {
+		err = s.OpenLines.See(r.Context(), who, id)
+	}
+	if err != nil {
+		return
+	}
+	x, err := s.OpenLines.Session(r.Context(), id)
+	if err != nil {
+		return
+	}
+	msgs, err := s.OpenLines.Messages(r.Context(), id, 0)
+	if err != nil {
+		return
+	}
+	f.OL, f.Title = &x, s.tr(r, "ol.task_title", x.Title())
+	var b strings.Builder
+	b.WriteString(s.tr(r, "ol.task_head", x.Widget, s.BaseURL+"/openlines?s="+x.ID))
+	if c := strings.Join(slices.DeleteFunc([]string{x.Phone, x.Email}, func(v string) bool { return v == "" }), ", "); c != "" {
+		b.WriteString("\n" + c)
+	}
+	b.WriteString("\n")
+	if n := len(msgs); n > 20 {
+		msgs = msgs[n-20:]
+	}
+	for _, m := range msgs {
+		if m.Internal() {
+			continue
+		}
+		who := m.Operator
+		switch {
+		case m.Auto():
+			who = s.tr(r, "ol.auto_msg")
+		case who == "":
+			who = x.Title()
+		}
+		b.WriteString("\n" + who + ", " + m.At.Local().Format(s.tr(r, "format.datetime")) + ":\n" + m.Text() + "\n")
+	}
+	f.Description = clipText(b.String(), 20000)
+	if f.CRM == "" {
+		if x.LeadID != "" {
+			f.CRM = "/crm/leads/" + x.LeadID
+		} else if x.ContactID != "" {
+			f.CRM = "/crm/contacts/" + x.ContactID
+		}
+	}
+}
+
+// taskDialogueDone notes the new task in the dialogue it was made of.
+func (s *Server) taskDialogueDone(r *http.Request, sess auth.Session, id, key string) {
+	who, err := s.olWho(r.Context(), sess.UserID, sess.Admin)
+	if err == nil {
+		err = s.OpenLines.See(r.Context(), who, id)
+	}
+	if err == nil {
+		err = s.OpenLines.TaskMade(r.Context(), sess.UserID, id, key, r.FormValue("title"))
+	}
+	if err != nil {
+		s.Log.Warn("task of a dialogue", "task", key, "err", err)
+	}
 }

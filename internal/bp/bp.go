@@ -6,9 +6,11 @@
 package bp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,25 +32,62 @@ var (
 )
 
 // StepKinds in the order the constructor offers them.
-var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "if", "goto", "parallel", "set", "stage", "update",
-	"create", "absence", "wait", "webhook"}
+var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "start",
+	"stage", "update", "create", "comment", "activity", "document", "absence", "wait", "log", "webhook"}
+
+// UserInfo are the fields «Информация о сотруднике» (userinfo) puts into the process, as user_<…>: the employee's
+// card; the manager is a user field (a step may go to them), the departments — their names.
+var UserInfo = []string{"name", "last_name", "first_name", "email", "position", "work_phone", "mobile", "inner_phone", "department", "manager"}
+
+// MaxLoops: a loop step sends a process back this many times at most, then the process fails («Цикл»
+// has such a limit too); MaxDepth: processes started by a step of another, one by another, at most.
+const (
+	MaxLoops = 100
+	MaxDepth = 5
+)
 
 // Modes of an approval by several people: the first decision decides, everyone must approve, or the majority.
 var Modes = []string{"any", "all", "majority"}
 
+// Delegations: whom the person given an approval, a review or a request may hand it to («Делегировать»), as the
+// delegation type of the activities: their subordinates ("" too, the default), anyone or nobody.
+var Delegations = []string{"sub", "all", "none"}
+
 // Ops of a condition.
 var Ops = []string{"eq", "ne", "gt", "lt", "contains", "empty", "filled"}
 
-// FieldKinds of a template's form.
-var FieldKinds = []string{"string", "text", "number", "date"}
+// FieldKinds of a template's form, as the parameters' types: a bool is "Y" or "N", a select — one of
+// the field's options, a user — an employee's id, a datetime — YYYY-MM-DDTHH:MM.
+var FieldKinds = []string{"string", "text", "number", "date", "datetime", "bool", "select", "user"}
 
 // Field of the form a process is started with.
 type Field struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Kind     string `json:"kind"`
-	Required bool   `json:"required,omitempty"`
+	Key      string   `json:"key"`
+	Label    string   `json:"label"`
+	Kind     string   `json:"kind"`
+	Required bool     `json:"required,omitempty"`
+	Options  []string `json:"options,omitempty"` // select: what to choose from
+	Default  string   `json:"default,omitempty"` // what the form shows at first; an autostarted process gets it
+	Scope    string   `json:"scope,omitempty"`   // of a template's fields: one of FieldScopes ("" — "param")
 }
+
+// FieldScopes of a template's fields designer has them: a parameter is asked at the start, a variable
+// begins with its default and steps change it («Изменить переменную»), a constant is its default for every process.
+var FieldScopes = []string{"param", "var", "const"}
+
+// Asked: the field is on the start form (a parameter).
+func (f Field) Asked() bool { return f.Scope == "" }
+
+// Shown is a value of the field as the page shows it when it is not a bool or a user's id: a datetime without «T».
+func (f Field) Shown(v string) string {
+	if f.Kind == "datetime" {
+		return strings.Replace(v, "T", " ", 1)
+	}
+	return v
+}
+
+// FieldPrefix: a step's To (From, Users) "field:KEY" is the employee of the process's user field KEY («Сотрудник»).
+const FieldPrefix = "field:"
 
 // Step of a template. To: "starter", "manager" (the starter's manager), "responsible" (of the CRM card) or a user id.
 type Step struct {
@@ -59,23 +98,28 @@ type Step struct {
 	Days     int      `json:"days,omitempty"`     // task deadline, pause length
 	Stage    string   `json:"stage,omitempty"`    // stage: the CRM stage id
 	URL      string   `json:"url,omitempty"`      // webhook: where the process's data go (n8n's Webhook node)
-	Users    []string `json:"users,omitempty"`    // approve, review: more people besides To
+	Users    []string `json:"users,omitempty"`    // approve, review: more people besides To; post: its addressees (none — all employees)
 	Mode     string   `json:"mode,omitempty"`     // approve: one of Modes ("" — any)
-	Field    string   `json:"field,omitempty"`    // if, set: the form's field
+	Field    string   `json:"field,omitempty"`    // if, loop, set: the form's field; wait: the date (time) field to wait till instead of Days
 	Op       string   `json:"op,omitempty"`       // if: one of Ops
 	Value    string   `json:"value,omitempty"`    // if: compared with; set: the new value ({…} filled)
-	Goto     int      `json:"goto,omitempty"`     // if (when false), goto, approve and request (when rejected): the step's number from 1; 0 — the end; parallel: the join
+	Goto     int      `json:"goto,omitempty"`     // if (when false), goto, approve and request (when rejected): the step's number from 1; 0 — the end; parallel: the join; loop: back to (while the condition holds)
 	Branches []int    `json:"branches,omitempty"` // parallel: the numbers of the steps the 2nd, 3rd… branches start with (the 1st — the next step)
 	Fields   []Field  `json:"fields,omitempty"`   // request: what the person fills in; the values join the process's form
 	Reject   bool     `json:"reject,omitempty"`   // request: the person may reject instead of answering, as an approval
-	From     string   `json:"from,omitempty"`     // chat, mail: who writes (as To; "" — the starter), mail — from their mailbox
+	Delegate string   `json:"delegate,omitempty"` // approve, review, request: one of Delegations ("" — "sub")
+	From     string   `json:"from,omitempty"`     // chat, mail, post, comment, document: who writes (as To; "" — the starter), mail — from their mailbox
 	Email    string   `json:"email,omitempty"`    // mail: more addresses ({…} filled)
-	Subject  string   `json:"subject,omitempty"`  // mail
+	Subject  string   `json:"subject,omitempty"`  // mail; post: the title
 	Entity   string   `json:"entity,omitempty"`   // create: the kind of card
-	Sets     []Assign `json:"sets,omitempty"`     // update, create: the card's fields
+	Sets     []Assign `json:"sets,omitempty"`     // update, create: the card's fields; start: the fields of the process started; document: the template's placeholders
+	Template string   `json:"template,omitempty"` // start: the template of the process started
 	Absence  string   `json:"absence,omitempty"`  // absence: the reason, one of company.AbsenceKinds
 	Start    string   `json:"start,omitempty"`    // absence: the form's date field it begins on
 	End      string   `json:"end,omitempty"`      // absence: … and ends on
+	Deed     string   `json:"deed,omitempty"`     // activity: one of crm.ActivityKinds
+	Note     string   `json:"note,omitempty"`     // activity: the description ({…} filled)
+	Doc      string   `json:"doc,omitempty"`      // document: the template of the document generator (of the card's kind)
 }
 
 // Assign is a field of a CRM card a step sets: a key of CardFields or the name of an own field, and the value ({…} filled).
@@ -114,15 +158,46 @@ func Ranges(steps []Step, p int) [][2]int {
 	return out
 }
 
-// AllFields are the form's fields and then those of the requests among the steps: everything a process may hold.
+// UserInfoPrefix begins the keys of the fields of UserInfo.
+const UserInfoPrefix = "user_"
+
+// UserInfoLabel is the locale key of a field of UserInfo by the field's key ("" — not one of them).
+func UserInfoLabel(key string) string {
+	if k, ok := strings.CutPrefix(key, UserInfoPrefix); ok && contains(UserInfo, k) {
+		return "bp.userinfo." + k
+	}
+	return ""
+}
+
+// AllFields are the form's fields and then those of the requests among the steps (and of «Информация о сотруднике»,
+// once): everything a process may hold.
 func AllFields(form []Field, steps []Step) []Field {
 	out := append([]Field(nil), form...)
+	info := false
 	for _, st := range steps {
 		if st.Kind == "request" {
 			out = append(out, st.Fields...)
 		}
+		if st.Kind == "userinfo" && !info { // labels of their own: the pages put them (UserInfoLabel)
+			info = true
+			for _, k := range UserInfo {
+				out = append(out, Field{Key: UserInfoPrefix + k, Kind: map[bool]string{true: "user", false: "string"}[k == "manager"]})
+			}
+		}
 	}
 	return out
+}
+
+// EntityFile is what a template of the documents of «Общий диск» is of processes of Диск: it starts on a
+// document added or changed there, or from the file's card.
+const EntityFile = "file"
+
+// Files are the documents of «Общий диск» (package drive).
+type Files interface {
+	// BPFile is the document's name and who uploaded it; an error — it is not on the drive.
+	BPFile(ctx context.Context, id string) (name, uploader string, err error)
+	// BPRight: the user may do op ("read", "write") on the document.
+	BPRight(ctx context.Context, userID, op, id string) error
 }
 
 type Template struct {
@@ -146,6 +221,13 @@ type Store struct {
 	Chat func(ctx context.Context, fromID, toID, text string) error
 	// Feed: a standalone process started by hand is a post of its starter (nil — no posts)
 	Feed *feed.Store
+	// Document makes a document of a CRM card by a template of the document generator, of the user, and says its id
+	// («Создание документа»; nil — the step fails)
+	Document func(ctx context.Context, userID, entity, entityID, templateID string, values map[string]string) (string, error)
+	// Files are the documents of «Общий диск» a template of files is about (nil — its processes do not start)
+	Files Files
+	// Tr translates in the portal's language: «Да»/«Нет» of a bool field in texts (nil — "Y"/"N")
+	Tr func(key string, args ...any) string
 }
 
 func NewStore(db *pgxpool.Pool, t *tasks.Store, c *crm.Store, co *company.Store) *Store {
@@ -200,40 +282,73 @@ func checkTemplate(t *Template) error {
 	if t.Entity == "" {
 		t.Entity = "none"
 	}
-	if t.Entity != "none" && !crm.Entities[t.Entity] || t.TypeID != "" && t.Entity != "deal" {
+	if t.Entity != "none" && t.Entity != EntityFile && !crm.Entities[t.Entity] || t.TypeID != "" && t.Entity != "deal" {
 		return i18n.E("err.bad_form")
 	}
 	if t.Entity == "none" { // a standalone process has no card to start by
 		t.AutoCreate, t.AutoChange = false, false
 	}
-	seen := map[string]bool{}
+	seen, consts := map[string]bool{}, map[string]bool{}
 	kinds := map[string]string{} // the fields' kinds
-	addFields := func(list []Field) error {
+	for i := range t.Fields {    // a variable and a constant are not asked, so not required
+		if t.Fields[i].Scope == "param" {
+			t.Fields[i].Scope = ""
+		}
+		if !t.Fields[i].Asked() {
+			t.Fields[i].Required = false
+		}
+	}
+	addFields := func(list []Field, template bool) error {
 		for _, f := range list {
-			if f.Key == "" || seen[f.Key] || strings.ContainsAny(f.Key, " {}") || f.Label == "" || !contains(FieldKinds, f.Kind) {
+			if f.Scope != "" && (!template || !contains(FieldScopes, f.Scope)) {
 				return i18n.E("err.bp_field")
+			}
+			consts[f.Key] = f.Scope == "const"
+			if f.Key == "" || seen[f.Key] || strings.ContainsAny(f.Key, " {}:") || f.Label == "" || !contains(FieldKinds, f.Kind) ||
+				f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 {
+				return i18n.E("err.bp_field")
+			}
+			for _, o := range f.Options {
+				if o == "" || len([]rune(o)) > 200 {
+					return i18n.E("err.bp_field")
+				}
+			}
+			if f.Default != "" {
+				if _, err := cleanValue(f, f.Default); err != nil {
+					return err
+				}
 			}
 			seen[f.Key], kinds[f.Key] = true, f.Kind
 		}
 		return nil
 	}
-	if err := addFields(t.Fields); err != nil {
+	if err := addFields(t.Fields, true); err != nil {
 		return err
 	}
+	info := false
 	for i, st := range t.Steps {
+		if st.Kind == "userinfo" && !info { // its fields are of the process from this step on, as a request's
+			info = true
+			for _, f := range AllFields(nil, []Step{st}) {
+				if seen[f.Key] {
+					return i18n.E("err.bp_field")
+				}
+				seen[f.Key], kinds[f.Key] = true, f.Kind
+			}
+		}
 		// a request's fields are of the process from this step on: a condition after it may check them
 		if st.Kind == "request" && len(st.Fields) == 0 || st.Kind != "request" && (len(st.Fields) > 0 || st.Reject) ||
 			st.Kind == "request" && st.Goto != 0 && !st.Reject {
 			return i18n.E("err.bp_step")
 		}
-		if err := addFields(st.Fields); err != nil {
+		if err := addFields(st.Fields, false); err != nil {
 			return err
 		}
 		if !contains(StepKinds, st.Kind) || len([]rune(st.Text)) > 1000 || st.Days < 0 || st.Days > 365 {
 			return i18n.E("err.bp_step")
 		}
 		if (st.Kind == "task" && st.Project == "") || (st.Kind == "stage" && (st.Stage == "" || t.Entity != "deal" && t.Entity != "lead")) ||
-			(st.Kind == "wait" && st.Days == 0) || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "parallel", "set", "update", "mail", "absence"}, st.Kind)) ||
+			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo"}, st.Kind)) ||
 			(st.Kind == "webhook" && hooks.CheckURL(st.URL) != nil) {
 			return i18n.E("err.bp_step")
 		}
@@ -243,13 +358,32 @@ func checkTemplate(t *Template) error {
 		if err := checkCardStep(t.Entity, st); err != nil {
 			return err
 		}
-		if (st.Kind == "if" || st.Kind == "set") && !seen[st.Field] || st.Kind == "if" && !contains(Ops, st.Op) ||
-			st.Mode != "" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 {
+		for _, to := range append(st.People(), st.From) { // a user field of the form or of a request before the step
+			if key, ok := strings.CutPrefix(to, FieldPrefix); ok && kinds[key] != "user" {
+				return i18n.E("err.bp_step")
+			}
+		}
+		cond := st.Kind == "if" || st.Kind == "loop"
+		if (cond || st.Kind == "set") && !seen[st.Field] || st.Kind == "set" && consts[st.Field] || cond && !contains(Ops, st.Op) ||
+			st.Mode != "" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 ||
+			st.Delegate != "" && (!contains(Delegations, st.Delegate) || !contains([]string{"approve", "review", "request"}, st.Kind)) {
 			return i18n.E("err.bp_step")
 		}
-		// jumps go forward only, so a process cannot loop
-		if st.Goto != 0 && (st.Goto <= i+1 || st.Goto > len(t.Steps)) || st.Kind == "goto" && st.Goto == 0 && i == len(t.Steps)-1 {
+		// jumps go forward only; a loop goes back, to a step before it, over steps without a parallel one
+		if st.Kind == "loop" {
+			if st.Goto < 1 || st.Goto > i {
+				return i18n.E("err.bp_loop", i+1)
+			}
+			for j := st.Goto - 1; j < i; j++ {
+				if t.Steps[j].Kind == "parallel" {
+					return i18n.E("err.bp_loop", i+1)
+				}
+			}
+		} else if st.Goto != 0 && (st.Goto <= i+1 || st.Goto > len(t.Steps)) || st.Kind == "goto" && st.Goto == 0 && i == len(t.Steps)-1 {
 			return i18n.E("err.bp_goto", i+1)
+		}
+		if (st.Kind == "start") != (st.Template != "") {
+			return i18n.E("err.bp_step")
 		}
 	}
 	if len(t.Steps) == 0 {
@@ -284,13 +418,19 @@ func checkParallel(steps []Step) error {
 		}
 		for _, r := range Ranges(steps, p) {
 			for j := r[0]; j < r[1]; j++ {
-				if steps[j].Kind == "parallel" || steps[j].Goto > r[1]+1 { // a jump to 0 or past it ends the branch
+				if steps[j].Kind == "parallel" || steps[j].Goto > r[1]+1 || // a jump to 0 or past it ends the branch
+					steps[j].Kind == "loop" && steps[j].Goto-1 < r[0] { // a loop stays in its branch
 					return i18n.E("err.bp_parallel", j+1)
 				}
 			}
 		}
 		for j := 0; j < p; j++ {
 			if steps[j].Goto > p+1 && steps[j].Goto < join {
+				return i18n.E("err.bp_parallel", j+1)
+			}
+		}
+		for j := join - 1; j < len(steps); j++ { // a loop after the join does not go back into a branch
+			if steps[j].Kind == "loop" && steps[j].Goto-1 > p && steps[j].Goto-1 < join-1 {
 				return i18n.E("err.bp_parallel", j+1)
 			}
 		}
@@ -321,6 +461,28 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 		return "", err
 	}
 	for i, st := range t.Steps { // own fields are the CRM's: a name not among them is a mistake now, not when the process runs
+		if st.Kind == "start" { // another process's fields, of a template it may start
+			other, err := s.Template(ctx, st.Template)
+			if err != nil {
+				return "", i18n.E("err.bp_step")
+			}
+			if other.Entity != "none" && other.Entity != t.Entity {
+				return "", i18n.E("err.bp_start_entity")
+			}
+			for _, a := range st.Sets {
+				if _, ok := fieldOf(other.Fields, a.Field); !ok {
+					return "", i18n.E("err.bp_start_field", i+1, other.Name, a.Field)
+				}
+			}
+			continue
+		}
+		if st.Kind == "document" { // a template of the card's kind; its placeholders are free
+			d, err := s.CRM.DocTemplate(ctx, st.Doc)
+			if err != nil || d.Entity != t.Entity {
+				return "", i18n.E("err.bp_step")
+			}
+			continue
+		}
 		entity := t.Entity
 		if st.Kind == "create" {
 			entity = st.Entity
@@ -358,13 +520,15 @@ func (s *Store) DeleteTemplate(ctx context.Context, id string) error {
 type Instance struct {
 	ID, TemplateID, Name, Entity, EntityID, Status string
 	Steps                                          []Step
+	Fields                                         []Field // the form's as the process was started (none before migration 336)
 	Values                                         map[string]string
 	Step                                           int
 	WakeAt                                         *time.Time
 	StartedBy                                      company.Person
 	CreatedAt                                      time.Time
 	FinishedAt                                     *time.Time
-	Branches                                       []int // in a parallel step: the step of each branch, its end when it is over
+	Branches                                       []int  // in a parallel step: the step of each branch, its end when it is over
+	Parent, ParentName                             string // the process a step of which started this one
 
 	branch, end int // the step's branch running (from 1; 0 — none) and where it ends (len(Steps) — the process's end)
 }
@@ -386,6 +550,29 @@ func (x Instance) Current(i int) bool {
 		}
 	}
 	return false
+}
+
+// Form is all the process's fields: of its form as it was started (of the template now, form — for a process
+// before migration 336) and of its requests.
+func (x Instance) Form(form []Field) []Field {
+	if len(x.Fields) > 0 {
+		form = x.Fields
+	}
+	return AllFields(form, x.Steps)
+}
+
+// Field of the process by its key: of the form or of a request among the steps.
+func (x Instance) Field(key string) (Field, bool) {
+	return fieldOf(AllFields(x.Fields, x.Steps), key)
+}
+
+func fieldOf(fields []Field, key string) (Field, bool) {
+	for _, f := range fields {
+		if f.Key == key {
+			return f, true
+		}
+	}
+	return Field{}, false
 }
 
 // State of a step for the list: "done", "now" or "".
@@ -425,20 +612,25 @@ type Approval struct {
 	CreatedAt                                           time.Time
 	Fields                                              []Field // request: what to fill in
 	CanReject                                           bool    // request: «Отклонить» too
+	Delegate                                            string  // whom the person may hand it to: one of Delegations
 }
 
-const instanceSQL = `SELECT i.id, i.template_id::text, i.name, i.entity, coalesce(i.entity_id::text, ''), i.status, i.steps, i.values,
-		i.step, i.wake_at, u.id, u.name, i.created_at, i.finished_at, ARRAY(SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id ORDER BY b.n)
+const instanceSQL = `SELECT i.id, i.template_id::text, i.name, i.entity, coalesce(i.entity_id::text, ''), i.status, i.steps, i.fields, i.values,
+		i.step, i.wake_at, u.id, u.name, i.created_at, i.finished_at, ARRAY(SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id ORDER BY b.n),
+		coalesce(i.parent_id::text, ''), coalesce((SELECT p.name FROM bp_instances p WHERE p.id = i.parent_id), '')
 	FROM bp_instances i JOIN users u ON u.id = i.started_by`
 
 func scanInstance(r pgx.CollectableRow) (Instance, error) {
 	var x Instance
-	var st, vals []byte
-	if err := r.Scan(&x.ID, &x.TemplateID, &x.Name, &x.Entity, &x.EntityID, &x.Status, &st, &vals, &x.Step, &x.WakeAt,
-		&x.StartedBy.ID, &x.StartedBy.Name, &x.CreatedAt, &x.FinishedAt, &x.Branches); err != nil {
+	var st, fields, vals []byte
+	if err := r.Scan(&x.ID, &x.TemplateID, &x.Name, &x.Entity, &x.EntityID, &x.Status, &st, &fields, &vals, &x.Step, &x.WakeAt,
+		&x.StartedBy.ID, &x.StartedBy.Name, &x.CreatedAt, &x.FinishedAt, &x.Branches, &x.Parent, &x.ParentName); err != nil {
 		return x, err
 	}
 	if err := json.Unmarshal(st, &x.Steps); err != nil {
+		return x, err
+	}
+	if err := json.Unmarshal(fields, &x.Fields); err != nil {
 		return x, err
 	}
 	x.end = len(x.Steps)
@@ -489,7 +681,7 @@ func (s *Store) Instances(ctx context.Context, userID, entity, entityID string) 
 
 // CardInstances are the processes of a CRM card, for one who may read it.
 func (s *Store) CardInstances(ctx context.Context, userID, entity, entityID string) ([]Instance, error) {
-	if !crm.Entities[entity] {
+	if !crm.Entities[entity] && entity != EntityFile {
 		return nil, i18n.E("err.bad_form")
 	}
 	if err := s.cardCheck(ctx, userID, entity, entityID); err != nil {
@@ -591,7 +783,7 @@ func (s *Store) Log(ctx context.Context, id string) ([]Line, error) {
 const currentSQL = `(a.step = i.step OR a.step IN (SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id AND b.waiting))`
 
 const approvalSQL = `SELECT a.id, a.instance_id::text, i.name, a.kind, a.text, coalesce(a.decision, ''), a.comment, a.step, u.id, u.name, s.name, a.created_at,
-		CASE WHEN a.kind = 'request' THEN i.steps -> a.step END
+		i.steps -> a.step
 	FROM bp_approvals a JOIN bp_instances i ON i.id = a.instance_id JOIN users u ON u.id = a.user_id JOIN users s ON s.id = i.started_by`
 
 func scanApproval(r pgx.CollectableRow) (Approval, error) {
@@ -606,7 +798,7 @@ func scanApproval(r pgx.CollectableRow) (Approval, error) {
 		if err := json.Unmarshal(step, &st); err != nil {
 			return a, err
 		}
-		a.Fields, a.CanReject = st.Fields, st.Reject
+		a.Fields, a.CanReject, a.Delegate = st.Fields, st.Reject, cmp.Or(st.Delegate, "sub")
 	}
 	return a, nil
 }
@@ -641,12 +833,12 @@ func (s *Store) Start(ctx context.Context, userID, templateID, entityID string, 
 	} else if !ok {
 		return "", i18n.E("err.bp_no_start")
 	}
-	return s.start(ctx, userID, t, entityID, values, false)
+	return s.start(ctx, userID, t, entityID, values, false, "")
 }
 
 // start: auto — the template starts by itself on a card's change, as its author, with the form empty (so a required
 // field does not stop it) and without checking the author's access to the card.
-func (s *Store) start(ctx context.Context, userID string, t Template, entityID string, values map[string]string, auto bool) (string, error) {
+func (s *Store) start(ctx context.Context, userID string, t Template, entityID string, values map[string]string, auto bool, parent string) (string, error) {
 	if !t.Active {
 		return "", i18n.E("err.bp_inactive")
 	}
@@ -667,10 +859,11 @@ func (s *Store) start(ctx context.Context, userID string, t Template, entityID s
 		eid = &entityID
 	}
 	steps, _ := json.Marshal(t.Steps)
+	fields, _ := json.Marshal(append([]Field{}, t.Fields...))
 	vals, _ := json.Marshal(clean)
 	var id string
-	if err := s.db.QueryRow(ctx, `INSERT INTO bp_instances (template_id, name, steps, entity, entity_id, values, started_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, t.ID, t.Name, steps, t.Entity, eid, vals, userID).Scan(&id); err != nil {
+	if err := s.db.QueryRow(ctx, `INSERT INTO bp_instances (template_id, name, steps, fields, entity, entity_id, values, started_by, parent_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`, t.ID, t.Name, steps, fields, t.Entity, eid, vals, userID, optional(parent)).Scan(&id); err != nil {
 		return "", err
 	}
 	kind := "started"
@@ -681,8 +874,8 @@ func (s *Store) start(ctx context.Context, userID string, t Template, entityID s
 	if s.Feed != nil && t.Entity == "none" && !auto {
 		var lines []string
 		for _, f := range t.Fields {
-			if v := clean[f.Key]; v != "" {
-				lines = append(lines, f.Label+": "+v)
+			if v := clean[f.Key]; v != "" && f.Asked() { // what the starter filled in
+				lines = append(lines, f.Label+": "+s.show(ctx, f, v))
 			}
 		}
 		if len(lines) == 0 {
@@ -693,30 +886,83 @@ func (s *Store) start(ctx context.Context, userID string, t Template, entityID s
 	return id, s.run(ctx, id)
 }
 
-// cleanValues are the fields' values checked: required ones filled (when strict), numbers and dates right.
+// cleanValues are the fields' values checked: required ones filled (when strict), each right for its kind. A form
+// sent without a field (an autostarted process, a REST call) gets its default.
 func cleanValues(fields []Field, values map[string]string, strict bool) (map[string]string, error) {
 	clean := map[string]string{}
 	for _, f := range fields {
-		v := strings.TrimSpace(values[f.Key])
+		raw, sent := values[f.Key]
+		if !sent || !f.Asked() { // a variable or a constant is not asked
+			raw = f.Default
+		}
+		v, err := cleanValue(f, raw)
+		if err != nil {
+			return nil, err
+		}
 		if f.Required && v == "" && strict {
 			return nil, i18n.E("err.bp_required", f.Label)
-		}
-		if len([]rune(v)) > 10000 {
-			return nil, i18n.E("err.bp_field")
-		}
-		if v != "" && f.Kind == "number" {
-			if _, err := strconv.ParseFloat(strings.ReplaceAll(v, ",", "."), 64); err != nil {
-				return nil, i18n.E("err.bp_number", f.Label)
-			}
-		}
-		if v != "" && f.Kind == "date" {
-			if _, err := time.Parse(time.DateOnly, v); err != nil {
-				return nil, i18n.E("err.bp_number", f.Label)
-			}
 		}
 		clean[f.Key] = v
 	}
 	return clean, nil
+}
+
+// cleanValue is a field's value checked and as kept: a number, a date or a time right, a select's one of the
+// options, a bool "Y" or "N" (empty — "N"; the form's box is followed by a hidden "N", so it is always sent).
+func cleanValue(f Field, v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if len([]rune(v)) > 10000 {
+		return "", i18n.E("err.bp_field")
+	}
+	bad := false
+	switch f.Kind {
+	case "bool":
+		switch strings.ToLower(v) {
+		case "y", "yes", "on", "1", "true":
+			v = "Y"
+		case "", "n", "no", "off", "0", "false":
+			v = "N"
+		default:
+			bad = true
+		}
+	case "number":
+		_, err := strconv.ParseFloat(strings.ReplaceAll(v, ",", "."), 64)
+		bad = v != "" && err != nil
+	case "date":
+		_, err := time.Parse(time.DateOnly, v)
+		bad = v != "" && err != nil
+	case "datetime":
+		v = strings.Replace(v, " ", "T", 1)
+		if len(v) > 16 { // seconds of a REST call
+			v = v[:16]
+		}
+		_, err := time.Parse("2006-01-02T15:04", v)
+		bad = v != "" && err != nil
+	case "select":
+		bad = v != "" && !contains(f.Options, v)
+	case "user":
+		bad = v != "" && !isUUID(v)
+	}
+	if bad {
+		return "", i18n.E("err.bp_number", f.Label)
+	}
+	return v, nil
+}
+
+func isUUID(v string) bool {
+	if len(v) != 36 {
+		return false
+	}
+	for i, c := range v {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+			return false
+		}
+	}
+	return true
 }
 
 // cardCheck: the person may read the CRM card the process is about.
@@ -724,11 +970,16 @@ func (s *Store) cardCheck(ctx context.Context, userID, entity, id string) error 
 	return s.cardRight(ctx, userID, entity, "read", id)
 }
 
-// cardRight: the person may do op ("read", "write") on the CRM card.
+// cardRight: the person may do op ("read", "write") on the CRM card (or the document of «Общий диск»).
 func (s *Store) cardRight(ctx context.Context, userID, entity, op, id string) error {
 	var resp string
 	var err error
 	switch entity {
+	case EntityFile:
+		if s.Files == nil {
+			return ErrNotFound
+		}
+		return s.Files.BPRight(ctx, userID, op, id)
 	case "deal":
 		var d crm.Deal
 		d, err = s.CRM.Deal(ctx, id)
@@ -857,6 +1108,83 @@ func (s *Store) Decide(ctx context.Context, userID, approvalID, decision, commen
 		return err
 	}
 	return s.run(ctx, instance)
+}
+
+// Delegate hands the person's approval (a review, a request) of the step a process waits on to another employee, as
+// «Делегировать»: to a subordinate or anyone, as the step allows; an administrator (in an administrator's
+// ctx) hands anyone's to anyone. The new person is told, the history keeps who handed it to whom. It returns the process.
+func (s *Store) Delegate(ctx context.Context, userID, approvalID, toID string) (string, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var instance, owner, text, kind string
+	var step int
+	var raw []byte
+	err = tx.QueryRow(ctx, `SELECT a.instance_id::text, a.step, a.user_id::text, a.text, a.kind, i.steps -> a.step FROM bp_approvals a
+		JOIN bp_instances i ON i.id = a.instance_id
+		WHERE a.id::text = $1 AND a.decision IS NULL AND i.status = 'running' AND `+currentSQL+`
+		FOR NO KEY UPDATE OF i`, approvalID).Scan(&instance, &step, &owner, &text, &kind, &raw)
+	admin := tasks.IsAdmin(ctx)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && owner != userID && !admin {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	var st Step
+	if raw != nil {
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return "", err
+		}
+	}
+	if !admin {
+		switch st.Delegate {
+		case "none":
+			return "", i18n.E("err.bp_no_delegate")
+		case "", "sub":
+			subs, err := s.Tasks.Subordinates(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			if !slices.ContainsFunc(subs, func(u tasks.User) bool { return u.ID == toID }) {
+				return "", i18n.E("err.bp_delegate_sub")
+			}
+		}
+	}
+	var name string
+	err = tx.QueryRow(ctx, `SELECT name FROM users WHERE id::text = $1 AND active AND NOT guest`, toID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) || toID == owner {
+		return "", i18n.E("err.bp_delegate_user")
+	}
+	if err != nil {
+		return "", err
+	}
+	// one has one part in a step: the person who already decides there is not given another
+	var taken bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM bp_approvals WHERE instance_id::text = $1 AND step = $2 AND user_id::text = $3)`,
+		instance, step, toID).Scan(&taken); err != nil {
+		return "", err
+	}
+	if taken {
+		return "", i18n.E("err.bp_delegate_user")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE bp_approvals SET user_id = $2, created_at = now() WHERE id::text = $1`, approvalID, toID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	s.log(ctx, instance, step, userID, "delegated", name)
+	s.notify(ctx, toID, userID, instance, map[string]string{"approve": "📝 ", "review": "👁 ", "request": "❓ "}[kind]+text)
+	if owner != userID { // an administrator's: the one it was taken from knows
+		s.notify(ctx, owner, userID, instance, "↪ "+text)
+	}
+	if x, err := s.instance(ctx, instance); err == nil {
+		s.feedReader(ctx, x, toID)
+	}
+	return instance, nil
 }
 
 // advance moves the process on from the step it waited on to next — or the pointer of the parallel branch the step is of.

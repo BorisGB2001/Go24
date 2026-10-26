@@ -84,8 +84,9 @@ type apiStockDoc struct {
 	Title          string        `json:"title,omitempty"`
 	Status         string        `json:"status"`
 	Date           string        `json:"date"`
-	SupplierID     string        `json:"supplier_id,omitempty"`
-	DealID         string        `json:"deal_id,omitempty"` // a shipment's
+	SupplierID     string        `json:"supplier_id,omitempty"`         // a company of the CRM
+	SupplierContID string        `json:"supplier_contact_id,omitempty"` // or a contact
+	DealID         string        `json:"deal_id,omitempty"`             // a shipment's
 	IncomingNumber string        `json:"incoming_number,omitempty"`
 	IncomingDate   string        `json:"incoming_date,omitempty"`
 	Reason         string        `json:"reason,omitempty"`
@@ -99,8 +100,13 @@ type apiStockDoc struct {
 
 func (s *Server) apiStockDocOut(d crm.StockDoc) apiStockDoc {
 	out := apiStockDoc{ID: d.ID, Kind: d.Kind, Number: d.Number, Title: d.Title, Status: d.Status, Date: d.Date.Format("2006-01-02"),
-		SupplierID: d.Supplier.ID, DealID: d.Deal.ID, IncomingNumber: d.IncomingNumber, Reason: d.Reason, Comment: d.Comment, Currency: d.Currency,
+		DealID: d.Deal.ID, IncomingNumber: d.IncomingNumber, Reason: d.Reason, Comment: d.Comment, Currency: d.Currency,
 		Amount: d.Amount, ResponsibleID: d.Responsible.ID, URL: s.BaseURL + "/store/docs/" + d.ID}
+	if d.SupplierKind == "contact" {
+		out.SupplierContID = d.Supplier.ID
+	} else {
+		out.SupplierID = d.Supplier.ID
+	}
 	if d.IncomingDate != nil {
 		out.IncomingDate = d.IncomingDate.Format("2006-01-02")
 	}
@@ -163,6 +169,9 @@ func (s *Server) apiStockDocSave(w http.ResponseWriter, r *http.Request, p apike
 	}
 	d := crm.StockDoc{ID: r.PathValue("id"), Kind: in.Kind, Title: in.Title, Supplier: crm.Ref{ID: in.SupplierID}, Deal: crm.Ref{ID: in.DealID}, IncomingNumber: in.IncomingNumber,
 		IncomingDate: formDay(in.IncomingDate), Reason: in.Reason, Comment: in.Comment, Currency: in.Currency, Responsible: crm.Ref{ID: in.ResponsibleID}}
+	if in.SupplierContID != "" {
+		d.Supplier.ID, d.SupplierKind = in.SupplierContID, "contact"
+	}
 	if t := formDay(in.Date); t != nil {
 		d.Date = *t
 	} else if in.Date != "" {

@@ -102,6 +102,24 @@ func TestFeedCommentsHTTP(t *testing.T) {
 	var cid string
 	must(pool.QueryRow(ctx, `SELECT id FROM feed_comments`).Scan(&cid))
 
+	// «Цитировать» (GO24DEV-692): a comment is formatted as a chat message, its notification is plain text
+	q := html(do(ivan, "POST", "/feed/"+post+"/comments", url.Values{"body": {"[quote]Анна:\nНовость[/quote]\n[b]Согласен[/b]"}}, 201))
+	for _, want := range []string{"<blockquote>Анна:<br>Новость</blockquote>", "<b>Согласен</b>", `data-cquote="Иван"`, "data-cinput"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("a quoting comment has no %s: %s", want, q)
+		}
+	}
+	var note string
+	must(pool.QueryRow(ctx, `SELECT body FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, anna).Scan(&note))
+	if strings.Contains(note, "[quote]") || !strings.Contains(note, "Согласен") {
+		t.Errorf("the notification of a comment: %q", note)
+	}
+	if p := do(anna, "GET", "/feed?post="+post, nil, 200); !strings.Contains(p, `data-quote="Анна"`) || !strings.Contains(p, `data-cmore=`) {
+		t.Error("the post has no «Цитировать»")
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM feed_comments WHERE id <> $1`, cid)
+	must(err)
+
 	// another person replies and links, but neither edits nor deletes
 	page := do(anna, "GET", "/feed", nil, 200)
 	if !strings.Contains(page, `id="comment-`+cid+`"`) || !strings.Contains(page, "data-clink") {

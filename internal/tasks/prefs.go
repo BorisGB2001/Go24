@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -104,4 +107,132 @@ func (s *Store) SetWidths(ctx context.Context, userID, name string, widths map[s
 	_, err := s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, $3)
 		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefWidths+name, raw)
 	return err
+}
+
+// SortColumns are the list columns a click on the header sorts by grids. A sort is the column name,
+// "-name" — descending; "" is the usual order of the list.
+var SortColumns = []string{"id", "title", "status", "activity", "deadline", "creator", "responsible", "project", "priority", "created", "closed", "plan"}
+
+// sortDescFirst are the columns whose first click puts the newest on top.
+var sortDescFirst = map[string]bool{"activity": true, "created": true, "closed": true, "priority": true}
+
+const prefSort = "list.sort"
+
+// NextSort is the sort a click on the column's header gives after cur: the column in its first direction, then the
+// other way round.
+func NextSort(cur, col string) string {
+	switch {
+	case cur == col:
+		return "-" + col
+	case cur == "-"+col:
+		return col
+	case sortDescFirst[col]:
+		return "-" + col
+	}
+	return col
+}
+
+// Sort returns the user's sort of task lists ("" — the usual order).
+func (s *Store) Sort(ctx context.Context, userID string) (string, error) {
+	var raw []byte
+	err := s.db.QueryRow(ctx, `SELECT value FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefSort).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var v string
+	if json.Unmarshal(raw, &v) != nil || !validSort(v) {
+		return "", nil
+	}
+	return v, nil
+}
+
+// SetSort keeps the user's sort; "" — back to the usual order.
+func (s *Store) SetSort(ctx context.Context, userID, v string) error {
+	if !validSort(v) {
+		return invalid("err.bad_form")
+	}
+	if v == "" {
+		_, err := s.db.Exec(ctx, `DELETE FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefSort)
+		return err
+	}
+	raw, _ := json.Marshal(v)
+	_, err := s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefSort, raw)
+	return err
+}
+
+func validSort(v string) bool {
+	return v == "" || slices.Contains(SortColumns, strings.TrimPrefix(v, "-"))
+}
+
+// statusOrder is the way of a task: the status column sorts by it.
+var statusOrder = map[Status]int{StatusPending: 0, StatusInProgress: 1, StatusAwaitingControl: 2, StatusDeferred: 3, StatusCompleted: 4}
+
+// SortTasks orders a list by a sort of SortColumns (in place, stable). Pinned tasks stay on top, and tasks without
+// the date sorted by go to the end either way.
+func SortTasks(list []Task, by string) {
+	col, desc := strings.TrimPrefix(by, "-"), strings.HasPrefix(by, "-")
+	if !validSort(by) || by == "" {
+		return
+	}
+	dates := func(a, b *time.Time) (int, bool) { // the compare, and whether one of them is missing
+		switch {
+		case a == nil && b == nil:
+			return 0, true
+		case a == nil:
+			return 1, true
+		case b == nil:
+			return -1, true
+		}
+		return a.Compare(*b), false
+	}
+	text := func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) }
+	slices.SortStableFunc(list, func(a, b Task) int {
+		if a.Pinned != b.Pinned {
+			if a.Pinned {
+				return -1
+			}
+			return 1
+		}
+		var c int
+		switch col {
+		case "id":
+			if c = text(a.ProjectKey, b.ProjectKey); c == 0 {
+				c = a.Number - b.Number
+			}
+		case "title":
+			c = text(a.Title, b.Title)
+		case "status":
+			c = statusOrder[a.Status] - statusOrder[b.Status]
+		case "activity":
+			c = a.UpdatedAt.Compare(b.UpdatedAt)
+		case "creator":
+			c = text(a.CreatorName, b.CreatorName)
+		case "responsible":
+			c = text(a.ResponsibleName, b.ResponsibleName)
+		case "project":
+			c = text(a.ProjectKey, b.ProjectKey)
+		case "priority":
+			c = int(a.Priority) - int(b.Priority)
+		case "created":
+			c = a.CreatedAt.Compare(b.CreatedAt)
+		default: // the dates that may be missing
+			pick := map[string]func(Task) *time.Time{
+				"deadline": func(t Task) *time.Time { return t.Deadline },
+				"closed":   func(t Task) *time.Time { return t.ClosedAt },
+				"plan":     func(t Task) *time.Time { return t.StartPlan },
+			}[col]
+			var missing bool
+			if c, missing = dates(pick(a), pick(b)); missing {
+				return c
+			}
+		}
+		if desc {
+			return -c
+		}
+		return c
+	})
 }

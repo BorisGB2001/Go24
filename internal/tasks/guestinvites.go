@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/mail"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -178,6 +179,44 @@ func (s *Store) RevokeGuestInvite(ctx context.Context, p Project, actorID, id st
 	return logCollab(ctx, s.db, p.ID, actorID, "invite_revoked", "", strings.TrimSpace(kind+" "+contact))
 }
 
+// RenewGuestInvite: «Пригласить повторно» — a personal invitation nobody has used or revoked works ttl more from now
+// (an expired one comes back); the caller sends it again.
+func (s *Store) RenewGuestInvite(ctx context.Context, p Project, actorID, id string, ttl time.Duration) (GuestInvite, error) {
+	if err := s.canInviteGuests(ctx, p, actorID); err != nil {
+		return GuestInvite{}, err
+	}
+	if ttl <= 0 {
+		ttl = GuestInviteTTL
+	}
+	ttl = min(max(ttl, GuestInviteMinTTL), GuestInviteMaxTTL)
+	var kind, contact string
+	err := s.db.QueryRow(ctx, `UPDATE collab_invites SET expires_at = $3
+		WHERE id::text = $1 AND project_id = $2 AND kind <> 'link' AND uses = 0 AND revoked_at IS NULL RETURNING kind, email || phone`,
+		id, p.ID, time.Now().Add(ttl)).Scan(&kind, &contact)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GuestInvite{}, ErrNotFound
+	}
+	if err != nil {
+		return GuestInvite{}, err
+	}
+	if err := logCollab(ctx, s.db, p.ID, actorID, "invite_resent", "", kind+" "+contact); err != nil {
+		return GuestInvite{}, err
+	}
+	return s.guestInvite(ctx, `i.id::text = $1`, id)
+}
+
+// SplitContacts: the e-mails or phones of several guests at once — one a line, or by commas and semicolons
+// («Анна <anna@example.org>, +7 999 123-45-67»); a repeated one once.
+func SplitContacts(s string) []string {
+	var out []string
+	for _, c := range strings.FieldsFunc(s, func(r rune) bool { return r == '\n' || r == ',' || r == ';' }) {
+		if c = strings.TrimSpace(c); c != "" && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // GuestInviteByToken is the invitation of a link while it works; a link that expired, was revoked or used (a
 // personal one) answers err.guest_invite_gone, an unknown one is not found.
 func (s *Store) GuestInviteByToken(ctx context.Context, token string) (GuestInvite, error) {
@@ -199,14 +238,14 @@ func (s *Store) GuestInviteByToken(ctx context.Context, token string) (GuestInvi
 func (s *Store) AcceptGuestInvite(ctx context.Context, token, userID string) (string, error) {
 	var key string
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		var id, projectID, kind string
+		var id, projectID, kind, inviter string
 		var expires time.Time
 		var revoked bool
 		var uses int
-		err := tx.QueryRow(ctx, `SELECT i.id, i.project_id, p.key, i.kind, i.expires_at, i.revoked_at IS NOT NULL, i.uses
+		err := tx.QueryRow(ctx, `SELECT i.id, i.project_id, p.key, i.kind, i.expires_at, i.revoked_at IS NOT NULL, i.uses, i.created_by::text
 			FROM collab_invites i JOIN projects p ON p.id = i.project_id
 			WHERE i.token = $1 AND p.kind = 'collab' AND NOT p.archived FOR UPDATE OF i`, token).
-			Scan(&id, &projectID, &key, &kind, &expires, &revoked, &uses)
+			Scan(&id, &projectID, &key, &kind, &expires, &revoked, &uses, &inviter)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -232,6 +271,9 @@ func (s *Store) AcceptGuestInvite(ctx context.Context, token, userID string) (st
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE collab_invites SET uses = uses + 1, used_by = $2, used_at = now() WHERE id = $1`, id, userID); err != nil {
+			return err
+		}
+		if err := notifyCollab(ctx, tx, inviter, userID, "collab_joined", projectID, "/p/"+key); err != nil {
 			return err
 		}
 		return logCollab(ctx, tx, projectID, userID, "joined", userID, kind)

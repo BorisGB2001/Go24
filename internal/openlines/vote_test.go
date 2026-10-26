@@ -104,7 +104,7 @@ func TestVote(t *testing.T) {
 	if st, _ = s.VisitorState(ctx, wid, tok); st.Vote != -1 {
 		t.Fatalf("the widget shows the rating: %+v", st)
 	}
-	list, err := s.Sessions(ctx, Filter{Tab: "closed"})
+	list, err := s.Sessions(ctx, Filter{Who: Who{All: true}, Tab: "closed"})
 	must(err)
 	if len(list) != 1 || list[0].Vote != -1 {
 		t.Fatalf("the list shows the rating: %+v", list)

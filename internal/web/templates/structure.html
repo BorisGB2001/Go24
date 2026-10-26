@@ -35,6 +35,9 @@
           <form method="post" action="/company/departments"><input type="hidden" name="op" value="add"><input type="hidden" name="parent" value="{{$n.ID}}">
             <label>{{t "structure.add_sub"}}</label>
             <div class="row"><input type="text" name="name" required placeholder="{{t "structure.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>
+          <form method="post" action="/company/teams"><input type="hidden" name="op" value="add"><input type="hidden" name="department" value="{{$n.ID}}">
+            <label>{{t "team.add"}}</label>
+            <div class="row"><input type="text" name="name" required maxlength="200" placeholder="{{t "team.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>
           {{if $n.ParentID}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{$n.ID}}">
             <button class="ghost">{{icon "trash"}} {{t "structure.delete"}}</button></form>{{end}}
         </div>
@@ -50,6 +53,48 @@
     </details>
     {{end}}
   </div>
+  {{if $n.Teams}}<div class="dteams">{{range $n.Teams}}{{template "team" (teamCtx . $d)}}{{end}}</div>{{end}}
   {{if $n.Children}}<div class="dkids">{{range $n.Children}}{{template "dept" (deptCtx . $d)}}{{end}}</div>{{end}}
+</div>
+{{end}}
+
+{{define "team"}}{{$tm := .Team}}{{$d := .Data}}
+<div class="teamcard card" data-team="{{$tm.ID}}">
+  <div class="dhead">
+    <span class="pill team-pill">{{t "team.label"}}</span>
+    <b class="teamname"><a href="/company?team={{$tm.ID}}">{{$tm.Name}}</a></b>
+    <span class="muted small" title="{{t "team.total"}}">{{icon "users"}} {{$tm.Total}}</span>
+    {{if or $d.Admin (and $tm.Head (eq $tm.Head.ID $d.Me))}}
+    <details class="tsettings dmenu"><summary title="{{t "team.edit"}}">{{icon "edit"}}</summary>
+      <div class="pop">
+        <form method="post" action="/company/teams"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{$tm.ID}}">
+          <label>{{t "team.name"}}</label><input type="text" name="name" value="{{$tm.Name}}" maxlength="200" required>
+          <label>{{t "team.description"}}</label><textarea name="description" rows="3" maxlength="2000">{{$tm.Description}}</textarea>
+          {{if $d.Admin}}
+          <label>{{t "team.department"}}</label>
+          <select name="department">{{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $tm.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+          <label>{{t "team.head"}}</label>
+          {{template "upick" (upick "head" (teamHead $tm) $d.Users)}}
+          {{end}}
+          <label>{{t "structure.deputies"}}</label>
+          {{template "upick" (upick "deputies" (persons $tm.Deputies) $d.Users "multi")}}
+          <label>{{t "team.members"}}</label>
+          {{template "upick" (upick "members" (persons $tm.Members) $d.Users "multi")}}
+          <p><button class="primary">{{t "common.save"}}</button></p></form>
+        {{if $d.Admin}}<form method="post" action="/company/teams" data-confirm="{{t "team.delete_confirm"}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{$tm.ID}}">
+          <button class="ghost">{{icon "trash"}} {{t "team.delete"}}</button></form>{{end}}
+      </div>
+    </details>
+    {{end}}
+  </div>
+  {{with $tm.Description}}<p class="muted small teamdesc">{{.}}</p>{{end}}
+  <div class="dlead">{{with $tm.Head}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}<span class="muted small"> · {{t "team.head"}}</span></span></a>
+    {{else}}<span class="muted small">{{t "team.no_head"}}</span>{{end}}
+    {{range $tm.Deputies}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}<span class="muted small"> · {{t "structure.deputy"}}</span></span></a>{{end}}</div>
+  {{if $tm.Members}}
+  <details class="dpeople"><summary class="muted small">{{t "team.members_n" (len $tm.Members)}}</summary>
+    {{range $tm.Members}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{end}}
+  </details>
+  {{end}}
 </div>
 {{end}}

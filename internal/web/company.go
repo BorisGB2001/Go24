@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -41,7 +42,7 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	q := r.URL.Query()
-	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("dept"), Fired: sess.Admin && q.Get("fired") == "1",
+	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("dept"), TeamID: q.Get("team"), Fired: sess.Admin && q.Get("fired") == "1",
 		Guests: sess.Admin && q.Get("guests") == "1"}
 	if f.Guests { // guests have no departments, nor working days and absences
 		f.DepartmentID = ""
@@ -53,8 +54,12 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, err, "/my")
 		return
 	}
-	if q.Get("format") == "csv" {
+	switch q.Get("format") {
+	case "csv":
 		s.employeesCSV(w, r, list, f.Guests)
+		return
+	case "vcf":
+		s.employeesVCF(w, r, list)
 		return
 	}
 	view := q.Get("view")
@@ -73,15 +78,22 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			}
 		}
 	}
+	var team *company.Team // the team the list is filtered by
+	if f.TeamID != "" {
+		if team, err = s.Company.Team(r.Context(), f.TeamID); err != nil && !errors.Is(err, company.ErrNotFound) {
+			s.taskErr(w, r, err, "/my")
+			return
+		}
+	}
 	keep := url.Values{}
-	for _, k := range []string{"q", "dept", "fired", "preset", "guests"} {
+	for _, k := range []string{"q", "dept", "team", "fired", "preset", "guests"} {
 		if v := q.Get(k); v != "" {
 			keep.Set(k, v)
 		}
 	}
 	s.render(w, r, "company", page{TitleKey: "title.employees", Nav: "company", Data: map[string]any{
 		"Employees": list, "Departments": depts, "Filter": f, "Admin": sess.Admin, "Presets": company.EmployeePresets,
-		"Tiles": view == "tiles", "Absent": absent, "Keep": listQuery{keep},
+		"Tiles": view == "tiles", "Absent": absent, "Keep": listQuery{keep}, "Team": team, "CardDAV": s.carddavURL(r),
 	}})
 }
 
@@ -158,8 +170,46 @@ func (s *Server) structure(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	s.render(w, r, "structure", page{TitleKey: "title.structure", Nav: "structure", Data: map[string]any{
-		"Root": root, "Departments": depts, "Users": users, "Admin": sess.Admin,
+		"Root": root, "Departments": depts, "Users": users, "Admin": sess.Admin, "Me": sess.UserID,
 	}})
+}
+
+// teams manages the teams of the structure: op=add|delete (administrators), op=update (administrators, and the
+// team's head — without its department and head).
+func (s *Server) teams(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/company/structure"
+	_ = r.ParseForm()
+	in := company.TeamInput{DepartmentID: r.FormValue("department"), Name: r.FormValue("name"), Description: r.FormValue("description"),
+		HeadID: r.FormValue("head"), Deputies: r.Form["deputies"], Members: r.Form["members"]}
+	id := r.FormValue("id")
+	var err error
+	switch op := r.FormValue("op"); {
+	case op == "update":
+		var ok bool
+		if ok, err = s.Company.CanEditTeam(r.Context(), sess.UserID, sess.Admin, id); err == nil && !ok {
+			err = company.ErrForbidden
+		} else if err == nil {
+			err = s.Company.UpdateTeam(r.Context(), id, in, !sess.Admin)
+		}
+	case !sess.Admin:
+		err = company.ErrForbidden
+	case op == "add":
+		id, err = s.Company.CreateTeam(r.Context(), in)
+	case op == "delete":
+		err = s.Company.DeleteTeam(r.Context(), id)
+	default:
+		err = i18n.E("err.bad_form")
+	}
+	if errors.Is(err, company.ErrForbidden) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("team "+r.FormValue("op"), "user_id", sess.UserID, "id", id)
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // departments manages the structure (administrators): op=add|update|delete, and what is dragged in it —
@@ -269,12 +319,20 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/company")
 		return
 	}
-	tab := r.URL.Query().Get("tab") // the profile's tabs: "" (general), tasks, thanks
-	if tab != "tasks" && tab != "thanks" {
+	tab := r.URL.Query().Get("tab") // the profile's tabs: "" (general), tasks, thanks, security (the person and administrators)
+	security := sess.UserID == id || sess.Admin
+	if tab != "tasks" && tab != "thanks" && (tab != "security" || !security) {
 		tab = ""
 	}
+	var devices []deviceRow
+	if tab == "security" {
+		if devices, err = s.profileDevices(r, sess, id); err != nil {
+			s.taskErr(w, r, err, "/company")
+			return
+		}
+	}
 	s.render(w, r, "profile", page{Title: p.FullName(), Nav: "company", Data: map[string]any{
-		"Thanks": thanks, "Fields": fields, "Tab": tab,
+		"Thanks": thanks, "Fields": fields, "Tab": tab, "Security": security, "Devices": devices, "AccountURL": s.accountURL(),
 		"MatrixID": mxid, "ElementURL": element,
 		"P": p, "Managers": managers, "Subordinates": subs, "Departments": depts, "InDept": inDept,
 		"Tasks": open, "CanEdit": sess.UserID == id || sess.Admin, "Admin": sess.Admin, "Me": sess.UserID == id,

@@ -75,6 +75,30 @@ func (s *Server) timeman(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	// late by each person's schedule: my days of the month and my people's today
+	normFrom, normTo := month, month.AddDate(0, 1, 0)
+	if today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local); today.Before(normFrom) {
+		normFrom = today
+	} else if !today.Before(normTo) {
+		normTo = today.AddDate(0, 0, 1)
+	}
+	norms, err := s.Company.Norms(r.Context(), append([]string{sess.UserID}, ids...), sched, normFrom, normTo)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	late := map[string]bool{}
+	for _, d := range append(slices.Clone(days), team...) {
+		uid := d.UserID
+		if uid == "" {
+			uid = sess.UserID
+		}
+		late[uid+"|"+d.Day.Format(time.DateOnly)] = slices.Contains(norms[uid].Violations(d, now), "late")
+	}
+	start := sched.LateAt()
+	if p := norms[sess.UserID].Plan(now); p.Work && p.Start != "" {
+		start = p.Start
+	}
 	total := 0
 	for _, d := range days {
 		total += d.Worked(now)
@@ -91,7 +115,7 @@ func (s *Server) timeman(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return
 	}
 	s.render(w, r, "timeman", page{TitleKey: "workday.page", Nav: "timeman", Data: map[string]any{
-		"Days": days, "Team": team, "TeamSize": len(ids), "Start": sched.LateAt(), "Pending": pending, "Forgotten": forgotten,
+		"Days": days, "Team": team, "TeamSize": len(ids), "Start": start, "Late": late, "Pending": pending, "Forgotten": forgotten,
 		"Me": sess.UserID, "Now": now, "Total": total,
 		"Month": month, "Prev": month.AddDate(0, -1, 0).Format("2006-01"), "Next": month.AddDate(0, 1, 0).Format("2006-01"),
 	}})

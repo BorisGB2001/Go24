@@ -148,3 +148,19 @@ func (s *Store) MayChange(ctx context.Context, userID string, d Drive, id string
 	}
 	return err == nil, err
 }
+
+// FileOn is the file of the drive as the viewer sees it there (its name, size, type, when it last changed and its
+// folder); ErrNotFound — it is not on the drive, in the trash, or in a folder closed to the viewer.
+func (s *Store) FileOn(ctx context.Context, d Drive, id string) (File, error) {
+	_, folder, err := s.fileOf(ctx, s.db, d, id)
+	if err != nil {
+		return File{}, err
+	}
+	if _, err := s.Within(ctx, d, folder); err != nil {
+		return File{}, err
+	}
+	f := File{ID: id, FolderID: folder}
+	err = s.db.QueryRow(ctx, `SELECT name, content_type, size, created_at FROM files WHERE id::text = $1`, id).
+		Scan(&f.Name, &f.ContentType, &f.Size, &f.CreatedAt)
+	return f, err
+}

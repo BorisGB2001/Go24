@@ -29,6 +29,7 @@ var settingsSections = []struct {
 	{"settings.sec.portal", []settingsLink{
 		{"/settings/portal", "portal.title", "home", true},
 		{"/settings/admins", "admins.title", "shield-lock", true},
+		{"/settings/tools", "sections.title", "adjustments", true},
 		{"/settings/ip", "ipaccess.title", "lock", true},
 		{"/settings/backup", "backup.title", "database", true},
 		{"/settings/notifications", "notify.settings", "bell", false},
@@ -47,6 +48,7 @@ var settingsSections = []struct {
 	{"settings.sec.tasks", []settingsLink{
 		{"/settings/task-fields", "nav.task_fields", "list-check", true},
 		{"/templates", "templates.title", "copy", false},
+		{"/tasks/robots", "taskrobot.title", "robot", false},
 		{"/tasks/trash", "trash.title", "trash", false},
 	}},
 	{"settings.sec.crm", []settingsLink{
@@ -86,6 +88,9 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess auth.
 		var links []settingsLink
 		for _, l := range sec.Links {
 			if l.Href == "/settings/telephony" && s.Telephony == nil { // no Asterisk: nothing to set
+				continue
+			}
+			if _, off := s.offSection(r.Context(), l.Href); off { // its section is switched off in «Инструменты»
 				continue
 			}
 			if !l.Admin || sess.Admin || l.Href == "/company/invite" && invite {

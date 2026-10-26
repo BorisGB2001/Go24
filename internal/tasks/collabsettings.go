@@ -3,6 +3,8 @@ package tasks
 import (
 	"context"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +14,8 @@ import (
 // The settings and the security of a collab «Настройки коллаба»: who may invite members and who may
 // invite guests (the owner / the owner and moderators / every member), whether new members see the chat's history,
 // what guests may do (make tasks, upload files); who changes the settings, the name and the avatar (the owner / the
-// owner and moderators) and who writes in the chat (everyone / all but guests / the owner and moderators); taking a person out takes their access at once; the archive is
+// owner and moderators) and who writes in the chat (everyone / all but guests / the owner and moderators), how long the
+// chat's messages live (auto-delete); taking a person out takes their access at once; the archive is
 // read-only; deleting is the owner's (or an administrator's). Every change is written into the collab's log.
 
 // CollabSettings are the switches of a collab.
@@ -24,7 +27,11 @@ type CollabSettings struct {
 	GuestFiles      bool   // guests upload files
 	EditPerm        string // who changes the settings, the name, the avatar: owner | managers
 	ChatPerm        string // who writes in the chat: members | employees (not guests) | managers
+	MsgTTL          int    // the chat's messages are deleted after so many seconds (0 — kept), one of MsgTTLs
 }
+
+// MsgTTLs are the lifetimes of «Автоудаление сообщений»: an hour, a day, a week, a month (as the messenger's).
+var MsgTTLs = []int{3600, 86400, 7 * 86400, 30 * 86400}
 
 // editPerms and chatPerms are the choices of «кто может изменять настройки» and «кто может писать в чат».
 var (
@@ -39,9 +46,9 @@ func (s *Store) CollabSettings(ctx context.Context, p Project) (CollabSettings, 
 
 func collabSettings(ctx context.Context, q querier, projectID string) (CollabSettings, error) {
 	var c CollabSettings
-	err := q.QueryRow(ctx, `SELECT invite_perm, guest_invite_perm, chat_history, guests_tasks, guests_files, edit_perm, chat_perm
-		FROM projects WHERE id = $1`, projectID).Scan(&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks, &c.GuestFiles,
-		&c.EditPerm, &c.ChatPerm)
+	err := q.QueryRow(ctx, `SELECT invite_perm, guest_invite_perm, chat_history, guests_tasks, guests_files, edit_perm, chat_perm,
+		msg_ttl FROM projects WHERE id = $1`, projectID).Scan(&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks,
+		&c.GuestFiles, &c.EditPerm, &c.ChatPerm, &c.MsgTTL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -57,7 +64,8 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 	if !p.CanEdit() || p.Archived {
 		return ErrForbidden
 	}
-	if !invitePerms[in.InvitePerm] || !invitePerms[in.GuestInvitePerm] || (in.ChatPerm != "" && !chatPerms[in.ChatPerm]) || (in.EditPerm != "" && !editPerms[in.EditPerm]) {
+	if !invitePerms[in.InvitePerm] || !invitePerms[in.GuestInvitePerm] || (in.ChatPerm != "" && !chatPerms[in.ChatPerm]) || (in.EditPerm != "" && !editPerms[in.EditPerm]) ||
+		(in.MsgTTL != 0 && !slices.Contains(MsgTTLs, in.MsgTTL)) {
 		return invalid("err.bad_form")
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
@@ -75,8 +83,10 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `UPDATE projects SET invite_perm = $2, guest_invite_perm = $3, chat_history = $4, guests_tasks = $5,
-			guests_files = $6, edit_perm = $7, chat_perm = $8, updated_at = now() WHERE id = $1`,
-			p.ID, in.InvitePerm, in.GuestInvitePerm, in.ChatHistory, in.GuestTasks, in.GuestFiles, in.EditPerm, in.ChatPerm); err != nil {
+			guests_files = $6, edit_perm = $7, chat_perm = $8, msg_ttl = $9,
+			msg_ttl_by = CASE WHEN msg_ttl = $9 THEN msg_ttl_by ELSE $10::uuid END, updated_at = now() WHERE id = $1`,
+			p.ID, in.InvitePerm, in.GuestInvitePerm, in.ChatHistory, in.GuestTasks, in.GuestFiles, in.EditPerm, in.ChatPerm,
+			in.MsgTTL, actorID); err != nil {
 			return err
 		}
 		var diff []string // «invite_perm=members», «chat_history=off»: the log shows them in words
@@ -91,6 +101,7 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 			{"chat_history", onOff(old.ChatHistory), onOff(in.ChatHistory)}, {"guests_tasks", onOff(old.GuestTasks), onOff(in.GuestTasks)},
 			{"guests_files", onOff(old.GuestFiles), onOff(in.GuestFiles)},
 			{"edit_perm", old.EditPerm, in.EditPerm}, {"chat_perm", old.ChatPerm, in.ChatPerm},
+			{"msg_ttl", strconv.Itoa(old.MsgTTL), strconv.Itoa(in.MsgTTL)},
 		} {
 			if d.o != d.n {
 				diff = append(diff, d.k+"="+d.n)
@@ -206,9 +217,12 @@ func (s *Store) setCollabMember(ctx context.Context, p Project, actorID, userID,
 			ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role`, p.ID, userID, role); err != nil {
 			return err
 		}
-		action := "member_added"
+		action, kind := "member_added", "collab_added"
 		if had != "" {
-			action = "role_changed"
+			action, kind = "role_changed", "collab_"+role // collab_manager | collab_member
+		}
+		if err := notifyCollab(ctx, tx, userID, actorID, kind, p.ID, "/p/"+p.Key); err != nil {
+			return err
 		}
 		return logCollab(ctx, tx, p.ID, actorID, action, userID, role)
 	})
@@ -312,6 +326,16 @@ func logCollab(ctx context.Context, q querier, projectID, actorID, action, targe
 	_, err := q.Exec(ctx, `INSERT INTO collab_log (project_id, actor_id, action, target_id, detail)
 		SELECT $1, (SELECT id FROM users WHERE id::text = $2), $3, (SELECT id FROM users WHERE id::text = $4), $5
 		FROM projects WHERE id = $1 AND kind = 'collab'`, projectID, actorID, action, targetID, detail)
+	return err
+}
+
+// notifyCollab tells the person what was done to them in the collab tells about its groups: added
+// (collab_added), made a moderator or a member again (collab_manager, collab_member), excluded (collab_removed), a
+// person they invited joined (collab_joined); nobody is told what they did themselves.
+func notifyCollab(ctx context.Context, q querier, userID, actorID, kind, projectID, url string) error {
+	_, err := q.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, project_id, url)
+		SELECT u.id, (SELECT id FROM users WHERE id::text = $2), $3, $4, $5 FROM users u
+		WHERE u.id::text = $1 AND u.active AND u.id::text <> $2 AND NOT go24_quiet()`, userID, actorID, kind, projectID, url)
 	return err
 }
 

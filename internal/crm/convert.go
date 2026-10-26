@@ -30,8 +30,8 @@ func (s *Store) ConvertDefaults(ctx context.Context, l Lead) (ConvertTo, error) 
 	if to.ContactID == "" && (l.Phone != "" || l.Email != "" || l.Name != "") {
 		pk, em, nm := phoneKey(l.Phone), strings.ToLower(strings.TrimSpace(l.Email)), strings.ToLower(strings.TrimSpace(l.Name))
 		err := s.db.QueryRow(ctx, `SELECT coalesce((SELECT id::text FROM crm_contacts
-			WHERE ($1 <> '' AND `+phoneSQL("phone")+` = $1) OR ($2 <> '' AND lower(email) = $2) OR ($3 <> '' AND lower(name) = $3)
-			ORDER BY ($1 <> '' AND `+phoneSQL("phone")+` = $1) DESC, ($2 <> '' AND lower(email) = $2) DESC, created_at LIMIT 1), '')`,
+			WHERE `+commMatch("contact", "crm_contacts", "$1", "$2")+` OR ($3 <> '' AND lower(name) = $3)
+			ORDER BY `+commHas("contact", "crm_contacts", "phone", "$1")+` DESC, `+commHas("contact", "crm_contacts", "email", "$2")+` DESC, created_at LIMIT 1), '')`,
 			pk, em, nm).Scan(&to.ContactID)
 		if err != nil {
 			return to, err
@@ -112,7 +112,7 @@ func (s *Store) ConvertLeadTo(ctx context.Context, userID, id string, to Convert
 			if name == "" {
 				name = l.Title
 			}
-			if got.ContactID, err = s.SaveContact(ctx, userID, Contact{Name: name, Phone: l.Phone, Email: l.Email,
+			if got.ContactID, err = s.SaveContact(ctx, userID, Contact{Name: name, Phone: l.Phone, Email: l.Email, Comms: l.Comms,
 				Company: Ref{ID: got.CompanyID}, Origin: l.Origin, Responsible: l.Responsible}); err != nil {
 				return got, err
 			}

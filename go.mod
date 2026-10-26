@@ -11,6 +11,8 @@ require (
 	golang.org/x/oauth2 v0.23.0
 )
 
+require rsc.io/qr v0.2.0
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect

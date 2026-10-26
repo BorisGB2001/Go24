@@ -32,6 +32,7 @@ func (s *Server) apiBPRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/bp/instances/{id}", s.api("bp:write", s.apiBPDeleteInstance))
 	mux.HandleFunc("GET /api/v1/bp/tasks", s.api("bp:read", s.apiBPTasks))
 	mux.HandleFunc("POST /api/v1/bp/tasks/{id}/complete", s.api("bp:write", s.apiBPComplete))
+	mux.HandleFunc("POST /api/v1/bp/tasks/{id}/delegate", s.api("bp:write", s.apiBPDelegate))
 }
 
 // apiBPCtx: an administrator's key administers the processes, as the pages do (not only in the admin mode).
@@ -46,7 +47,7 @@ type apiBPTemplate struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	Entity      string     `json:"entity"`  // deal, lead, contact, company or none — a standalone process
+	Entity      string     `json:"entity"`  // deal, lead, contact, company, file (a document of «Общий диск») or none — a standalone process
 	TypeID      string     `json:"type_id"` // of deals: of this smart process's cards
 	Active      bool       `json:"active"`
 	AutoCreate  bool       `json:"auto_create"` // «Автозапуск»: when a card is added
@@ -69,7 +70,7 @@ func (s *Server) apiBPTemplateOf(t bp.Template, admin bool) apiBPTemplate {
 	return out
 }
 
-// apiBPTemplates: ?entity=deal|lead|contact|company|none, those the key's owner starts; the inactive ones — for
+// apiBPTemplates: ?entity=deal|lead|contact|company|file|none, those the key's owner starts; the inactive ones — for
 // administrators only.
 func (s *Server) apiBPTemplates(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	ctx, admin := s.apiBPCtx(r, p)
@@ -300,7 +301,12 @@ func (s *Server) apiBPWriteInstance(w http.ResponseWriter, r *http.Request, p ap
 	}
 	t, _ := s.BP.Template(ctx, x.TemplateID) // the field labels (the template may be gone)
 	out := s.apiBPInstanceOf(x)
-	out.CanStop, out.Fields = s.BP.CanStop(ctx, p.UserID, x), bp.AllFields(t.Fields, x.Steps)
+	out.CanStop, out.Fields = s.BP.CanStop(ctx, p.UserID, x), x.Form(t.Fields)
+	for i, f := range out.Fields { // «Информация о сотруднике»: its fields are named by their keys
+		if f.Label == "" {
+			out.Fields[i].Label = f.Key
+		}
+	}
 	out.Steps, out.Tasks, out.Log = []apiBPStep{}, []*apiBPTask{}, []apiBPLine{}
 	for i, st := range x.Steps {
 		out.Steps = append(out.Steps, apiBPStep{N: i + 1, Kind: st.Kind, Text: st.Text, State: x.State(i)})
@@ -371,6 +377,21 @@ func (s *Server) apiBPTasks(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 
 // apiBPComplete decides on a task: {"decision": "approve" | "reject" | "seen" (a review) | "answer" (a request, with
 // "values": {key: …}), "comment"}; the process as it is then.
+// apiBPDelegate hands the key owner's task to the employee {"to": id}, as bizproc.task.delegate (an administrator's key —
+// anyone's task).
+func (s *Server) apiBPDelegate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct{ To string }
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	ctx, _ := s.apiBPCtx(r, p)
+	process, err := s.BP.Delegate(ctx, p.UserID, r.PathValue("id"), in.To)
+	if err != nil {
+		return err
+	}
+	return s.apiBPWriteInstance(w, r, p, process, http.StatusOK)
+}
+
 func (s *Server) apiBPComplete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
 		Decision, Comment string

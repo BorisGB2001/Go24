@@ -8,7 +8,7 @@
 </form>
 <p class="muted small">{{t "booking.stats_hint"}}</p>
 <div class="card flush bk-stats-wrap">
-  <table class="list bk-stats"><thead><tr><th>{{t "booking.resource"}}</th><th>{{t "booking.stats_work"}}</th><th>{{t "booking.stats_busy"}}</th><th>{{t "booking.stats_load"}}</th><th>{{t "booking.stats_no_show"}}</th>
+  <table class="list bk-stats"><thead><tr><th>{{t "booking.resource"}}</th><th>{{t "booking.stats_work"}}</th><th>{{t "booking.stats_busy"}}</th><th>{{t "booking.stats_load"}}</th><th>{{t "booking.stats_no_show"}}</th><th>{{t "booking.rating"}}</th>
     <th>{{t "booking.stats_bookings"}}</th>{{range $d.Statuses}}<th>{{t (print "booking.st." .)}}</th>{{end}}</tr></thead><tbody>
   {{range $d.Rows}}{{template "bkstat" (dict "x" . "d" $d "total" false)}}{{end}}{{if $d.Rows}}{{template "bkstat" (dict "x" $d.Total "d" $d "total" true)}}{{end}}</tbody></table>
   {{if not $d.Rows}}<p class="empty">{{t "booking.no_resources"}}</p>{{end}}
@@ -19,4 +19,5 @@
     <td>{{call $d.Hours $x.Work}}</td><td>{{call $d.Hours $x.Busy}}</td>
     <td><div class="bk-load"><span style="width:{{if gt $x.Load 100}}100{{else}}{{$x.Load}}{{end}}%"></span></div> {{$x.Load}}%</td>
     <td>{{if ge $x.NoShowShare 0}}{{$x.NoShowShare}}%{{else}}—{{end}}</td>
+    <td>{{if $x.Rated}}<span title="{{t "booking.rated_n" (printf "%d" $x.Rated)}}">★ {{call $d.Rating $x}}</span>{{else}}—{{end}}</td>
     <td>{{$x.Bookings}}</td>{{range $d.Statuses}}<td>{{or (index $x.Statuses .) "—"}}</td>{{end}}</tr>{{end}}

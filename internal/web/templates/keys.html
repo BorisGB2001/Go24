@@ -9,6 +9,9 @@
   <p class="muted">{{t "keys.created_hint"}}</p>
   <input type="text" readonly value="{{$d.NewToken}}" onclick="this.select()" style="font-family:var(--font-mono)">
   <p class="small muted">{{t "keys.check"}} <code>curl -H "{{t "keys.header_value"}}" {{$d.BaseURL}}/api/v1/me</code></p>
+  <label>{{t "keys.webhook"}}</label>
+  <input type="text" readonly value="{{$d.BaseURL}}/rest/{{.User.UserID}}/{{$d.NewToken}}/" onclick="this.select()" style="font-family:var(--font-mono)" data-webhook>
+  <p class="small muted">{{t "keys.webhook_hint"}} <code>{{$d.BaseURL}}/rest/{{.User.UserID}}/…/crm/deals</code></p>
   {{if .User.Admin}}<p class="small muted">{{t "keys.admin_mode"}} <code>X-Go24-Admin: 1</code></p>{{end}}
 </div>
 {{end}}

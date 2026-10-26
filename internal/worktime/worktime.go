@@ -102,10 +102,12 @@ func Minutes(hhmm string) int {
 
 // WorkingDay reports whether the date (in its own location) is a working day.
 func (s Schedule) WorkingDay(t time.Time) bool {
-	if slices.Contains(s.Weekend, int(t.Weekday())) {
-		return false
-	}
-	return !slices.Contains(s.Holidays, t.Format("2006-01-02")) && !slices.Contains(s.Holidays, t.Format("01-02"))
+	return !slices.Contains(s.Weekend, int(t.Weekday())) && !s.Holiday(t)
+}
+
+// Holiday reports whether the date is one of the company's holidays.
+func (s Schedule) Holiday(t time.Time) bool {
+	return slices.Contains(s.Holidays, t.Format("2006-01-02")) || slices.Contains(s.Holidays, t.Format("01-02"))
 }
 
 // Deadline moves a deadline into working time with «пропускать выходные»: a deadline

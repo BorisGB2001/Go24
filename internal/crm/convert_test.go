@@ -133,7 +133,8 @@ func TestConvertTo(t *testing.T) {
 			conv[e.Body]++
 		}
 	}
-	if conv["contact:"+known] != 1 || conv["deal:"+d.ID] != 1 || conv["company:"+c.ID] != 1 { // the contact chosen twice, told once
+	// the lead has the known contact's phone: a repeat lead linked to it at once, so converting does not tell of it again
+	if !l.Repeat || conv["contact:"+known] != 0 || conv["deal:"+d.ID] != 1 || conv["company:"+c.ID] != 1 {
 		t.Fatalf("lead timeline: %v", conv)
 	}
 	tl, err = s.Timeline(ctx, "company", c.ID)

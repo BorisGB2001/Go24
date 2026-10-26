@@ -164,7 +164,13 @@ func writeEvent(line func(string), e Event, stamp string) {
 	}
 	if e.Repeat != "" {
 		rule := "RRULE:FREQ=" + strings.ToUpper(e.Repeat) + fmt.Sprintf(";INTERVAL=%d", max(e.Every, 1))
-		if e.Until != nil {
+		if len(e.Days) > 0 {
+			rule += ";BYDAY=" + ICSDays(e.Days)
+		}
+		switch {
+		case e.Count > 0:
+			rule += fmt.Sprintf(";COUNT=%d", e.Count)
+		case e.Until != nil:
 			u := time.Date(e.Until.Year(), e.Until.Month(), e.Until.Day(), 23, 59, 59, 0, time.Local)
 			rule += ";UNTIL=" + u.UTC().Format("20060102T150405Z")
 		}
@@ -245,4 +251,15 @@ func foldLine(b *strings.Builder, l string) {
 		l = l[cut:]
 	}
 	b.WriteString(l + "\r\n")
+}
+
+// ICSDays are the days of the week (1 — Monday … 7 — Sunday) as BYDAY of a calendar file: MO,WE,FR.
+func ICSDays(days []int) string {
+	codes := make([]string, 0, len(days))
+	for _, d := range days {
+		if d >= 1 && d <= 7 {
+			codes = append(codes, [...]string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}[d-1])
+		}
+	}
+	return strings.Join(codes, ",")
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"go24/internal/auth"
@@ -90,6 +91,9 @@ func (s *Server) stockDocPage(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	if err == nil && d.Kind == "arrival" {
 		data["Suppliers"], err = s.CRM.Companies(r.Context(), sess.UserID, "")
+		if err == nil {
+			data["SupplierContacts"], err = s.CRM.Contacts(r.Context(), sess.UserID, "", "")
+		}
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/store/docs")
@@ -142,6 +146,9 @@ func (s *Server) stockDocAction(w http.ResponseWriter, r *http.Request, sess aut
 			Rows: rows}
 		if id != "new" {
 			d.ID = id
+		}
+		if c, ok := strings.CutPrefix(d.Supplier.ID, "contact:"); ok { // the supplier is a contact
+			d.Supplier.ID, d.SupplierKind = c, "contact"
 		}
 		if t := formDay(r.FormValue("date")); t != nil {
 			d.Date = *t

@@ -23,6 +23,8 @@ import (
 	"go24/internal/crm"
 	"go24/internal/db"
 	"go24/internal/i18n"
+	"go24/internal/sites"
+	"go24/internal/speech"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 )
@@ -259,6 +261,68 @@ func TestPhone(t *testing.T) {
 	if _, p := do(eve, "GET", "/telephony/calls?user="+anna, nil, nil); strings.Contains(p, "Борис") {
 		t.Fatal("eve sees anna's calls")
 	}
+	// «Расшифровка»: the record's text by Whisper, for those who may listen; by itself after the call when switched on
+	heard := make(chan string, 4)
+	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, h, err := r.FormFile("audio_file")
+		if err != nil || r.URL.Path != "/asr" || r.URL.Query().Get("language") != "ru" {
+			http.Error(w, "bad", http.StatusBadRequest)
+			return
+		}
+		f.Close()
+		heard <- h.Filename
+		io.WriteString(w, "Добрый день, это Анна.\n")
+	}))
+	defer ws.Close()
+	srv.Speech = speech.New(ws.URL)
+	if res, _ := do(eve, "POST", "/telephony/calls/"+calls[1].ID+"/transcript", url.Values{}, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve transcribes: %d", res.StatusCode)
+	}
+	if res, _ := do(anna, "POST", "/telephony/calls/"+calls[1].ID+"/transcript", url.Values{}, map[string]string{"Referer": hs.URL + "/telephony/calls?kind=in"}); res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/telephony/calls?kind=in" || <-heard != "r1.wav" {
+		t.Fatalf("anna transcribes: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	if _, p := do(anna, "GET", "/telephony/calls", nil, nil); !strings.Contains(p, "Добрый день, это Анна.") || strings.Count(p, "/transcript\"") != 0 {
+		t.Fatal("the transcript not in the log")
+	}
+	must(store.SetTranscribing(ctx, anna, true))
+	must(os.WriteFile(srv.Telephony.Records+"/r9.wav", []byte("RIFFauto"), 0o644))
+	if st := cdr(url.Values{"key": {"astkey"}, "id": {"1729.9"}, "from": {"101"}, "to": {"102"}, "start": {"1761400300"}, "answer": {"1761400302"},
+		"end": {"1761400330"}, "dial": {"ANSWER"}, "rec": {"r9.wav"}}); st != http.StatusNoContent {
+		t.Fatalf("a recorded call: %d", st)
+	}
+	select {
+	case name := <-heard:
+		if name != "r9.wav" {
+			t.Fatalf("transcribed by itself: %s", name)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the new record not transcribed by itself")
+	}
+	for i := 0; ; i++ {
+		got, _ := store.Calls(ctx, telephony.CallFilter{UserID: anna, Number: "102"})
+		if len(got) > 0 && got[0].Record == "r9.wav" && got[0].Transcript != "" {
+			break
+		}
+		if i == 50 {
+			t.Fatalf("the automatic transcript not kept: %+v", got)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	must(store.SetTranscribing(ctx, anna, false))
+	srv.Speech = nil
+	// «Статистика звонков»: the calls of the lines; eve sees only her own
+	if st := cdr(url.Values{"key": {"astkey"}, "id": {"1729.3"}, "from": {"+79001112200"}, "to": {"+74951234567"}, "by": {"101"}, "line": {"+74951234567"},
+		"start": {"1761400200"}, "answer": {"1761400204"}, "end": {"1761400264"}, "dial": {"ANSWER"}}); st != http.StatusNoContent {
+		t.Fatalf("a call from the line: %d", st)
+	}
+	res, page = do(anna, "GET", "/telephony/stats?from=2025-10-31&to=2025-10-01", nil, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(page, "Статистика звонков") || !strings.Contains(page, `value="2025-10-01"`) ||
+		!strings.Contains(page, "/telephony/calls?from=2025-10-01&amp;to=2025-10-31&amp;user="+anna) || !strings.Contains(page, "<b>1:00</b>") {
+		t.Fatalf("anna's stats: %d\n%s", res.StatusCode, page)
+	}
+	if _, p := do(eve, "GET", "/telephony/stats?from=2025-10-01&to=2025-10-31&user="+anna, nil, nil); strings.Contains(p, "user="+anna) || !strings.Contains(p, "Ваши звонки") {
+		t.Fatal("eve sees anna's stats")
+	}
 
 	// CRM: a client calling goes to their card; an unknown number calling makes a lead; one's own call to an unknown
 	// number makes nothing until «Создать сделку»
@@ -266,6 +330,24 @@ func TestPhone(t *testing.T) {
 	contact, err := srv.CRM.SaveContact(ctx, anna, crm.Contact{Name: "ООО Ромашка", Phone: "+7 (900) 111-22-33", Responsible: crm.Ref{ID: anna}})
 	must(err)
 	must(os.WriteFile(srv.Telephony.Records+"/r3.wav", []byte("RIFFclient"), 0o644))
+	// «сначала ответственному»: Asterisk asks whose client calls — the responsible's inner number, only with its key
+	owner := func(key, from string) (int, string) {
+		t.Helper()
+		res, err := http.PostForm(hs.URL+"/telephony/owner", url.Values{"key": {key}, "from": {from}})
+		must(err)
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return res.StatusCode, string(b)
+	}
+	if st, n := owner("astkey", "89001112233"); st != http.StatusOK || n != "101" {
+		t.Fatalf("the client's responsible: %d %q", st, n)
+	}
+	if st, n := owner("astkey", "+74950000009"); st != http.StatusOK || n != "" {
+		t.Fatalf("an unknown number's responsible: %d %q", st, n)
+	}
+	if st, n := owner("wrong", "89001112233"); st != http.StatusForbidden || n == "101\n" || strings.Contains(n, "101") {
+		t.Fatalf("without the key: %d %q", st, n)
+	}
 	in := func(id, from, to, dial, rec string) {
 		t.Helper()
 		v := url.Values{"key": {"astkey"}, "id": {id}, "from": {from}, "to": {to}, "start": {"1761401000"}, "end": {"1761401090"}, "dial": {dial}, "rec": {rec}}
@@ -396,6 +478,138 @@ func TestPhone(t *testing.T) {
 	}
 	if res, _ := do(eve, "GET", "/telephony/trunks/"+trunks[0].ID+"/greeting", nil, nil); res.StatusCode != http.StatusForbidden {
 		t.Fatalf("eve listens to the greeting: %d", res.StatusCode)
+	}
+	// a voice menu (the administrators'): its items by the form's rows, empty rows skipped; the settings show it
+	admin := func(path string, v url.Values) *http.Response {
+		req, _ := http.NewRequest("POST", hs.URL+path, strings.NewReader(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(rec.Result().Cookies()[0])
+		res, err := client.Do(req)
+		must(err)
+		res.Body.Close()
+		return res
+	}
+	menu := url.Values{"name": {"Главное меню"}, "wait": {"5"}, "repeats": {"2"}, "direct": {"1"}, "digit": {"1", "2", "3"},
+		"item0_act": {"ring"}, "item0_users": {anna, bob}, "item0_mode": {"queue"}, "item1_act": {"forward"}, "item1_to": {"+7 900 555-00-11"},
+		"item2_act": {""}, "timeout_act": {"voicemail"}}
+	if res, _ := do(eve, "POST", "/telephony/menus", menu, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve makes a menu: %d", res.StatusCode)
+	}
+	if res := admin("/telephony/menus", menu); res.StatusCode != http.StatusSeeOther || !strings.HasSuffix(res.Header.Get("Location"), "#menus") {
+		t.Fatalf("the administrator's menu: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	menus, err := store.Menus(ctx)
+	must(err)
+	if len(menus) != 1 || len(menus[0].Items) != 2 || menus[0].Items[0].Mode != "queue" || len(menus[0].Items[0].Users) != 2 ||
+		menus[0].Items[1].To != "+79005550011" || menus[0].Timeout.Act != telephony.ActVoicemail || !menus[0].Direct {
+		t.Fatalf("the menu: %+v", menus)
+	}
+	reqP, _ := http.NewRequest("GET", hs.URL+"/settings/telephony", nil)
+	reqP.AddCookie(rec.Result().Cookies()[0])
+	resP, err := client.Do(reqP)
+	must(err)
+	body, _ := io.ReadAll(resP.Body)
+	resP.Body.Close()
+	if !strings.Contains(string(body), `action="/telephony/menus/`+menus[0].ID+`"`) || !strings.Contains(string(body), `<option value="`+menus[0].ID+`"`) {
+		t.Fatalf("the menu in the settings: %d", resP.StatusCode)
+	}
+	if res := admin("/telephony/menus/"+menus[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the menu deleted: %d", res.StatusCode)
+	}
+	if menus, _ = store.Menus(ctx); len(menus) != 0 {
+		t.Fatalf("the menu stays: %+v", menus)
+	}
+	// «Группы очереди»: the administrators'; the line rings its group
+	grp := url.Values{"name": {"Продажи"}, "users": {anna, bob}, "strategy": {"evenly"}, "ring": {"15"}, "wait": {"90"}}
+	if res, _ := do(eve, "POST", "/telephony/groups", grp, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve makes a group: %d", res.StatusCode)
+	}
+	if res := admin("/telephony/groups", grp); res.StatusCode != http.StatusSeeOther || !strings.HasSuffix(res.Header.Get("Location"), "#groups") {
+		t.Fatalf("the administrator's group: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	groups, err := store.Groups(ctx)
+	must(err)
+	if len(groups) != 1 || groups[0].Strategy != "evenly" || len(groups[0].Users) != 2 || groups[0].Wait != 90 {
+		t.Fatalf("the groups: %+v", groups)
+	}
+	line.Set("ring_group", groups[0].ID)
+	if res := admin("/telephony/trunks/"+trunks[0].ID, line); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the line with a group: %d", res.StatusCode)
+	}
+	if got, _ := store.Trunks(ctx); got[0].Group != groups[0].ID {
+		t.Fatalf("the line's group: %+v", got[0])
+	}
+	line.Del("ring_group")
+	if res := admin("/telephony/groups/"+groups[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the group deleted: %d", res.StatusCode)
+	}
+	// «Оценка разговора» needs an invitation
+	line.Set("rate_on", "1")
+	if res := admin("/telephony/trunks/"+trunks[0].ID, line); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the line asking for a rating: %d", res.StatusCode)
+	}
+	if got, _ := store.Trunks(ctx); got[0].RateOn {
+		t.Fatalf("rating on without an invitation: %+v", got[0])
+	}
+	line.Del("rate_on")
+	// «Обратный звонок»: the administrators' form; the client's request — out of reach of Asterisk it waits, the
+	// employees told to call back, a new number makes a lead; a robot and a number asking again make nothing
+	cbForm := url.Values{"name": {"Сайт"}, "trunk": {trunks[0].ID}, "ring": {anna}, "ring_mode": {"all"}, "button": {"Позвоните мне"}}
+	if res, _ := do(eve, "POST", "/telephony/callbacks", cbForm, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve makes a callback form: %d", res.StatusCode)
+	}
+	if res := admin("/telephony/callbacks", cbForm); res.StatusCode != http.StatusSeeOther || !strings.HasSuffix(res.Header.Get("Location"), "#callbacks") {
+		t.Fatalf("the administrator's callback form: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	cbs, err := store.Callbacks(ctx)
+	must(err)
+	if len(cbs) != 1 || cbs[0].Button != "Позвоните мне" {
+		t.Fatalf("the callback forms: %+v", cbs)
+	}
+	if res, p := do("", "GET", "/cb/"+cbs[0].Token+"?embed=1", nil, nil); res.StatusCode != http.StatusOK || !strings.Contains(p, "Позвоните мне") || !strings.Contains(p, "go24form") {
+		t.Fatalf("the public callback form: %d\n%s", res.StatusCode, p)
+	}
+	if res, _ := do("", "GET", "/cb/nope", nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("a callback form of a bad token: %d", res.StatusCode)
+	}
+	must(store.SetLeadAuto(ctx, anna, true))
+	old := sites.FormStamp(time.Now().Add(-time.Minute))
+	ask := func(v url.Values) (int, string) {
+		t.Helper()
+		res, p := do("", "POST", "/cb/"+cbs[0].Token, v, nil)
+		return res.StatusCode, p
+	}
+	if st, p := ask(url.Values{"t": {old}, "phone": {"12"}}); st != http.StatusUnprocessableEntity || !strings.Contains(p, "Укажите номер телефона") {
+		t.Fatalf("a callback to a bad number: %d", st)
+	}
+	if st, _ := ask(url.Values{"t": {sites.FormStamp(time.Now())}, "phone": {"+7 900 444-55-66"}}); st != http.StatusOK {
+		t.Fatalf("a robot's callback: %d", st)
+	}
+	if st, p := ask(url.Values{"t": {old}, "phone": {"+7 900 444-55-66"}, "name": {"Пётр"}, "page": {"https://example.com/price"}}); st != http.StatusOK || !strings.Contains(p, "скоро перезвоним") {
+		t.Fatalf("a callback: %d\n%s", st, p)
+	}
+	ask(url.Values{"t": {old}, "phone": {"+79004445566"}})
+	reqs, err := store.CallbackRequests(ctx, cbs[0].ID, 10)
+	must(err)
+	if len(reqs) != 1 || reqs[0].Number != "+79004445566" || reqs[0].Name != "Пётр" || reqs[0].Status != telephony.CallbackLater || reqs[0].Page != "https://example.com/price" {
+		t.Fatalf("the callback requests: %+v", reqs)
+	}
+	var calledBack int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'phone' AND body LIKE 'Перезвоните: Пётр, +79004445566%'`, anna).Scan(&calledBack))
+	if calledBack != 1 {
+		t.Fatalf("told to call back: %d", calledBack)
+	}
+	if l, _ := srv.CRM.Duplicates(ctx, "lead", "", "", "+79004445566", ""); len(l) != 1 || l[0].Title != "Обратный звонок: +79004445566" {
+		t.Fatalf("the callback's lead: %+v", l)
+	}
+	must(store.SetLeadAuto(ctx, anna, false))
+	_, err = pool.Exec(ctx, `DELETE FROM notifications WHERE body LIKE 'Перезвоните:%'`)
+	must(err)
+	if res, p := do(anna, "GET", "/settings/telephony", nil, nil); res.StatusCode == http.StatusOK && !strings.Contains(p, "/cb/"+cbs[0].Token) {
+		t.Fatal("the callback form not in the settings")
+	}
+	if res := admin("/telephony/callbacks/"+cbs[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the callback form deleted: %d", res.StatusCode)
 	}
 	// a voicemail on the line: the message kept, the employee told; a client who hung up before the beep — a missed call
 	must(os.WriteFile(srv.Telephony.Records+"/vm1.wav", make([]byte, 20000), 0o644))

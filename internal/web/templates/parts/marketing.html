@@ -1,5 +1,5 @@
 {{/* the tabs of «Маркетинг» */}}
-{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "templates" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
+{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "calls" "templates" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
 
 {{/* a campaign's status: a draft, planned, being sent, paused, done, stopped */}}
 {{define "mktstatus"}}{{if .Planned}}<span class="pill mkt-planned" title="{{date .SendAt}}">{{icon "clock"}} {{t "mkt.st.planned"}}</span>
@@ -11,6 +11,7 @@
 {{- else}}<div class="small muted">{{t "mkt.f.all"}}</div>{{end}}{{end}}
 
 {{/* a count of a started campaign: its addressees of a status, a share of Of */}}
+{{define "mktcallstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/calls/{{.ID}}?done={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span></a>{{end}}
 {{define "mktstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/campaigns/{{.ID}}?status={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span>{{with .Of}}<small>{{pct $.N .}}%</small>{{end}}</a>{{end}}
 
 {{/* a line of «Сквозная аналитика»: a channel (Top), a campaign of it or the total */}}
@@ -31,3 +32,39 @@
   {{if and .CreatedBy (or (eq .CreatedBy $d.Me) $d.Admin)}}<a class="button ghost small" href="/marketing/templates?edit={{.ID}}#edit" title="{{t "crm.edit"}}">{{icon "edit"}}</a>
   <form method="post" action="/marketing/templates/{{.ID}}/delete" data-confirm="{{t "mkt.tpl_delete" .Name}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
 </div>{{end}}</div>{{end}}
+
+{{/* «Вставить» of a letter's editor (js/mktletter.js): a picture (uploaded or by its address), a button, a divider */}}
+{{define "mktblocks"}}<div class="row mkt-blocks" data-mkt-blocks data-err="{{t "err.photo"}}">
+  <span class="small muted">{{t "mkt.bl.insert"}}</span>
+  <button type="button" class="ghost small" data-mkt-add="image">{{icon "photo"}} {{t "mkt.bl.image"}}</button>
+  <button type="button" class="ghost small" data-mkt-add="button">{{icon "hand-click"}} {{t "mkt.bl.button"}}</button>
+  <button type="button" class="ghost small" data-mkt-add="hr">{{icon "separator-horizontal"}} {{t "mkt.bl.hr"}}</button>
+  <button type="button" class="ghost small" data-mkt-add="cols">{{icon "layout-columns"}} {{t "mkt.bl.cols"}}</button>
+  <button type="button" class="ghost small" data-mkt-add="social">{{icon "share"}} {{t "mkt.bl.social"}}</button>
+</div>
+<div class="mkt-panel" hidden data-mkt-panel="image">
+  <button type="button" class="ghost small" data-mkt-upload>{{icon "cloud-upload"}} {{t "mkt.bl.upload"}}</button>
+  <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-mkt-file>
+  <span class="small muted">{{t "mkt.bl.or"}}</span>
+  <input type="url" placeholder="https://" data-mkt-src aria-label="{{t "mkt.bl.src"}}">
+  <button type="button" class="small" data-mkt-ok>{{t "mkt.bl.do"}}</button>
+  <span class="small red" data-mkt-msg></span>
+</div>
+<div class="mkt-panel" hidden data-mkt-panel="button">
+  <input type="text" maxlength="100" placeholder="{{t "mkt.bl.btn_text"}}" aria-label="{{t "mkt.bl.btn_text"}}" data-mkt-text>
+  <input type="url" placeholder="https://" aria-label="{{t "mkt.bl.btn_url"}}" data-mkt-href>
+  <input type="color" value="#2f6fed" aria-label="{{t "mkt.bl.btn_color"}}" data-mkt-color>
+  <button type="button" class="small" data-mkt-ok>{{t "mkt.bl.do"}}</button>
+</div>
+<div class="mkt-panel" hidden data-mkt-panel="cols" data-col-title="{{t "mkt.bl.col_title"}}" data-col-text="{{t "mkt.bl.col_text"}}">
+  <select aria-label="{{t "mkt.bl.cols"}}" data-mkt-n><option value="2">{{t "mkt.bl.cols2"}}</option><option value="3">{{t "mkt.bl.cols3"}}</option></select>
+  <button type="button" class="small" data-mkt-ok>{{t "mkt.bl.do"}}</button>
+</div>
+<div class="mkt-panel" hidden data-mkt-panel="social">
+  <input type="text" placeholder="{{t "mkt.bl.soc_vk"}}" aria-label="{{t "mkt.bl.soc_vk"}}" data-mkt-soc="vk" data-label="{{t "mkt.bl.soc_vk"}}">
+  <input type="text" placeholder="{{t "mkt.bl.soc_telegram"}}" aria-label="{{t "mkt.bl.soc_telegram"}}" data-mkt-soc="telegram" data-label="{{t "mkt.bl.soc_telegram"}}">
+  <input type="text" placeholder="{{t "mkt.bl.soc_whatsapp"}}" aria-label="{{t "mkt.bl.soc_whatsapp"}}" data-mkt-soc="whatsapp" data-label="{{t "mkt.bl.soc_whatsapp"}}">
+  <input type="text" placeholder="{{t "mkt.bl.soc_youtube"}}" aria-label="{{t "mkt.bl.soc_youtube"}}" data-mkt-soc="youtube" data-label="{{t "mkt.bl.soc_youtube"}}">
+  <input type="text" placeholder="{{t "mkt.bl.soc_site"}}" aria-label="{{t "mkt.bl.soc_site"}}" data-mkt-soc="site" data-label="{{t "mkt.bl.soc_site"}}">
+  <button type="button" class="small" data-mkt-ok>{{t "mkt.bl.do"}}</button>
+</div>{{end}}

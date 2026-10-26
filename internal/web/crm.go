@@ -59,7 +59,7 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		data["PresetKind"] = "items"
 	}
 	nav := "crm_" + kind
-	var ids []string // the listed cards
+	var ids []string                       // the listed cards
 	rates, err := s.CRM.Rates(r.Context()) // the kanban sums are in the base currency
 	if err == nil {
 		data["Dicts"], err = s.CRM.Dicts(r.Context()) // the filter's sources, the lists' types
@@ -317,10 +317,37 @@ func typeID(t *crm.Type) string {
 	return t.ID
 }
 
+// crmComms are the phones and e-mails of the card's form (rows comm_kind, comm_type, comm_value); nil — a form
+// without them (only phone and email).
+func crmComms(r *http.Request) []crm.Comm {
+	if r.FormValue("with_comms") != "1" {
+		return nil
+	}
+	kinds, types, values := r.Form["comm_kind"], r.Form["comm_type"], r.Form["comm_value"]
+	out := []crm.Comm{}
+	for i, k := range kinds {
+		if i < len(types) && i < len(values) && strings.TrimSpace(values[i]) != "" {
+			out = append(out, crm.Comm{Kind: k, Type: types[i], Value: values[i]})
+		}
+	}
+	return out
+}
+
+// crmCommFirst is the first phone or e-mail (kind) of the list: the card's main one.
+func crmCommFirst(list []crm.Comm, kind string) string {
+	if c := crm.CommsOf(list, kind); len(c) > 0 {
+		return c[0].Value
+	}
+	return ""
+}
+
 // crmFilter reads the list's filter from the address; «me» (of a preset) is the person looking.
 func crmFilter(q url.Values, me string) crm.Filter {
 	f := crm.Filter{Q: q.Get("q"), Stage: q.Get("stage"), Responsible: q.Get("responsible"), Observer: q.Get("observer"),
 		Source: q.Get("source"), Sort: q.Get("sort"), Asc: q.Get("asc") == "1"}
+	if v := q.Get("repeat"); v == "1" || v == "0" {
+		f.Repeat = v
+	}
 	if v := q.Get("semantic"); v == "process" || v == "success" || v == "failure" || v == "closed" {
 		f.Semantic = v
 	}
@@ -359,7 +386,7 @@ func crmQuery(q url.Values) string {
 }
 
 // crmPresetKeys are what a filter preset keeps: the filter without the search, the order and the view.
-var crmPresetKeys = []string{"stage", "semantic", "responsible", "observer", "source", "from", "to", "min", "max"}
+var crmPresetKeys = []string{"stage", "semantic", "responsible", "observer", "repeat", "source", "from", "to", "min", "max"}
 
 // crmPresetQuery is the address's filter as a preset keeps it; a chip whose preset has it is on.
 func crmPresetQuery(q url.Values) string {
@@ -650,6 +677,10 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if err == nil && s.Booking != nil && entity != "lead" { // «Онлайн-запись»: the client's bookings and «Записать»
 		data["Bookings"], err = s.Booking.OfCard(r.Context(), entity, id)
 	}
+	if err == nil && s.Calendar != nil && !tasks.IsGuestCtx(r.Context()) { // «Встречи» of the card and «Запланировать встречу»
+		data["MeetingsOn"] = true
+		data["Meetings"], err = s.Calendar.OfCard(r.Context(), sess.UserID, entity, id)
+	}
 	if err == nil && entity == "deal" {
 		data["AllContacts"], err = s.CRM.Contacts(r.Context(), sess.UserID, "", "")
 	}
@@ -764,6 +795,11 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			observers = append(observers, crm.Ref{ID: o})
 		}
 	}
+	comms := crmComms(r) // nil — the form has only one phone and e-mail
+	phone, email := f("phone"), f("email")
+	if comms != nil {
+		phone, email = crmCommFirst(comms, "phone"), crmCommFirst(comms, "email")
+	}
 	switch crmEntities[kind] {
 	case "deal":
 		var close *time.Time
@@ -791,14 +827,14 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			Origin: crm.Dict{ID: f("origin")}, Observers: observers})
 	case "lead":
 		id, err = s.CRM.SaveLead(r.Context(), sess.UserID, crm.Lead{ID: id, Title: f("title"), Stage: crm.Stage{ID: f("stage")}, Name: f("name"), CompanyTitle: f("company_title"),
-			Phone: f("phone"), Email: f("email"), Source: f("source"), Amount: amount(), Currency: f("currency"), Responsible: resp, Comment: f("comment"),
+			Phone: phone, Email: email, Comms: comms, Source: f("source"), Amount: amount(), Currency: f("currency"), Responsible: resp, Comment: f("comment"),
 			Origin: crm.Dict{ID: f("origin")}, Observers: observers})
 	case "contact":
-		id, err = s.CRM.SaveContact(r.Context(), sess.UserID, crm.Contact{ID: id, Name: f("name"), Position: f("position"), Phone: f("phone"),
-			Email: f("email"), Company: crm.Ref{ID: f("company")}, Responsible: resp, Comment: f("comment"),
+		id, err = s.CRM.SaveContact(r.Context(), sess.UserID, crm.Contact{ID: id, Name: f("name"), Position: f("position"), Phone: phone,
+			Email: email, Comms: comms, Company: crm.Ref{ID: f("company")}, Responsible: resp, Comment: f("comment"),
 			ContactType: crm.Dict{ID: f("contact_type")}, Origin: crm.Dict{ID: f("origin")}})
 	case "company":
-		id, err = s.CRM.SaveCompany(r.Context(), sess.UserID, crm.Company{ID: id, Title: f("title"), Phone: f("phone"), Email: f("email"),
+		id, err = s.CRM.SaveCompany(r.Context(), sess.UserID, crm.Company{ID: id, Title: f("title"), Phone: phone, Email: email, Comms: comms,
 			Website: f("website"), Address: f("address"), Responsible: resp, Comment: f("comment"),
 			CompanyType: crm.Dict{ID: f("company_type")}, Industry: crm.Dict{ID: f("industry")}})
 	default:

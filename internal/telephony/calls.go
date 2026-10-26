@@ -14,6 +14,7 @@ import (
 const (
 	settingRecord = "telephony_record"
 	settingLead   = "telephony_lead"
+	settingText   = "telephony_transcribe"
 )
 
 // LeadAuto tells whether a call from an unknown number makes a lead.
@@ -31,6 +32,30 @@ func (s *Store) SetLeadAuto(ctx context.Context, userID string, on bool) error {
 	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
 		settingLead, on, userID)
+	return err
+}
+
+// Transcribing tells whether the records are turned into text by themselves after the call.
+func (s *Store) Transcribing(ctx context.Context) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingText).Scan(&on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return on, err
+}
+
+// SetTranscribing turns the records' text after the call on or off.
+func (s *Store) SetTranscribing(ctx context.Context, userID string, on bool) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		settingText, on, userID)
+	return err
+}
+
+// SetTranscript keeps the text of the call's record.
+func (s *Store) SetTranscript(ctx context.Context, id, text string) error {
+	_, err := s.db.Exec(ctx, `UPDATE telephony_calls SET transcript = $2 WHERE id::text = $1`, id, text)
 	return err
 }
 
@@ -60,6 +85,8 @@ type CDR struct {
 	Dial               string // DIALSTATUS: ANSWER, BUSY, NOANSWER, CANCEL, CHANUNAVAIL, CONGESTION; "" — nobody to ring
 	Record             string // the file of the conversation in the volume of recordings
 	Voicemail          bool   // nobody answered, the client was asked to leave a message (Record — the message, if left)
+	XFrom, XTo         string // transferred: by whom (an employee's inner number) and to which number
+	Rating             int    // the client rated the conversation 1–5 (0 — not)
 	Start, Answer, End time.Time
 }
 
@@ -115,15 +142,22 @@ func (s *Store) SaveCall(ctx context.Context, c CDR) (string, error) {
 	if (st != StatusAnswered && st != StatusVoicemail) || strings.ContainsAny(c.Record, "/\\") {
 		c.Record = ""
 	}
+	if c.XTo = Dialable(c.XTo); c.XTo == "" || !numberRe.MatchString(c.XFrom) {
+		c.XFrom, c.XTo = "", ""
+	}
+	if st != StatusAnswered || c.Rating < 1 || c.Rating > 5 {
+		c.Rating = 0
+	}
 	var id string
 	err := s.db.QueryRow(ctx, `WITH who AS (SELECT DISTINCT ON (inner_phone) inner_phone, id FROM users
 			WHERE active AND NOT guest AND inner_phone IN ($2, $3, $9) ORDER BY inner_phone, created_at, id)
-		INSERT INTO telephony_calls (uniqueid, from_number, to_number, from_user, to_user, started_at, answered_at, seconds, status, record, line)
+		INSERT INTO telephony_calls (uniqueid, from_number, to_number, from_user, to_user, started_at, answered_at, seconds, status, record, line,
+			transfer_from, transfer_to, rating)
 		VALUES ($1, $2, $3, (SELECT id FROM who WHERE inner_phone = $2),
 			coalesce((SELECT id FROM who WHERE inner_phone = $3), CASE WHEN NOT EXISTS (SELECT 1 FROM who WHERE inner_phone = $2)
-				THEN (SELECT id FROM who WHERE inner_phone = $9) END), $4, $5, $6, $7, $8, $10)
+				THEN (SELECT id FROM who WHERE inner_phone = $9) END), $4, $5, $6, $7, $8, $10, $11, $12, $13)
 		ON CONFLICT (uniqueid) DO NOTHING RETURNING id::text`,
-		c.UniqueID, c.From, c.To, c.Start, answered, secs, st, c.Record, c.By, c.Line).Scan(&id)
+		c.UniqueID, c.From, c.To, c.Start, answered, secs, st, c.Record, c.By, c.Line, c.XFrom, c.XTo, c.Rating).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -132,13 +166,17 @@ func (s *Store) SaveCall(ctx context.Context, c CDR) (string, error) {
 
 // Call is a call of the log.
 type Call struct {
-	ID, From, To     string // numbers
-	FromUser, ToUser Who    // the employees on the ends (UserID "" — an outside number)
-	Started          time.Time
-	Answered         *time.Time
-	Seconds          int
-	Status, Record   string
-	Line             string // the external line's number ("" — between employees)
+	ID, From, To       string // numbers
+	FromUser, ToUser   Who    // the employees on the ends (UserID "" — an outside number)
+	Started            time.Time
+	Answered           *time.Time
+	Seconds            int
+	Status, Record     string
+	Line               string // the external line's number ("" — between employees)
+	Transcript         string // the text of the record ("" — none yet)
+	Rating             int    // the client's rating of the conversation, 1–5 (0 — none)
+	XFrom, XTo         string // transferred by (an inner number) and to ("" — not transferred)
+	XFromName, XToName string // the employees of those numbers ("" — none)
 	// the client's CRM card the call went to (CRMEntity "" — none)
 	CRMEntity, CRMID, CRMName string
 }
@@ -189,9 +227,11 @@ func (c Call) Duration() string {
 }
 
 // CallFilter: which calls of the log. UserID: the calls of one employee ("" — everyone's); Kind: "in", "out",
-// "missed" (for UserID — theirs: incoming not answered); Number: a part of a number on either end.
+// "missed" (for UserID — theirs: incoming not answered); Number: a part of a number on either end; Users (not nil):
+// only the calls with one of these employees on an end (the rights' «dept»).
 type CallFilter struct {
 	UserID, Kind, Number string
+	Users                []string
 	From, To             time.Time // started in [From, To); zero — no bound
 	Before               time.Time // the next page: older than this
 	Limit                int
@@ -215,7 +255,8 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 	rows, err := s.db.Query(ctx, `SELECT c.id::text, c.from_number, c.to_number,
 			coalesce(c.from_user::text, ''), coalesce(CASE WHEN fu.name <> '' THEN fu.name ELSE fu.email END, ''), coalesce(fu.photo_key, ''),
 			coalesce(c.to_user::text, ''), coalesce(CASE WHEN tu.name <> '' THEN tu.name ELSE tu.email END, ''), coalesce(tu.photo_key, ''),
-			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, `+callCRM+`
+			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.rating, c.transfer_from, c.transfer_to,
+			`+callWho("c.transfer_from")+`, `+callWho("c.transfer_to")+`, `+callCRM+`
 		FROM telephony_calls c LEFT JOIN users fu ON fu.id = c.from_user LEFT JOIN users tu ON tu.id = c.to_user`+callCRMJoin+`
 		WHERE ($1 = '' OR c.from_user::text = $1 OR c.to_user::text = $1)
 		  AND CASE $2
@@ -226,7 +267,8 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 		  AND ($3 = '' OR c.from_number LIKE '%' || $3 || '%' OR c.to_number LIKE '%' || $3 || '%')
 		  AND ($4::timestamptz IS NULL OR c.started_at >= $4) AND ($5::timestamptz IS NULL OR c.started_at < $5)
 		  AND ($6::timestamptz IS NULL OR c.started_at < $6)
-		ORDER BY c.started_at DESC, c.id LIMIT $7`, f.UserID, f.Kind, Dialable(f.Number), from, to, before, f.Limit)
+		  AND ($8::text[] IS NULL OR c.from_user::text = ANY($8) OR c.to_user::text = ANY($8))
+		ORDER BY c.started_at DESC, c.id LIMIT $7`, f.UserID, f.Kind, Dialable(f.Number), from, to, before, f.Limit, f.Users)
 	if err != nil {
 		return nil, err
 	}
@@ -234,18 +276,24 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 		var c Call
 		err := r.Scan(&c.ID, &c.From, &c.To, &c.FromUser.UserID, &c.FromUser.Name, &c.FromUser.PhotoKey,
 			&c.ToUser.UserID, &c.ToUser.Name, &c.ToUser.PhotoKey, &c.Started, &c.Answered, &c.Seconds, &c.Status, &c.Record, &c.Line,
-			&c.CRMEntity, &c.CRMID, &c.CRMName)
+			&c.Transcript, &c.Rating, &c.XFrom, &c.XTo, &c.XFromName, &c.XToName, &c.CRMEntity, &c.CRMID, &c.CRMName)
 		return c, err
 	})
+}
+
+// callWho is the name of the employee with the inner number of the column ("" — none).
+func callWho(col string) string {
+	return `coalesce((SELECT CASE WHEN u.name <> '' THEN u.name ELSE u.email END FROM users u WHERE ` + col + ` <> '' AND u.inner_phone = ` + col +
+		` AND u.active AND NOT u.guest ORDER BY u.created_at, u.id LIMIT 1), '')`
 }
 
 // CallByID is one call of the log; ErrNotFound — none.
 func (s *Store) CallByID(ctx context.Context, id string) (Call, error) {
 	var c Call
 	err := s.db.QueryRow(ctx, `SELECT c.id::text, c.from_number, c.to_number, coalesce(c.from_user::text, ''), coalesce(c.to_user::text, ''),
-		c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, `+callCRM+` FROM telephony_calls c`+callCRMJoin+` WHERE c.id::text = $1`, id).
+		c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, `+callCRM+` FROM telephony_calls c`+callCRMJoin+` WHERE c.id::text = $1`, id).
 		Scan(&c.ID, &c.From, &c.To, &c.FromUser.UserID, &c.ToUser.UserID, &c.Started, &c.Answered, &c.Seconds, &c.Status, &c.Record, &c.Line,
-			&c.CRMEntity, &c.CRMID, &c.CRMName)
+			&c.Transcript, &c.CRMEntity, &c.CRMID, &c.CRMName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}

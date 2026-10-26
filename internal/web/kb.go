@@ -151,6 +151,7 @@ func (s *Server) kbCreatePage(w http.ResponseWriter, r *http.Request, sess auth.
 		s.taskErr(w, r, err, back)
 		return
 	}
+	s.feedKBPage(r.Context(), sess.UserID, id)
 	http.Redirect(w, r, back+"/"+id, http.StatusSeeOther)
 }
 
@@ -241,6 +242,7 @@ func (s *Server) kbDeletePage(w http.ResponseWriter, r *http.Request, sess auth.
 		s.taskErr(w, r, err, "/kb/"+r.PathValue("space")+"/"+r.PathValue("page"))
 		return
 	}
+	s.withdraw(r.Context(), feed.SourceKB, r.PathValue("page"))
 	http.Redirect(w, r, "/kb/"+space+"?msg="+url.QueryEscape(s.tr(r, "kb.page_trashed")), http.StatusSeeOther)
 }
 

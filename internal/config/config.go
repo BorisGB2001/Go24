@@ -57,6 +57,9 @@ type Config struct {
 	// Documents online (ONLYOFFICE Document Server): its address and JWT secret as go24 reaches it, and go24 as it
 	// reaches go24 (for the file and the callback); any of them empty — off
 	OfficeURL, OfficeSecret, OfficeSelf string
+	// «Хранилища» in the cloud services: go24's application at Google, Dropbox, Microsoft (client ID and secret);
+	// empty — the service is not offered
+	GDriveID, GDriveSecret, DropboxID, DropboxSecret, OneDriveID, OneDriveSecret string
 	// Backups («Настройки → Резервное копирование»): the folder go24-worker writes copies into, the snapshot of the
 	// configuration (deploy/ as at the start, made by backup-init) and the backups' folder as the server names it
 	// (shown on the page), the data folder of Synapse (its media); BackupDir empty — no backups
@@ -109,6 +112,12 @@ func Load() (Config, error) {
 		OfficeURL:        env("GO24_OFFICE_URL", ""),
 		OfficeSecret:     env("GO24_OFFICE_SECRET", ""),
 		OfficeSelf:       env("GO24_OFFICE_SELF_URL", ""),
+		GDriveID:         env("GO24_GDRIVE_CLIENT_ID", ""),
+		GDriveSecret:     env("GO24_GDRIVE_CLIENT_SECRET", ""),
+		DropboxID:        env("GO24_DROPBOX_CLIENT_ID", ""),
+		DropboxSecret:    env("GO24_DROPBOX_CLIENT_SECRET", ""),
+		OneDriveID:       env("GO24_ONEDRIVE_CLIENT_ID", ""),
+		OneDriveSecret:   env("GO24_ONEDRIVE_CLIENT_SECRET", ""),
 	}
 
 	var missing []string

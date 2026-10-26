@@ -5,6 +5,7 @@ package booking
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ var (
 	ErrNotFound  = i18n.E("err.not_found")
 	ErrName      = i18n.E("booking.err.name")
 	ErrSchedule  = i18n.E("booking.err.schedule")
+	ErrConfirm   = i18n.E("booking.err.confirm")
 	ErrTime      = i18n.E("booking.err.time")
 	ErrClient    = i18n.E("booking.err.client")
 	ErrOverlap   = i18n.E("booking.err.overlap")
@@ -39,7 +41,8 @@ type Type struct {
 	Resources      int
 }
 
-// Resource is what is booked; it works on Days (ISO weekdays) From–To (minutes of the day) by slots of Slot minutes.
+// Resource is what is booked; it works on Days (ISO weekdays) From–To (minutes of the day; DayHours — of its own for
+// some weekdays) by slots of Slot minutes, but for the break BreakFrom–BreakTo and the dates off.
 type Resource struct {
 	ID, TypeID, TypeCode, TypeName string
 	Name, Description              string
@@ -47,19 +50,60 @@ type Resource struct {
 	Slot                           int
 	Days                           []int
 	From, To                       int
-	NotifyMail                     bool      // letters to the client: about the booking, the reminder, the lateness
-	RemindHours, LateMinutes       int       // the reminder that many hours before, the lateness note that many minutes after; 0 — none
-	Overbooking                    bool      // bookings of employees may overlap (by a link — never)
-	Services                       []Service // the catalog's services it provides, with their minutes
+	NotifyMail                     bool           // letters to the client: about the booking, the reminder, the lateness
+	RemindHours, LateMinutes       int            // the reminder that many hours before, the lateness note that many minutes after; 0 — none
+	ConfirmHours, ConfirmAlert     int            // ask the client to confirm that many hours before; tell the employee that many hours before if not; 0 — none
+	Overbooking                    bool           // bookings of employees may overlap (by a link — never)
+	Feedback                       bool           // after a visit the client is asked by a letter to rate it
+	Services                       []Service      // the catalog's services it provides, with their minutes
+	DayHours                       map[int][2]int // an ISO weekday → its own from, to
+	BreakFrom, BreakTo             int            // equal — no break
+	OffDates                       []time.Time    // the dates it does not work, in order
+	CalendarBusy                   bool           // an employee: their meetings and absences in the calendar take its slots
 }
 
-// WorksOn: the resource works on the day of t.
-func (r Resource) WorksOn(t time.Time) bool {
-	wd := int(t.Weekday())
-	if wd == 0 {
-		wd = 7
+func isoWeekday(t time.Time) int {
+	if wd := int(t.Weekday()); wd != 0 {
+		return wd
 	}
-	return slices.Contains(r.Days, wd)
+	return 7
+}
+
+// WorksOn: the resource works on the day of t — a working weekday, not a date off.
+func (r Resource) WorksOn(t time.Time) bool {
+	return slices.Contains(r.Days, isoWeekday(t)) && !r.IsOff(t)
+}
+
+// IsOff: the day of t is a date off of the resource.
+func (r Resource) IsOff(t time.Time) bool {
+	return slices.ContainsFunc(r.OffDates, func(d time.Time) bool {
+		return d.Year() == t.Year() && d.Month() == t.Month() && d.Day() == t.Day()
+	})
+}
+
+// HoursOn: the working hours (minutes of the day) on the day of t — of its weekday or the common ones.
+func (r Resource) HoursOn(t time.Time) (from, to int) {
+	if h, ok := r.DayHours[isoWeekday(t)]; ok {
+		return h[0], h[1]
+	}
+	return r.From, r.To
+}
+
+// InBreak: the minutes a–b of a day touch the break.
+func (r Resource) InBreak(a, b int) bool {
+	return r.BreakFrom < r.BreakTo && a < r.BreakTo && b > r.BreakFrom
+}
+
+// OwnFrom, OwnTo: the weekday's own hours as "09:00", "15:00" for the form; "" — the common ones.
+func (r Resource) OwnFrom(wd int) string { return r.own(wd, 0) }
+func (r Resource) OwnTo(wd int) string   { return r.own(wd, 1) }
+
+func (r Resource) own(wd, i int) string {
+	h, ok := r.DayHours[wd]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%02d:%02d", h[i]/60, h[i]%60)
 }
 
 // Booking is a client's visit to a resource.
@@ -78,6 +122,8 @@ type Booking struct {
 	ResourceName             string
 	Extras, ExtraNames       []string  // the other resources the booking takes at the same time
 	Services                 []Service // what the client comes for, as booked
+	Rating                   int       // the client's rating of the visit, 1–5; 0 — none
+	RatingNote               string    // and their comment
 }
 
 func (s *Store) Types(ctx context.Context) ([]Type, error) {
@@ -127,13 +173,15 @@ func (s *Store) DeleteType(ctx context.Context, id string) error {
 
 const resourceSQL = `SELECT r.id, r.type_id, coalesce(t.code, ''), t.name, r.name, r.description,
 		coalesce(r.user_id::text, ''), coalesce(u.name, ''), r.slot_minutes, r.work_days, r.work_from, r.work_to,
-		r.notify_mail, r.remind_hours, r.late_minutes, r.overbooking
+		r.notify_mail, r.remind_hours, r.late_minutes, r.overbooking, r.feedback, r.day_hours, r.break_from, r.break_to,
+		r.off_dates, r.confirm_hours, r.confirm_alert_hours, r.calendar_busy
 	FROM booking_resources r JOIN booking_resource_types t ON t.id = r.type_id LEFT JOIN users u ON u.id = r.user_id`
 
 func scanResource(r pgx.Row) (Resource, error) {
 	var x Resource
 	err := r.Scan(&x.ID, &x.TypeID, &x.TypeCode, &x.TypeName, &x.Name, &x.Description, &x.UserID, &x.UserName,
-		&x.Slot, &x.Days, &x.From, &x.To, &x.NotifyMail, &x.RemindHours, &x.LateMinutes, &x.Overbooking)
+		&x.Slot, &x.Days, &x.From, &x.To, &x.NotifyMail, &x.RemindHours, &x.LateMinutes, &x.Overbooking, &x.Feedback,
+		&x.DayHours, &x.BreakFrom, &x.BreakTo, &x.OffDates, &x.ConfirmHours, &x.ConfirmAlert, &x.CalendarBusy)
 	return x, err
 }
 
@@ -178,9 +226,34 @@ func (s *Store) SaveResource(ctx context.Context, by string, r Resource) (string
 	}
 	slices.Sort(days)
 	if r.Slot < 5 || r.Slot > 480 || r.From < 0 || r.To > 1440 || r.From >= r.To || len(days) == 0 ||
-		r.RemindHours < 0 || r.RemindHours > 336 || r.LateMinutes < 0 || r.LateMinutes > 240 {
+		r.RemindHours < 0 || r.RemindHours > 336 || r.LateMinutes < 0 || r.LateMinutes > 240 ||
+		r.BreakFrom < 0 || r.BreakTo > 1440 || r.BreakFrom > r.BreakTo {
 		return "", ErrSchedule
 	}
+	if r.ConfirmHours < 0 || r.ConfirmHours > 336 || r.ConfirmAlert < 0 || (r.ConfirmAlert > 0 && r.ConfirmAlert >= r.ConfirmHours) {
+		return "", ErrConfirm
+	}
+	hours := map[int][2]int{}
+	for wd, h := range r.DayHours {
+		if !slices.Contains(days, wd) || h == [2]int{r.From, r.To} {
+			continue // not a working day or the common hours
+		}
+		if h[0] < 0 || h[1] > 1440 || h[0] >= h[1] {
+			return "", ErrSchedule
+		}
+		hours[wd] = h
+	}
+	if r.BreakFrom == r.BreakTo {
+		r.BreakFrom, r.BreakTo = 0, 0
+	}
+	off := []time.Time{}
+	for _, d := range r.OffDates {
+		d = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		if !slices.ContainsFunc(off, d.Equal) {
+			off = append(off, d)
+		}
+	}
+	slices.SortFunc(off, time.Time.Compare)
 	user := any(nil)
 	if r.UserID != "" {
 		user = r.UserID
@@ -192,16 +265,19 @@ func (s *Store) SaveResource(ctx context.Context, by string, r Resource) (string
 	defer tx.Rollback(ctx)
 	if r.ID == "" {
 		err = tx.QueryRow(ctx, `INSERT INTO booking_resources (type_id, name, description, user_id, slot_minutes,
-				work_days, work_from, work_to, created_by, notify_mail, remind_hours, late_minutes, overbooking)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+				work_days, work_from, work_to, created_by, notify_mail, remind_hours, late_minutes, overbooking, feedback,
+				day_hours, break_from, break_to, off_dates, confirm_hours, confirm_alert_hours, calendar_busy)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING id`,
 			r.TypeID, r.Name, r.Description, user, r.Slot, days, r.From, r.To, by, r.NotifyMail, r.RemindHours, r.LateMinutes,
-			r.Overbooking).Scan(&r.ID)
+			r.Overbooking, r.Feedback, hours, r.BreakFrom, r.BreakTo, off, r.ConfirmHours, r.ConfirmAlert, r.CalendarBusy).Scan(&r.ID)
 	} else {
 		var tag pgconn.CommandTag
 		tag, err = tx.Exec(ctx, `UPDATE booking_resources SET type_id = $2, name = $3, description = $4, user_id = $5,
 			slot_minutes = $6, work_days = $7, work_from = $8, work_to = $9, notify_mail = $10, remind_hours = $11,
-			late_minutes = $12, overbooking = $13 WHERE id = $1`,
-			r.ID, r.TypeID, r.Name, r.Description, user, r.Slot, days, r.From, r.To, r.NotifyMail, r.RemindHours, r.LateMinutes, r.Overbooking)
+			late_minutes = $12, overbooking = $13, feedback = $14, day_hours = $15, break_from = $16, break_to = $17,
+			off_dates = $18, confirm_hours = $19, confirm_alert_hours = $20, calendar_busy = $21 WHERE id = $1`,
+			r.ID, r.TypeID, r.Name, r.Description, user, r.Slot, days, r.From, r.To, r.NotifyMail, r.RemindHours, r.LateMinutes,
+			r.Overbooking, r.Feedback, hours, r.BreakFrom, r.BreakTo, off, r.ConfirmHours, r.ConfirmAlert, r.CalendarBusy)
 		if err == nil && tag.RowsAffected() == 0 {
 			err = ErrNotFound
 		}
@@ -231,7 +307,8 @@ const bookingSQL = `SELECT b.id, b.resource_id, b.starts_at, b.ends_at, b.client
 		ARRAY(SELECT e.resource_id::text FROM booking_extra_resources e JOIN booking_resources er ON er.id = e.resource_id
 			WHERE e.booking_id = b.id ORDER BY lower(er.name)),
 		ARRAY(SELECT er.name FROM booking_extra_resources e JOIN booking_resources er ON er.id = e.resource_id
-			WHERE e.booking_id = b.id ORDER BY lower(er.name))
+			WHERE e.booking_id = b.id ORDER BY lower(er.name)),
+		coalesce(b.rating, 0), b.rating_note
 	FROM bookings b JOIN booking_resources r ON r.id = b.resource_id LEFT JOIN users u ON u.id = b.created_by
 	LEFT JOIN booking_links l ON l.id = b.link_id LEFT JOIN crm_contacts x ON x.id = b.contact_id
 	LEFT JOIN crm_companies c ON c.id = b.company_id LEFT JOIN crm_deals d ON d.id = b.deal_id`
@@ -240,7 +317,8 @@ func scanBooking(r pgx.Row) (Booking, error) {
 	var b Booking
 	err := r.Scan(&b.ID, &b.ResourceID, &b.Start, &b.End, &b.ClientName, &b.ClientPhone, &b.ClientEmail, &b.Note,
 		&b.Status, &b.CreatedBy, &b.CreatedByName, &b.LinkID, &b.LinkName, &b.ClientIP, &b.ClientToken, &b.ContactID,
-		&b.ContactName, &b.CompanyID, &b.CompanyName, &b.DealID, &b.DealTitle, &b.ResourceName, &b.Extras, &b.ExtraNames)
+		&b.ContactName, &b.CompanyID, &b.CompanyName, &b.DealID, &b.DealTitle, &b.ResourceName, &b.Extras, &b.ExtraNames,
+		&b.Rating, &b.RatingNote)
 	return b, err
 }
 
@@ -383,7 +461,9 @@ func saveBooking(ctx context.Context, tx pgx.Tx, by string, b Booking, strict bo
 		tag, err = tx.Exec(ctx, `UPDATE bookings SET resource_id = $2, starts_at = $3, ends_at = $4, client_name = $5,
 				client_phone = $6, client_email = $7, note = $8, status = $9, contact_id = $10, company_id = $11,
 				deal_id = $12, updated_at = now(),
-				reminded_at = CASE WHEN starts_at = $3 THEN reminded_at END, late_at = CASE WHEN starts_at = $3 THEN late_at END
+				reminded_at = CASE WHEN starts_at = $3 THEN reminded_at END, late_at = CASE WHEN starts_at = $3 THEN late_at END,
+				confirm_asked_at = CASE WHEN starts_at = $3 THEN confirm_asked_at END,
+				unconfirmed_at = CASE WHEN starts_at = $3 THEN unconfirmed_at END
 				WHERE id::text = $1`,
 			b.ID, b.ResourceID, b.Start, b.End, b.ClientName, b.ClientPhone, b.ClientEmail, b.Note, b.Status,
 			nullable(b.ContactID), nullable(b.CompanyID), nullable(b.DealID))
@@ -441,7 +521,8 @@ func (s *Store) Free(ctx context.Context, r Resource, day time.Time, loc *time.L
 }
 
 // FreeFor: the starts of the resource's slots on a day (in loc) from which mins minutes are free (a service longer
-// than a slot takes the following ones) and end within its working hours.
+// than a slot takes the following ones) and end within its working hours of that day, not touching its break nor
+// the busy time of its employee's calendar (see CalendarBusy).
 func (s *Store) FreeFor(ctx context.Context, r Resource, day time.Time, loc *time.Location, mins int) ([]time.Time, error) {
 	if mins <= 0 {
 		mins = r.Slot
@@ -464,12 +545,20 @@ func (s *Store) FreeFor(ctx context.Context, r Resource, day time.Time, loc *tim
 	if err != nil {
 		return nil, err
 	}
+	cal, err := s.CalendarBusy(ctx, r, d0, d0.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range cal {
+		busy = append(busy, span{x.Start, x.End})
+	}
 	now := time.Now()
 	var free []time.Time
-	for m := r.From; m+mins <= r.To; m += r.Slot {
+	from, to := r.HoursOn(d0)
+	for m := from; m+mins <= to; m += r.Slot {
 		a := time.Date(day.Year(), day.Month(), day.Day(), 0, m, 0, 0, loc)
 		b := a.Add(time.Duration(mins) * time.Minute)
-		if a.Before(now) || slices.ContainsFunc(busy, func(x span) bool { return x.a.Before(b) && x.b.After(a) }) {
+		if a.Before(now) || r.InBreak(m, m+mins) || slices.ContainsFunc(busy, func(x span) bool { return x.a.Before(b) && x.b.After(a) }) {
 			continue
 		}
 		free = append(free, a)

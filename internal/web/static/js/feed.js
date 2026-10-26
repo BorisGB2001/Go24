@@ -13,7 +13,52 @@
       return { ok: res.ok, data };
     } catch { return { ok: false, data: {} }; }
   };
-  const node = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+  // a long discussion: the last 3 comments and the new ones are seen, «Предыдущие комментарии (N)» above
+  // shows the rest; a link to a hidden comment shows them at once
+  const collapse = root => root.querySelectorAll('[data-comments]').forEach(box => {
+    const cs = [...box.querySelectorAll(':scope > .fc')];
+    const old = cs.slice(0, -3).filter(c => !c.classList.contains('fnew'));
+    if (!old.length || old.some(c => location.hash === '#' + c.id)) return;
+    old.forEach(c => { c.hidden = true; });
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'ghostbtn small fc-more';
+    more.textContent = `${feed.dataset.cmore} (${old.length})`;
+    more.addEventListener('click', () => { old.forEach(c => { c.hidden = false; }); more.remove(); });
+    box.prepend(more);
+  });
+  const node = (html) => {
+    const t = document.createElement('template');
+    t.innerHTML = html.trim();
+    const n = t.content.firstElementChild;
+    if (n) collapse(n);
+    return n;
+  };
+  collapse(feed);
+
+  // the comment field: grows with the text, Enter sends, Shift+Enter starts a new line
+  const grow = el => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+  feed.addEventListener('input', e => { if (e.target.matches?.('[data-cinput]')) grow(e.target); });
+  feed.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.defaultPrevented || !e.target.matches?.('[data-cinput]')) return;
+    e.preventDefault(); // the mention picker takes its Enter before this
+    e.target.form.requestSubmit();
+  });
+  // «Цитировать»: the selected text of the post or the comment (all of it when nothing is selected) goes to the comment
+  // field as a quote
+  const quote = (card, name, src, whole) => {
+    const sel = getSelection();
+    let text = sel && !sel.isCollapsed && src.contains(sel.anchorNode) && src.contains(sel.focusNode) ? sel.toString() : (whole || src).innerText;
+    text = text.trim().slice(0, 2000);
+    const input = card.querySelector('form[data-comment] [name=body]');
+    if (!text || !input) return;
+    input.value += (input.value && !input.value.endsWith('\n') ? '\n' : '') + `[quote]${name}:\n${text}[/quote]\n`;
+    grow(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  };
+  // the button keeps the selection: pressing it does not take the selection away
+  feed.addEventListener('mousedown', e => { if (e.target.closest?.('[data-quote], [data-cquote]')) e.preventDefault(); });
 
   // a post appears once, whichever comes first: the answer to our own publish or the live event
   const put = (id, html) => {
@@ -23,6 +68,50 @@
     feed.querySelector('[data-items]').prepend(node(html));
   };
 
+  // drafts: what is typed in the new post's form and in a post's comment field is kept in this
+  // browser (for the person, a month at most) and comes back after a reload; sending it clears the draft
+  const drafts = (() => {
+    const key = k => `go24.feed.draft.${feed.dataset.me || ''}.${k}`;
+    const fields = ['title', 'body', 'tags', 'poll_question', 'poll_options'];
+    const get = k => {
+      try {
+        const d = JSON.parse(localStorage.getItem(key(k)) || 'null');
+        if (d && Date.now() - d.at < 30 * 86400e3) return d.v;
+        localStorage.removeItem(key(k));
+      } catch { /* no storage */ }
+      return null;
+    };
+    const set = (k, v) => {
+      try {
+        if (Object.values(v).some(x => x.trim())) localStorage.setItem(key(k), JSON.stringify({ v, at: Date.now() }));
+        else localStorage.removeItem(key(k));
+      } catch { /* private mode: no drafts */ }
+    };
+    const of = f => f.matches('[data-post]') ? 'post' : f.matches('[data-comment]') ? 'c.' + f.closest('[data-post-id]')?.dataset.postId : null;
+    const read = f => Object.fromEntries(fields.filter(n => f.elements[n]).map(n => [n, f.elements[n].value]));
+    const timers = new Map();
+    const save = f => { const k = of(f); if (k) { clearTimeout(timers.get(k)); set(k, read(f)); } };
+    // a form gets its draft back unless something is in it already (a chat message's post, an edit)
+    const restore = f => {
+      const k = of(f), v = k && get(k);
+      if (!v || fields.some(n => f.elements[n]?.value.trim())) return;
+      fields.forEach(n => { if (f.elements[n] && v[n]) f.elements[n].value = v[n]; });
+      f.querySelectorAll('details').forEach(d => { if ([...d.querySelectorAll('input, textarea')].some(i => i.value)) d.open = true; });
+    };
+    const forms = root => root.querySelectorAll('form[data-post], form[data-comment]');
+    forms(feed).forEach(restore);
+    new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) forms(n).forEach(restore); })))
+      .observe(feed, { childList: true, subtree: true });
+    feed.addEventListener('input', e => {
+      const f = e.target.form, k = f && of(f);
+      if (!k || !fields.includes(e.target.name)) return;
+      clearTimeout(timers.get(k));
+      timers.set(k, setTimeout(() => save(f), 500));
+    });
+    addEventListener('pagehide', () => forms(feed).forEach(f => { if (timers.has(of(f))) save(f); }));
+    return { clear: f => { const k = of(f); if (k) { clearTimeout(timers.get(k)); timers.delete(k); set(k, {}); } } };
+  })();
+
   // new post
   const form = feed.querySelector('form[data-post]');
   form?.addEventListener('submit', async e => {
@@ -31,6 +120,7 @@
     const { ok, data } = await post(form.action, new FormData(form));
     if (!ok || !data.html) { err.textContent = data.error || failed; err.hidden = false; return; }
     err.hidden = true;
+    drafts.clear(form);
     put(data.id, data.html);
     if (form.querySelector('[data-im-src]')) { // a post of a chat message: made once, the form is a plain one again
       form.querySelector('[data-im-src]').remove();
@@ -146,8 +236,10 @@
     const card = f.closest('[data-post-id]');
     const { ok, data } = await post('/feed/' + card.dataset.postId + '/comments', new FormData(f));
     if (!ok || !data.html) { alert(data.error || failed); return; }
+    drafts.clear(f);
     card.querySelector('[data-comments]').append(node(data.html));
     f.reset();
+    f.elements.body.style.height = '';
     fileNames(f);
     f.querySelectorAll('.dpick-chip').forEach(c => c.remove());
   });
@@ -251,8 +343,34 @@
     if (n) n.textContent = list.length;
     box.append(who);
   };
+  // «Кто голосовал» for an answer of a poll
+  const pollVoters = async (row, id, option) => {
+    const box = row.closest('.fpoll');
+    const was = who && who.parentNode === box && who.dataset.option === option;
+    closeWho();
+    if (was) return;
+    let list = [];
+    try {
+      const res = await fetch('/feed/' + id + '/poll/voters', { headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+      list = (await res.json()).filter(x => x.option === option);
+    } catch { return; }
+    who = document.querySelector('template[data-reactors-box]').content.firstElementChild.cloneNode(true);
+    who.dataset.option = option;
+    who.querySelector('[data-tabs]').remove();
+    who.querySelector('[data-list]').replaceChildren(...list.map(x => {
+      const a = document.createElement('a');
+      a.className = 'person'; a.href = '/u/' + x.id; a.dataset.user = x.id;
+      const img = document.createElement('img'); img.src = x.photo || '/static/img/avatar.svg'; img.alt = '';
+      const name = document.createElement('span'); name.textContent = x.name;
+      a.append(img, name);
+      return a;
+    }));
+    who.style.top = (row.offsetTop + row.offsetHeight + 4) + 'px';
+    box.append(who);
+  };
   document.addEventListener('click', e => {
-    if (who && !e.target.closest('.rwho') && !e.target.closest('[data-reactors]') && !e.target.closest('[data-views]')) closeWho();
+    if (who && !e.target.closest('.rwho') && !e.target.closest('[data-reactors]') && !e.target.closest('[data-views]') && !e.target.closest('[data-poll-who]')) closeWho();
     if (picker && !e.target.closest('[data-react]')) closePicker();
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeWho(); closePicker(); } });
@@ -284,9 +402,13 @@
       if (e.target.closest('[data-reactors]')) { reactors(box); return; }
       return;
     }
-    const c = e.target.closest('[data-comment-id]'); // a comment: «Ответить», «Ссылка», «Изменить», «Удалить»
+    const pq = e.target.closest('[data-quote]');
+    if (pq) { const v = card.querySelector('[data-view]'); quote(card, pq.dataset.quote, v, v.querySelector('.fbody')); return; }
+    const c = e.target.closest('[data-comment-id]'); // a comment: «Ответить», «Цитировать», «Ссылка», «Изменить», «Удалить»
     if (c) {
       const cid = c.dataset.commentId;
+      const cq = e.target.closest('[data-cquote]');
+      if (cq) { quote(card, cq.dataset.cquote, c.querySelector('[data-cview]')); return; }
       const reply = e.target.closest('[data-creply]');
       if (reply) { //: the answer starts with a mention of the author
         const input = card.querySelector('form[data-comment] [name=body]');
@@ -308,7 +430,7 @@
       const cv = c.querySelector('[data-cview]'), cf = c.querySelector('[data-cedit-form]');
       if (e.target.closest('[data-cedit]') && cf) {
         cv.hidden = true; cf.hidden = false;
-        const i = cf.elements.body; i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+        const i = cf.elements.body; grow(i); i.focus(); i.setSelectionRange(i.value.length, i.value.length);
         return;
       }
       if (e.target.closest('[data-cedit-cancel]') && cf) {
@@ -325,6 +447,15 @@
       }
     }
     if (e.target.closest('[data-views]')) { viewers(card.querySelector('[data-views-box]'), id); return; }
+    const pw = e.target.closest('[data-poll-who]');
+    if (pw) { pollVoters(pw.closest('.fpoll-res'), id, pw.dataset.pollWho); return; }
+    const pc = e.target.closest('[data-poll-close]'); // «Остановить опрос» / «Возобновить опрос»: the post comes back
+    if (pc) {
+      const { ok, data } = await post('/feed/' + id + '/poll/' + pc.dataset.pollClose, {});
+      if (!ok || !data.html) { alert(data.error || failed); return; }
+      card.replaceWith(node(data.html));
+      return;
+    }
     const read = e.target.closest('[data-read]');
     if (read) {
       const { ok, data } = await post('/feed/' + id + '/read', {});

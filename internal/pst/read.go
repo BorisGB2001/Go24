@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -520,13 +521,30 @@ func (n *Node) Table() (*Table, error) {
 // Folders are the folders of the file by their paths from the root («Top of Personal Folders/Входящие»), each with
 // its letters' nodes in the order of its contents table.
 func (f *File) Folders() (map[string][]uint32, error) {
+	tree, err := f.Tree()
 	out := map[string][]uint32{}
-	var walk func(nid uint32, path string, depth int) error
-	walk = func(nid uint32, path string, depth int) error {
-		if depth > 50 {
+	for _, t := range tree {
+		out[strings.Join(t.Path, "/")] = t.Letters
+	}
+	return out, err
+}
+
+// FolderOf is a folder of the file: the names of its path from the root and its letters' nodes.
+type FolderOf struct {
+	Path    []string
+	Letters []uint32
+}
+
+// Tree is the folders of the file in the order of the tree: each folder before its subfolders, those in the order of
+// its hierarchy table.
+func (f *File) Tree() ([]FolderOf, error) {
+	var out []FolderOf
+	var walk func(nid uint32, path []string) error
+	walk = func(nid uint32, path []string) error {
+		if len(path) > 50 {
 			return fmt.Errorf("pst: folders too deep")
 		}
-		if path != "" {
+		if len(path) > 0 {
 			ct, err := f.Node(makeNID(nidTypeContentsTable, nid>>5))
 			if err != nil {
 				return err
@@ -535,7 +553,7 @@ func (f *File) Folders() (map[string][]uint32, error) {
 			if err != nil {
 				return err
 			}
-			out[path] = t.RowIDs
+			out = append(out, FolderOf{Path: path, Letters: t.RowIDs})
 		}
 		ht, err := f.Node(makeNID(nidTypeHierarchyTable, nid>>5))
 		if err != nil {
@@ -547,18 +565,14 @@ func (f *File) Folders() (map[string][]uint32, error) {
 		}
 		for i, r := range t.Rows {
 			if id := t.RowIDs[i]; nidType(id) == nidTypeNormalFolder {
-				p := r.String(TagDisplayName)
-				if path != "" {
-					p = path + "/" + p
-				}
-				if err := walk(id, p, depth+1); err != nil {
+				if err := walk(id, append(path[:len(path):len(path)], r.String(TagDisplayName))); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return out, walk(nidRootFolder, "", 0)
+	return out, walk(nidRootFolder, nil)
 }
 
 // Letter is a letter read: its properties, its recipients' and its attachments' (with their data).

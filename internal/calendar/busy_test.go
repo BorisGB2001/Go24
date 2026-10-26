@@ -236,6 +236,44 @@ func TestOccurrences(t *testing.T) {
 	// the whole first series: its changed occurrence goes too
 	must(s.DeleteOccurrence(ctx, boss, id, d(0, 10, 30), ScopeAll))
 	same(week(), "22 09:30 Стендап")
+	must(s.DeleteOccurrence(ctx, boss, next, d(3, 9, 30), ScopeAll))
+
+	// weekly on Mon, Wed, Fri, six meetings (GO24DEV-682): kept with its days and count, the end from the count
+	weeks := func(from, n int) (out []string) {
+		t.Helper()
+		list, err := s.Range(ctx, anna, d(from, 0, 0), d(from+7*n, 0, 0))
+		must(err)
+		for _, e := range list {
+			out = append(out, e.Start.Format("02.01 15:04"))
+		}
+		return
+	}
+	yoga, err := s.Save(ctx, boss, Event{Title: "Йога", Start: d(0, 18, 0), End: d(0, 19, 0), Repeat: "weekly", Days: []int{3, 5}, Count: 6}, []string{anna})
+	must(err)
+	e, err = s.Get(ctx, anna, yoga)
+	must(err)
+	if len(e.Days) != 3 || e.Count != 6 || e.Until == nil || e.Until.Format("02.01") != "30.10" {
+		t.Fatalf("yoga = %+v", e)
+	}
+	same(weeks(0, 3), "19.10 18:00", "21.10 18:00", "23.10 18:00", "26.10 18:00", "28.10 18:00", "30.10 18:00")
+	// from Wednesday of the second week on at 19:00: the new series ends where the old one did
+	later, err := s.SaveOccurrence(ctx, boss, yoga, d(9, 18, 0), ScopeFollowing,
+		Event{Title: "Йога", Start: d(9, 19, 0), End: d(9, 20, 0), Repeat: "weekly", Days: e.Days, Count: 6}, []string{anna})
+	must(err)
+	same(weeks(0, 3), "19.10 18:00", "21.10 18:00", "23.10 18:00", "26.10 18:00", "28.10 19:00", "30.10 19:00")
+	if o, _ := s.Get(ctx, boss, yoga); o.Count != 0 || o.Until.Format("02.01") != "27.10" {
+		t.Fatalf("the series before = %+v", o)
+	}
+	// the whole first series a day later: its days move with it
+	tue := d(8, 0, 0)
+	_, err = s.SaveOccurrence(ctx, boss, yoga, d(0, 18, 0), ScopeAll,
+		Event{Title: "Йога", Start: d(1, 18, 0), End: d(1, 19, 0), Repeat: "weekly", Days: []int{1, 3, 5}, Until: &tue}, []string{anna})
+	must(err)
+	if o, _ := s.Get(ctx, boss, yoga); len(o.Days) != 3 || o.Days[0] != 2 || o.Days[2] != 6 {
+		t.Fatalf("the series moved = %+v", o.Days)
+	}
+	must(s.DeleteOccurrence(ctx, boss, later, d(9, 19, 0), ScopeAll))
+	same(weeks(0, 1), "20.10 18:00", "22.10 18:00", "24.10 18:00")
 }
 
 // TestRooms: a meeting room is never booked twice at the same time — single meetings and every occurrence of a

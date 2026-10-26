@@ -1,0 +1,15 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row"><h1 style="flex:1">{{t "wschedule.title"}}</h1>
+  <a href="/worktime/table" class="button ghost">{{icon "table"}} {{t "worksheet.title"}}</a>
+  {{if $d.Admin}}<a href="/worktime/schedules/new" class="button primary">{{icon "plus"}} {{t "wschedule.add"}}</a>{{end}}</div>
+<div class="sub">{{t "wschedule.subtitle"}}</div>
+<div class="card flush">
+  {{if $d.List}}<table class="tlist"><thead><tr><th>{{t "wschedule.name"}}</th><th>{{t "wschedule.kind"}}</th><th>{{t "wschedule.members"}}</th><th></th></tr></thead><tbody>
+  {{range $d.List}}<tr><td><a href="/worktime/schedules/{{.ID}}">{{.Name}}</a></td><td>{{t (print "wschedule.kind." .Kind)}}</td>
+    <td class="small">{{if .Depts}}{{t "wschedule.n_depts" .Depts}}{{end}}{{if and .Depts .People}} · {{end}}{{if .People}}{{t "wschedule.n_people" .People}}{{end}}{{if not (or .Depts .People)}}<span class="muted">{{t "wschedule.no_members"}}</span>{{end}}</td>
+    <td class="nowrap">{{if eq .Kind "shift"}}<a href="/worktime/schedules/{{.ID}}/plan" class="button ghost">{{icon "calendar-event"}} {{t "wschedule.plan"}}</a>{{end}}</td></tr>{{end}}
+  </tbody></table>{{else}}<div class="empty">{{t "wschedule.empty"}}</div>{{end}}
+</div>
+<p class="small muted">{{t "wschedule.default_hint"}}{{if $d.Admin}} <a href="/settings/worktime">{{t "title.worktime"}}</a>{{end}}</p>
+{{end}}

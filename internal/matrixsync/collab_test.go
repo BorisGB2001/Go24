@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -286,6 +288,53 @@ func TestCollabRoom(t *testing.T) {
 	if why := s.CollabChatClosed(ctx, client, room); why != "" {
 		t.Fatalf("the guest's chat stays closed: %q", why)
 	}
+
+	// «Автоудаление сообщений» of the collab's settings: go24 puts it into the chat once, on behalf of the one who chose
+	// it — the chat's line names them, the header shows it to all, nobody changes it in the messenger; the messages
+	// go when their time is up (as their authors or go24); turned off, it is gone from the chat and the worker's index
+	set, _ = ts.CollabSettings(ctx, co)
+	if set.MsgTTL = 1234; ts.SetCollabSettings(ctx, co, owner, set) == nil {
+		t.Fatal("a lifetime not offered")
+	}
+	set.MsgTTL = 86400
+	must(ts.SetCollabSettings(ctx, co, owner, set))
+	must(s.Reconcile(ctx))
+	must(s.Reconcile(ctx))
+	if a := last(room, "go24.autodelete"); a["ttl"] != float64(86400) || a["by"] != "@owner:t.lan" || a["_n"] != 1 {
+		t.Fatalf("the collab chat's auto-delete: %v", a)
+	}
+	if ttl, can, err := s.AutoDelete(ctx, client, room); ttl != 86400 || can || err != nil {
+		t.Fatalf("the chat's auto-delete for a member: %d %t %v", ttl, can, err)
+	}
+	msgs, _, err := s.Messages(ctx, client, room, "")
+	must(err)
+	if l := msgs[len(msgs)-1]; l.Event != "autodelete" || l.Body != "86400" || l.SenderName != "owner" {
+		t.Fatalf("the chat's line about auto-delete: %+v", l)
+	}
+	bye, err := s.Send(ctx, client, room, "удалится через день", "")
+	must(err)
+	if _, err := pool.Exec(ctx, `UPDATE im_autodelete SET since = to_timestamp(0)`); err != nil {
+		t.Fatal(err)
+	}
+	gone := len(fake.redacted)
+	must(s.expire(ctx, time.UnixMilli(86400_000+5000)))
+	if !slices.Contains(fake.redacted[gone:], bye.ID) {
+		t.Fatalf("the collab chat's message not deleted: %v", fake.redacted[gone:])
+	}
+	set.MsgTTL = 0
+	must(ts.SetCollabSettings(ctx, co, owner, set))
+	must(s.Reconcile(ctx))
+	n = 0
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM im_autodelete`).Scan(&n))
+	if a := last(room, "go24.autodelete"); a["ttl"] != float64(0) || a["_n"] != 2 || n != 0 {
+		t.Fatalf("the collab chat's auto-delete not off: %v %d", a, n)
+	}
+	log, err := ts.CollabLog(ctx, co, 10)
+	must(err)
+	if c := log[0].Changes(); len(c) != 1 || c[0] != "msg_ttl.0" {
+		t.Fatalf("the log of auto-delete: %v", c)
+	}
+
 	must(ts.RemoveMember(ctx, co, other))
 	must(s.Reconcile(ctx))
 	if fake.rooms[room]["@other:t.lan"] {

@@ -67,12 +67,13 @@
   </aside>
   <section class="im-chat">
     {{with $d.Current}}
-    <div class="im-head"><b style="flex:1">{{.Name}}{{if eq .Kind "channel"}} <span class="pill">{{icon "speakerphone"}} {{t "im.channel"}}</span>{{end}}{{if eq .Kind "notes"}}<span class="small muted im-topic">{{t "im.notes_sub"}}</span>{{end}}{{if and (eq .Kind "dm") .PeerID}}<span class="small muted pr-line" data-presence="{{.PeerID}}" data-presence-text></span>{{end}}{{with $d.Group}}{{with .Topic}}<span class="small muted im-topic" title="{{.}}">{{.}}</span>{{end}}{{end}}{{with $d.Collab}}
+    <div class="im-head"><b style="flex:1">{{.Name}}{{if .PeerBot}} <span class="pill">{{icon "robot"}} {{t "im.bot"}}</span>{{end}}{{if eq .Kind "channel"}} <span class="pill">{{icon "speakerphone"}} {{t "im.channel"}}</span>{{end}}{{if eq .Kind "notes"}}<span class="small muted im-topic">{{t "im.notes_sub"}}</span>{{end}}{{if and (eq .Kind "dm") .PeerID (not .PeerBot)}}<span class="small muted pr-line" data-presence="{{.PeerID}}" data-presence-text></span>{{end}}{{with $d.Group}}{{with .Topic}}<span class="small muted im-topic" title="{{.}}">{{.}}</span>{{end}}{{end}}{{with $d.Collab}}
       <span class="small im-collab"><a href="/p/{{.Key}}">{{icon "list-check"}} {{t "collab.tasks"}}</a>{{if .Overdue}} <a href="/my?view=overdue&amp;project={{.Key}}" class="cnt red" title="{{t "counter.overdue"}}">{{.Overdue}}</a>{{end}}{{if .Comments}} <a href="/my?view=comments&amp;project={{.Key}}" class="cnt green" title="{{t "counter.comments"}}">{{.Comments}}</a>{{end}}
         <a href="/disk/p/{{.Key}}">{{icon "folder"}} {{t "collab.drive"}}</a>
         <a href="/calendar?project={{.Key}}">{{icon "calendar-event"}} {{t "collab.calendar"}}</a>
         <a href="/p/{{.Key}}#members" title="{{t "collab.members"}}">{{icon "users"}} {{.Members}}{{if .Guests}} <span class="pill guest">{{t "collab.guests_n" .Guests}}</span>{{end}}</a></span>{{end}}</b>{{if .Encrypted}} <span class="muted small">🔒 {{t "im.encrypted_room"}}</span>{{end}}
       {{with $d.CollabInvite}}<a href="/p/{{$d.Collab.Key}}#{{.}}" class="button ghost" title="{{t "guests.invite"}}">{{icon "user-plus"}}</a>{{end}}
+      {{if $d.CollabSign}}<a href="/sign/new?collab={{$d.Collab.Key}}" class="button ghost" title="{{t "sign.collab.button"}}">{{icon "signature"}}</a>{{end}}
       <button type="button" class="ghost" data-search-open title="{{t "im.search_chat"}}">{{icon "search"}}</button>
       <button type="button" class="ghost" data-media-open title="{{t "im.media_title"}}">{{icon "photo"}}</button>
       <button type="button" class="ghost im-threads-btn" data-threads-open title="{{t "im.threads"}}">{{icon "messages"}}<span class="cnt" data-threads-cnt {{if not .Threads}}hidden{{end}}>{{.Threads}}</span></button>
@@ -84,7 +85,7 @@
           {{range $d.AutoDeleteTTLs}}<label class="small"><input type="radio" name="ttl" value="{{.}}"{{if eq . $d.AutoDelete}} checked{{end}}> {{t (printf "im.ttl_%d" .)}}</label>
           {{end}}<p class="small muted">{{t "im.autodelete_hint"}}</p><button>{{t "common.save"}}</button></form></details>
       {{else if $d.AutoDelete}}<span class="pill small" title="{{t "im.autodelete"}}">{{icon "clock"}} {{t (printf "im.ttl_%d" $d.AutoDelete)}}</span>{{end}}
-      {{if and $d.Calls (ne .Kind "notes")}}{{if or (eq .Kind "dm") (eq .Kind "group")}}<a href="/call?room={{urlquery .ID}}&amp;ring=1&amp;video=0" class="button ghost" target="_blank" rel="noopener" title="{{t "call.audio_call"}}">{{icon "phone"}}</a>
+      {{if and $d.Calls (ne .Kind "notes") (not .PeerBot)}}{{if or (eq .Kind "dm") (eq .Kind "group")}}<a href="/call?room={{urlquery .ID}}&amp;ring=1&amp;video=0" class="button ghost" target="_blank" rel="noopener" title="{{t "call.audio_call"}}">{{icon "phone"}}</a>
       <a href="/call?room={{urlquery .ID}}&amp;ring=1&amp;video=1" class="button ghost" target="_blank" rel="noopener" title="{{t "call.video_call"}}">{{icon "video"}}</a>
       {{else}}<a href="/call?room={{urlquery .ID}}&amp;announce=1" class="button ghost" target="_blank" rel="noopener" title="{{t "call.call"}}">{{icon "phone"}}</a>{{end}}{{end}}
       {{if ne .Kind "notes"}}{{template "callext" (dict "Q" (printf "room=%s" (urlquery .ID)))}}{{end}}</div>
@@ -161,9 +162,9 @@
     {{if and $g.Topic (not $g.CanEdit)}}<p class="small im-topic-full">{{$g.Topic}}</p>{{end}}
     <b class="small">{{t "im.group_members"}}</b>
     <ul class="im-members">{{range $g.Members}}
-      <li>{{photo .Name (photoURL .ID .Photo) false}} <a href="/u/{{.ID}}">{{.Name}}</a>{{if .Owner}} <span class="pill">{{t "im.group_owner"}}</span>{{end}}{{if .Admin}} <span class="pill">{{t "im.channel_admin"}}</span>{{end}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}
+      <li>{{photo .Name (photoURL .ID .Photo) false}} {{if .Bot}}{{.Name}} <span class="pill">{{icon "robot"}} {{t "im.bot"}}</span>{{else}}<a href="/u/{{.ID}}">{{.Name}}</a>{{end}}{{if .Owner}} <span class="pill">{{t "im.group_owner"}}</span>{{end}}{{if .Admin}} <span class="pill">{{t "im.channel_admin"}}</span>{{end}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}
         {{if and $g.Owner (not .Me) (not .Owner) .ID}}<form method="post" action="/im/group/admin"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="user" value="{{.ID}}"><input type="hidden" name="on" value="{{if .Admin}}0{{else}}1{{end}}"><button class="ghost" title="{{if .Admin}}{{t "im.channel_unmake_admin"}}{{else}}{{t "im.channel_make_admin"}}{{end}}">{{icon "shield-check"}}</button></form>
-        {{if not .Guest}}<form method="post" action="/im/group/owner" data-confirm="{{t "im.group_owner_confirm" .Name}}"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="user" value="{{.ID}}"><button class="ghost" title="{{t "im.group_make_owner"}}">{{icon "crown"}}</button></form>{{end}}{{end}}
+        {{if not (or .Guest .Bot)}}<form method="post" action="/im/group/owner" data-confirm="{{t "im.group_owner_confirm" .Name}}"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="user" value="{{.ID}}"><button class="ghost" title="{{t "im.group_make_owner"}}">{{icon "crown"}}</button></form>{{end}}{{end}}
         {{if and .Removable .ID}}<form method="post" action="/im/group/remove" data-confirm="{{t "im.group_remove_confirm" .Name}}"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="user" value="{{.ID}}"><button class="ghost" title="{{t "im.group_remove"}}">{{icon "x"}}</button></form>{{end}}</li>{{end}}
     </ul>
     {{if $g.CanAdd}}<form method="post" action="/im/group/add" class="row"><input type="hidden" name="room" value="{{$room}}">
@@ -216,7 +217,7 @@
 {{else if .Event}}<div class="msg system" data-id="{{.ID}}"><span class="small muted">{{template "imevent" .}} · {{clock .At}}</span></div>{{else}}
 <div class="msg{{if .Mine}} mine{{end}}{{if .Notice}} notice{{end}}{{if .ToMe}} to-me{{end}}" data-id="{{.ID}}" data-sender="{{.SenderName}}" data-photo="{{photoURL .SenderID .SenderPhoto}}" data-when="{{day .At}} {{clock .At}}" data-thread-root="{{.ThreadRoot}}" data-ts="{{.At.UnixMilli}}">
   {{if not .Mine}}{{photo .SenderName (photoURL .SenderID .SenderPhoto) false}}{{end}}
-  <div class="bubble">{{if not .Mine}}<b class="who">{{.SenderName}}</b>{{if .SenderGuest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}{{end}}
+  <div class="bubble">{{if not .Mine}}<b class="who">{{.SenderName}}</b>{{if .SenderGuest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}{{if .SenderBot}} <span class="pill">{{icon "robot"}} {{t "im.bot"}}</span>{{end}}{{end}}
     {{if and (not .Encrypted) (not .Notice)}}<details class="im-menu"><summary title="{{t "im.actions"}}">{{icon "dots"}}</summary><div class="pop">
       <div class="im-menu-reacts">{{range quickReactions}}<button type="button" data-react="{{.}}">{{.}}</button>{{end}}<button type="button" data-react-more title="{{t "im.react_more"}}">{{icon "mood-plus"}}</button></div>
       <button type="button" data-act="reply">{{icon "arrow-back-up"}} {{t "im.answer"}}</button>
@@ -248,6 +249,7 @@
     </div>
     {{else}}{{if $.Poll}}{{template "impoll" $}}
     {{else}}<div class="text"{{if not $.Encrypted}} data-body="{{$.Body}}"{{end}}>{{if $.Encrypted}}🔒 <i>{{t "im.encrypted"}}</i>{{else}}{{imtext $.Body}}{{end}}</div>{{end}}{{end}}
+    {{with .Keyboard}}<div class="im-kbd">{{range .}}<div class="im-kbd-row">{{range .}}{{if .Link}}<a class="button small{{if not .BgColor}} ghost{{end}}" href="{{.Link}}" target="_blank" rel="noopener noreferrer"{{if or .BgColor .TextColor}} style="{{with .BgColor}}background:{{.}};{{end}}{{with .TextColor}}color:{{.}};{{end}}"{{end}}>{{.Text}}</a>{{else}}<button type="button" class="small{{if not .BgColor}} ghost{{end}}"{{if .Command}} data-kbd="command" data-command="{{.Command}}" data-params="{{.CommandParams}}"{{else}} data-kbd="{{.Action}}" data-value="{{.ActionValue}}"{{end}}{{if .Block}} data-block="1"{{end}}{{if .Disabled}} disabled{{end}}{{if or .BgColor .TextColor}} style="{{with .BgColor}}background:{{.}};{{end}}{{with .TextColor}}color:{{.}};{{end}}"{{end}}>{{.Text}}</button>{{end}}{{end}}</div>{{end}}</div>{{end}}
     <span class="time">{{if .Saved}}<span class="im-saved" title="{{t "im.saved"}}">★</span> {{end}}{{if not .RemindAt.IsZero}}<span class="im-reminder" title="{{t "im.remind_set" (.RemindAt.Local.Format "02.01.2006 15:04")}}">⏰</span> {{end}}{{if .Edited}}{{t "feed.edited"}} · {{end}}{{clock .At}}{{if and .Mine (not .Notice)}} <span class="tick{{if .ReadBy}} read{{end}}" data-tick data-readers="{{join .ReadBy ", "}}" title="{{if .ReadBy}}{{t "im.read_by" (join .ReadBy ", ")}}{{else}}{{t "im.sent"}}{{end}}">{{if .ReadBy}}✓✓{{else}}✓{{end}}</span>{{end}}</span>
     <div class="reacts">{{range .Reactions}}<button type="button" class="react{{if .Mine}} mine{{end}}" data-react="{{.Key}}" title="{{.Names}}">{{.Key}} <b>{{.Count}}</b></button>{{end}}
       {{if not .Encrypted}}<details class="react-add"><summary title="{{t "chat.react"}}">☺</summary>

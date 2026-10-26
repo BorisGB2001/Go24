@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,7 @@ func TestAPI(t *testing.T) {
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	srv.BP = bp.NewStore(pool, srv.Tasks, srv.CRM, srv.Company)
+	srv.BP.Tr = func(key string, _ ...any) string { return map[string]string{"bp.bool.Y": "Да", "bp.bool.N": "Нет"}[key] }
 	srv.Feed = feed.NewStore(pool, srv.Tasks)
 	srv.BP.Feed = srv.Feed
 	srv.BI = bi.NewStore(pool, srv.CRM)
@@ -398,10 +400,19 @@ func TestAPI(t *testing.T) {
 		t.Fatalf("task from the deal (%s): %d linked", got, len(linked))
 	}
 	// a business process through the constructor's forms: a template, a step, a start, a decision
-	got = form(admin, "/bp/templates/new", url.Values{"op": {"meta"}, "name": {"Счёт"}, "entity": {"none"}, "active": {"on"}, "fields": {"sum | Сумма | number | *"}})
+	got = form(admin, "/bp/templates/new", url.Values{"op": {"meta"}, "name": {"Счёт"}, "entity": {"none"}, "active": {"on"}, "f_key": {"sum"}, "f_label": {"Сумма"}, "f_kind": {"number"}, "f_req": {"1"}})
 	tpl := strings.TrimPrefix(got, "/bp/templates/")
 	if !strings.HasPrefix(got, "/bp/templates/") || strings.Contains(tpl, "?") {
 		t.Fatalf("new template: %s", got)
+	}
+	// «Параметры» as rows: a bool with its default, a user field with an employee by id, an empty row left out
+	if got := form(admin, "/bp/templates/"+tpl, url.Values{"op": {"meta"}, "name": {"Счёт"}, "entity": {"none"}, "active": {"on"},
+		"f_key": {"sum", "urgent", "payer", ""}, "f_label": {"Сумма", "Срочно", "Плательщик", ""}, "f_kind": {"number", "bool", "user", "string"},
+		"f_req": {"1", "", "", ""}, "f_opts": {"", "", "", ""}, "f_def": {"", "Y", uid, ""}}); got != "/bp/templates/"+tpl {
+		t.Fatalf("the fields: %s", got)
+	}
+	if tp, _ := srv.BP.Template(ctx, tpl); len(tp.Fields) != 3 || tp.Fields[1].Default != "Y" || tp.Fields[2].Default != uid || !tp.Fields[0].Required {
+		t.Fatalf("the fields saved: %+v", tp.Fields)
 	}
 	if got := form(admin, "/bp/templates/"+tpl, url.Values{"op": {"add"}, "kind": {"approve"}, "to": {uid}, "text": {"Оплатить {sum}?"}}); got != "/bp/templates/"+tpl {
 		t.Fatalf("add a step: %s", got)
@@ -416,6 +427,14 @@ func TestAPI(t *testing.T) {
 	mine, _ := srv.BP.MyApprovals(ctx, uid)
 	if len(mine) != 1 || mine[0].Text != "Оплатить 500?" {
 		t.Fatalf("approvals = %+v", mine)
+	}
+	// «Делегировать»: only to a subordinate here, the approval stays
+	var colleague string
+	if err := pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('col', 'Коллега', 'col@test') RETURNING id`).Scan(&colleague); err != nil {
+		t.Fatal(err)
+	}
+	if got := form(cookie, "/bp/approvals/"+mine[0].ID+"/delegate", url.Values{"to": {colleague}}); !strings.Contains(got, "msg=") {
+		t.Fatalf("delegated to a non-subordinate: %s", got)
 	}
 	if got := form(cookie, "/bp/approvals/"+mine[0].ID, url.Values{"decision": {"approve"}}); got != "/bp?tab=approvals" {
 		t.Fatalf("decide: %s", got)
@@ -444,6 +463,17 @@ func TestAPI(t *testing.T) {
 	}
 	if body := page(admin, "/bp?tab=all&status=stopped"); !strings.Contains(body, "/bp/i/"+running) || strings.Contains(body, "/bp/i/"+mine[0].InstanceID) {
 		t.Fatal("all the processes, the stopped ones: wrong list")
+	}
+	form(admin, "/bp/templates/"+tpl, url.Values{"op": {"add"}, "kind": {"review"}, "text": {"Счёт"}, "to": {"field:payer"}})
+	if body := page(admin, "/bp/templates/"+tpl); !strings.Contains(body, "data-bpfields") || !strings.Contains(body, `data-extra="field:payer"`) ||
+		!strings.Contains(body, "из поля «Плательщик»") || !strings.Contains(body, `name="f_scope"`) {
+		t.Fatal("the template's page: no fields' table, no user field to choose for a step or its label in the steps")
+	}
+	if pt, _ := srv.BP.Template(ctx, tpl); len(pt.Steps) > 0 {
+		form(admin, "/bp/templates/"+tpl, url.Values{"op": {"delete"}, "n": {strconv.Itoa(len(pt.Steps) - 1)}})
+	}
+	if body := page(cookie, "/bp/start/"+tpl); !strings.Contains(body, `name="f_urgent" value="Y" checked`) || !strings.Contains(body, `data-name="f_payer"`) {
+		t.Fatal("the start form: no checked box or no employee picker")
 	}
 	if body := page(admin, "/bp/i/"+running); !strings.Contains(body, "Передумал") {
 		t.Fatal("the reason is not in the history")
@@ -492,13 +522,23 @@ func TestAPI(t *testing.T) {
 	if body := page(admin, "/bp/templates/"+vacation); !strings.Contains(body, "<code>from</code> — <code>to</code>") {
 		t.Fatal("the absence step is not in the constructor")
 	}
+	// «Цикл» back to the first step and «Запуск бизнес-процесса» of the template with its sum
+	if got := form(admin, "/bp/templates/"+vacation, url.Values{"op": {"add"}, "kind": {"loop"}, "field": {"from"}, "cmp": {"empty"}, "goto": {"1"}}); got != "/bp/templates/"+vacation {
+		t.Fatalf("add a loop: %s", got)
+	}
+	if got := form(admin, "/bp/templates/"+vacation, url.Values{"op": {"add"}, "kind": {"start"}, "template": {tpl}, "sets": {"sum = 5"}}); got != "/bp/templates/"+vacation {
+		t.Fatalf("add a start: %s", got)
+	}
+	if vt, _ := srv.BP.Template(ctx, vacation); len(vt.Steps) != 7 || vt.Steps[5].Kind != "loop" || vt.Steps[6].Template != tpl || vt.Steps[6].Text == "" {
+		t.Fatalf("the loop and the start: %+v", vt.Steps[5:])
+	}
 	// the feed: «Бизнес-процессы» of the composer; a process started is a post with its state and the decision in it
 	if body := page(cookie, "/feed"); !strings.Contains(body, `href="/bp/start/`+vacation+`"`) {
 		t.Fatal("no processes in the composer")
 	}
 	inFeed := strings.TrimPrefix(form(cookie, "/bp/start/"+tpl, url.Values{"f_sum": {"900"}}), "/bp/i/")
 	posts, err := srv.Feed.List(ctx, uid, feed.Filter{Kind: "bp"})
-	if err != nil || len(posts) == 0 || posts[0].Post.Process != inFeed || posts[0].Post.Body != "Сумма: 900" {
+	if err != nil || len(posts) == 0 || posts[0].Post.Process != inFeed || posts[0].Post.Body != "Сумма: 900\nСрочно: Нет" {
 		t.Fatalf("the process's post: %+v %v", posts, err)
 	}
 	postID := posts[0].Post.ID
@@ -575,7 +615,7 @@ func TestAPI(t *testing.T) {
 	got = form(admin, "/bp/templates/new", url.Values{"op": {"meta"}, "name": {"Уточнение"}, "entity": {"none"}, "active": {"on"}})
 	reqTpl := strings.TrimPrefix(got, "/bp/templates/")
 	if got := form(admin, "/bp/templates/"+reqTpl, url.Values{"op": {"add"}, "kind": {"request"}, "to": {uid}, "text": {"Бюджет?"},
-		"request_fields": {"budget | Бюджет | number | *"}, "reject": {"on"}, "goto": {"0"}}); got != "/bp/templates/"+reqTpl {
+		"rf_key": {"budget"}, "rf_label": {"Бюджет"}, "rf_kind": {"number"}, "rf_req": {"1"}, "reject": {"on"}, "goto": {"0"}}); got != "/bp/templates/"+reqTpl {
 		t.Fatalf("add a request: %s", got)
 	}
 	if body := page(admin, "/bp/templates/"+reqTpl); !strings.Contains(body, "<code>budget</code>") {

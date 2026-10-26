@@ -221,6 +221,8 @@ func removeMember(ctx context.Context, tx pgx.Tx, p Project, userID, action stri
 	actor := Viewer(ctx)
 	if action == "left" {
 		actor = userID
+	} else if err := notifyCollab(ctx, tx, userID, actor, "collab_removed", p.ID, "/collabs"); err != nil {
+		return err
 	}
 	return logCollab(ctx, tx, p.ID, actor, action, userID, "")
 }

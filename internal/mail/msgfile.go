@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -256,6 +257,7 @@ const (
 	prHeaders        = 0x007D
 	prBody           = 0x1000
 	prHTML           = 0x1013
+	prRTFCompressed  = 0x1009
 	prMessageID      = 0x1035
 	prInReplyTo      = 0x1042
 	prRcptType       = 0x0C15
@@ -280,6 +282,28 @@ func msgMIME(data []byte, host string) ([]byte, error) {
 	if len(root.str) == 0 && len(root.bin) == 0 {
 		return nil, errNotMsg
 	}
+	var recips, atts []mapiProps
+	names := make([]string, 0, len(root.kids))
+	for name := range root.kids {
+		names = append(names, name)
+	}
+	sort.Strings(names) // «__recip_version1.0_#00000000», …: in the letter's order
+	for _, name := range names {
+		k := root.kids[name]
+		switch {
+		case f.dir[k].kind != 1:
+		case strings.HasPrefix(name, "__recip_version1.0_"):
+			recips = append(recips, f.props(k, 8))
+		case strings.HasPrefix(name, "__attach_version1.0_"):
+			atts = append(atts, f.props(k, 8))
+		}
+	}
+	return mapiMIME(root, recips, atts, host), nil
+}
+
+// mapiMIME: a letter of Outlook — its properties, its recipients' and its attachments' — as MIME (its own headers
+// when it keeps them, as a received letter does); the letters of .msg and .pst files.
+func mapiMIME(root mapiProps, recips, atts []mapiProps, host string) []byte {
 	var hdr mail.Header
 	if h := root.str[prHeaders]; h != "" {
 		if m, err := mail.ReadMessage(strings.NewReader(strings.TrimRight(h, "\r\n") + "\r\n\r\n")); err == nil {
@@ -312,11 +336,7 @@ func msgMIME(data []byte, host string) ([]byte, error) {
 		cc, _ = hdr.AddressList("Cc")
 	}
 	if len(to) == 0 && len(cc) == 0 {
-		for name, k := range root.kids {
-			if f.dir[k].kind != 1 || !strings.HasPrefix(name, "__recip_version1.0_") {
-				continue
-			}
-			r := f.props(k, 8)
+		for _, r := range recips {
 			a := addr(r.str[prDisplayName], first(r.str[prSMTP], smtpOnly(r.str[prEmail])))
 			if a == nil {
 				continue
@@ -338,6 +358,11 @@ func msgMIME(data []byte, host string) ([]byte, error) {
 	} else if h, ok := root.str[prHTML]; ok {
 		l.HTML = h
 	}
+	if l.HTML == "" {
+		if rtf, err := rtfDecompress(root.bin[prRTFCompressed]); err == nil {
+			l.HTML = rtfHTML(rtf)
+		}
+	}
 	l.HTML = bodyOf(l.HTML)
 	if l.Text == "" && l.HTML != "" {
 		l.Text = HTMLText(l.HTML)
@@ -353,11 +378,7 @@ func msgMIME(data []byte, host string) ([]byte, error) {
 	if r := msgID(first(hdr.Get("In-Reply-To"), root.str[prInReplyTo])); r != "" {
 		l.Refs = []string{r}
 	}
-	for name, k := range root.kids {
-		if f.dir[k].kind != 1 || !strings.HasPrefix(name, "__attach_version1.0_") {
-			continue
-		}
-		a := f.props(k, 8)
+	for _, a := range atts {
 		data, ok := a.bin[prAttachData]
 		if !ok { // a letter or an object inside the letter: not a file
 			continue
@@ -370,7 +391,7 @@ func msgMIME(data []byte, host string) ([]byte, error) {
 		l.Files = append(l.Files, file)
 	}
 	msg, _ := compose(e, l)
-	return msg, nil
+	return msg
 }
 
 // bodyOf: what is inside <body> of an HTML document (htmlPart wraps it again).

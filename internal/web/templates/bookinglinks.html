@@ -24,7 +24,13 @@
 <div class="card flush">
   <table class="list"><thead><tr><th>{{t "form.name"}}</th><th>{{t "booking.link_address"}}</th><th>{{t "booking.link_resources"}}</th><th>{{t "booking.responsible"}}</th><th>{{t "booking.link_bookings"}}</th></tr></thead><tbody>
   {{range $d.Links}}{{$u := print $d.Base "/bk/" .Token}}<tr{{if not .Active}} class="muted"{{end}}><td>{{if $d.Admin}}<a href="/booking/links?edit={{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}{{if not .Active}} <span class="small">· {{t "booking.link_off"}}</span>{{end}}</td>
-    <td><div class="row bk-url"><input type="text" readonly value="{{$u}}" onclick="this.select()"><button type="button" class="ghost small" data-copy="{{$u}}" title="{{t "booking.copy_link"}}">{{icon "copy"}}</button><a class="button ghost small" href="/bk/{{.Token}}" target="_blank" rel="noopener" title="{{t "booking.link_open"}}">{{icon "external-link"}}</a></div></td>
+    <td><div class="row bk-url"><input type="text" readonly value="{{$u}}" onclick="this.select()"><button type="button" class="ghost small" data-copy="{{$u}}" title="{{t "booking.copy_link"}}">{{icon "copy"}}</button><a class="button ghost small" href="/bk/{{.Token}}" target="_blank" rel="noopener" title="{{t "booking.link_open"}}">{{icon "external-link"}}</a></div>
+      <details class="bk-site"><summary class="small">{{icon "code"}} {{t "booking.site_code"}} · {{t "booking.qr"}}</summary>
+        <p class="small muted">{{t "booking.site_code_hint"}}</p>{{$c := index $d.Codes .ID}}
+        <textarea class="bk-code" rows="5" readonly onclick="this.select()">{{$c}}</textarea>
+        <p class="row"><button type="button" class="ghost small" data-copy="{{$c}}">{{icon "copy"}} {{t "booking.copy_code"}}</button>
+          <a class="button ghost small" href="/booking/links/{{.ID}}/qr?download=1">{{icon "download"}} {{t "booking.qr_download"}}</a></p>
+        <img class="bk-qr" src="/booking/links/{{.ID}}/qr" alt="{{t "booking.qr"}}" loading="lazy"></details></td>
     <td>{{range $i, $id := .Resources}}{{if $i}}, {{end}}{{index $d.Names $id}}{{else}}{{t "booking.all_resources"}}{{end}}</td>
     <td>{{or .Responsible (t "booking.responsible_auto")}}</td><td>{{.Bookings}}</td></tr>
   {{else}}<tr><td colspan="5" class="muted">{{t "booking.no_links"}}</td></tr>{{end}}

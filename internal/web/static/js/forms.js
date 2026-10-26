@@ -22,6 +22,16 @@
   document.addEventListener('change', e => { if (e.target.matches?.('[data-new-users]')) sync(e.target); });
 })();
 
+// several responsible people of a new task: each gets a task of their own, the hint says how many
+document.addEventListener('change', e => {
+  const b = e.target.closest?.('[data-upick][data-name="responsible"][data-multiple]');
+  const hint = b?.parentElement.querySelector('[data-resp-many]');
+  if (!hint) return;
+  const n = b.querySelectorAll('.upick-chip').length;
+  hint.hidden = n < 2;
+  hint.textContent = hint.dataset.respMany.replace('%d', n);
+});
+
 // form[data-submit-now]: sent as the page opens (an application's page gets its tokens in the frame)
 document.querySelectorAll('form[data-submit-now]').forEach(f => f.submit());
 
@@ -141,4 +151,21 @@ document.addEventListener('click', async e => {
   c.title = c.closest('[data-copied]')?.dataset.copied || ''; c.classList.add('copied');
   c.dataset.tip = c.title;
   c.copyTimer = setTimeout(() => { c.title = c.dataset.was || ''; c.classList.remove('copied'); }, 1500);
+});
+
+// [data-add-row="id"]: one more row from <template id="id">, put before the button's paragraph; [data-rm-row] removes
+// its row («Подпись»: one more client signing)
+document.addEventListener('click', e => {
+  const add = e.target.closest?.('[data-add-row]');
+  if (add) {
+    const tpl = document.getElementById(add.dataset.addRow);
+    const box = add.closest('[data-rows]');
+    if (tpl && box && box.querySelectorAll('[data-row]').length < (+box.dataset.rows || 10)) {
+      add.parentElement.before(tpl.content.cloneNode(true));
+      box.querySelector('[data-row]:last-of-type input')?.focus();
+    }
+    return;
+  }
+  const rm = e.target.closest?.('[data-rm-row]');
+  if (rm) rm.closest('[data-row]')?.remove();
 });

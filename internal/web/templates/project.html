@@ -25,7 +25,7 @@
 
 <div class="layout2">
 <div>
-  <div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+  <div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true $)}}</div>
 
 </div>
 
@@ -70,6 +70,9 @@
       <select name="guest_invite_perm">{{$v = .GuestInvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
       <label class="check"><input type="checkbox" name="chat_history" {{if .ChatHistory}}checked{{end}}> {{t "collab.chat_history"}}</label>
       <p class="small muted">{{t "collab.chat_history_hint"}}</p>
+      <label>{{t "im.autodelete"}}</label>
+      <select name="msg_ttl">{{$ttl := .MsgTTL}}<option value="0">{{t "im.autodelete_off"}}</option>{{range $d.MsgTTLs}}<option value="{{.}}" {{if eq . $ttl}}selected{{end}}>{{t (printf "im.ttl_%d" .)}}</option>{{end}}</select>
+      <p class="small muted">{{t "im.autodelete_hint"}}</p>
       <div class="small muted" style="margin-top:8px">{{t "collab.guest_rights"}}</div>
       <label class="check"><input type="checkbox" name="guests_tasks" {{if .GuestTasks}}checked{{end}}> {{t "collab.guests_tasks"}}</label>
       <label class="check"><input type="checkbox" name="guests_files" {{if .GuestFiles}}checked{{end}}> {{t "collab.guests_files"}}</label>
@@ -91,14 +94,14 @@
       <button>{{icon "link"}} {{t "guests.new_link"}}</button></form>
     <details><summary>{{icon "mail"}} {{t "guests.by_email"}}</summary>
       <form method="post" action="/p/{{$p.Key}}/guests"><input type="hidden" name="kind" value="email"><input type="hidden" name="days" value="7">
-        <input type="email" name="contact" required maxlength="254" placeholder="{{t "guests.email"}}">
-        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name"}}">
+        <textarea name="contact" required rows="2" maxlength="20000" placeholder="{{t "guests.emails"}}"></textarea>
+        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name_one"}}">
         {{if $d.Mailbox}}<label class="small"><input type="checkbox" name="send" value="1" checked> {{t "guests.send_mail"}}</label>{{else}}<p class="small muted">{{t "guests.no_mailbox"}}</p>{{end}}
         <p><button>{{icon "send"}} {{t "guests.invite"}}</button></p></form></details>
     <details><summary>{{icon "message-circle"}} {{t "guests.by_phone"}}</summary>
       <form method="post" action="/p/{{$p.Key}}/guests"><input type="hidden" name="kind" value="phone"><input type="hidden" name="days" value="7">
-        <input type="tel" name="contact" required maxlength="30" placeholder="{{t "guests.phone"}}">
-        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name"}}">
+        <textarea name="contact" required rows="2" maxlength="5000" placeholder="{{t "guests.phones"}}"></textarea>
+        <input type="text" name="name" maxlength="200" placeholder="{{t "guests.name_one"}}">
         <p class="small muted">{{t "guests.phone_hint"}}</p>
         <p><button>{{icon "link"}} {{t "guests.invite"}}</button></p></form></details>
     {{range $d.GuestInvites}}{{$link := index $d.JoinLinks .ID}}
@@ -111,9 +114,11 @@
         {{with .Email}}<a href="mailto:{{.}}?subject={{urlquery (t "guests.mail_subject" $p.Name)}}&amp;body={{urlquery $link}}">{{icon "mail"}} {{t "guests.open_mail"}}</a>{{end}}
         {{with .Phone}}<a href="sms:{{.}}?body={{urlquery (t "guests.sms" $p.Name $link)}}">{{icon "message-circle"}} {{t "guests.open_sms"}}</a>{{end}}
         <span class="muted">{{t "guests.until" (day .Expires)}} · {{t "guests.uses" .Uses}} · {{t "invites.by" .CreatedBy}}</span>
+        {{if eq .Kind "email"}}<form method="post" action="/p/{{$p.Key}}/guests/{{.ID}}/resend"><button class="ghost small">{{icon "send"}} {{t "guests.resend"}}</button></form>{{end}}
         <form method="post" action="/p/{{$p.Key}}/guests/{{.ID}}/revoke" data-confirm="{{t "guests.revoke_confirm"}}"><button class="ghost small">{{icon "x"}} {{t "guests.revoke"}}</button></form>
       </div>
-      {{else}}<div class="small muted">{{if .Revoked}}{{t "guests.state.revoked"}}{{else if and (ne .Kind "link") .Uses}}{{t "guests.state.used" .UsedBy}}{{else}}{{t "guests.state.expired"}}{{end}}{{if and (eq .Kind "link") .Uses}} · {{t "guests.uses" .Uses}}{{end}}</div>{{end}}
+      {{else}}<div class="row small muted">{{if .Revoked}}{{t "guests.state.revoked"}}{{else if and (ne .Kind "link") .Uses}}{{t "guests.state.used" .UsedBy}}{{else}}{{t "guests.state.expired"}}{{end}}{{if and (eq .Kind "link") .Uses}} · {{t "guests.uses" .Uses}}{{end}}
+        {{if and (ne .Kind "link") (not .Revoked) (not .Uses)}}<form method="post" action="/p/{{$p.Key}}/guests/{{.ID}}/resend"><button class="ghost small">{{icon "send"}} {{t "guests.resend"}}</button></form>{{end}}</div>{{end}}
     </div>{{end}}
   </div>
   <script src="{{asset "js/task.js"}}"></script>{{end}}

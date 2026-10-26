@@ -31,7 +31,7 @@ func TestInHours(t *testing.T) {
 		t.Fatal("without a schedule the line always works")
 	}
 	for _, bad := range []Widget{{HoursFrom: "9:00", HoursTo: "18:00"}, {HoursFrom: "10:00", HoursTo: "10:00"}, {HoursOn: true, HoursDays: []int32{}},
-		{QueueMode: "random"}, {AnswerWait: 2000}, {HoursDays: []int32{7}}, {Autoclose: -1}} {
+		{QueueMode: "random"}, {AnswerWait: 2000}, {HoursDays: []int32{7}}, {Autoclose: -1}, {KPIFirst: 2000}, {KPIFurther: -1}} {
 		var ve *i18n.Error
 		if err := cleanLine(&bad); !errors.As(err, &ve) {
 			t.Fatalf("%+v: %v", bad, err)

@@ -26,12 +26,16 @@ var RobotKinds = []string{"notify", "comment", "responsible", "accomplice", "aud
 // RobotStatuses are the actions a status robot may take.
 var RobotStatuses = []Action{ActionStart, ActionPause, ActionComplete, ActionDefer}
 
+// RobotColumns are the statuses of «Мои задачи» robots, in the order of their columns.
+var RobotColumns = []Status{StatusPending, StatusInProgress, StatusAwaitingControl, StatusCompleted, StatusDeferred}
+
 // robotUnits are the delays a robot may wait, by their name in the settings.
 var robotUnits = map[string]time.Duration{"min": time.Minute, "hour": time.Hour, "day": 24 * time.Hour}
 
-// Robot of a stage.
+// Robot of a stage, or a person's robot of a status («Мои задачи»).
 type Robot struct {
 	ID, StageID, Kind string
+	Status            Status // a status robot: the status it waits for
 	Params            RobotParams
 	Active            bool
 }
@@ -77,6 +81,20 @@ func (s *Store) AddRobot(ctx context.Context, userID string, p Project, stageID,
 	if _, err := s.stageByID(ctx, s.db, p.ID, stageID); err != nil {
 		return err
 	}
+	if err := s.checkRobot(ctx, p.ID, stageID, kind, &rp); err != nil {
+		return err
+	}
+	raw, _ := json.Marshal(rp)
+	_, err := s.db.Exec(ctx, `INSERT INTO task_robots (stage_id, kind, params, delay_sec, created_by) VALUES ($1, $2, $3, $4, $5)`,
+		stageID, kind, raw, int(rp.Wait().Seconds()), userID)
+	return err
+}
+
+// checkRobot checks and tidies a new robot's settings; projectID "" — a robot of «Мои задачи» (no stages there).
+func (s *Store) checkRobot(ctx context.Context, projectID, stageID, kind string, rp *RobotParams) error {
+	if projectID == "" && kind == "stage" {
+		return invalid("err.robot")
+	}
 	rp.Text, rp.Details, rp.To = strings.TrimSpace(rp.Text), strings.TrimSpace(rp.Details), strings.TrimSpace(rp.To)
 	needText := kind == "notify" || kind == "comment" || kind == "checklist" || kind == "task"
 	if !slices.Contains(RobotKinds, kind) || (needText && rp.Text == "") || len([]rune(rp.Text)) > 500 ||
@@ -98,7 +116,10 @@ func (s *Store) AddRobot(ctx context.Context, userID string, p Project, stageID,
 		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE id::text = $1`, rp.To).Scan(&n); err != nil || n == 0 {
 			return invalid("err.robot_user")
 		}
-		if err := collabStrangers(ctx, s.db, p.ID, rp.To); err != nil {
+		if projectID == "" {
+			break
+		}
+		if err := collabStrangers(ctx, s.db, projectID, rp.To); err != nil {
 			return err
 		}
 	case "status":
@@ -109,7 +130,7 @@ func (s *Store) AddRobot(ctx context.Context, userID string, p Project, stageID,
 		if rp.Stage == stageID {
 			return invalid("err.robot_stage")
 		}
-		if _, err := s.stageByID(ctx, s.db, p.ID, rp.Stage); err != nil {
+		if _, err := s.stageByID(ctx, s.db, projectID, rp.Stage); err != nil {
 			return invalid("err.robot_stage")
 		}
 	case "deadline":
@@ -120,9 +141,49 @@ func (s *Store) AddRobot(ctx context.Context, userID string, p Project, stageID,
 	if rp.To == "" {
 		rp.To = "responsible"
 	}
+	return nil
+}
+
+// StatusRobots are the person's robots of «Мои задачи», on the task statuses (Robot.Status).
+func (s *Store) StatusRobots(ctx context.Context, userID string) ([]Robot, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, status, kind, params, active FROM task_robots
+		WHERE owner_id = $1 ORDER BY created_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Robot, error) {
+		var x Robot
+		var raw []byte
+		if err := r.Scan(&x.ID, &x.Status, &x.Kind, &raw, &x.Active); err != nil {
+			return x, err
+		}
+		return x, json.Unmarshal(raw, &x.Params)
+	})
+}
+
+// AddStatusRobot sets the person's own robot on a task status: it runs in the tasks the person has set.
+func (s *Store) AddStatusRobot(ctx context.Context, userID string, status Status, kind string, rp RobotParams) error {
+	if !slices.Contains(RobotColumns, status) {
+		return invalid("err.robot")
+	}
+	if err := s.checkRobot(ctx, "", "", kind, &rp); err != nil {
+		return err
+	}
 	raw, _ := json.Marshal(rp)
-	_, err := s.db.Exec(ctx, `INSERT INTO task_robots (stage_id, kind, params, delay_sec, created_by) VALUES ($1, $2, $3, $4, $5)`,
-		stageID, kind, raw, int(rp.Wait().Seconds()), userID)
+	_, err := s.db.Exec(ctx, `INSERT INTO task_robots (owner_id, status, kind, params, delay_sec, created_by)
+		VALUES ($1, $2, $3, $4, $5, $1)`, userID, status, kind, raw, int(rp.Wait().Seconds()))
+	return err
+}
+
+// SetStatusRobotActive turns the person's status robot on or off.
+func (s *Store) SetStatusRobotActive(ctx context.Context, userID, robotID string, active bool) error {
+	_, err := s.db.Exec(ctx, `UPDATE task_robots SET active = $3 WHERE id::text = $1 AND owner_id = $2`, robotID, userID, active)
+	return err
+}
+
+// DeleteStatusRobot removes the person's status robot.
+func (s *Store) DeleteStatusRobot(ctx context.Context, userID, robotID string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM task_robots WHERE id::text = $1 AND owner_id = $2`, robotID, userID)
 	return err
 }
 
@@ -160,17 +221,18 @@ func (s *Store) RunRobotsDue(ctx context.Context, now time.Time) (int, error) {
 		return moved, err
 	}
 	type job struct {
-		robot, task, stage string
-		depth              int
+		robot, task, stage, status string
+		depth                      int
 	}
 	rows, err := s.db.Query(ctx, `DELETE FROM task_robot_jobs WHERE id IN (SELECT id FROM task_robot_jobs WHERE run_at <= greatest($1, now())
-		ORDER BY run_at, id LIMIT 200 FOR UPDATE SKIP LOCKED) RETURNING robot_id::text, task_id::text, stage_id::text, depth`, now)
+		ORDER BY run_at, id LIMIT 200 FOR UPDATE SKIP LOCKED)
+		RETURNING robot_id::text, task_id::text, coalesce(stage_id::text, ''), coalesce(status, ''), depth`, now)
 	if err != nil {
 		return 0, err
 	}
 	jobs, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (job, error) {
 		var j job
-		return j, r.Scan(&j.robot, &j.task, &j.stage, &j.depth)
+		return j, r.Scan(&j.robot, &j.task, &j.stage, &j.status, &j.depth)
 	})
 	if err != nil {
 		return 0, err
@@ -184,10 +246,12 @@ func (s *Store) RunRobotsDue(ctx context.Context, now time.Time) (int, error) {
 		var raw []byte
 		var creator string
 		var here bool
-		err := s.db.QueryRow(ctx, `SELECT r.id, r.stage_id::text, r.kind, r.params, r.active, r.created_by::text,
+		// a stage robot's task must still be in the stage, a status robot's — in the status
+		err := s.db.QueryRow(ctx, `SELECT r.id, coalesce(r.stage_id::text, ''), r.kind, r.params, r.active, r.created_by::text,
+				CASE WHEN r.stage_id IS NULL THEN t.status = $4 ELSE
 				coalesce(t.stage_id, (SELECT id FROM project_stages WHERE project_id = t.project_id AND code IS DISTINCT FROM 'finish'
-					ORDER BY sort, created_at LIMIT 1))::text = $3
-			FROM task_robots r, tasks t WHERE r.id::text = $1 AND t.id::text = $2`, j.robot, j.task, j.stage).
+					ORDER BY sort, created_at LIMIT 1))::text = $3 END
+			FROM task_robots r, tasks t WHERE r.id::text = $1 AND t.id::text = $2`, j.robot, j.task, j.stage, j.status).
 			Scan(&r.ID, &r.StageID, &r.Kind, &raw, &r.Active, &creator, &here)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
@@ -268,7 +332,7 @@ func (s *Store) robotDo(ctx context.Context, actorID string, r Robot, taskID str
 		if err != nil || next == t.Status {
 			return nil // nothing to do: the task is already there or cannot go there from its status
 		}
-		return s.ApplyAction(ctx, actorID, taskID, p.Status)
+		return s.ApplyAction(context.WithValue(ctx, robotDepth{}, depthOf(ctx)+1), actorID, taskID, p.Status)
 	case "stage":
 		return s.MoveToStage(context.WithValue(ctx, robotDepth{}, depthOf(ctx)+1), actorID, taskID, p.Stage)
 	case "checklist":

@@ -7,10 +7,14 @@
 <script src="{{asset "js/forms.js"}}"></script>
 {{else}}
 <div class="app-frame">
-  <iframe name="go24app" title="{{$d.App.Title}}" allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
-  <form method="post" action="{{$d.Action}}" target="go24app" data-submit-now hidden>
+  {{/* static/js/apphost.js names the frame (go24.js inside learns go24's address from it) and posts the form into it */}}
+  <iframe title="{{$d.App.Title}}" data-app="{{$d.App.ID}}" data-placement="{{$d.Placement}}" data-options="{{$d.Options}}"
+    allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
+  <form method="post" action="{{$d.Action}}" data-app-post hidden>
     {{range $d.Fields}}<input type="hidden" name="{{index . 0}}" value="{{index . 1}}">{{end}}
   </form>
 </div>
+{{template "appsel"}}
+<script src="{{asset "js/apphost.js"}}"></script>
 {{end}}
 {{end}}

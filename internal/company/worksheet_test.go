@@ -46,7 +46,7 @@ func TestSheet(t *testing.T) {
 	rows := BuildSheet([]Person{{ID: "a"}, {ID: "b"}},
 		[]Workday{{UserID: "a", Day: day, Started: at(9, 0), Ended: &ok}, {UserID: "a", Day: day.AddDate(0, 0, 1), Started: at(9, 40).AddDate(0, 0, 1)}},
 		[]Absence{{UserID: "b", Kind: "vacation", From: day, To: day.AddDate(0, 0, 2)}},
-		map[string]bool{"a|2026-10-14": true}, sched, month, now)
+		map[string]bool{"a|2026-10-14": true}, nil, sched, month, now)
 	if len(rows) != 2 || len(rows[0].Cells) != 31 {
 		t.Fatalf("rows %d", len(rows))
 	}

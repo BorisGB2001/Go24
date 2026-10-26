@@ -3,10 +3,22 @@
 <div class="crumbs"><a href="/openlines">{{t "ol.title"}}</a></div>
 <h1>{{t "ol.widgets"}}</h1>
 <div class="sub">{{t "ol.widgets_sub"}}</div>
+<details class="card"><summary><b>{{t "ol.access"}}</b></summary>
+  <p class="small muted">{{t "ol.access_hint"}}</p>
+  <form method="post" action="/openlines/heads">
+    <label>{{t "ol.heads"}}</label>{{template "upick" (upick "heads" $d.Heads $d.Users "multi")}}
+    <p><button class="primary">{{t "common.save"}}</button></p></form></details>
 {{range $w := $d.Widgets}}<div class="card">
   <h2>💬 {{$w.Name}}{{if not $w.Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</h2>
   <p><a class="button ghost" href="/openlines/widgets/{{$w.ID}}/preview" target="_blank">{{icon "eye"}} {{t "ol.preview"}}</a></p>
   <label>{{t "ol.code"}}</label><pre class="olcode">&lt;script src="{{$d.Base}}/w/{{$w.ID}}/widget.js" async&gt;&lt;/script&gt;</pre>
+  {{$bot := index $d.Bots $w.ID}}<details class="oltg"{{if $bot.Error}} open{{end}}><summary>Telegram{{with $bot.Name}}: <a href="https://t.me/{{.}}" target="_blank" rel="noopener">@{{.}}</a>{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.tg_hint"}}</p>
+    {{with $bot.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $bot.Name}}<form method="post" action="/openlines/widgets/{{$w.ID}}/telegram" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/telegram" class="row"><input type="hidden" name="op" value="connect">
+      <input type="password" name="token" required maxlength="200" autocomplete="off" placeholder="{{t "ol.tg_token"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
   <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
     <form method="post" action="/openlines/widgets/{{$w.ID}}">
       <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$w.Name}}" required maxlength="100">
@@ -64,5 +76,16 @@
 <details class="olline"><summary>{{t "ol.crm"}}</summary>
   <label class="check"><input type="checkbox" name="crm_auto" {{if $w.CRMAuto}}checked{{end}}> {{t "ol.crm_auto"}}</label>
   <p class="small muted">{{t "ol.crm_hint"}}</p>
+</details>
+<details class="olline"><summary>{{t "ol.consent"}}</summary>
+  <label class="check"><input type="checkbox" name="consent_on" {{if $w.ConsentOn}}checked{{end}}> {{t "ol.consent_on"}}</label>
+  <label>{{t "ol.consent_text"}}</label><textarea name="consent_text" rows="6" maxlength="10000" placeholder="{{t "ol.consent_hint"}}">{{$w.ConsentText}}</textarea>
+</details>
+<details class="olline"><summary>{{t "ol.kpi"}}</summary>
+  <label>{{t "ol.kpi_first_label"}}</label><input type="number" name="kpi_first" min="0" max="1440" value="{{$w.KPIFirst}}">
+  <label>{{t "ol.kpi_further_label"}}</label><input type="number" name="kpi_further" min="0" max="1440" value="{{$w.KPIFurther}}">
+  <label class="check"><input type="checkbox" name="kpi_operator" {{if $w.KPIOperator}}checked{{end}}> {{t "ol.kpi_operator"}}</label>
+  <label class="check"><input type="checkbox" name="kpi_heads" {{if $w.KPIHeads}}checked{{end}}> {{t "ol.kpi_heads"}}</label>
+  <p class="small muted">{{t "ol.kpi_hint"}}</p>
 </details>
 {{end}}

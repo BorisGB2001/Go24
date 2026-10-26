@@ -18,6 +18,7 @@ import (
 // not know — a fired person — the script asks the server about). Options: "multi"; "required" — a single choice
 // without ×; "submit" — the form is sent on each change; "noself" — the viewer is not offered; "im" — only people
 // with a messenger account; "ph" LABEL — the placeholder; "+ID" LABEL — a fixed choice before the people;
+// "extra" []tasks.User — more fixed choices (the user fields of a business process);
 // "collab" KEY — only the members of that collab, without «Отделы» (KEY "" — everybody; "@project" — the collab
 // chosen in the form's project field, see taskform); "depts" — a whole department is one choice «dept:ID» (it means
 // its people now and later, with sub-departments) instead of its people one by one.
@@ -39,6 +40,11 @@ type userPick struct {
 func newUserPick(name string, sel any, users []tasks.User, opts ...any) (userPick, error) {
 	p := userPick{Name: name, Self: true}
 	for i := 0; i < len(opts); i++ {
+		if i > 0 && opts[i-1] == "extra" { // nil — none
+			list, _ := opts[i].([]tasks.User)
+			p.Extra = append(p.Extra, list...)
+			continue
+		}
 		o, ok := opts[i].(string)
 		if !ok {
 			return p, fmt.Errorf("upick %s: option %v is not a string", name, opts[i])
@@ -56,6 +62,7 @@ func newUserPick(name string, sel any, users []tasks.User, opts ...any) (userPic
 			p.Messenger = true
 		case o == "depts":
 			p.Depts = true
+		case o == "extra":
 		case o == "collab":
 			if i+1 >= len(opts) {
 				return p, fmt.Errorf("upick %s: %q needs a key", name, o)

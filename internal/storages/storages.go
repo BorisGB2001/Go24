@@ -1,5 +1,5 @@
 // Package storages manages storages that users connect themselves (Nextcloud/WebDAV, Яндекс.Диск, Облако Mail.ru,
-// a Windows/NAS share by SMB, SFTP, S3, FTP) through
+// a Windows/NAS share by SMB, SFTP, S3, FTP; Google Диск, Dropbox, OneDrive by signing in) through
 // rclone rcd, and stores/reads files either there or in the built-in storage.
 package storages
 
@@ -30,7 +30,8 @@ var (
 	ErrForbidden = i18n.E("err.forbidden")
 )
 
-// Types that may be connected. Deliberately no "local", "alias", "union"…: they would expose the server's own files.
+// Types that may be connected by a form (the cloud services — by signing in, see Clouds). Deliberately no "local",
+// "alias", "union"…: they would expose the server's own files.
 var Types = []string{"webdav", "yandex", "mailru", "smb", "sftp", "s3", "ftp"}
 
 // yandexDAV is Яндекс.Диск's WebDAV: signed in with the login and a password of an application («Файлы WebDAV»).
@@ -82,6 +83,8 @@ type Store struct {
 	builtin *storage.Store // the built-in S3 storage (rclone serve s3)
 	// Resolve looks up a host; replaced in tests.
 	Resolve func(ctx context.Context, host string) ([]netip.Addr, error)
+	// Apps are go24's applications at the cloud services by type ("gdrive", "dropbox", "onedrive")
+	Apps map[string]App
 }
 
 func NewStore(db *pgxpool.Pool, rc *storage.RC, builtin *storage.Store) *Store {
@@ -125,13 +128,25 @@ func (s *Store) Create(ctx context.Context, userID string, admin bool, in Input)
 	if err := s.checkHost(ctx, host, admin); err != nil {
 		return "", err
 	}
+	return s.create(ctx, userID, admin, in, rcloneType(in.Type), params, summary)
+}
+
+// create makes the rclone remote, checks the connection and saves the storage.
+func (s *Store) create(ctx context.Context, userID string, admin bool, in Input, typ string, params map[string]string, summary string) (string, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return "", i18n.E("err.storage_name_required")
+	}
+	if in.Shared && !admin {
+		return "", ErrForbidden
+	}
 	root := cleanRoot(strings.ReplaceAll(in.Root, `\`, "/"))
 	remote := "go24_" + randomHex(6)
-	if err := s.rc.CreateRemote(ctx, remote, rcloneType(in.Type), params); err != nil {
+	if err := s.rc.CreateRemote(ctx, remote, typ, params); err != nil {
 		return "", i18n.E("err.storage_rclone", err.Error())
 	}
 	// Create the folder first (a fresh Nextcloud has no "go24" folder yet), then prove we can list it.
-	err = nil
+	var err error
 	if root != "" {
 		err = s.rc.Mkdir(ctx, remote, root)
 	}

@@ -1,0 +1,54 @@
+{{define "planval"}}{{if eq .M "count"}}{{fnum .V}}{{else}}{{money .V}} {{.C}}{{end}}{{end}}
+{{define "planrow"}}{{$r := .R}}{{$c := .C}}<tr><td>{{if .Dept}}{{icon "hierarchy-2"}} {{end}}{{$r.Name}}</td>
+  <td>{{if $r.Target}}{{template "planval" (dict "M" $r.Metric "V" $r.Target "C" $c)}}{{else}}<span class="muted small">{{t "crm.plan.no_target"}}</span>{{end}}</td>
+  <td><b>{{template "planval" (dict "M" $r.Metric "V" $r.Fact "C" $c)}}</b></td>
+  <td>{{if $r.Target}}<span class="crmbar planbar"><span class="bar"><i style="width:{{$r.Bar}}%" class="{{if ge $r.Percent 100}}done{{end}}"></i></span><b>{{$r.Percent}}%</b></span>{{end}}</td>
+  <td>{{if $r.Target}}{{template "planval" (dict "M" $r.Metric "V" $r.Left "C" $c)}}{{end}}</td>
+  <td class="muted">{{template "planval" (dict "M" $r.Metric "V" $r.Forecast "C" $c)}}</td></tr>{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Plan}}{{$c := $p.Currency}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<form method="get" action="/crm/plan" class="row crmtools">
+  {{if gt (len $d.Pipelines) 1}}<select name="pipeline">{{range $d.Pipelines}}<option value="{{.ID}}" {{if eq .ID $d.Pipeline.ID}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}</option>{{end}}</select>{{end}}
+  <select name="period">{{range $d.Periods}}<option value="{{.}}" {{if eq . $p.Period}}selected{{end}}>{{t (print "crm.plan.period." .)}}</option>{{end}}</select>
+  <input type="hidden" name="start" value="{{$d.Start}}">
+  <button>{{t "crm.find"}}</button>
+  <span class="row nowrap"><a class="btn ghost" href="/crm/plan?{{$d.Query}}&start={{$d.Prev}}" title="{{t "crm.plan.prev"}}">‹</a>
+    <b>{{$d.Label}}</b><a class="btn ghost" href="/crm/plan?{{$d.Query}}&start={{$d.Next}}" title="{{t "crm.plan.next"}}">›</a></span>
+  {{if and $d.Admin (not $d.Edit)}}<a class="btn" href="/crm/plan?{{$d.Query}}&start={{$d.Start}}&edit=1">{{if $p.ID}}{{t "crm.plan.edit"}}{{else}}{{t "crm.plan.set"}}{{end}}</a>{{end}}
+</form>
+
+{{if $d.Edit}}
+<form method="post" action="/crm/plan" class="card form crmplanform">
+  <h2>{{t "crm.plan.set"}}: {{$d.Label}}</h2>
+  <input type="hidden" name="pipeline" value="{{$d.Pipeline.ID}}"><input type="hidden" name="period" value="{{$p.Period}}"><input type="hidden" name="start" value="{{$d.Start}}">
+  <label>{{t "crm.plan.metric"}}</label><select name="metric">{{range list "sum" "count"}}<option value="{{.}}" {{if eq . $p.Metric}}selected{{end}}>{{t (print "crm.plan.metric." .)}}{{if eq . "sum"}}, {{$c}}{{end}}</option>{{end}}</select>
+  <label>{{t "crm.plan.company"}}</label><input type="text" inputmode="decimal" name="company" value="{{if $p.Company.Target}}{{fnum $p.Company.Target}}{{end}}">
+  {{with $d.Departments}}<h3>{{t "crm.plan.departments"}}</h3><table class="tlist"><tbody>{{range .}}<tr><td style="padding-left:{{.Depth}}em">{{.Name}}</td>
+    <td><input type="hidden" name="dept_id" value="{{.ID}}"><input type="text" inputmode="decimal" name="dept_amount" value="{{with index $d.Targets (print "dept:" .ID)}}{{fnum .}}{{end}}"></td></tr>{{end}}</tbody></table>{{end}}
+  <h3>{{t "crm.plan.users"}}</h3><table class="tlist"><tbody>{{range $d.Users}}<tr><td>{{.Name}}</td>
+    <td><input type="hidden" name="user_id" value="{{.ID}}"><input type="text" inputmode="decimal" name="user_amount" value="{{with index $d.Targets (print "user:" .ID)}}{{fnum .}}{{end}}"></td></tr>{{end}}</tbody></table>
+  <p class="muted small">{{t "crm.plan.form_hint"}}</p>
+  <div class="row"><button>{{t "common.save"}}</button><a class="btn ghost" href="/crm/plan?{{$d.Query}}&start={{$d.Start}}">{{t "common.cancel"}}</a>
+    {{if $p.ID}}<button class="ghost danger" name="op" value="delete" data-confirmdel="{{t "crm.plan.delete_confirm"}}">{{t "crm.plan.delete"}}</button>{{end}}</div>
+</form>
+{{else}}
+<div class="crmkpi">
+  <div class="card"><div class="muted small">{{t "crm.plan.target"}}</div><b>{{if $p.Company.Target}}{{template "planval" (dict "M" $p.Metric "V" $p.Company.Target "C" $c)}}{{else}}—{{end}}</b></div>
+  <div class="card"><div class="muted small">{{t "crm.plan.fact"}}</div><b>{{template "planval" (dict "M" $p.Metric "V" $p.Company.Fact "C" $c)}}</b><div class="small muted">{{t "crm.plan.won_n" $p.Company.Won}}</div></div>
+  <div class="card"><div class="muted small">{{t "crm.plan.done"}}</div><b>{{if $p.Company.Target}}{{$p.Company.Percent}}%{{else}}—{{end}}</b></div>
+  <div class="card"><div class="muted small">{{t "crm.plan.left"}}</div><b>{{if $p.Company.Target}}{{template "planval" (dict "M" $p.Metric "V" $p.Company.Left "C" $c)}}{{else}}—{{end}}</b></div>
+  <div class="card"><div class="muted small">{{t "crm.plan.in_work"}}</div><b>{{template "planval" (dict "M" $p.Metric "V" $p.Company.Forecast "C" $c)}}</b><div class="small muted">{{t "crm.plan.in_work_n" $p.Company.InWork}}</div></div>
+</div>
+{{if not $p.ID}}<p class="muted">{{t "crm.plan.none"}}{{if $d.Admin}} <a href="/crm/plan?{{$d.Query}}&start={{$d.Start}}&edit=1">{{t "crm.plan.set"}}</a>{{end}}</p>{{end}}
+<div class="card flush"><table class="tlist crmplan">
+  <thead><tr><th></th><th>{{t "crm.plan.target"}}</th><th>{{t "crm.plan.fact"}}</th><th>{{t "crm.plan.done"}}</th><th>{{t "crm.plan.left"}}</th><th title="{{t "crm.plan.in_work_hint"}}">{{t "crm.plan.in_work"}}</th></tr></thead>
+  <tbody>{{template "planrow" (dict "R" $p.Company "C" $c)}}
+  {{if $p.Departments}}<tr class="sub"><th colspan="6">{{t "crm.plan.departments"}}</th></tr>{{range $p.Departments}}{{template "planrow" (dict "R" . "C" $c "Dept" true)}}{{end}}{{end}}
+  {{if $p.Users}}<tr class="sub"><th colspan="6">{{t "crm.plan.users"}}</th></tr>{{range $p.Users}}{{template "planrow" (dict "R" . "C" $c)}}{{end}}{{end}}</tbody>
+</table></div>
+<p class="muted small">{{t "crm.plan.hint"}}{{with $p.UpdatedBy.Name}} {{t "crm.plan.updated" . (datetime $p.UpdatedAt)}}{{end}}</p>
+{{end}}
+{{end}}

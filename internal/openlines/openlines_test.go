@@ -73,7 +73,7 @@ func TestWidget(t *testing.T) {
 	if note(op1) != 1 || note(op2) != 1 || note(boss) != 0 { // once per unread dialogue, to the queue
 		t.Fatalf("notified: op1 %d, op2 %d, boss %d", note(op1), note(op2), note(boss))
 	}
-	list, _ := s.Sessions(ctx, Filter{})
+	list, _ := s.Sessions(ctx, Filter{Who: Who{All: true}})
 	if len(list) != 1 || list[0].Unread != 2 || list[0].Last != "И самовывоз?" {
 		t.Fatalf("sessions = %+v", list)
 	}
@@ -101,7 +101,7 @@ func TestWidget(t *testing.T) {
 		t.Fatalf("a token used on another widget: %v", err)
 	}
 	must(s.SetStatus(ctx, op1, sess, false))
-	if list, _ := s.Sessions(ctx, Filter{Tab: "closed"}); len(list) != 1 {
+	if list, _ := s.Sessions(ctx, Filter{Who: Who{All: true}, Tab: "closed"}); len(list) != 1 {
 		t.Fatal("closed dialogue")
 	}
 }

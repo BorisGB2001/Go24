@@ -15,12 +15,15 @@ import (
 	"go24/internal/drive"
 	"go24/internal/i18n"
 	"go24/internal/mail"
+	"go24/internal/office"
+	"go24/internal/tasks"
 )
 
 // ---------- «Публичная ссылка» of «Диск»: /s/{token} for anyone, no sign-in ----------
 
 // diskLink makes or changes the public link of a file (file=ID) or a folder (folder_id=ID): expires (a date, the
-// link works through that day), password (clear_password=1 — none); off=1 switches it off.
+// link works through that day), password (clear_password=1 — none), edit=1 — a document edited by those who open
+// it; off=1 switches it off.
 func (s *Server) diskLink(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d, err := s.openDrive(r, sess)
 	if err != nil {
@@ -45,7 +48,8 @@ func (s *Server) diskLink(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			end := day.AddDate(0, 0, 1).Add(-time.Second)
 			expires = &end
 		}
-		_, err = s.Drive.SetLink(r.Context(), sess.UserID, d, kind, id, r.FormValue("password"), r.FormValue("clear_password") == "1", expires)
+		_, err = s.Drive.SetLink(r.Context(), sess.UserID, d, kind, id, r.FormValue("password"), r.FormValue("clear_password") == "1", expires,
+			r.FormValue("edit") == "1", driveWhich(d))
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
@@ -88,6 +92,8 @@ func (s *Server) sharePage(w http.ResponseWriter, r *http.Request) {
 	if sh.FileID != "" {
 		data["Kind"] = fileKind(sh.Name, "")
 		data["Board"] = drive.IsBoard(sh.Name) // shown read only, in the editor of «Доски»
+		data["Doc"] = s.Office != nil && office.Kind(sh.Name) != ""
+		data["Edit"] = data["Doc"] == true && s.linkEditor(r.Context(), sh) != ""
 	} else {
 		folders, files, trail, err := s.Drive.SharedList(r.Context(), sh, r.URL.Query().Get("folder"))
 		if err != nil {
@@ -96,10 +102,67 @@ func (s *Server) sharePage(w http.ResponseWriter, r *http.Request) {
 		}
 		data["Folders"], data["Files"], data["Trail"] = folders, files, trail
 		data["Folder"] = trail[len(trail)-1].ID
+		data["Office"] = s.Office != nil
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	s.render(w, r, "share", page{Title: sh.Name, Data: data})
+}
+
+// shareDoc opens a document of the link in ONLYOFFICE: for viewing, or for editing when the link lets one edit the
+// document and its maker still may change it (see linkEditor). Whoever opens it is a guest the editor asks the name of.
+func (s *Server) shareDoc(w http.ResponseWriter, r *http.Request) {
+	sh, ok := s.shareOpen(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	m, err := s.Storages.FileMeta(r.Context(), id)
+	if s.Office == nil || s.Drive.SharedFile(r.Context(), sh, id) != nil || err != nil || office.Kind(m.Name) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	back := "/s/" + sh.Token
+	if sh.FolderID != "" {
+		if f, err := s.Drive.FileOn(r.Context(), sh.Drive, id); err == nil && f.FolderID != sh.FolderID {
+			back += "?folder=" + url.QueryEscape(f.FolderID)
+		}
+	}
+	which := s.linkEditor(r.Context(), sh)
+	edit := which != "" && sh.FileID == id && office.Editable(m.Name)
+	callback := "/onlyoffice/callback/" + id + "?" + url.Values{"u": {sh.By}, "w": {which}, "s": {s.Office.Stamp(id, sh.By, which)}}.Encode()
+	raw, err := s.officeConfig(r, auth.Session{UserID: "guest-" + randomHex(8)}, m.Name, office.Key(id, m.Key),
+		"/onlyoffice/file/"+id+"/"+s.Office.Stamp(id, m.Key), callback, back, edit)
+	if err != nil {
+		s.fail(w, "office config", err)
+		return
+	}
+	s.letOfficeGuest(w)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	s.render(w, r, "office", page{Title: m.Name, Data: map[string]any{"Config": raw, "Name": m.Name, "Back": back,
+		"BackKey": "share.back", "Edit": edit, "Download": "/s/" + sh.Token + "/f/" + id}})
+}
+
+// linkEditor is how the link's maker opens the drive when the link lets one edit its document and the maker (still
+// working) may change the file now — not locked by someone, not moved where the maker no longer writes; "" — not so.
+func (s *Server) linkEditor(ctx context.Context, sh drive.Shared) string {
+	if !sh.Edit || sh.FileID == "" || sh.As == "" {
+		return ""
+	}
+	var guest, active bool
+	if err := s.DB.QueryRow(ctx, `SELECT active, guest FROM users WHERE id::text = $1`, sh.By).Scan(&active, &guest); err != nil || !active {
+		return ""
+	}
+	ctx = tasks.WithViewer(ctx, sh.By, guest)
+	d, err := s.Drive.Open(ctx, sh.By, sh.As)
+	if err != nil {
+		return ""
+	}
+	if may, err := s.Drive.MayChange(ctx, sh.By, d, sh.FileID); err != nil || !may {
+		return ""
+	}
+	return sh.As
 }
 
 // sharePassword takes the password of a link and remembers it in the browser for a day.

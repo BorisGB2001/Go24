@@ -115,13 +115,13 @@ func TestFeed(t *testing.T) {
 		t.Fatal("a stranger sees the project post's files")
 	}
 	// a poll in the post to everyone: one answer, a vote can be changed and taken back
-	if err := s.AddPoll(ctx, boss, all, "Когда?", []string{"Пн", " Пн "}, false); err == nil {
+	if err := s.AddPoll(ctx, boss, all, "Когда?", []string{"Пн", " Пн "}, PollKind{}); err == nil {
 		t.Fatal("a poll with one distinct answer")
 	}
-	if err := s.AddPoll(ctx, dev, all, "Когда?", []string{"Пн", "Вт"}, false); !errors.Is(err, ErrForbidden) {
+	if err := s.AddPoll(ctx, dev, all, "Когда?", []string{"Пн", "Вт"}, PollKind{}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("a poll in someone else's post: %v", err)
 	}
-	must(s.AddPoll(ctx, boss, all, "Когда?", []string{"Пн", "Вт", "Ср"}, false))
+	must(s.AddPoll(ctx, boss, all, "Когда?", []string{"Пн", "Вт", "Ср"}, PollKind{}))
 	poll := func(user string) *Poll {
 		t.Helper()
 		it, err := s.Item(ctx, user, all)
@@ -141,6 +141,35 @@ func TestFeed(t *testing.T) {
 	must(s.Vote(ctx, dev, all, nil))
 	if p := poll(dev); p.Voted || p.Voters != 1 {
 		t.Fatalf("after taking the vote back: %+v", p)
+	}
+	// «Кто голосовал»; the author stops the poll — no more votes — and resumes it
+	if vs, err := s.PollVoters(ctx, dev, all); err != nil || len(vs) != 1 || vs[0].ID != other || vs[0].OptionID != opts[0].ID {
+		t.Fatalf("voters = %+v, %v", vs, err)
+	}
+	if err := s.ClosePoll(ctx, dev, all, true); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("someone else stops the poll: %v", err)
+	}
+	must(s.ClosePoll(ctx, boss, all, true))
+	if err := s.Vote(ctx, dev, all, []string{opts[2].ID}); err == nil {
+		t.Fatal("a vote in a stopped poll")
+	}
+	if p := poll(dev); !p.Closed || p.Voters != 1 {
+		t.Fatalf("stopped poll = %+v", p)
+	}
+	must(s.ClosePoll(ctx, boss, all, false))
+	must(s.Vote(ctx, dev, all, []string{opts[2].ID}))
+	// an anonymous poll: the counts only
+	anon, err := s.CreatePost(ctx, boss, "", "", "Опрос", false)
+	must(err)
+	must(s.AddPoll(ctx, boss, anon, "Анонимно?", []string{"Да", "Нет"}, PollKind{Anonymous: true}))
+	ap, err := s.Item(ctx, dev, anon)
+	must(err)
+	if !ap.Post.Poll.Anonymous {
+		t.Fatalf("anonymous poll = %+v", ap.Post.Poll)
+	}
+	must(s.Vote(ctx, dev, anon, []string{ap.Post.Poll.Options[0].ID}))
+	if _, err := s.PollVoters(ctx, dev, anon); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("voters of an anonymous poll: %v", err)
 	}
 	// a gratitude: dev and other thanked; they are notified, the profile lists it to those who see the post
 	thanks, err := s.CreatePost(ctx, boss, p.ID, "", "Спасибо за релиз", false)

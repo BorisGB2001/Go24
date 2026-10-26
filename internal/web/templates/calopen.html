@@ -1,0 +1,50 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/calendar">{{t "calendar.title"}}</a> {{icon "chevron-right"}} {{t "calendar.open.title"}}</div>
+<div class="pagehead"><h1>{{icon "world"}} {{t "calendar.open.title"}}</h1><span style="flex:1"></span>
+  <a class="button ghost" href="/calendar/open?edit=new">{{icon "plus"}} {{t "calendar.open.cat_add"}}</a>
+  {{if $d.Categories}}<a class="button create" href="/calendar/new{{with $d.Cat}}?category={{.ID}}{{else}}?category={{(index $d.Categories 0).ID}}{{end}}">{{icon "plus"}} {{t "calendar.open.add"}}</a>{{end}}</div>
+<div class="sub">{{t "calendar.open.subtitle"}}</div>
+{{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+{{with $d.Edit}}
+<form method="post" action="/calendar/open/categories{{if not $d.New}}/{{.ID}}{{end}}" class="card" style="max-width:760px">
+  <h3>{{if $d.New}}{{t "calendar.open.cat_add"}}{{else}}{{t "calendar.open.cat_edit"}}{{end}}</h3>
+  <label for="oc-name">{{t "calendar.open.cat_name"}}</label>
+  <input id="oc-name" type="text" name="name" required maxlength="100" value="{{.Name}}" autofocus>
+  <label for="oc-desc">{{t "form.description"}}</label>
+  <textarea id="oc-desc" name="description" rows="3" maxlength="2000">{{.Description}}</textarea>
+  <label class="check"><input type="checkbox" name="closed"{{if .Closed}} checked{{end}}> {{t "calendar.open.cat_closed"}}</label>
+  <div class="row" style="margin-top:16px"><span class="spacer"></span><a class="button ghost" href="/calendar/open{{if not $d.New}}?cat={{.ID}}{{end}}">{{t "common.cancel"}}</a><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}
+{{if $d.Categories}}
+<div class="tabs opencats" style="flex-wrap:wrap"><a href="/calendar/open" {{if not $d.Cat}}class="on"{{end}}>{{t "calendar.open.all"}}</a>
+  {{range $d.Categories}}<a href="/calendar/open?cat={{.ID}}" {{if and $d.Cat (eq .ID $d.Cat.ID)}}class="on"{{end}}>{{if .Muted}}{{icon "bell-off"}} {{end}}{{.Name}}{{with .Upcoming}} <span class="muted small">{{.}}</span>{{end}}</a>{{end}}</div>
+{{else if not $d.Edit}}<div class="card empty"><p class="muted">{{t "calendar.open.no_cats"}}</p></div>{{end}}
+{{with $d.Cat}}
+<div class="card row" style="align-items:flex-start">
+  <div style="flex:1"><h3 style="margin:0">{{.Name}}{{if .Closed}} <span class="chip" title="{{t "calendar.open.cat_closed"}}">{{icon "lock"}}</span>{{end}}</h3>
+    {{with .Description}}<p>{{nl2br .}}</p>{{end}}{{with .Creator}}<p class="small muted">{{t "calendar.open.cat_by"}} {{.}}</p>{{end}}</div>
+  <form method="post" action="/calendar/open/categories/{{.ID}}/mute"><input type="hidden" name="on" value="{{if .Muted}}0{{else}}1{{end}}">
+    <button class="ghost" title="{{t "calendar.open.mute_hint"}}">{{if .Muted}}{{icon "bell"}} {{t "calendar.open.unmute"}}{{else}}{{icon "bell-off"}} {{t "calendar.open.mute"}}{{end}}</button></form>
+  {{if .Mine}}<a class="button ghost" href="/calendar/open?cat={{.ID}}&edit=1" title="{{t "calendar.open.cat_edit"}}">{{icon "edit"}}</a>
+  <form method="post" action="/calendar/open/categories/{{.ID}}/delete" data-confirm="{{t "calendar.open.cat_delete_confirm"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}
+</div>
+{{end}}
+{{if $d.Categories}}
+<div class="card">
+  {{range $d.Events}}{{$at := ""}}{{if .Repeat}}{{$at = print "?at=" (.Start.Format "2006-01-02T15:04")}}{{end}}
+  <div class="row evatt openev">
+    <span class="openwhen"><b>{{if .AllDay}}{{day .Start}}{{else}}{{datetime .Start}} — {{clock .End}}{{end}}</b></span>
+    <span style="flex:1"><a href="/calendar/{{.ID}}{{$at}}">{{if .Important}}{{icon "exclamation-mark"}} {{end}}{{if .Video}}{{icon "video"}} {{end}}{{.Title}}</a>
+      <span class="small muted">· {{if not $d.Cat}}{{.CategoryName}} · {{end}}{{.OwnerName}}{{with .Where}} · {{.}}{{end}} · {{icon "users"}} {{t "calendar.open.people" .Coming}}</span></span>
+    {{if eq .OwnerID $d.Me}}<span class="pill">{{t "calendar.organizer"}}</span>
+    {{else if eq .MyStatus "accepted"}}<span class="pill ev-accepted">{{t "calendar.open.going"}}</span>
+      <form method="post" action="/calendar/{{.ID}}/join"><input type="hidden" name="join" value="0"><input type="hidden" name="back" value="/calendar/open{{with $d.Cat}}?cat={{.ID}}{{end}}">
+        <button class="ghost small">{{icon "x"}} {{t "calendar.open.leave"}}</button></form>
+    {{else}}<form method="post" action="/calendar/{{.ID}}/join"><input type="hidden" name="join" value="1"><input type="hidden" name="back" value="/calendar/open{{with $d.Cat}}?cat={{.ID}}{{end}}">
+        <button class="primary small">{{icon "check"}} {{t "calendar.open.join"}}</button></form>{{end}}
+  </div>
+  {{else}}<p class="muted">{{t "calendar.open.empty"}}</p>{{end}}
+</div>
+{{end}}
+{{end}}

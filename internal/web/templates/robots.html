@@ -2,6 +2,19 @@
 
 {{define "crmpipe"}}{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}{{end}}
 
+{{define "robotfname"}}{{$k := .K}}{{range .D.Fields}}{{if eq .Key $k}}{{if .Name}}{{.Name}}{{else}}{{t (print "crm.f." .Key)}}{{end}}{{end}}{{end}}{{end}}
+
+{{define "robotfval"}}{{$k := .K}}{{$v := .V}}{{$d := .D}}{{range $d.Fields}}{{if eq .Key $k}}{{if or (eq .Pick "source") (eq .Pick "deal_type")}}{{range index $d.Dicts .Pick}}{{if eq .ID $v}}{{template "crmdict" .Dict}}{{end}}{{end}}{{else if eq .Pick "users"}}{{range $d.Users}}{{if eq .ID $v}}{{.Name}}{{end}}{{end}}{{else if eq .Pick "bool"}}{{if $v}}{{t "robots.yes"}}{{else}}{{t "robots.no"}}{{end}}{{else}}{{$v}}{{end}}{{end}}{{end}}{{end}}
+
+{{/* robotvalue: the controls of a field's value — typed, or chosen as the field's Pick says; robots.js shows the one of
+   the chosen field (data-pick) */}}
+{{define "robotvalue"}}{{$n := .N}}<input type="text" name="{{$n}}" data-pick="" maxlength="2000" placeholder="{{t "robots.value"}}">
+<select name="{{$n}}" data-pick="source">{{range index .D.Dicts "source"}}<option value="{{.ID}}">{{template "crmdict" .Dict}}</option>{{end}}</select>
+<select name="{{$n}}" data-pick="deal_type"><option value=""></option>{{range index .D.Dicts "deal_type"}}<option value="{{.ID}}">{{template "crmdict" .Dict}}</option>{{end}}</select>
+<select name="{{$n}}" data-pick="users">{{range .D.Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+<select name="{{$n}}" data-pick="bool"><option value="1">{{t "robots.yes"}}</option><option value="">{{t "robots.no"}}</option></select>
+{{range .D.Fields}}{{if eq .Pick "list"}}<select name="{{$n}}" data-pick="list" data-of="{{.Key}}"><option value=""></option>{{range .Options}}<option>{{.}}</option>{{end}}</select>{{end}}{{end}}{{end}}
+
 {{define "content"}}
 {{$d := .Data}}
 <div class="crumbs"><a href="/crm/deals">{{t "crm.title"}}</a></div>
@@ -33,8 +46,9 @@
       <b>{{t (print "robots.icon." .Kind)}} {{t (print "robots.kind." .Kind)}}</b>
       {{with .Params}}
       {{if .Text}}<div class="small">{{.Text}}</div>{{end}}
-      <div class="small muted">{{if eq $rb.Kind "task"}}{{.Project}}{{if .Days}} · {{t "robots.in_days" .Days}}{{end}} · {{end}}{{if eq $rb.Kind "activity"}}{{t (print "crm.act." .Act)}}{{if .Days}} · {{t "robots.in_days" .Days}}{{end}} · {{end}}{{if eq $rb.Kind "stage"}}→ {{range $d.Stages}}{{if eq .ID $rb.Params.Stage}}{{template "crmstage" .}}{{end}}{{end}}{{else if or (eq $rb.Kind "copy") (eq $rb.Kind "move")}}→ {{range $d.Pipelines}}{{$p := .}}{{range .Stages}}{{if eq .ID $rb.Params.Stage}}{{template "crmpipe" $p}}: {{template "crmstage" .}}{{end}}{{end}}{{end}}{{else if eq $rb.Kind "mail"}}{{t "robots.to_client"}}{{else if eq $rb.Kind "booking"}}{{t "robots.to_client"}} · {{range $d.BookingLinks}}{{if eq .ID $rb.Params.Link}}🔗 {{.Name}}{{if not .Active}} ({{t "booking.link_off"}}){{end}}{{end}}{{end}}{{else if ne $rb.Kind "comment"}}{{if eq $rb.Kind "responsible"}}→{{else}}{{t "robots.to"}}{{end}} {{if or (eq .To "responsible") (eq .To "creator")}}{{t (print "robots.to." .To)}}{{else}}{{range $d.Users}}{{if eq .ID $rb.Params.To}}{{.Name}}{{end}}{{end}}{{end}}{{end}}</div>
+      <div class="small muted">{{if eq $rb.Kind "task"}}{{.Project}}{{if .Days}} · {{t "robots.in_days" .Days}}{{end}} · {{end}}{{if eq $rb.Kind "activity"}}{{t (print "crm.act." .Act)}}{{if .Days}} · {{t "robots.in_days" .Days}}{{end}} · {{end}}{{if eq $rb.Kind "stage"}}→ {{range $d.Stages}}{{if eq .ID $rb.Params.Stage}}{{template "crmstage" .}}{{end}}{{end}}{{else if or (eq $rb.Kind "copy") (eq $rb.Kind "move")}}→ {{range $d.Pipelines}}{{$p := .}}{{range .Stages}}{{if eq .ID $rb.Params.Stage}}{{template "crmpipe" $p}}: {{template "crmstage" .}}{{end}}{{end}}{{end}}{{else if eq $rb.Kind "mail"}}{{t "robots.to_client"}}{{else if eq $rb.Kind "booking"}}{{t "robots.to_client"}} · {{range $d.BookingLinks}}{{if eq .ID $rb.Params.Link}}🔗 {{.Name}}{{if not .Active}} ({{t "booking.link_off"}}){{end}}{{end}}{{end}}{{else if eq $rb.Kind "webhook"}}POST {{.URL}}{{else if eq $rb.Kind "fields"}}{{range $i, $f := .Set}}{{if $i}}; {{end}}{{template "robotfname" (dict "K" $f.Field "D" $d)}} = {{if $f.Value}}{{template "robotfval" (dict "K" $f.Field "V" $f.Value "D" $d)}}{{else}}—{{end}}{{end}}{{else if ne $rb.Kind "comment"}}{{if eq $rb.Kind "responsible"}}→{{else}}{{t "robots.to"}}{{end}} {{if or (eq .To "responsible") (eq .To "creator")}}{{t (print "robots.to." .To)}}{{else}}{{range $d.Users}}{{if eq .ID $rb.Params.To}}{{.Name}}{{end}}{{end}}{{end}}{{end}}</div>
       {{if or .Delay .Min .Max}}<div class="small muted">{{if .Delay}}⏱ {{t (print "robots.wait." .Unit) .Delay}}{{end}}{{if or .Min .Max}} · {{t "robots.if_amount"}}{{if .Min}} {{t "robots.from"}} {{money .Min}}{{end}}{{if .Max}} {{t "robots.upto"}} {{money .Max}}{{end}}{{end}}</div>{{end}}
+      {{with .If}}<div class="small muted">{{t "robots.if"}} {{template "robotfname" (dict "K" .Field "D" $d)}} {{t (print "robots.op." .Op)}}{{if .Value}} «{{template "robotfval" (dict "K" .Field "V" .Value "D" $d)}}»{{end}}</div>{{end}}
       {{end}}
       <form method="post" action="/crm/robots/{{.ID}}/delete" data-confirm="{{t "robots.delete_confirm"}}"><input type="hidden" name="back" value="{{$d.Back}}"><button class="ghost small">{{icon "trash"}}</button></form>
     </div>{{end}}
@@ -54,10 +68,19 @@
         {{if gt (len $d.Pipelines) 1}}<div data-for="copy move"><label>{{t "robots.to_pipeline"}}</label><select name="to_stage">{{range $d.Pipelines}}{{if ne .ID $d.Pipeline}}<optgroup label="{{template "crmpipe" .}}">{{range .Stages}}<option value="{{.ID}}">{{template "crmstage" .}}</option>{{end}}</optgroup>{{end}}{{end}}</select>
           <p class="small muted" data-for="copy">{{t "robots.copy_hint"}}</p><p class="small muted" data-for="move">{{t "robots.move_hint"}}</p></div>{{end}}
         <div data-for="task activity"><label>{{t "robots.days"}}</label><input type="number" name="days" min="0" max="365" value="1"></div>
+        <div data-for="fields">{{range $d.SetRows}}<div class="row robotrow" data-fieldrow><select name="set_field_{{.}}" data-field><option value="">{{if eq . 0}}{{t "robots.set_field"}}{{else}}{{t "robots.set_more"}}{{end}}</option>{{range $d.Fields}}{{if ne .Key "responsible"}}<option value="{{.Key}}" data-pick="{{.Pick}}">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.f." .Key)}}{{end}}</option>{{end}}{{end}}</select>
+          {{template "robotvalue" (dict "N" (print "set_value_" .) "D" $d)}}</div>{{end}}
+          <p class="small muted">{{t "robots.fields_hint"}}</p></div>
+        <div data-for="webhook"><input type="url" name="url" required maxlength="1000" placeholder="https://…">
+          <p class="small muted">{{t "robots.webhook_hint"}}</p></div>
         <label>{{t "robots.delay"}}</label>
         <div class="row"><input type="number" name="delay" min="0" max="1000" value="0" style="width:6em"><select name="unit">{{range (list "min" "hour" "day")}}<option value="{{.}}">{{t (print "robots.unit." .)}}</option>{{end}}</select></div>
         <label>{{t "robots.amount"}}</label>
         <div class="row"><input type="text" name="min" inputmode="decimal" placeholder="{{t "robots.from"}}" style="width:8em"><input type="text" name="max" inputmode="decimal" placeholder="{{t "robots.upto"}}" style="width:8em"></div>
+        <label>{{t "robots.cond"}}</label>
+        <div class="row robotrow" data-fieldrow><select name="if_field" data-field><option value="">{{t "robots.cond_none"}}</option>{{range $d.Fields}}<option value="{{.Key}}" data-pick="{{.Pick}}">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.f." .Key)}}{{end}}</option>{{end}}</select>
+          <select name="if_op" data-op>{{range $d.CondOps}}<option value="{{.}}">{{t (print "robots.op." .)}}</option>{{end}}</select>
+          {{template "robotvalue" (dict "N" "if_value" "D" $d)}}</div>
         <p class="small muted">{{t "robots.hint"}}</p>
         <button class="primary">{{t "common.save"}}</button></form></div></details>
   </div>{{end}}

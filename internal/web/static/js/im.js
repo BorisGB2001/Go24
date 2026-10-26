@@ -1106,4 +1106,102 @@
       Object.entries(d.rooms || {}).forEach(([id, n]) => { setBadge(id, n); setAt(id, d.mentions?.[id] || 0); setThreads(id, d.threads?.[id] || 0); });
     });
   }
+
+  // the buttons of a bot's message (KEYBOARD): a command goes to the bot, an action works here; a
+  // blocking button takes them all off after one press
+  im.addEventListener('click', async e => {
+    const b = e.target.closest('[data-kbd]');
+    if (!b || b.disabled) return;
+    const kbd = b.closest('.im-kbd'), msg = b.closest('.msg'), v = b.dataset.value || '';
+    const field = (b.closest('[data-thread-pane]') || im).querySelector('form.chatform textarea');
+    const lock = on => kbd.querySelectorAll('button').forEach(x => { x.disabled = on; });
+    if (b.dataset.block) lock(true);
+    switch (b.dataset.kbd) {
+      case 'command': {
+        const { ok, data } = await post('/im/button', { room, event: msg.dataset.id, command: b.dataset.command, params: b.dataset.params || '' });
+        if (!ok) { lock(false); alert(data.error || failed); }
+        break;
+      }
+      case 'PUT': if (field) { field.value = v; field.focus(); field.dispatchEvent(new Event('input', { bubbles: true })); } break;
+      case 'SEND': if (field) { field.value = v; field.form.requestSubmit(); } break;
+      case 'COPY': window.go24Copy?.(v); break;
+      case 'CALL': location.href = 'tel:' + v.replace(/[^\d+]/g, ''); break;
+      case 'DIALOG': location.href = '/im/direct?user=' + encodeURIComponent(v); break;
+    }
+  });
+
+  // «/» at the start of the field: the commands of the chat's bots; a click, Enter or Tab puts
+  // «/command » into the field
+  let cmds = null, cbox = null, cfield = null, citems = [], csel = 0;
+  const cclose = () => { cbox?.remove(); cbox = null; cfield = null; };
+  const cpick = c => {
+    const f = cfield;
+    f.value = '/' + c.command + ' ';
+    cclose();
+    f.focus();
+    f.setSelectionRange(f.value.length, f.value.length);
+  };
+  const cshow = () => {
+    if (!citems.length) { cclose(); return; }
+    if (!cbox) {
+      cbox = document.createElement('div');
+      cbox.className = 'mention-pop im-cmds';
+      cbox.addEventListener('mousedown', e => {
+        const el = e.target.closest('[data-i]');
+        if (el) { e.preventDefault(); cpick(citems[Number(el.dataset.i)]); }
+      });
+      document.body.append(cbox);
+      window.go24Pop?.(cbox, cclose, cfield);
+    }
+    cbox.innerHTML = '';
+    citems.forEach((c, i) => {
+      const el = document.createElement('div');
+      el.className = 'mention-item' + (i === csel ? ' on' : '');
+      el.dataset.i = i;
+      const b = document.createElement('b');
+      b.textContent = '/' + c.command + (c.params ? ' ' + c.params : '');
+      const d = document.createElement('span');
+      d.className = 'muted small';
+      d.textContent = [c.title, c.bot].filter(Boolean).join(' · ');
+      el.append(b, ' ', d);
+      cbox.append(el);
+    });
+    const r = cfield.getBoundingClientRect();
+    const h = Math.min(citems.length, 8) * 34 + 8;
+    cbox.style.left = Math.max(8, Math.min(r.left, innerWidth - 368)) + 'px';
+    cbox.style.top = Math.max(8, r.top - h - 4) + 'px';
+  };
+  im.addEventListener('input', async e => {
+    const f = e.target;
+    if (!f.matches?.('form.chatform textarea')) return;
+    const m = f.value.match(/^\/([\p{L}\p{N}_.-]{0,50})$/u);
+    if (!m || !room) { if (cfield === f) cclose(); return; }
+    if (!cmds) {
+      const { ok, data } = await get('/im/commands?room=' + encodeURIComponent(room));
+      cmds = ok && Array.isArray(data) ? data : [];
+    }
+    if (f.value !== m[0]) return; // typed on meanwhile
+    const q = m[1].toLowerCase();
+    cfield = f;
+    citems = cmds.filter(c => c.command.toLowerCase().startsWith(q)).slice(0, 8);
+    csel = 0;
+    cshow();
+  });
+  // capture: before the chat's own Enter-to-send
+  document.addEventListener('keydown', e => {
+    if (!cbox || e.target !== cfield) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      csel = (csel + (e.key === 'ArrowDown' ? 1 : citems.length - 1)) % citems.length;
+      cshow();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      cpick(citems[csel]);
+    } else if (e.key === 'Escape') {
+      e.stopImmediatePropagation();
+      cclose();
+    }
+  }, true);
+  document.addEventListener('focusout', e => { if (e.target === cfield) setTimeout(cclose, 150); });
 })();

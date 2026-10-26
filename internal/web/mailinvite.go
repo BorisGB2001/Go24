@@ -222,7 +222,7 @@ func clipText(s string, n int) string {
 // eventInvite is the meeting as an invitation by mail.
 func (s *Server) eventInvite(ctx context.Context, e calendar.Event, mi calendar.MailInfo, box mail.Mailbox, organizer string, ext []calendar.External) mail.Invite {
 	in := mail.Invite{UID: mi.UID, Sequence: mi.Sequence, Summary: e.Title, Location: e.Where, Description: e.Description,
-		Start: e.Start, End: e.End, AllDay: e.AllDay, Repeat: e.Repeat, Every: e.Every, Until: e.Until,
+		Start: e.Start, End: e.End, AllDay: e.AllDay, Repeat: e.Repeat, Every: e.Every, Until: e.Until, Days: e.Days, Count: e.Count,
 		Organizer: mail.Person{Email: box.Email, Name: organizer}}
 	for _, a := range e.Attendees { // go24's own invited, with their answers
 		var email string

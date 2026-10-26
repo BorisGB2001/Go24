@@ -44,9 +44,55 @@
   <form method="post" action="/calendar/import" enctype="multipart/form-data" class="row evwhen">
     <input type="file" name="file" accept=".ics,text/calendar" required>
     {{with $d.Sections}}<select name="calendar" style="width:auto" aria-label="{{t "calendar.calendar"}}"><option value="">{{t "calendar.cals.personal"}}</option>
-      {{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>{{end}}
+      {{range .}}{{if not .URL}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>{{end}}
     <span style="flex:1"></span>
     <button class="primary">{{icon "cloud-upload"}} {{t "calsync.import_do"}}</button>
   </form>
+</div>
+<h2 id="dav">{{t "calsync.dav"}}</h2>
+<div class="card" style="max-width:760px">
+  <p class="small muted">{{t "calsync.dav_hint"}}</p>
+  {{range $d.Sections}}{{if .DAV}}<div class="row evatt callink">
+    <span style="flex:1;min-width:0"><b{{with .Color}} style="color:{{.}}"{{end}}>{{.Name}}</b>
+      <span class="small muted callink-url">{{.Login}} · {{.DAV}}</span>
+      <span class="small {{if .SyncError}}err{{else}}muted{{end}}">{{if .SyncError}}{{icon "alert-triangle"}} {{.SyncError}}{{else if .SyncedAt}}{{t "calsync.dav_synced"}} {{datetime .SyncedAt}}{{else}}{{t "calsync.link_waiting"}}{{end}}</span>
+      {{if .SyncError}}<details class="small"><summary>{{t "calsync.dav_password"}}</summary>
+        <form method="post" action="/calendar/dav/{{.ID}}/password" class="row evwhen">
+          <input type="text" name="login" required value="{{.Login}}" aria-label="{{t "calsync.dav_login"}}" autocomplete="off">
+          <input type="password" name="password" required placeholder="{{t "calsync.dav_pass"}}" aria-label="{{t "calsync.dav_pass"}}" autocomplete="new-password">
+          <button class="ghost small">{{icon "check"}} {{t "common.save"}}</button></form></details>{{end}}</span>
+    <form method="post" action="/calendar/dav/{{.ID}}/sync" class="inline"><button class="ghost small">{{icon "refresh"}} {{t "calsync.dav_sync"}}</button></form>
+    <form method="post" action="/calendar/sections/{{.ID}}/delete" class="inline" data-confirm="{{t "calsync.dav_delete_confirm"}}"><input type="hidden" name="back" value="/calendar/sync">
+      <button class="ghost small" title="{{t "calsync.link_delete"}}">{{icon "trash"}}</button></form>
+  </div>{{end}}{{end}}
+  <form method="post" action="/calendar/dav" class="row evwhen" style="margin-top:10px">
+    <input type="text" name="url" required placeholder="caldav.yandex.ru, https://…" aria-label="{{t "calsync.dav_url"}}" style="flex:2;min-width:200px">
+    <input type="text" name="login" required placeholder="{{t "calsync.dav_login"}}" aria-label="{{t "calsync.dav_login"}}" autocomplete="off" style="flex:1;min-width:140px">
+    <input type="password" name="password" required placeholder="{{t "calsync.dav_pass"}}" aria-label="{{t "calsync.dav_pass"}}" autocomplete="new-password" style="flex:1;min-width:140px">
+    <button class="primary">{{icon "refresh"}} {{t "calsync.link_add"}}</button>
+  </form>
+  <ul class="small muted">
+    <li>{{t "calsync.dav_yandex"}}</li><li>{{t "calsync.dav_icloud"}}</li><li>{{t "calsync.dav_nextcloud"}}</li><li>{{t "calsync.dav_google"}}</li>
+  </ul>
+</div>
+<h2 id="links">{{t "calsync.links"}}</h2>
+<div class="card" style="max-width:760px">
+  <p class="small muted">{{t "calsync.links_hint"}}</p>
+  {{range $d.Sections}}{{if .URL}}<div class="row evatt callink">
+    <span style="flex:1;min-width:0"><b{{with .Color}} style="color:{{.}}"{{end}}>{{.Name}}</b>
+      <span class="small muted callink-url">{{.URL}}</span>
+      <span class="small {{if .SyncError}}err{{else}}muted{{end}}">{{if .SyncError}}{{icon "alert-triangle"}} {{.SyncError}}{{else if .SyncedAt}}{{t "calsync.link_synced"}} {{datetime .SyncedAt}}{{else}}{{t "calsync.link_waiting"}}{{end}}</span></span>
+    <form method="post" action="/calendar/links/{{.ID}}/sync" class="inline"><button class="ghost small">{{icon "refresh"}} {{t "calsync.link_sync"}}</button></form>
+    <form method="post" action="/calendar/sections/{{.ID}}/delete" class="inline" data-confirm="{{t "calsync.link_delete_confirm"}}"><input type="hidden" name="back" value="/calendar/sync">
+      <button class="ghost small" title="{{t "calsync.link_delete"}}">{{icon "trash"}}</button></form>
+  </div>{{end}}{{end}}
+  <form method="post" action="/calendar/links" class="row evwhen" style="margin-top:10px">
+    <input type="url" name="url" required placeholder="https://… .ics, webcal://…" aria-label="{{t "calsync.link_url"}}" style="flex:2;min-width:220px">
+    <input type="text" name="name" maxlength="100" placeholder="{{t "calsync.link_name"}}" aria-label="{{t "calsync.link_name"}}" style="flex:1;min-width:140px">
+    <button class="primary">{{icon "link"}} {{t "calsync.link_add"}}</button>
+  </form>
+  <ul class="small muted">
+    <li>{{t "calsync.links_google"}}</li><li>{{t "calsync.links_yandex"}}</li><li>{{t "calsync.links_outlook"}}</li><li>{{t "calsync.links_icloud"}}</li>
+  </ul>
 </div>
 {{end}}

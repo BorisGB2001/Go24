@@ -63,6 +63,7 @@
 .i-database { --icon: url("../icons/database.svg"); }
 .i-cloud-upload { --icon: url("../icons/cloud-upload.svg"); }
 .i-download { --icon: url("../icons/download.svg"); }
+.i-device-desktop { --icon: url("../icons/device-desktop.svg"); }
 .i-device-floppy { --icon: url("../icons/device-floppy.svg"); }
 .i-server-2 { --icon: url("../icons/server-2.svg"); }
 .i-link { --icon: url("../icons/link.svg"); }
@@ -102,6 +103,11 @@
 .i-italic { --icon: url("../icons/italic.svg"); }
 .i-underline { --icon: url("../icons/underline.svg"); }
 .i-strikethrough { --icon: url("../icons/strikethrough.svg"); }
+.i-separator-horizontal { --icon: url("../icons/separator-horizontal.svg"); }
+.i-hand-click { --icon: url("../icons/hand-click.svg"); }
+.i-layout-columns { --icon: url("../icons/layout-columns.svg"); }
+.i-arrows-split { --icon: url("../icons/arrows-split.svg"); }
+.i-trophy { --icon: url("../icons/trophy.svg"); }
 .i-list { --icon: url("../icons/list.svg"); }
 .i-list-numbers { --icon: url("../icons/list-numbers.svg"); }
 .i-indent-increase { --icon: url("../icons/indent-increase.svg"); }
@@ -152,3 +158,5 @@
 .i-thumb-up { --icon: url("../icons/thumb-up.svg"); }
 .i-stack-2 { --icon: url("../icons/stack-2.svg"); }
 .i-cash { --icon: url("../icons/cash.svg"); }
+.i-robot { --icon: url("../icons/robot.svg"); }
+.i-address-book { --icon: url("../icons/address-book.svg"); }

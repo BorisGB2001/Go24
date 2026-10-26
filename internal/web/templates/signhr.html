@@ -1,0 +1,26 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/sign">{{t "sign.title"}}</a></div>
+<div class="pagehead"><h1>{{icon "users"}} {{t "sign.hr.new"}}</h1></div>
+<form method="post" action="/sign/hr" enctype="multipart/form-data" class="card form-narrow" data-native>
+  <p class="small muted">{{t "sign.hr.hint"}}</p>
+  <label>{{t "sign.hr.template"}}</label>
+  <select name="template" data-hr-tpl><option value="">{{t "sign.hr.own_file"}}</option>
+    {{range $d.Templates}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+  {{if not $d.Templates}}<p class="small muted">{{t "sign.hr.no_templates"}}{{if $d.Admin}} <a href="/crm/documents">{{t "docs.templates"}}</a>{{end}}</p>{{end}}
+  <div data-hr-file><label>{{t "sign.file"}} (.docx)</label><input type="file" name="file" accept=".docx"></div>
+  <label>{{t "sign.doc_title"}}</label><input type="text" name="title" maxlength="300" placeholder="{{t "sign.hr.title_hint"}}">
+  <h3>{{icon "users"}} {{t "sign.hr.to"}}</h3>
+  {{template "upick" (upick "to" nil nil "multi" "depts" "required" "ph" (t "sign.hr.to_ph"))}}
+  <p class="small muted">{{t "sign.hr.to_hint"}}</p>
+  <h3>{{icon "signature"}} {{t "sign.side.company"}}</h3>
+  <label>{{t "sign.hr.signer"}}</label>{{template "upick" (upick "signer" nil $d.Users "ph" (t "sign.hr.signer_none"))}}
+  <p class="small muted">{{t "sign.hr.signer_hint"}}</p>
+  <label for="sg-remind">{{icon "bell"}} {{t "sign.remind"}}</label>{{template "sgremind" 1}}
+  <p class="small muted">{{t "sign.remind_hint"}}</p>
+  <details><summary class="small">{{t "docs.fields"}}</summary><div class="docfields">
+    {{range $d.Fields}}{{template "docfield" (list . (t (print "docs.e." .)))}}{{end}}
+    {{template "docfield" (list "DocumentNumber" (t "docs.f.DocumentNumber"))}}{{template "docfield" (list "MyCompany.Title" (t "docs.p.Title"))}}</div>
+    <p class="small muted">{{t "sign.hr.fields_hint"}}</p></details>
+  <p><button class="primary">{{icon "send"}} {{t "sign.hr.send"}}</button> <a class="button ghost" href="/sign?f=hr">{{t "common.cancel"}}</a></p>
+</form>
+{{end}}

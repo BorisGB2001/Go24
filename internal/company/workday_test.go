@@ -118,7 +118,7 @@ func TestEmployeeInvites(t *testing.T) {
 	if err != nil || email != "ann@test" || name != "Анна" {
 		t.Fatalf("checked = %q %q %v", email, name, err)
 	}
-	if err := s.SaveInvite(ctx, boss, email, name, "https://sso/x", time.Now().Add(time.Hour)); err != nil {
+	if _, err := s.SaveInvite(ctx, boss, email, name, "", "https://sso/x", "ak-1", time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := s.Invites(ctx)

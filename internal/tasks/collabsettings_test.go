@@ -415,3 +415,76 @@ func TestCollabEditPerm(t *testing.T) {
 		t.Fatalf("the log of the rights: %v", changes)
 	}
 }
+
+// The people are told what was done to them in the collab tells about its groups.
+func TestCollabNotifications(t *testing.T) {
+	pool, s := freshDB(t)
+	bg := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	newUser := func(name string, guest bool) string {
+		var id string
+		must(pool.QueryRow(bg, `INSERT INTO users (oidc_sub, name, email, guest) VALUES ($1, $1, $1 || '@test', $2) RETURNING id`, name, guest).Scan(&id))
+		return id
+	}
+	owner, dev, client, quiet := newUser("owner", false), newUser("dev", false), newUser("client", true), newUser("quiet", false)
+	as := func(u string) context.Context {
+		g, _ := s.IsGuest(bg, u)
+		return WithViewer(bg, u, g)
+	}
+	collab := func(u string) Project {
+		t.Helper()
+		p, err := s.CollabByKey(as(u), u, "CL1")
+		must(err)
+		return p
+	}
+	kinds := func(u string) string {
+		t.Helper()
+		var out []string
+		rows, err := pool.Query(bg, `SELECT n.kind || ':' || coalesce(a.name, '') || ':' || n.url FROM notifications n
+			LEFT JOIN users a ON a.id = n.actor_id WHERE n.user_id = $1 AND n.kind LIKE 'collab%' ORDER BY n.id`, u)
+		must(err)
+		for rows.Next() {
+			var k string
+			must(rows.Scan(&k))
+			out = append(out, k)
+		}
+		must(rows.Err())
+		return strings.Join(out, ",")
+	}
+
+	_, err := s.CreateCollab(as(owner), owner, "Альфа", "", nil)
+	must(err)
+	must(s.SetMember(as(owner), collab(owner), dev, "member"))
+	must(s.SetMember(as(owner), collab(owner), dev, "manager"))
+	must(s.SetMember(as(owner), collab(owner), dev, "member"))
+	// the guest joins by the owner's link: the owner is told, the guest is not
+	inv, err := s.CreateGuestInvite(as(owner), collab(owner), owner, "link", "", "", 0)
+	must(err)
+	_, err = s.AcceptGuestInvite(bg, inv.Token, client)
+	must(err)
+	must(s.RemoveMember(as(owner), collab(owner), client))
+	// a kind turned off is not written; leaving by oneself tells nobody
+	_, err = pool.Exec(bg, `UPDATE users SET notify_off = '{collab_removed}' WHERE id = $1`, quiet)
+	must(err)
+	must(s.SetMember(as(owner), collab(owner), quiet, "member"))
+	must(s.RemoveMember(as(owner), collab(owner), quiet))
+	must(s.LeaveProject(as(dev), collab(dev), dev))
+
+	if got := kinds(dev); got != "collab_added:owner:/p/CL1,collab_manager:owner:/p/CL1,collab_member:owner:/p/CL1" {
+		t.Errorf("the employee: %s", got)
+	}
+	if got := kinds(owner); got != "collab_joined:client:/p/CL1" {
+		t.Errorf("the owner: %s", got)
+	}
+	if got := kinds(client); got != "collab_removed:owner:/collabs" {
+		t.Errorf("the guest: %s", got)
+	}
+	if got := kinds(quiet); got != "collab_added:owner:/p/CL1" {
+		t.Errorf("the one who turned removal off: %s", got)
+	}
+}

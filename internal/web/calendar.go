@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/calendar"
+	"go24/internal/feed"
 	"go24/internal/i18n"
 	"go24/internal/tasks"
 )
@@ -61,7 +62,9 @@ func (s *Server) calendarGrid(w http.ResponseWriter, r *http.Request, sess auth.
 		s.taskErr(w, r, err, "/my")
 		return
 	}
-	onGrid := func(e calendar.Event) bool { return !e.AllDay && e.Kind != "task" && sameDay(e.Start, e.End) }
+	onGrid := func(e calendar.Event) bool {
+		return !e.AllDay && e.Kind != "task" && e.Kind != "crm" && sameDay(e.Start, e.End)
+	}
 	hour0, hour1 := max(0, cs.WorkFrom-2), min(24, cs.WorkTo+4)
 	for _, e := range items {
 		if onGrid(e) && !e.Start.Before(start) && e.Start.Before(end) {
@@ -257,8 +260,10 @@ func (s *Server) calRange(r *http.Request, sess auth.Session, from, to time.Time
 	if err != nil {
 		return nil, nil, err
 	}
+	noBooking := slices.Contains(s.sectionsOff(r.Context()), "booking") // «Онлайн-запись» switched off
 	return slices.DeleteFunc(list, func(e calendar.Event) bool {
-		return !cs.ShowDeclined && e.MyStatus == "declined" || !cs.ShowTasks && e.Kind == "task"
+		return !cs.ShowDeclined && e.MyStatus == "declined" || !cs.ShowTasks && e.Kind == "task" ||
+			noBooking && e.Kind == calendar.BookingKind
 	}), nil, nil
 }
 
@@ -293,6 +298,7 @@ func (s *Server) renderCal(w http.ResponseWriter, r *http.Request, sc *calScope,
 			return
 		}
 		data["Colors"] = calendar.Colors
+		data["Booking"] = !slices.Contains(s.sectionsOff(r.Context()), "booking")
 		data["Presets"] = calendar.Presets
 		if data["Invites"], err = s.Calendar.Invitations(r.Context(), me); err != nil {
 			s.fail(w, "calendar", err)
@@ -427,8 +433,8 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	data := map[string]any{
 		"E": e, "Presets": presets, "Users": users, "Invited": invited, "Projects": projects, "Me": sess.UserID,
-		"CanEdit": e.ID == "" || e.OwnerID == sess.UserID || tasks.IsAdmin(r.Context()), "At": at,
-		"Colors": calendar.Colors,
+		"CanEdit": e.ID == "" || (e.OwnerID == sess.UserID || tasks.IsAdmin(r.Context())) && !e.ReadOnly, "At": at,
+		"Colors": calendar.Colors, "Zones": calendar.Zones(e.Start, e.TZ), "PortalTZ": portalTZ(),
 	}
 	if data["Sections"], err = s.Calendar.Sections(r.Context(), sess.UserID); err != nil { // one's own calendars
 		s.taskErr(w, r, err, "/calendar")
@@ -450,6 +456,21 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			data["ExternalText"] = strings.Join(addrs, ", ")
 		}
 	}
+	data["ChatOn"] = s.groupChats() != nil && mayChat(e, sess.UserID)
+	if err := s.eventCRMData(r, sess, e, copied, data); err != nil {
+		s.taskErr(w, r, err, "/calendar")
+		return
+	}
+	if !tasks.IsGuestCtx(r.Context()) { // «Открытые события»: the category of the form (?category= — a new event of it)
+		if data["Categories"], err = s.Calendar.Categories(r.Context(), sess.UserID); err != nil {
+			s.taskErr(w, r, err, "/calendar")
+			return
+		}
+		if c := r.URL.Query().Get("category"); c != "" && e.ID == "" {
+			e.CategoryID = c
+			data["E"] = e
+		}
+	}
 	if e.ID != "" && !e.Hidden { // «Файлы» and «Комментарии»
 		if data["Disc"], err = s.Calendar.Discussion(r.Context(), e.ID); err != nil {
 			s.taskErr(w, r, err, "/calendar")
@@ -468,7 +489,7 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 func copyOf(src calendar.Event, viewer string) calendar.Event {
 	e := calendar.Event{OwnerID: viewer, ProjectID: src.ProjectID, Company: src.Company, Title: src.Title,
 		Description: src.Description, Where: src.Where, Start: src.Start, End: src.End, AllDay: src.AllDay,
-		Repeat: src.Repeat, Every: src.Every, Until: src.Until, Reminds: slices.Clone(src.Reminds),
+		Repeat: src.Repeat, Every: src.Every, Until: src.Until, Days: slices.Clone(src.Days), Count: src.Count, Reminds: slices.Clone(src.Reminds), TZ: src.TZ,
 		Accessibility: src.Accessibility, Private: src.Private, Video: src.Video,
 		Color: src.Color, Important: src.Important}
 	if src.OwnerID == viewer {
@@ -490,10 +511,19 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	allDay := r.FormValue("all_day") == "on"
+	tz := strings.TrimSpace(r.FormValue("tz")) // the time is entered by the clock of the meeting's zone
+	if !calendar.ValidTZ(tz) {
+		s.taskErr(w, r, i18n.E("err.bad_form"), "/calendar")
+		return
+	}
+	loc := calendar.Event{TZ: tz}.Loc()
+	if allDay {
+		loc = time.Local
+	}
 	parse := func(name string) (time.Time, error) {
 		v := strings.TrimSpace(r.FormValue(name))
-		if t, err := time.ParseInLocation("2006-01-02T15:04", v, time.Local); err == nil {
-			return t, nil
+		if t, err := time.ParseInLocation("2006-01-02T15:04", v, loc); err == nil {
+			return t.In(time.Local), nil
 		}
 		if t, err := time.ParseInLocation("2006-01-02", v, time.Local); err == nil {
 			return t, nil
@@ -505,15 +535,27 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	if err == nil {
 		end, err = parse("end")
 	}
+	var crmRefs []calendar.CRMRef // «CRM»: the cards the form links (those newly linked the person may see)
+	if err == nil && r.FormValue("crm_on") == "1" && s.CRM != nil {
+		crmRefs, err = s.eventCRMForm(r, sess, r.PathValue("id"))
+	}
 	var id string
 	msg := s.tr(r, "common.saved")
 	if err == nil {
 		e := calendar.Event{ID: r.PathValue("id"), Title: r.FormValue("title"), Description: r.FormValue("description"),
 			Where: r.FormValue("where"), Start: start, End: end, AllDay: allDay, Repeat: r.FormValue("repeat"),
 			Accessibility: r.FormValue("accessibility"), Private: r.FormValue("private") == "on", RoomID: r.FormValue("room"),
-			Video: r.FormValue("video") == "on", Color: r.FormValue("color"), Important: r.FormValue("important") == "on"}
+			Video: r.FormValue("video") == "on", Color: r.FormValue("color"), Important: r.FormValue("important") == "on", TZ: tz}
 		e.Every, _ = strconv.Atoi(r.FormValue("every"))
-		if u, perr := time.ParseInLocation("2006-01-02", r.FormValue("until"), time.Local); perr == nil {
+		for _, v := range r.Form["days"] {
+			if d, perr := strconv.Atoi(v); perr == nil {
+				e.Days = append(e.Days, d)
+			}
+		}
+		// the end: never, after N meetings, on a day (a form with no «ends» — on its day, if given)
+		if ends := r.FormValue("ends"); ends == "count" {
+			e.Count, _ = strconv.Atoi(r.FormValue("count"))
+		} else if u, perr := time.ParseInLocation("2006-01-02", r.FormValue("until"), time.Local); perr == nil && (ends == "until" || !r.Form.Has("ends")) {
 			e.Until = &u
 		}
 		for _, v := range r.Form["remind"] {
@@ -538,16 +580,23 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 				before = &b
 			}
 		}
+		if r.FormValue("category_on") == "1" { // an open event (a form without the field keeps its category)
+			e.CategoryID = r.FormValue("category")
+		} else if before != nil {
+			e.CategoryID = before.CategoryID
+		}
 		if at, perr := time.ParseInLocation("2006-01-02T15:04", r.FormValue("at"), time.Local); perr == nil && e.ID != "" {
 			// an occurrence of a repeated meeting; one taken out of the series is not sent by mail (it has no
 			// RECURRENCE-ID yet), the whole series is
 			scope := r.FormValue("scope")
 			if id, err = s.Calendar.SaveOccurrence(r.Context(), sess.UserID, e.ID, at, scope, e, r.Form["invite"]); err == nil && scope == calendar.ScopeAll {
+				s.feedMeeting(r.Context(), sess.UserID, id)
 				if m := s.eventMailSend(r, sess, id, before); m != "" {
 					msg = m
 				}
 			}
 		} else if id, err = s.Calendar.Save(r.Context(), sess.UserID, e, r.Form["invite"]); err == nil {
+			s.feedMeeting(r.Context(), sess.UserID, id)
 			if m := s.eventMailSend(r, sess, id, before); m != "" {
 				msg = m
 			}
@@ -556,8 +605,17 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			}
 		}
 	}
+	if err == nil && r.FormValue("crm_on") == "1" && s.CRM != nil {
+		err = s.Calendar.SetCRM(r.Context(), sess.UserID, id, crmRefs)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/calendar")
+		return
+	}
+	// those invited now come into the meeting's chat
+	s.meetingChatSync(r.Context(), sess.UserID, id)
+	if back := r.FormValue("crm_back"); strings.HasPrefix(back, "/crm/") && !strings.HasPrefix(back, "//") { // made from a card: back to it
+		http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	back := "/calendar?month=" + start.Format("2006-01")
@@ -582,6 +640,7 @@ func (s *Server) eventDelete(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.taskErr(w, r, err, "/calendar")
 		return
 	}
+	s.withdraw(r.Context(), feed.SourceMeeting, id)
 	http.Redirect(w, r, "/calendar", http.StatusSeeOther)
 }
 
@@ -723,6 +782,7 @@ func (s *Server) eventMove(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.jsonErr(w, r, err)
 		return
 	}
+	s.feedMeeting(r.Context(), sess.UserID, id) // moved: the time of the post's meeting
 	msg := ""
 	if xs, err := s.Calendar.Externals(r.Context(), id); err == nil && len(xs) > 0 { // the same people from outside
 		var addrs []string
@@ -810,10 +870,10 @@ func (s *Server) sectionSave(w http.ResponseWriter, r *http.Request, sess auth.S
 // sectionDelete removes one of one's own calendars with its meetings.
 func (s *Server) sectionDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if err := s.Calendar.DeleteSection(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
-		s.taskErr(w, r, err, "/calendar")
+		s.taskErr(w, r, err, calBack(r))
 		return
 	}
-	http.Redirect(w, r, "/calendar", http.StatusSeeOther)
+	http.Redirect(w, r, calBack(r), http.StatusSeeOther) // a connected calendar: back to «Синхронизация»
 }
 
 // calBack is where a form of the calendar's panel returns: the calendar page it was sent from.
@@ -939,4 +999,12 @@ func (s *Server) calendarSettingsSave(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	http.Redirect(w, r, "/calendar/settings?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
+}
+
+// portalTZ is the name of the portal's time zone ("" — the server's, not named).
+func portalTZ() string {
+	if n := time.Local.String(); n != "Local" {
+		return n
+	}
+	return ""
 }

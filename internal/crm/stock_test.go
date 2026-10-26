@@ -193,4 +193,22 @@ func TestStock(t *testing.T) {
 	must(err)
 	must(s.DeleteStockDoc(ctx, draft))
 	errKey(s.ConductStockDoc(ctx, anna, draft), "err.not_found")
+
+	// the supplier of an arrival is a contact or a company, one of them
+	ivan, err := s.SaveContact(ctx, anna, Contact{Name: "Иван Поставщиков", Responsible: Ref{ID: anna}})
+	must(err)
+	byContact, err := s.SaveStockDoc(ctx, anna, StockDoc{Kind: "arrival", Supplier: Ref{ID: ivan}, SupplierKind: "contact",
+		Rows: []StockRow{{ProductID: pen, Quantity: 1, Price: 20}}})
+	must(err)
+	if d, _ = s.StockDoc(ctx, byContact); d.Supplier.ID != ivan || d.SupplierKind != "contact" || d.Supplier.Name != "Иван Поставщиков" {
+		t.Fatalf("a contact supplier %+v", d)
+	}
+	if list, _ := s.StockDocs(ctx, StockFilter{Q: "поставщиков"}); len(list) != 1 || list[0].ID != byContact {
+		t.Fatalf("found by the contact %+v", list)
+	}
+	_, err = s.SaveStockDoc(ctx, anna, StockDoc{ID: byContact, Supplier: Ref{ID: supplier}, Rows: []StockRow{{ProductID: pen, Quantity: 1, Price: 20}}})
+	must(err)
+	if d, _ = s.StockDoc(ctx, byContact); d.Supplier.ID != supplier || d.SupplierKind != "company" {
+		t.Fatalf("the company instead %+v", d)
+	}
 }

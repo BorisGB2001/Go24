@@ -1,0 +1,57 @@
+{{define "content"}}
+{{$d := .Data}}{{$ws := $d.WS}}{{$ro := not $d.Admin}}
+<div class="row"><h1 style="flex:1">{{if $ws.ID}}{{$ws.Name}}{{else}}{{t "wschedule.new"}}{{end}}</h1>
+  {{if eq $ws.Kind "shift"}}{{if $ws.ID}}<a href="/worktime/schedules/{{$ws.ID}}/plan" class="button">{{icon "calendar-event"}} {{t "wschedule.plan"}}</a>{{end}}{{end}}
+  <a href="/worktime/schedules" class="button ghost">{{t "wschedule.title"}}</a></div>
+<form method="post" action="/worktime/schedules{{if $ws.ID}}/{{$ws.ID}}{{end}}" class="wsform">
+<fieldset {{if $ro}}disabled{{end}} class="plain">
+<div class="card" style="max-width:820px">
+  <label>{{t "wschedule.name"}}</label><input name="name" value="{{$ws.Name}}" required maxlength="200" placeholder="{{t "wschedule.name_ph"}}">
+  <label>{{t "wschedule.kind"}}</label>
+  <div class="row">{{range $d.Kinds}}<label class="check"><input type="radio" name="kind" value="{{.}}" {{if eq . $ws.Kind}}checked{{end}}> {{t (print "wschedule.kind." .)}}</label>{{end}}</div>
+  <p class="small muted ws-k-fixed">{{t "wschedule.kind_hint.fixed"}}</p><p class="small muted ws-k-shift">{{t "wschedule.kind_hint.shift"}}</p><p class="small muted ws-k-flexible">{{t "wschedule.kind_hint.flexible"}}</p>
+</div>
+<div class="card ws-k-fixed" style="max-width:820px">
+  <h2>{{icon "clock"}} {{t "wschedule.times"}}</h2>
+  <p class="small muted">{{t "wschedule.times_hint"}}</p>
+  {{range $i, $tm := $d.Times}}<div class="wstime">
+    <div class="row wsdays">{{range $d.Days}}<label class="check"><input type="checkbox" name="t{{$i}}_day" value="{{.}}" {{if hasInt $tm.Days (print .)}}checked{{end}}> {{t (print "weekday." .)}}</label>{{end}}</div>
+    <div class="grid">
+      <div><label>{{t "worktime.start"}}</label><input type="time" name="t{{$i}}_start" value="{{$tm.Start}}"></div>
+      <div><label>{{t "worktime.end"}}</label><input type="time" name="t{{$i}}_end" value="{{$tm.End}}"></div>
+      <div><label>{{t "wschedule.break"}}</label><input type="number" name="t{{$i}}_break" min="0" max="720" value="{{$tm.Break}}"></div>
+    </div></div>{{end}}
+</div>
+<div class="card ws-k-shift" style="max-width:820px">
+  <h2>{{icon "clock"}} {{t "wschedule.shifts"}}</h2>
+  <p class="small muted">{{t "wschedule.shifts_hint"}}</p>
+  <table class="tlist wsshifts"><thead><tr><th>{{t "wschedule.shift_name"}}</th><th>{{t "worktime.start"}}</th><th>{{t "worktime.end"}}</th><th>{{t "wschedule.break"}}</th></tr></thead><tbody>
+  {{range $d.Shifts}}<tr><td><input type="hidden" name="sh_id" value="{{if .ID}}{{.ID}}{{end}}"><input name="sh_name" value="{{.Name}}" maxlength="100" placeholder="{{t "wschedule.shift_ph"}}"></td>
+    <td><input type="time" name="sh_start" value="{{.Start}}"></td><td><input type="time" name="sh_end" value="{{.End}}"></td>
+    <td><input type="number" name="sh_break" min="0" max="720" value="{{.Break}}"></td></tr>{{end}}
+  </tbody></table>
+</div>
+<div class="card" style="max-width:820px">
+  <h2>{{icon "users"}} {{t "wschedule.members"}}</h2>
+  <p class="small muted">{{t "wschedule.members_hint"}}</p>
+  <label>{{t "wschedule.members"}}</label>{{template "upick" (upick "members" $d.Members nil "multi" "depts" "ph" (t "wschedule.members_ph"))}}
+  <label>{{t "wschedule.excluded"}}</label>{{template "upick" (upick "excluded" $d.Excluded nil "multi" "ph" (t "wschedule.excluded_ph"))}}
+  {{if $ws.ID}}<details class="wspeople"><summary>{{t "wschedule.people_n" (len $d.People)}}</summary>
+    <div class="row wrap small">{{range $d.People}}<a href="/u/{{.ID}}" class="person">{{.Name}}</a>{{else}}<span class="muted">{{t "wschedule.no_members"}}</span>{{end}}</div></details>{{end}}
+</div>
+<div class="card" style="max-width:820px">
+  <h2>{{t "worktime.violations"}}</h2>
+  <p class="small muted ws-k-fixed">{{t "wschedule.violations_hint.fixed"}}</p><p class="small muted ws-k-shift">{{t "wschedule.violations_hint.shift"}}</p><p class="small muted ws-k-flexible">{{t "wschedule.violations_hint.flexible"}}</p>
+  <div class="grid">
+    <div class="ws-k-fixed"><label>{{t "worktime.late_after"}}</label><input type="time" name="late_after" value="{{$ws.LateAfter}}"></div>
+    <div class="ws-k-fixed"><label>{{t "worktime.leave_before"}}</label><input type="time" name="leave_before" value="{{$ws.LeaveBefore}}"></div>
+    <div class="ws-k-shift"><label>{{t "wschedule.tolerance"}}</label><input type="number" name="tolerance" min="0" max="720" value="{{$d.Tolerance}}" placeholder="0"></div>
+    <div><label>{{t "worktime.min_duration"}}</label><input type="time" name="min_duration" value="{{$ws.MinDuration}}"></div>
+  </div>
+</div>
+</fieldset>
+{{if $d.Admin}}<p class="row"><button class="primary">{{t "common.save"}}</button>
+  {{if $ws.ID}}<button class="danger" formaction="/worktime/schedules/{{$ws.ID}}/delete" formnovalidate data-confirm="{{t "wschedule.delete_confirm"}}">{{icon "trash"}} {{t "common.delete"}}</button>{{end}}</p>{{end}}
+</form>
+{{end}}
+

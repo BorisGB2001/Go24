@@ -51,6 +51,9 @@ type Service struct {
 	// a task change as a log line in its thread (nil: not logged)
 	HistoryText func(actor, actingFor, field, old, next string, at time.Time) string
 
+	// a bot's event is queued for its application (go24 worker delivers it at once; nil: on its next round)
+	BotQueued func()
+
 	// Remote: this process serves pages only; reconciling and bridging run in go24 worker (Wake notifies it)
 	Remote bool
 
@@ -99,6 +102,7 @@ func (s *Service) Run(ctx context.Context) {
 	go s.pushLoop(ctx)
 	go s.statusLoop(ctx)
 	go s.autoDeleteLoop(ctx)
+	go s.botLoop(ctx)
 	go func() { // go24 web asks for a reconcile (new project, members, employees)
 		w := s.listen(ctx, "go24_matrix_wake")
 		for {
@@ -413,7 +417,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	rows, err := s.DB.Query(ctx, `SELECT p.id::text, p.key, p.name, p.description, NOT p.archived, p.kind = 'collab', p.chat_history,
 			array(SELECT pm.user_id::text FROM project_members pm WHERE pm.project_id = p.id), p.chat_perm <> 'members',
 			array(SELECT pm.user_id::text FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = p.id
-				AND `+collabWriterSQL+`)
+				AND `+collabWriterSQL+`),
+			p.msg_ttl, coalesce(p.msg_ttl_by::text, (SELECT pm.user_id::text FROM project_members pm WHERE pm.project_id = p.id AND pm.role = 'owner' LIMIT 1), '')
 		FROM projects p`)
 	if err != nil {
 		return err
@@ -424,6 +429,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		Members                   []string
 		Restricted                bool     // not everyone writes in the collab's chat
 		Writers                   []string // who does then
+		MsgTTL                    int      // the collab chat's auto-delete
+		MsgTTLBy                  string   // who turned it on (the owner when unknown)
 	}
 	projects, err := pgx.CollectRows(rows, pgx.RowToStructByPos[proj])
 	if err != nil {
@@ -458,6 +465,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				}
 			}
 			if err := s.collabRoomRules(ctx, room, p.ChatHistory, !p.Open, writers); err != nil {
+				return err
+			}
+			if err := s.collabAutoDelete(ctx, room, p.MsgTTL, p.MsgTTLBy); err != nil {
 				return err
 			}
 		}
@@ -609,7 +619,7 @@ func (s *Service) Link(ctx context.Context, taskID string) (string, error) {
 func (s *Service) puppet(ctx context.Context, userID string) (mxid, token string, err error) {
 	err = s.DB.QueryRow(ctx, `SELECT mxid, token FROM matrix_users WHERE user_id = $1`, userID).Scan(&mxid, &token)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", nil
+		return s.botPuppet(ctx, userID) // a chat bot writes as itself too
 	}
 	if err != nil || token != "" {
 		return mxid, token, err

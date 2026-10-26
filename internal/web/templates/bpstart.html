@@ -5,7 +5,7 @@
 {{with $d.T.Description}}<div class="sub">{{.}}</div>{{end}}
 <div class="card" style="max-width:640px">
   <form method="post" action="/bp/start/{{$d.T.ID}}"><input type="hidden" name="entity_id" value="{{$d.EntityID}}">
-    {{range $d.T.Fields}}{{template "bpfield" .}}{{end}}
+    {{range $d.T.Fields}}{{if .Asked}}{{template "bpfield" .}}{{end}}{{end}}
     <p><button class="primary">{{icon "player-play"}} {{t "bp.start"}}</button></p>
   </form>
 </div>

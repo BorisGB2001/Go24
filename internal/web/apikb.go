@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go24/internal/apikeys"
+	"go24/internal/feed"
 	"go24/internal/i18n"
 	"go24/internal/kb"
 	"go24/internal/tasks"
@@ -346,6 +347,7 @@ func (s *Server) apiKBCreatePage(w http.ResponseWriter, r *http.Request, p apike
 	if err != nil {
 		return err
 	}
+	s.feedKBPage(r.Context(), p.UserID, id)
 	return s.apiKBWritePage(w, r, p, id, http.StatusCreated)
 }
 
@@ -377,6 +379,7 @@ func (s *Server) apiKBDeletePage(w http.ResponseWriter, r *http.Request, p apike
 	if _, err := s.KB.DeletePage(r.Context(), p.UserID, r.PathValue("page")); err != nil {
 		return err
 	}
+	s.withdraw(r.Context(), feed.SourceKB, r.PathValue("page"))
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

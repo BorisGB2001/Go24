@@ -23,6 +23,7 @@ func (s *Server) apiCollabRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/collabs/{key}/invites", s.api("collabs:read", s.apiCollabInvites))
 	mux.HandleFunc("POST /api/v1/collabs/{key}/invites", s.api("collabs:write", s.apiCollabInvite))
 	mux.HandleFunc("DELETE /api/v1/collabs/{key}/invites/{id}", s.api("collabs:write", s.apiCollabInviteRevoke))
+	mux.HandleFunc("POST /api/v1/collabs/{key}/invites/{id}/resend", s.api("collabs:write", s.apiCollabInviteResend))
 	mux.HandleFunc("POST /api/v1/collabs/{key}/members", s.api("collabs:write", s.apiCollabMember))
 	mux.HandleFunc("DELETE /api/v1/collabs/{key}/members/{uid}", s.api("collabs:write", s.apiCollabMemberRemove))
 	mux.HandleFunc("PATCH /api/v1/collabs/{key}/settings", s.api("collabs:write", s.apiCollabSettings))
@@ -59,6 +60,7 @@ type apiCollabSettings struct {
 	GuestFiles      bool   `json:"guests_files"` // guests upload files
 	EditPerm        string `json:"edit_perm"`    // who changes the settings, the name, the avatar: owner | managers
 	ChatPerm        string `json:"chat_perm"`    // who writes in the chat: members | employees | managers
+	MsgTTL          int    `json:"msg_ttl"`      // the chat's messages go after so many seconds: 0 | 3600 | 86400 | 604800 | 2592000
 }
 
 type apiCollabLogEntry struct {
@@ -131,7 +133,7 @@ func (s *Server) writeCollab(w http.ResponseWriter, r *http.Request, p apikeys.P
 	out.Chat, _ = s.Matrix.ProjectRoom(r.Context(), c.ID)
 	if set, err := s.Tasks.CollabSettings(r.Context(), c); err == nil {
 		out.Settings = &apiCollabSettings{set.InvitePerm, set.GuestInvitePerm, set.ChatHistory, set.GuestTasks, set.GuestFiles,
-			set.EditPerm, set.ChatPerm}
+			set.EditPerm, set.ChatPerm, set.MsgTTL}
 	}
 	ms := make([]apiCollabMember, 0, len(members))
 	for _, m := range members {
@@ -283,13 +285,53 @@ func (s *Server) apiCollabInvite(w http.ResponseWriter, r *http.Request, p apike
 	s.Log.Info("guest invite", "user_id", p.UserID, "collab", c.Key, "kind", in.Kind, "api", true)
 	out := s.toAPIGuestInvite(inv)
 	if in.Kind == "email" && in.Send {
-		var name string
-		if err := s.DB.QueryRow(r.Context(), `SELECT name FROM users WHERE id = $1`, p.UserID).Scan(&name); err != nil {
+		if out.Sent, err = s.apiSendGuestInvite(r, p, c, inv); err != nil {
 			return err
 		}
-		out.Sent = s.sendGuestInvite(r, p.UserID, name, c, inv)
 	}
 	writeJSON(w, http.StatusCreated, out)
+	return nil
+}
+
+// apiSendGuestInvite sends the invitation by e-mail from the key's employee's mailbox; false — they have none.
+func (s *Server) apiSendGuestInvite(r *http.Request, p apikeys.Principal, c tasks.Project, inv tasks.GuestInvite) (bool, error) {
+	var name string
+	if err := s.DB.QueryRow(r.Context(), `SELECT name FROM users WHERE id = $1`, p.UserID).Scan(&name); err != nil {
+		return false, err
+	}
+	return s.sendGuestInvite(r, p.UserID, name, c, inv), nil
+}
+
+// apiCollabInviteResend: «Пригласить повторно» — a personal invitation nobody used or revoked works {days} (7 by
+// default) more from now; by e-mail it goes out again ({"send": false} — not).
+func (s *Server) apiCollabInviteResend(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	in := struct {
+		Days int  `json:"days"`
+		Send bool `json:"send"`
+	}{Send: true}
+	if r.ContentLength != 0 {
+		if err := readJSON(r, &in); err != nil {
+			return err
+		}
+	}
+	c, err := s.Tasks.CollabByKey(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	if c.Frozen() {
+		return errCollabArchived
+	}
+	inv, err := s.Tasks.RenewGuestInvite(r.Context(), c, p.UserID, r.PathValue("id"), time.Duration(in.Days)*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	out := s.toAPIGuestInvite(inv)
+	if inv.Kind == "email" && in.Send {
+		if out.Sent, err = s.apiSendGuestInvite(r, p, c, inv); err != nil {
+			return err
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 

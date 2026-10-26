@@ -203,4 +203,29 @@ func TestStockReportsHTTP(t *testing.T) {
 	if api("sales?from=2026-10-01&to=2026-10-31", &sales); len(sales) != 1 || sales[0].Revenue != 400 || sales[0].Cost == nil || *sales[0].Profit != 150 {
 		t.Fatalf("api sales %+v", sales)
 	}
+
+	// the supplier of an arrival: a contact of the CRM in the form and over REST
+	ivan, err := srv.CRM.SaveContact(ctx, anna, crm.Contact{Name: "Иван Поставщиков", Responsible: crm.Ref{ID: anna}})
+	must(err)
+	if _, page = get(anna, "/store/docs/new?kind=arrival"); !strings.Contains(page, `value="contact:`+ivan+`"`) {
+		t.Fatal("no contact among the suppliers")
+	}
+	body := `{"kind": "arrival", "supplier_contact_id": "` + ivan + `", "rows": [{"product_id": "` + p + `", "quantity": 1, "price": 10, "to_warehouse_id": "` + wh + `"}]}`
+	req, _ := http.NewRequest("POST", hs.URL+"/api/v1/store/docs", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	must(err)
+	var made struct {
+		ID         string
+		SupplierID string `json:"supplier_id"`
+		ContactID  string `json:"supplier_contact_id"`
+	}
+	must(json.NewDecoder(res.Body).Decode(&made))
+	res.Body.Close()
+	if made.ContactID != ivan || made.SupplierID != "" {
+		t.Fatalf("api arrival %d %+v", res.StatusCode, made)
+	}
+	if _, page = get(anna, "/store/docs/"+made.ID); !strings.Contains(page, `value="contact:`+ivan+`" selected`) {
+		t.Fatal("the document's contact isn't chosen")
+	}
 }

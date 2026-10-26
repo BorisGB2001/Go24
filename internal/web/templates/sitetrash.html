@@ -1,0 +1,28 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/sites">{{t "site.title"}}</a> {{icon "chevron-right"}} {{t "trash.title"}}</div>
+<div class="pagehead"><h1>{{t "trash.title"}}</h1></div>
+<p class="muted">{{if $d.Days}}{{t "site.trash_hint" $d.Days}}{{else}}{{t "site.trash_hint_forever"}}{{end}}</p>
+{{if $d.Items}}
+<div class="card flush tlist-wrap">
+<table class="tlist trash">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "site.trash_site"}}</th><th>{{t "trash.deleted_by"}}</th><th>{{t "trash.deleted_at"}}</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Items}}
+  <tr>
+    <td>{{if .PageID}}{{icon "file-text"}} <b>{{.Title}}</b>{{else}}{{icon "world"}} <b>{{.Title}}</b> <span class="badge">{{t "site.trash_whole"}}</span>{{end}}</td>
+    <td>{{if .PageID}}<a href="/sites/{{.SiteID}}">{{.SiteName}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{if .DeletedBy}}{{.DeletedBy}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{datetime .Deleted}}{{if not .Expires.IsZero}}<div class="muted small">{{t "trash.days_left" (day .Expires)}}</div>{{end}}</td>
+    <td class="row tpl-actions">
+      <form method="post" action="/sites/{{.SiteID}}/trash"><input type="hidden" name="page" value="{{.PageID}}"><button class="ghost" name="act" value="restore">{{icon "history"}} {{t "trash.restore"}}</button></form>
+      <form method="post" action="/sites/{{.SiteID}}/trash" data-confirm="{{if .PageID}}{{t "site.purge_page_confirm"}}{{else}}{{t "site.purge_site_confirm"}}{{end}}"><input type="hidden" name="page" value="{{.PageID}}"><button class="ghost danger" name="act" value="purge" title="{{t "trash.purge"}}">{{icon "trash"}}</button></form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="card empty">{{icon "trash"}} {{t "trash.empty"}}</div>
+{{end}}
+{{end}}

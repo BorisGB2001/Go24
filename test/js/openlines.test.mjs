@@ -1,5 +1,6 @@
 // «Открытые линии»: «Быстрые ответы» after «/» in the reply and by the button; the list and the open dialogue refresh
-// when the server says a dialogue changed, in jsdom. node test/js/openlines.test.mjs
+// when the server says a dialogue changed; a file to the reply, «печатает…» both ways, in jsdom.
+// node test/js/openlines.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -9,15 +10,19 @@ const quick = JSON.stringify([{ ID: 'q1', Title: 'Доставка', Body: 'До
   .replace(/"/g, '&quot;');
 const page = (list, msgs) => `<!doctype html><body><div data-ol data-current="s1"><div data-ol-tabs><a>Все 1</a></div>
   <nav data-ol-list>${list}</nav><div data-ol-msgs>${msgs}</div>
-  <form><div data-ol-quick-list="${quick}"><textarea data-ol-reply></textarea><div data-ol-quick hidden></div></div>
-  <button type="button" data-ol-quick-btn></button></form></div>
+  <div data-ol-typing hidden>Клиент печатает…</div>
+  <form data-ol-typing-url="/openlines/s/s1/typing"><div data-ol-quick-list="${quick}"><textarea name="body" data-ol-reply></textarea><div data-ol-quick hidden></div></div>
+  <input type="file" name="file" data-ol-file><span data-ol-file-name></span><button type="button" data-ol-quick-btn></button></form></div>
   <template data-ol-quick-empty>Нет</template></body>`;
 const dom = new JSDOM(page('<a>Иван</a>', '<div>Привет</div>'), { runScripts: 'outside-only', url: 'http://go24.test/openlines?s=s1' });
 const w = dom.window, d = w.document;
 const sources = [];
 w.EventSource = class { constructor(u) { this.url = u; this.l = {}; sources.push(this); } addEventListener(k, f) { this.l[k] = f; } close() {} };
 let fetched = 0;
-w.fetch = async () => { fetched++; return { ok: true, text: async () => page('<a>Иван</a><a>Мария</a>', '<div>Привет</div><div>Новое</div>') }; };
+const posts = [];
+w.fetch = async (u, o) => {
+  if (o?.method === 'POST') { posts.push(u); return { ok: true }; }
+  fetched++; return { ok: true, text: async () => page('<a>Иван</a><a>Мария</a>', '<div>Привет</div><div>Новое</div>') }; };
 w.eval(script);
 
 const reply = d.querySelector('[data-ol-reply]'), box = d.querySelector('[data-ol-quick]');
@@ -69,5 +74,28 @@ sources[0].l.session({ data: 's9' });
 await new Promise(r => setTimeout(r, 500));
 assert.equal(d.querySelector('[data-ol-list]').textContent, 'Пётр');
 assert.equal(d.querySelectorAll('[data-ol-msgs] div').length, 2);
+
+// «печатает…»: the operator's typing is told once in 3 seconds; the visitor's shows for the open dialogue only
+assert.deepEqual(posts, ['/openlines/s/s1/typing'], 'typed many times, told once');
+const typing = d.querySelector('[data-ol-typing]');
+sources[0].l.typing({ data: 's9' });
+assert.equal(typing.hidden, true);
+sources[0].l.typing({ data: 's1' });
+assert.equal(typing.hidden, false);
+sources[0].l.session({ data: 's1' }); // their message came
+assert.equal(typing.hidden, true);
+
+// a file: its name by the button; an empty reply without a file is not sent
+const form = d.querySelector('form'), file = d.querySelector('[data-ol-file]');
+reply.value = '';
+let ev = new w.Event('submit', { cancelable: true });
+form.dispatchEvent(ev);
+assert.equal(ev.defaultPrevented, true);
+Object.defineProperty(file, 'files', { value: [new w.File(['x'], 'bill.pdf')], configurable: true });
+file.dispatchEvent(new w.Event('change'));
+assert.equal(d.querySelector('[data-ol-file-name]').textContent, 'bill.pdf');
+ev = new w.Event('submit', { cancelable: true });
+form.dispatchEvent(ev);
+assert.equal(ev.defaultPrevented, false, 'a file alone is a reply');
 
 console.log('openlines: ok');

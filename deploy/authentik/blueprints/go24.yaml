@@ -61,6 +61,8 @@ entries:
         - authentik_core.change_user
         - authentik_stages_invitation.add_invitation
         - authentik_stages_invitation.view_invitation
+        # boris.gb 2026-10-26 14:52 - и удаление приглашений: «Пригласить повторно» и «Отменить» гасят прежнюю ссылку (GO24DEV-676)
+        - authentik_stages_invitation.delete_invitation
         - authentik_flows.view_flow
 
   - model: authentik_core.token

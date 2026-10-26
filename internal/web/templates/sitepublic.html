@@ -4,12 +4,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{$d.Page.Title}} · {{$d.Site.Name}}</title>
-{{with $d.Site.Description}}<meta name="description" content="{{.}}">{{end}}
+<title>{{or $d.Page.SEO.Title (print $d.Page.Title " · " $d.Site.Name)}}</title>
+{{with or $d.Page.SEO.Description $d.Site.Description}}<meta name="description" content="{{.}}">{{end}}
+{{with $d.Page.SEO.Keywords}}<meta name="keywords" content="{{.}}">{{end}}
+{{if or $d.Page.SEO.NoIndex $d.Preview}}<meta name="robots" content="noindex">{{end}}
+{{with $d.Site.Favicon}}<link rel="icon" href="{{.}}">{{end}}
 <link rel="stylesheet" href="{{asset "css/site.css"}}">
+{{if not $d.Preview}}{{with $d.Site.Analytics}}<script async src="https://www.googletagmanager.com/gtag/js?id={{.}}"></script>
+<script>window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', {{.}});</script>{{end}}
+{{with $d.Site.Metrika}}<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();
+k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");
+ym(Number({{.}}), "init", {clickmap:true, trackLinks:true, accurateTrackBounce:true, webvisor:true});</script>{{end}}{{end}}
 </head>
-<body class="lp">
+<body class="lp{{with $d.Site.Font}} lp-font-{{.}}{{end}}"{{with $d.Site.Accent}} style="--lp-accent:{{.}}"{{end}}>
 {{if $d.Preview}}<div class="lp-preview">{{t "site.preview_bar"}} · <a href="/sites/{{$d.Site.ID}}/p/{{$d.Page.ID}}">{{t "site.back_to_editor"}}</a></div>{{end}}
-{{range $d.Page.Blocks}}{{template "siteblock" .}}{{else}}<section class="lp-text"><div class="lp-wrap"><p>{{$d.Page.Title}}</p></div></section>{{end}}
+{{range $d.Page.Blocks}}<div id="b-{{.ID}}">{{template "siteblock" .}}</div>{{else}}<section class="lp-text"><div class="lp-wrap"><p>{{$d.Page.Title}}</p></div></section>{{end}}
 </body>
 </html>{{end}}

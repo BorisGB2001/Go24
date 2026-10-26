@@ -1,8 +1,8 @@
 {{define "content"}}
 {{$d := .Data}}{{$f := $d.Filter}}
-<h1>{{icon "phone"}} {{t "tel.calls"}}</h1>
+<div class="pagehead"><h1>{{icon "phone"}} {{t "tel.calls"}}</h1><a class="button ghost" href="/telephony/stats">{{icon "chart-bar"}} {{t "tel.stats"}}</a></div>
 <form method="get" action="/telephony/calls" class="card row phonefilter">
-  {{if $d.Admin}}<select name="user" style="width:auto" aria-label="{{t "tel.col.employee"}}"><option value="">{{t "tel.filter.everyone"}}</option>
+  {{if $d.Users}}<select name="user" style="width:auto" aria-label="{{t "tel.col.employee"}}"><option value="">{{t "tel.filter.everyone"}}</option>
     {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.UserID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
   <select name="kind" style="width:auto" aria-label="{{t "tel.col.kind"}}"><option value="">{{t "tel.filter.all_kinds"}}</option>
     {{range list "in" "out" "missed"}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "tel.kind." .)}}</option>{{end}}</select>
@@ -21,10 +21,16 @@
       <td>{{template "phone-end" (dict "W" .FromUser "N" .From "P" .FromPhoto "C" (and (not .FromUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
       <td>{{template "phone-end" (dict "W" .ToUser "N" .To "P" .ToPhoto "C" (and (not .ToUser.UserID) .CRMPath) "CN" .CRMName)}}</td>
       <td class="nowrap">{{if .Seconds}}{{.Duration}}{{else}}<span class="muted">—</span>{{end}}</td>
-      <td class="small">{{t (print "tel.status." .Status)}}{{if and (not .CRMPath) $d.CRM .Mine .Outside}}
-        <form method="post" action="/telephony/calls/{{.ID}}/crm" class="row nowrap" style="gap:4px;margin-top:4px"><button class="ghost small" name="what" value="lead" title="{{t "tel.make_lead"}}">{{icon "plus"}} {{t "crm.lead"}}</button><button class="ghost small" name="what" value="deal" title="{{t "tel.make_deal"}}">{{icon "plus"}} {{t "crm.deal"}}</button></form>{{end}}</td>
+      <td class="small">{{t (print "tel.status." .Status)}}{{if .Rating}} <span class="tel-rate" title="{{t "tel.rating" .Rating}}">{{stars .Rating}}</span>{{end}}{{if .XTo}}
+        <div class="muted nowrap" title="{{t "tel.transferred"}}">{{icon "arrows-exchange"}} {{or .XFromName .XFrom}} → {{or .XToName .XTo}}</div>{{end}}{{if and (not .CRMPath) $d.CRM .Mine .Outside}}
+        <form method="post" action="/telephony/calls/{{.ID}}/crm" class="row nowrap" style="gap:4px;margin-top:4px"><button class="ghost small" name="what" value="lead" title="{{t "tel.make_lead"}}">{{icon "plus"}} {{t "crm.lead"}}</button><button class="ghost small" name="what" value="deal" title="{{t "tel.make_deal"}}">{{icon "plus"}} {{t "crm.deal"}}</button></form>{{end}}{{if and $d.Admin .Outside}}
+        {{if .Blocked}}<div><span class="pill st-deferred" title="{{t "tel.black_hint"}}">{{icon "lock"}} {{t "tel.black.in"}}</span></div>{{else}}<form method="post" action="/telephony/blacklist" style="margin-top:4px" data-confirm="{{t "tel.black.confirm" .Outside}}">
+          <input type="hidden" name="number" value="{{.Outside}}"><input type="hidden" name="back" value="{{$d.Back}}">
+          <button class="ghost small" title="{{t "tel.black.add_hint"}}">{{icon "lock"}} {{t "tel.black.add"}}</button></form>{{end}}{{end}}</td>
       <td>{{if .CanListen}}<div class="row nowrap"><audio controls preload="none" src="/telephony/calls/{{.ID}}/record"></audio>
-        <a class="button ghost small" href="/telephony/calls/{{.ID}}/record?download=1" title="{{t "tel.download"}}" aria-label="{{t "tel.download"}}">{{icon "download"}}</a></div>
+        <a class="button ghost small" href="/telephony/calls/{{.ID}}/record?download=1" title="{{t "tel.download"}}" aria-label="{{t "tel.download"}}">{{icon "download"}}</a>
+        {{if and (not .Transcript) $d.Speech}}<form method="post" action="/telephony/calls/{{.ID}}/transcript"><button class="ghost small" title="{{t "tel.transcribe_hint"}}">{{icon "file-text"}} {{t "tel.transcribe"}}</button></form>{{end}}</div>
+        {{with .Transcript}}<details class="tel-text"><summary class="small">{{t "tel.transcript"}}</summary><p class="small">{{nl2br .}}</p></details>{{end}}
         {{else if .HasRecord}}<span class="muted small">{{t "tel.recorded"}}</span>{{else}}<span class="muted">—</span>{{end}}</td></tr>
     {{else}}<tr><td colspan="7" class="empty">{{t "tel.calls_empty"}}</td></tr>{{end}}</tbody>
   </table></div>

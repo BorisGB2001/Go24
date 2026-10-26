@@ -460,7 +460,20 @@ type apiSignDoc struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	DoneAt     *time.Time        `json:"done_at,omitempty"`
 	Parties    []apiSignParty    `json:"parties"`
-	Files      map[string]string `json:"files"` // docx, pdf, result (when signed): GET with the same key
+	Files      map[string]string `json:"files"`             // docx, pdf, result (when signed): GET with the same key
+	History    []apiSignEvent    `json:"history,omitempty"` // GET /api/v1/sign/{id} only
+}
+
+// apiSignEvent is a line of the document's history: created, sent, reminded, viewed, code, signed, refused,
+// cancelled, done.
+type apiSignEvent struct {
+	Kind   string    `json:"kind"`
+	At     time.Time `json:"at"`
+	Party  string    `json:"party,omitempty"` // the signer's name
+	Actor  *apiUser  `json:"actor,omitempty"` // the employee who did it
+	Sent   bool      `json:"sent"`            // false — the letter was not sent
+	IP     string    `json:"ip,omitempty"`    // to the sender
+	Reason string    `json:"reason,omitempty"`
 }
 
 type apiSignParty struct {
@@ -524,24 +537,45 @@ func (s *Server) apiSignGet(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, s.apiSignOf(d, p.UserID))
+	events, err := s.Sign.Events(r.Context(), d.ID)
+	if err != nil {
+		return err
+	}
+	out := s.apiSignOf(d, p.UserID)
+	for _, e := range events {
+		a := apiSignEvent{Kind: e.Kind, At: e.At, Party: e.Party, Sent: e.OK, Reason: e.Note}
+		if e.ActorID != "" {
+			a.Actor = &apiUser{e.ActorID, e.Actor}
+		}
+		if p.UserID == d.AuthorID {
+			a.IP = e.IP
+		}
+		out.History = append(out.History, a)
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 
 // apiSignCreate sends a document for signing: the card's document — JSON {"document": "…", "title": "…",
-// "signer": "user id", "client_name": "…", "client_email": "…"}, or a Word file — multipart with «file» and the
-// same fields. The employee signs first, then the client gets the link by e-mail.
+// "signer": "user id" or "signers": ["user id", …], "client_name": "…", "client_email": "…" or "clients": [{"name",
+// "email"}, …], "remind_days": 1}, or a Word file — multipart with «file» and the same fields (signer, client_name and
+// client_email repeated). The employees sign first in turn, then the clients get the link by e-mail in turn; the one
+// whose turn it is is reminded every remind_days days (0, 1, 2, 3, 7; 0 — never; by default every day).
 func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
-		Document    string `json:"document"`
-		Title       string `json:"title"`
-		Signer      string `json:"signer"`
-		ClientName  string `json:"client_name"`
-		ClientEmail string `json:"client_email"`
+		Document    string                         `json:"document"`
+		Title       string                         `json:"title"`
+		Signer      string                         `json:"signer"`
+		ClientName  string                         `json:"client_name"`
+		ClientEmail string                         `json:"client_email"`
+		Signers     []string                       `json:"signers"`
+		Clients     []struct{ Name, Email string } `json:"clients"`
+		RemindDays  *int                           `json:"remind_days"`
 	}
 	sess := s.apiSess(r, p)
 	var data []byte
 	var name string
+	var clients []sign.Party
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		r.Body = http.MaxBytesReader(w, r.Body, signMax+1<<16)
 		f, h, err := r.FormFile("file")
@@ -553,14 +587,28 @@ func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys
 			return i18n.E("sign.err.file")
 		}
 		name = h.Filename
-		in.Title, in.Signer, in.ClientName, in.ClientEmail = r.FormValue("title"), r.FormValue("signer"), r.FormValue("client_name"), r.FormValue("client_email")
+		in.Title, in.Signers = r.FormValue("title"), r.Form["signer"]
+		clients = signClients(r.Form["client_name"], r.Form["client_email"])
+		if v := r.FormValue("remind_days"); v != "" {
+			days := atoi(v)
+			in.RemindDays = &days
+		}
 		if strings.TrimSpace(in.Title) == "" {
 			in.Title = strings.TrimSuffix(name, path.Ext(name))
 		}
 	} else if err := readJSON(r, &in); err != nil {
 		return err
+	} else {
+		in.Signers = append([]string{in.Signer}, in.Signers...)
+		clients = signClients([]string{in.ClientName}, []string{in.ClientEmail})
+		for _, c := range in.Clients {
+			clients = append(clients, signClients([]string{c.Name}, []string{c.Email})...)
+		}
 	}
-	d := sign.Doc{Title: in.Title}
+	d := sign.Doc{Title: in.Title, RemindDays: 1}
+	if in.RemindDays != nil {
+		d.RemindDays = *in.RemindDays
+	}
 	if data == nil {
 		doc, err := s.CRM.DocumentByID(r.Context(), in.Document)
 		if err == nil {
@@ -579,7 +627,7 @@ func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys
 		d.Entity, d.EntityID, d.CRMDocID, name = doc.Entity, doc.EntityID, doc.ID, m.Name
 		d.Title = cmp.Or(strings.TrimSpace(d.Title), signDocTitle(doc))
 	}
-	id, err := s.signStart(r, sess, d, data, name, in.Signer, in.ClientName, in.ClientEmail)
+	id, err := s.signStart(r, sess, d, data, name, in.Signers, clients)
 	if err != nil {
 		return err
 	}
@@ -640,7 +688,7 @@ func (s *Server) apiSignCancel(w http.ResponseWriter, r *http.Request, p apikeys
 		err = sign.ErrNotFound
 	}
 	if err == nil {
-		err = s.Sign.Cancel(r.Context(), d.ID)
+		err = s.Sign.Cancel(r.Context(), d.ID, p.UserID)
 	}
 	if err == nil {
 		d, err = s.Sign.Get(r.Context(), d.ID)

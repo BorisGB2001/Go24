@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -132,8 +133,22 @@ func TestSign(t *testing.T) {
 	if list, err := s.List(ctx, anna, "done", false); err != nil || len(list) != 1 || len(list[0].Parties) != 2 {
 		t.Fatalf("done list: %v %v", list, err)
 	}
-	if err := s.Cancel(ctx, id); !errors.Is(err, ErrTurn) {
+	if err := s.Cancel(ctx, id, ""); !errors.Is(err, ErrTurn) {
 		t.Fatalf("recall a signed one: %v", err)
+	}
+	// the history: made, viewed once, signed by both, done; a view of a signer again is not kept
+	must(s.Log(ctx, id, cli.ID, "", EvViewed, true, "1.1.1.1", ""))
+	must(s.Log(ctx, id, cli.ID, "", EvViewed, true, "1.1.1.1", ""))
+	must(s.Log(ctx, id, cli.ID, "", EvSent, false, "", ""))
+	evs, err := s.Events(ctx, id)
+	must(err)
+	kinds := []string{}
+	for _, e := range evs {
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, ","); got != "created,signed,signed,done,viewed,sent" || evs[0].Actor != "Анна" || evs[1].IP != "10.0.0.1" ||
+		evs[2].Party != cli.Name || evs[5].OK {
+		t.Fatalf("history: %s %+v", got, evs)
 	}
 
 	// a refusal, a recall
@@ -147,7 +162,13 @@ func TestSign(t *testing.T) {
 	}
 	id3, err := s.Create(ctx, Doc{Title: "Счёт", FileID: file, AuthorID: anna}, []Party{{UserID: bob, Name: "Боб"}})
 	must(err)
-	must(s.Cancel(ctx, id3))
+	must(s.Cancel(ctx, id3, bob))
+	if evs, err := s.Events(ctx, id3); err != nil || len(evs) != 2 || evs[1].Kind != EvCancelled || evs[1].Actor != "Боб" {
+		t.Fatalf("recalled history: %+v %v", evs, err)
+	}
+	if evs, err := s.Events(ctx, id2); err != nil || len(evs) != 2 || evs[1].Kind != EvRefused || evs[1].Note != "не тот срок" {
+		t.Fatalf("refused history: %+v %v", evs, err)
+	}
 	d3, _ := s.Get(ctx, id3)
 	if _, _, err := s.Sign(ctx, id3, d3.Parties[0].ID, "", "", ""); !errors.Is(err, ErrTurn) {
 		t.Fatalf("sign a recalled one: %v", err)

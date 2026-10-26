@@ -20,7 +20,8 @@ import (
 var forEvent = strings.ReplaceAll(appFor, "$1", "u.id")
 
 // Events are what an application can subscribe its handler to, as event.bind (see migration 323): the
-// cards of CRM (a smart process's — ONCRMDYNAMICITEM…), tasks, a new employee and the application's own uninstall.
+// cards of CRM (a smart process's — ONCRMDYNAMICITEM…), tasks, a new employee, the application's own uninstall and
+// what its chat bots hear (imbot.register binds their handlers; migration 329).
 var Events = []string{
 	"ONCRMLEADADD", "ONCRMLEADUPDATE", "ONCRMLEADDELETE",
 	"ONCRMDEALADD", "ONCRMDEALUPDATE", "ONCRMDEALDELETE",
@@ -29,6 +30,7 @@ var Events = []string{
 	"ONCRMDYNAMICITEMADD", "ONCRMDYNAMICITEMUPDATE", "ONCRMDYNAMICITEMDELETE",
 	"ONTASKADD", "ONTASKUPDATE", "ONTASKDELETE",
 	"ONUSERADD", "ONAPPUNINSTALL",
+	"ONIMBOTMESSAGEADD", "ONIMBOTJOINCHAT", "ONIMBOTDELETE", "ONIMCOMMANDADD", // of the application's chat bots (matrixsync.Bot)
 }
 
 // Event is a handler of an application subscribed to an event.

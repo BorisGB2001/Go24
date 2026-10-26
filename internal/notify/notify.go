@@ -140,6 +140,15 @@ func (s *Store) MarkTaskRead(ctx context.Context, userID, taskID string) error {
 	return err
 }
 
+// MarkCommentsRead reads the user's notifications of new task messages and mentions — the green counter, as
+// «Прочитать все» tasks; with a project, only in its tasks. Returns how many were read.
+func (s *Store) MarkCommentsRead(ctx context.Context, userID, projectID string) (int64, error) {
+	tag, err := s.db.Exec(ctx, `UPDATE notifications SET read_at = now()
+		WHERE user_id = $1 AND read_at IS NULL AND kind IN ('comment', 'mention') AND task_id IS NOT NULL
+		AND ($2 = '' OR task_id IN (SELECT id FROM tasks_all WHERE project_id::text = $2))`, userID, projectID)
+	return tag.RowsAffected(), err
+}
+
 // Prune forgets read notifications older than the given age (the portal keeps them for a limited time too).
 func (s *Store) Prune(ctx context.Context, age time.Duration) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < now() - $1::interval`,
@@ -185,7 +194,7 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		t += " «" + i.Body + "»"
 	case "sign_done", "sign_refused":
 		return "✍ " + tr("notify.kind."+i.Kind) + ": " + i.Body
-	case "booking_new", "booking_late", "booking_confirmed", "booking_cancelled", "event_slot", "event_slot_cancel":
+	case "booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated", "event_slot", "event_slot_cancel":
 		return "📅 " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "bp":
 		return "⚙ " + i.Body
@@ -274,8 +283,8 @@ var Kinds = []struct {
 }{
 	{"tasks", []string{"task_new", "flow_task", "subtasks_done", "comment", "mention", "status", "deadline", "responsible", "participant", "task_remind", "task_robot"}},
 	{"feed", []string{"post_to_you", "post_shared", "post_comment", "post_followed", "like", "comment_like", "important", "gratitude"}},
-	{"calendar", []string{"event", "event_reply", "event_remind", "event_comment", "event_slot", "event_slot_cancel"}},
-	{"projects", []string{"project_invite", "collab_owner"}},
+	{"calendar", []string{"event", "event_open", "event_reply", "event_remind", "event_comment", "event_slot", "event_slot_cancel"}},
+	{"projects", []string{"project_invite", "collab_added", "collab_joined", "collab_manager", "collab_member", "collab_removed", "collab_owner"}},
 	{"crm", []string{"crm_activity", "crm_activity_remind", "crm_recurring", "crm_observer", "crm_comment", "crm_stage", "crm_robot", "bp", "openline", "site_form", "crm_form"}},
 	{"telephony", []string{"phone"}},
 	{"mail", []string{"mail", "mail_assign", "mail_remind", "mail_recall"}},
@@ -283,7 +292,7 @@ var Kinds = []struct {
 	{"disk", []string{"disk_share", "disk_file_share", "disk_comment"}},
 	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
 	{"sign", []string{"sign_request", "sign_done", "sign_refused"}},
-	{"booking", []string{"booking_new", "booking_late", "booking_confirmed", "booking_cancelled"}},
+	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated"}},
 	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "backup_failed", "backup_restored", "backup_restore_failed"}},
 }
 

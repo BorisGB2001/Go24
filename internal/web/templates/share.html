@@ -17,13 +17,14 @@
 {{else if $d.Link.FileID}}<div class="card share-file">
   {{if eq $d.Kind "image"}}<img src="/s/{{$d.Token}}/f/{{$d.Link.FileID}}?inline=1" alt="{{$d.Name}}">{{else}}<div class="ticon">{{icon "files"}}<small>{{ext $d.Name}}</small></div>{{end}}
   <h2>{{$d.Name}}</h2><div class="muted">{{size $d.Size}}</div>
-  <a class="button primary" href="/s/{{$d.Token}}/f/{{$d.Link.FileID}}">{{icon "download"}} {{t "disk.download"}}</a></div>
+  <div class="row">{{if $d.Doc}}<a class="button primary" href="/s/{{$d.Token}}/doc/{{$d.Link.FileID}}">{{if $d.Edit}}{{icon "file-pencil"}} {{t "office.edit"}}{{else}}{{icon "eye"}} {{t "office.open"}}{{end}}</a>{{end}}
+  <a class="button{{if not $d.Doc}} primary{{end}}" href="/s/{{$d.Token}}/f/{{$d.Link.FileID}}">{{icon "download"}} {{t "disk.download"}}</a></div></div>
 {{else}}<div class="row diskhead"><div class="crumbs" style="flex:1">{{range $i, $f := $d.Trail}}{{if $i}} {{icon "chevron-right"}} {{end}}<a href="/s/{{$d.Token}}{{if $i}}?folder={{$f.ID}}{{end}}">{{$f.Name}}</a>{{end}}</div>
   <a class="button primary" href="/s/{{$d.Token}}/zip{{if ne $d.Folder $d.Link.FolderID}}?folder={{$d.Folder}}{{end}}">{{icon "file-zip"}} {{t "share.download_all"}}</a></div>
 <div class="card flush">{{if or $d.Folders $d.Files}}<table class="disk-list">
   <thead><tr><th>{{t "col.file_name"}}</th><th>{{t "col.size"}}</th></tr></thead><tbody>
   {{range $d.Folders}}<tr><td><a href="/s/{{$d.Token}}?folder={{.ID}}">{{icon "folder"}} {{.Name}}</a></td><td></td></tr>{{end}}
-  {{range $d.Files}}<tr><td><a href="/s/{{$d.Token}}/f/{{.ID}}">{{icon "download"}} {{.Name}}</a></td><td class="small">{{size .Size}}</td></tr>{{end}}
+  {{range $d.Files}}<tr><td><a href="/s/{{$d.Token}}/f/{{.ID}}">{{icon "download"}} {{.Name}}</a>{{if and $d.Office (officeKind .Name)}} <a class="button ghost small" href="/s/{{$d.Token}}/doc/{{.ID}}" title="{{t "office.open"}}">{{icon "eye"}}</a>{{end}}</td><td class="small">{{size .Size}}</td></tr>{{end}}
   </tbody></table>{{else}}<div class="empty">{{t "disk.empty"}}</div>{{end}}</div>
 {{end}}
 <p class="muted small share-foot">go24 · {{t "share.foot"}}</p>

@@ -6,8 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"html"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,7 +27,10 @@ import (
 	"go24/internal/calendar"
 	"go24/internal/crm"
 	"go24/internal/db"
+	"go24/internal/inwords"
 	"go24/internal/office"
+	"go24/internal/payqr"
+	"go24/internal/sign"
 	"go24/internal/storage"
 	"go24/internal/storages"
 	"go24/internal/tasks"
@@ -422,6 +428,8 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	if code, _ := do(eve, "POST", "/crm/documents/builtin", url.Values{"kind": {"invoice"}}); code != http.StatusForbidden {
 		t.Fatalf("a non-administrator added a template: %d", code)
 	}
+	var dealTemplates int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM crm_doc_templates WHERE entity = 'deal'`).Scan(&dealTemplates))
 	for _, kind := range docBuiltins {
 		if code, _ := do(anna, "POST", "/crm/documents/builtin", url.Values{"kind": {kind}}); code != http.StatusSeeOther {
 			t.Fatalf("builtin %s: %d", kind, code)
@@ -436,9 +444,171 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 			t.Fatalf("made by the builtin %s: %s", kind, got)
 		}
 	}
+	// the invoice's QR code of the payment, when «Моя компания» has the bank details
+	_, err = pool.Exec(ctx, `UPDATE crm_requisites SET account = '40702810900000000001', bik = '044525225',
+		corr_account = '30101810400000000225', kpp = '770101001' WHERE entity_id = $1`, seller)
+	must(err)
+	var invoice string
+	must(pool.QueryRow(ctx, `SELECT id FROM crm_doc_templates WHERE entity = 'deal' ORDER BY created_at LIMIT 1 OFFSET $1`,
+		dealTemplates).Scan(&invoice))
+	do(anna, "POST", "/crm/deals/"+other+"/document", url.Values{"template": {invoice}})
+	docs, _ = srv.CRM.Documents(ctx, "deal", other)
+	_, got = do(anna, "GET", "/crm/deals/"+other+"/documents/"+docs[0].ID, nil)
+	v := docs[0].Values
+	want, err := payqr.PNG(payqr.Text(payqr.Payee{Name: "ООО «Ромашка»", Account: "40702810900000000001", Bank: "Банк",
+		BIK: "044525225", CorrAccount: "30101810400000000225", INN: "7701234567", KPP: "770101001"},
+		payqr.Kopecks(v["Total"]), "Оплата по счёту № "+v["DocumentNumber"]+" от "+v["DocumentDate"]))
+	must(err)
+	zr, err := zip.NewReader(bytes.NewReader([]byte(got)), int64(len(got)))
+	must(err)
+	var qr []byte
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "word/media/") {
+			rc, _ := f.Open()
+			qr, _ = io.ReadAll(rc)
+			rc.Close()
+		}
+	}
+	if x := text(got); docs[0].TemplateName != "Счёт на оплату" || strings.Count(x, "<w:drawing>") != 1 || !bytes.Equal(qr, want) || payqr.Kopecks(v["Total"]) == 0 {
+		t.Fatalf("the invoice's QR code: %s %v", docs[0].TemplateName, v)
+	}
+	if w := inwords.Amount("ru-RU", payqr.Kopecks(v["Total"]), v["Currency"]); v["TotalWords"] != w || !strings.Contains(text(got), w) ||
+		!strings.Contains(w, "рубл") {
+		t.Fatalf("the total in words: %q, want %q", v["TotalWords"], w)
+	}
+
+	// «Печать и подписи» of «Моя компания»: uploaded by administrators, the builtin act gets the stamp and the
+	// director's facsimile as pictures, the accountant's — not uploaded — leaves nothing
+	upload := func(who, kind string, data []byte) int {
+		t.Helper()
+		var b bytes.Buffer
+		mw := multipart.NewWriter(&b)
+		mw.WriteField("kind", kind)
+		fw, _ := mw.CreateFormFile("file", "pic.png")
+		fw.Write(data)
+		mw.Close()
+		req, _ := http.NewRequest("POST", hs.URL+"/crm/documents/image", &b)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.AddCookie(as[who])
+		res, err := client.Do(req)
+		must(err)
+		res.Body.Close()
+		return res.StatusCode
+	}
+	var pic bytes.Buffer
+	must(png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 40, 40))))
+	if code := upload(eve, "Stamp", pic.Bytes()); code != http.StatusForbidden {
+		t.Fatalf("a non-administrator uploaded the stamp: %d", code)
+	}
+	upload(anna, "Stamp", []byte("not a picture"))
+	upload(anna, "Nope", pic.Bytes())
+	if imgs, _ := srv.CRM.DocImages(ctx); len(imgs) != 0 {
+		t.Fatalf("kept a wrong picture: %v", imgs)
+	}
+	upload(anna, "Stamp", pic.Bytes())
+	upload(anna, "Stamp", pic.Bytes()) // the second one takes the place of the first
+	upload(anna, "DirectorSignature", pic.Bytes())
+	imgs, _ := srv.CRM.DocImages(ctx)
+	var pics int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM files WHERE content_type = 'image/png'`).Scan(&pics))
+	if len(imgs) != 2 || pics != 2 {
+		t.Fatalf("pictures: %v, files %d", imgs, pics)
+	}
+	if _, page := do(anna, "GET", "/crm/documents", nil); !strings.Contains(page, `src="/files/`+imgs["Stamp"]+`?inline=1"`) {
+		t.Fatal("the stamp is not shown")
+	}
+	do(anna, "POST", "/crm/deals/"+other+"/document", url.Values{"template": {func() string {
+		var id string
+		must(pool.QueryRow(ctx, `SELECT id FROM crm_doc_templates WHERE entity = 'deal' ORDER BY created_at DESC LIMIT 1`).Scan(&id)) // the act, the last builtin
+		return id
+	}()}})
+	docs, _ = srv.CRM.Documents(ctx, "deal", other)
+	_, got = do(anna, "GET", "/crm/deals/"+other+"/documents/"+docs[0].ID, nil)
+	if x := text(got); strings.Count(x, "<w:drawing>") != 2 || strings.Contains(x, "{") {
+		t.Fatalf("the act with the stamp: %s", x)
+	}
+	do(anna, "POST", "/crm/documents/image", url.Values{"kind": {"Stamp"}, "remove": {"1"}})
+	if imgs, _ := srv.CRM.DocImages(ctx); len(imgs) != 1 || imgs["Stamp"] != "" {
+		t.Fatalf("removed: %v", imgs)
+	}
+
+	// a print form of an invoice: a template of «Счёт или предложение», the document made on the invoice's page
+	tpl.Reset()
+	zw = zip.NewWriter(&tpl)
+	f, _ = zw.Create("word/document.xml")
+	io.WriteString(f, `<w:document><w:p><w:t>{Kind} № {Number} от {IssueDate} до {DueDate}: {Client.FullName}, {Card}</w:t></w:p>`+
+		`<w:tbl><w:tr><w:tc><w:p><w:t>{Product.Name}|{Product.Sum}</w:t></w:p></w:tc></w:tr></w:tbl><w:p><w:t>{Total} ({TotalWords})</w:t></w:p></w:document>`)
+	zw.Close()
+	key = "go24/doc-templates/t/pf.docx"
+	must(srv.Storages.Put(ctx, anna, false, "", key, bytes.NewReader(tpl.Bytes()), int64(tpl.Len()), docxType))
+	file, err = srv.Storages.AddFile(ctx, storages.NewFile{Key: key, Name: "pf.docx", ContentType: docxType, Size: int64(tpl.Len()), UploadedBy: anna})
+	must(err)
+	must(srv.CRM.AddDocTemplate(ctx, anna, "Печатная форма", "invoice", file))
+	pf, _ := srv.CRM.DocTemplates(ctx, "invoice")
+	invID, err := srv.CRM.MakeInvoice(ctx, anna, "invoice", other, 5)
+	must(err)
+	ip := "/crm/invoices/" + invID
+	if _, page := do(anna, "GET", ip, nil); len(pf) != 1 || !strings.Contains(page, `action="`+ip+`/document"`) {
+		t.Fatalf("the invoice's page: %d templates", len(pf))
+	}
+	if _, page := do(anna, "GET", ip+"/document?template="+pf[0].ID, nil); !strings.Contains(page, `name="v.Kind" value="Счёт"`) {
+		t.Fatal("the invoice's values form")
+	}
+	if code, _ := do(anna, "POST", ip+"/document", url.Values{"template": {pf[0].ID}}); code != http.StatusSeeOther {
+		t.Fatalf("made on the invoice: %d", code)
+	}
+	idocs, _ := srv.CRM.Documents(ctx, "invoice", invID)
+	if len(idocs) != 1 {
+		t.Fatalf("invoice documents: %+v", idocs)
+	}
+	_, got = do(anna, "GET", ip+"/documents/"+idocs[0].ID, nil)
+	iv, _ := srv.CRM.Invoice(ctx, invID)
+	if x := text(got); !strings.Contains(x, "Счёт № "+iv.Code()) || !strings.Contains(x, "ООО «Лютик»") || !strings.Contains(x, "Стол|") ||
+		!strings.Contains(x, "Стул|") || !strings.Contains(x, "рубл") || strings.Contains(x, "{") {
+		t.Fatalf("the print form: %s", x)
+	}
+	var notes int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM crm_timeline WHERE entity = 'deal' AND entity_id = $1 AND kind = 'document' AND body LIKE 'Печатная форма%'`, other).Scan(&notes))
+	if _, page := do(anna, "GET", ip, nil); notes != 1 || !strings.Contains(page, ip+"/documents/"+idocs[0].ID) {
+		t.Fatalf("the invoice's documents: %d notes", notes)
+	}
+	// sent for signing from the invoice's page
+	srv.Sign = sign.NewStore(pool)
+	if _, page := do(anna, "GET", "/sign/new?kind=invoices&id="+invID+"&doc="+idocs[0].ID, nil); !strings.Contains(page, ip+"/documents/"+idocs[0].ID) {
+		t.Fatal("the signing form of the invoice's document")
+	}
+	if code, _ := do(anna, "POST", "/sign", url.Values{"kind": {"invoices"}, "id": {invID}, "doc": {idocs[0].ID}, "signer": {anna},
+		"title": {"Счёт на подпись"}}); code != http.StatusSeeOther {
+		t.Fatalf("sent for signing: %d", code)
+	}
+	if signs, _ := srv.Sign.OfCard(ctx, "invoice", invID); signs[idocs[0].ID].Title != "Счёт на подпись" {
+		t.Fatalf("the invoice's signing: %+v", signs)
+	} else if _, page := do(anna, "GET", "/sign/"+signs[idocs[0].ID].ID, nil); !strings.Contains(page, `href="`+ip+`#documents"`) {
+		t.Fatal("the signing's link to the invoice")
+	}
+	if _, page := do(anna, "GET", ip, nil); !strings.Contains(page, `class="pill sg-signing"`) {
+		t.Fatal("the signing on the invoice's page")
+	}
+	do(anna, "POST", ip+"/documents/"+idocs[0].ID+"/delete", nil)
+	if idocs, _ = srv.CRM.Documents(ctx, "invoice", invID); len(idocs) != 0 {
+		t.Fatal("deleted")
+	}
+
 	before, _ := srv.CRM.DocTemplates(ctx, "")
 	do(anna, "POST", "/crm/documents/builtin", url.Values{"kind": {"x"}})
 	if after, _ := srv.CRM.DocTemplates(ctx, ""); len(after) != len(before) {
 		t.Fatal("an unknown builtin template")
+	}
+
+	// «Создание документа» of a business process: from the employee chosen, the values given over the card's
+	bpDoc, err := srv.BPDocument(ctx, eve, "deal", deal, tpls[0].ID, map[string]string{"Title": "По процессу"})
+	must(err)
+	made, err := srv.CRM.Document(ctx, "deal", deal, bpDoc)
+	must(err)
+	if made.AuthorID != eve || made.TemplateID != tpls[0].ID || made.Values["Title"] != "По процессу" || made.Values["Amount"] == "" || made.FileID == "" {
+		t.Fatalf("the process's document: %+v", made)
+	}
+	if _, err := srv.BPDocument(ctx, eve, "none", deal, tpls[0].ID, nil); err == nil {
+		t.Fatal("a document of no card")
 	}
 }

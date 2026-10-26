@@ -1,0 +1,14 @@
+{{/* «Генератор документов» of a card that is not a CRM card's page (a quote or an invoice): (dict "Kind" "invoices" "ID" … "D" .Data) */}}
+{{define "docmake"}}{{$p := print "/crm/" .Kind "/" .ID}}{{with .D.Docs}}<details class="tsettings"><summary class="button ghost">{{icon "files"}} {{t "docs.make"}}</summary>
+  <div class="pop">{{range .}}<div class="row"><form method="post" action="{{$p}}/document" style="flex:1"><input type="hidden" name="template" value="{{.ID}}">
+    <button class="ghost">{{icon "file-plus"}} {{.Name}}</button></form><a class="button ghost" href="{{$p}}/document?template={{.ID}}" title="{{t "docs.edit_values"}}">{{icon "edit"}}</a></div>{{end}}</div></details>{{end}}{{end}}
+
+{{/* the documents made of the card: (dict "Kind" … "ID" … "D" .Data) */}}
+{{define "doclist"}}{{$k := .Kind}}{{$id := .ID}}{{$p := print "/crm/" .Kind "/" .ID}}{{$d := .D}}{{with $d.Documents}}<div class="card" id="documents"><h2>{{icon "files"}} {{t "docs.of_card"}}</h2>
+  {{range .}}<div class="row crmdoc"><a href="{{$p}}/documents/{{.ID}}" style="flex:1" title="{{t "disk.download"}}">{{icon "file-text"}} {{.TemplateName}}{{with .Number}} № {{.}}{{end}}</a>
+    {{if and .TemplateID $d.CanWrite}}<a class="button ghost small" href="{{$p}}/document?doc={{.ID}}" title="{{t "docs.edit_values"}}">{{icon "edit"}}</a>{{end}}
+    {{if $d.PDF}}<a class="button ghost small" href="{{$p}}/documents/{{.ID}}/pdf" title="{{t "docs.pdf"}}">PDF</a>{{end}}
+    {{$cd := .}}{{with $d.Signs}}{{with index . $cd.ID}}<a class="pill sg-{{.Status}}" href="/sign/{{.ID}}" title="{{t "sign.title"}}">{{icon "signature"}} {{t (print "sign.st." .Status)}}</a>{{end}}{{end}}
+    {{if $d.CanWrite}}<a class="button ghost small" href="/sign/new?kind={{$k}}&id={{$id}}&doc={{.ID}}" title="{{t "sign.to_sign"}}">{{icon "signature"}}</a>{{end}}
+    {{if $d.CanWrite}}<form method="post" action="{{$p}}/documents/{{.ID}}/delete" data-confirm="{{t "docs.doc_delete_confirm"}}" style="display:inline"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
+  <div class="small muted">{{.Author}} · {{datetime .CreatedAt}}{{if ne .UpdatedAt .CreatedAt}} · {{t "docs.remade_at" (datetime .UpdatedAt)}}{{end}}</div>{{end}}</div>{{end}}{{end}}

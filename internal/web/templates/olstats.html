@@ -16,6 +16,7 @@
   <div class="card"><div class="muted small">{{t "ol.stats_new"}}</div><b>{{$t.New}}</b></div>
   <div class="card"><div class="muted small">{{t "ol.stats_closed"}}</div><b>{{$t.Closed}}</b></div>
   <div class="card"><div class="muted small">{{t "ol.stats_noanswer"}}</div><b>{{$t.NoAnswer}}</b></div>
+  <div class="card"><div class="muted small">{{t "ol.stats_kpi"}}</div><b>{{$t.KPI}}</b></div>
   <div class="card"><div class="muted small">{{t "ol.stats_answer"}}</div><b>{{if $t.FirstAnswer}}{{durs $t.FirstAnswer}}{{else}}—{{end}}</b></div>
   <div class="card"><div class="muted small">{{t "ol.stats_close"}}</div><b>{{if $t.ToClose}}{{durs $t.ToClose}}{{else}}—{{end}}</b></div>
   <div class="card"><div class="muted small">{{t "ol.stats_votes"}}</div><b>👍 {{$t.Up}} · 👎 {{$t.Down}}</b></div>
@@ -25,14 +26,14 @@
 <div class="card flush"><div class="tablewrap"><table class="tlist olstats">
   <thead><tr><th>{{if eq $d.By "days"}}{{t "ol.stats_day"}}{{else if eq $d.By "lines"}}{{t "ol.stats_line"}}{{else}}{{t "ol.operator"}}{{end}}</th>
     <th class="right">{{t "ol.stats_new"}}</th><th class="right">{{t "ol.stats_closed"}}</th><th class="right">{{t "ol.stats_noanswer"}}</th>
-    <th class="right">{{t "ol.stats_answer"}}</th><th class="right">{{t "ol.stats_close"}}</th><th class="right">👍</th><th class="right">👎</th><th class="right">{{t "ol.stats_spam"}}</th></tr></thead>
+    <th class="right">{{t "ol.stats_kpi"}}</th><th class="right">{{t "ol.stats_answer"}}</th><th class="right">{{t "ol.stats_close"}}</th><th class="right">👍</th><th class="right">👎</th><th class="right">{{t "ol.stats_spam"}}</th></tr></thead>
   <tbody>{{range $d.Rows}}<tr{{if and (eq $d.By "days") (not .New) (not .Closed)}} class="muted"{{end}}>
     <td>{{if eq $d.By "days"}}<span class="nowrap">{{day .Day}}</span>{{else if .Name}}{{.Name}}{{else}}<span class="muted">{{t "ol.stats_nobody"}}</span>{{end}}</td>
-    <td class="right"><b>{{.New}}</b></td><td class="right">{{.Closed}}</td><td class="right">{{.NoAnswer}}</td>
+    <td class="right"><b>{{.New}}</b></td><td class="right">{{.Closed}}</td><td class="right">{{.NoAnswer}}</td><td class="right">{{.KPI}}</td>
     <td class="right nowrap">{{if .FirstAnswer}}{{durs .FirstAnswer}}{{else}}—{{end}}</td><td class="right nowrap">{{if .ToClose}}{{durs .ToClose}}{{else}}—{{end}}</td>
     <td class="right">{{.Up}}</td><td class="right">{{.Down}}</td><td class="right">{{.Spam}}</td></tr>
-  {{else}}<tr><td colspan="9" class="empty">{{t "ol.stats_none"}}</td></tr>{{end}}</tbody>
-  <tfoot><tr><th>{{t "stock.total"}}</th><th class="right">{{$t.New}}</th><th class="right">{{$t.Closed}}</th><th class="right">{{$t.NoAnswer}}</th>
+  {{else}}<tr><td colspan="10" class="empty">{{t "ol.stats_none"}}</td></tr>{{end}}</tbody>
+  <tfoot><tr><th>{{t "stock.total"}}</th><th class="right">{{$t.New}}</th><th class="right">{{$t.Closed}}</th><th class="right">{{$t.NoAnswer}}</th><th class="right">{{$t.KPI}}</th>
     <th class="right nowrap">{{if $t.FirstAnswer}}{{durs $t.FirstAnswer}}{{else}}—{{end}}</th><th class="right nowrap">{{if $t.ToClose}}{{durs $t.ToClose}}{{else}}—{{end}}</th>
     <th class="right">{{$t.Up}}</th><th class="right">{{$t.Down}}</th><th class="right">{{$t.Spam}}</th></tr></tfoot>
 </table></div></div>

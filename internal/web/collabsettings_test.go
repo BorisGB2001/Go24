@@ -331,6 +331,17 @@ func TestCollabSecurityHTTP(t *testing.T) {
 		!strings.Contains(string(raw), `"guests_tasks": true`) || !strings.Contains(string(raw), `"invite_perm": "members"`) {
 		t.Errorf("the owner's settings over the API: %d %s", st, raw)
 	}
+	// «Автоудаление сообщений»: one of the messenger's lifetimes, in the form and over the API
+	if st, raw := api(ot, "PATCH", "/api/v1/collabs/CL1/settings", map[string]any{"msg_ttl": 3600}); st != http.StatusOK ||
+		!strings.Contains(string(raw), `"msg_ttl": 3600`) || !strings.Contains(string(raw), `"guests_tasks": true`) {
+		t.Errorf("auto-delete over the API: %d %s", st, raw)
+	}
+	if st, _ := api(ot, "PATCH", "/api/v1/collabs/CL1/settings", map[string]any{"msg_ttl": 5}); st != http.StatusUnprocessableEntity {
+		t.Errorf("a lifetime not offered over the API: %d", st)
+	}
+	if _, body, _ := do(owner, "GET", "/p/CL1", nil); !strings.Contains(body, `name="msg_ttl"`) || !strings.Contains(body, `value="3600" selected`) {
+		t.Error("the settings card has no auto-delete")
+	}
 	st, raw = api(ot, "GET", "/api/v1/collabs/CL1/log", nil)
 	if st != http.StatusOK || !strings.Contains(string(raw), `"action": "member_removed"`) || !strings.Contains(string(raw), `"action": "archived"`) {
 		t.Errorf("the log over the API: %d %s", st, raw)
@@ -394,6 +405,45 @@ func TestCollabSecurityHTTP(t *testing.T) {
 	}
 	if st, _ := api(token(dev), "GET", "/api/v1/collabs/CL1/invites", nil); st != http.StatusForbidden {
 		t.Errorf("a member reads the invitations: %d", st)
+	}
+	// «Пригласить повторно»: a personal invitation works a week more; a link or a revoked one — not found
+	var ph struct {
+		ID      string
+		Expires string `json:"expires_at"`
+	}
+	st, raw = api(ot, "POST", "/api/v1/collabs/CL1/invites", map[string]any{"kind": "phone", "contact": "+7 999 123-45-67", "days": 1})
+	if st != http.StatusCreated || json.Unmarshal(raw, &ph) != nil {
+		t.Fatalf("an invitation by phone: %d %s", st, raw)
+	}
+	var again struct {
+		Expires string `json:"expires_at"`
+	}
+	st, raw = api(ot, "POST", "/api/v1/collabs/CL1/invites/"+ph.ID+"/resend", nil)
+	if st != http.StatusOK || json.Unmarshal(raw, &again) != nil || again.Expires <= ph.Expires {
+		t.Errorf("resend: %d %s (was %s)", st, raw, ph.Expires)
+	}
+	if st, _ := api(ot, "POST", "/api/v1/collabs/CL1/invites/"+inv.ID+"/resend", nil); st != http.StatusNotFound {
+		t.Errorf("a revoked invitation resent: %d", st)
+	}
+	if st, _, loc := do(owner, "POST", "/p/CL1/guests/"+ph.ID+"/resend", nil); st != http.StatusSeeOther || !strings.Contains(loc, "msg=") {
+		t.Errorf("resend on the page: %d %s", st, loc)
+	}
+	// several guests at once: the wrong contacts are named, the rest are invited
+	var before, after int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM collab_invites`).Scan(&before))
+	st, _, loc = do(owner, "POST", "/p/CL1/guests", url.Values{"kind": {"email"}, "days": {"7"},
+		"contact": {"a1@example.org, не-адрес\nБорис <b2@example.org>; a1@example.org"}})
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM collab_invites`).Scan(&after))
+	if msg, _ := url.QueryUnescape(loc); st != http.StatusSeeOther || after-before != 2 || !strings.Contains(msg, "не-адрес") {
+		t.Errorf("several guests: %d, %d made, %s", st, after-before, msg)
+	}
+	var bname string
+	must(pool.QueryRow(ctx, `SELECT name FROM collab_invites WHERE email = 'b2@example.org'`).Scan(&bname))
+	if bname != "Борис" {
+		t.Errorf("the name from the address: %q", bname)
+	}
+	if st, _, loc := do(owner, "POST", "/p/CL1/guests", url.Values{"kind": {"phone"}, "contact": {"12"}}); st != http.StatusSeeOther || !strings.Contains(loc, "msg=") {
+		t.Errorf("one wrong phone: %d %s", st, loc)
 	}
 
 	// the company's administrator: sees and manages a collab they are not in

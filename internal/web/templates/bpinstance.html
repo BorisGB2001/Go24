@@ -2,7 +2,7 @@
 {{$d := .Data}}{{$x := $d.X}}
 <div class="crumbs"><a href="/bp">{{t "bp.title"}}</a>{{with $d.Card}} {{icon "chevron-right"}} <a href="{{.}}">{{t "bp.card"}}</a>{{end}}</div>
 <div class="pagehead"><h1>⚙ {{$x.Name}}</h1><span class="pill bp-{{$x.Status}}">{{t (print "bp.status." $x.Status)}}</span></div>
-<div class="sub">{{t "bp.started" $x.StartedBy.Name (datetime $x.CreatedAt)}}</div>
+<div class="sub">{{t "bp.started" $x.StartedBy.Name (datetime $x.CreatedAt)}}{{with $x.Parent}} · {{t "bp.parent"}} <a href="/bp/i/{{.}}">{{$x.ParentName}}</a>{{end}}</div>
 {{if or $d.CanStop .User.Admin}}<div class="row bpactions">
   {{if $d.CanStop}}<form method="post" action="/bp/i/{{$x.ID}}/stop" class="row" data-confirm="{{t "bp.stop_confirm"}}" style="flex:1">
     <input type="text" name="reason" maxlength="5000" placeholder="{{t "bp.stop_reason"}}" style="flex:1"><button class="ghost">{{icon "player-stop"}} {{t "bp.stop"}}</button></form>{{end}}
@@ -11,11 +11,12 @@
   <b>{{if eq .Kind "request"}}{{t "bp.your_answer"}}{{else}}{{t "bp.your_decision"}}{{end}}</b><p>{{.Text}}</p>
   {{template "bpanswer" (dict "A" . "Back" (print "/bp/i/" $x.ID))}}</div>{{end}}
 <div class="layout2"><div>
-  {{if $d.Fields}}<div class="card"><div class="props">{{range $d.Fields}}<span class="k">{{.Label}}</span><span>{{index $x.Values .Key}}</span>{{end}}</div></div>{{end}}
+  {{if $d.Fields}}<div class="card"><div class="props">{{range $d.Fields}}<span class="k">{{.Label}}</span><span>{{template "bpvalue" (dict "F" . "V" (index $x.Values .Key) "Users" $d.Users)}}</span>{{end}}</div></div>{{end}}
   <div class="card"><h2>{{t "bp.steps"}}</h2><ol class="bpsteps">{{range $i, $s := $x.Steps}}<li class="{{$x.State $i}}">
-    {{template "bpstep" (dict "S" $s "Users" $d.Users)}}</li>{{end}}</ol></div>
+    {{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $d.Fields)}}</li>{{end}}</ol></div>
 </div><div>
-  {{with $d.Approvals}}<div class="card"><h2>{{t "bp.approvals"}}</h2>{{range .}}<div class="small"><b>{{.User.Name}}</b>{{if ne .Kind "approve"}} · {{t (print "bp.kind." .Kind)}}{{end}} — {{if .Decision}}{{t (print "bp.decision." .Decision)}}{{else}}{{t "bp.waiting"}}{{end}}{{with .Comment}} · «{{.}}»{{end}}</div>{{end}}</div>{{end}}
+  {{with $d.Approvals}}<div class="card"><h2>{{t "bp.approvals"}}</h2>{{range .}}<div class="small"><b>{{.User.Name}}</b>{{if ne .Kind "approve"}} · {{t (print "bp.kind." .Kind)}}{{end}} — {{if .Decision}}{{t (print "bp.decision." .Decision)}}{{else}}{{t "bp.waiting"}}{{end}}{{with .Comment}} · «{{.}}»{{end}}
+    {{if and $.User.Admin (not .Decision) (eq $x.Status "running") (ne .User.ID $.User.UserID)}}{{template "bpdelegate" (dict "A" . "Back" (print "/bp/i/" $x.ID))}}{{end}}</div>{{end}}</div>{{end}}
   <div class="card"><h2>{{icon "history"}} {{t "bp.history"}}</h2>{{range $d.Log}}<div class="small"><span class="muted">{{datetime .At}}</span> {{t (print "bp.log." .Kind)}}{{with .Actor}} · {{.}}{{end}}{{if and .Text (ne .Kind "step")}} — {{.Text}}{{end}}</div>{{end}}</div>
 </div></div>
 {{end}}

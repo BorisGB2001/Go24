@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"go24/internal/worktime"
 )
 
 // Link is a dependency of To on From, of one of the LinkTypes: finish_start — To cannot start before From
@@ -191,33 +193,143 @@ func (s *Store) Gantt(ctx context.Context, viewerID string, p Project, withCompl
 			}
 		}
 		gt.Editable = gt.Linkable && !t.DatesFollow() && !p.Frozen()
-		day := func(x time.Time) time.Time {
-			y, m, d := x.Local().Date()
-			return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-		}
-		switch {
-		case t.StartPlan != nil:
-			gt.Start = *t.StartPlan
-		default:
-			gt.Start = day(t.CreatedAt)
-		}
-		switch {
-		case t.EndPlan != nil:
-			gt.End = *t.EndPlan
-		case t.Deadline != nil:
-			gt.End = day(*t.Deadline)
-		case t.ClosedAt != nil:
-			gt.End = day(*t.ClosedAt)
-		default:
-			gt.End = gt.Start
-		}
-		if gt.End.Before(gt.Start) {
-			gt.End = gt.Start
-		}
+		gt.Start, gt.End = barDates(t.StartPlan, t.EndPlan, t.CreatedAt, t.Deadline, t.ClosedAt)
 		g.Tasks = append(g.Tasks, gt)
 	}
 	g.Links, err = scanLinks(ctx, s.db, "f.project_id = $1 AND t.project_id = $1", p.ID)
 	return g, err
+}
+
+// barDates is the span of a task's bar: the plan dates, else the creation date → the deadline (or the completion).
+func barDates(startPlan, endPlan *time.Time, created time.Time, deadline, closed *time.Time) (start, end time.Time) {
+	day := func(x time.Time) time.Time {
+		y, m, d := x.Local().Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	}
+	switch {
+	case startPlan != nil:
+		start = *startPlan
+	default:
+		start = day(created)
+	}
+	switch {
+	case endPlan != nil:
+		end = *endPlan
+	case deadline != nil:
+		end = day(*deadline)
+	case closed != nil:
+		end = day(*closed)
+	default:
+		end = start
+	}
+	if end.Before(start) {
+		end = start
+	}
+	return start, end
+}
+
+// linkShift is how many days the successor's bar (ss..se) must move later for the link of the type to the
+// predecessor's bar (ps..pe) to hold; 0 — it holds.
+func linkShift(typ string, ps, pe, ss, se time.Time) int {
+	need, have := pe.AddDate(0, 0, 1), ss // finish_start: the successor starts the day after
+	switch typ {
+	case "start_start":
+		need, have = ps, ss
+	case "finish_finish":
+		need, have = pe, se
+	case "start_finish":
+		need, have = ps, se
+	}
+	if !have.Before(need) {
+		return 0
+	}
+	return int(need.Sub(have).Hours()/24 + 0.5)
+}
+
+// shiftSuccessors moves the plan dates of the task's successors later, keeping their length, where the task's new
+// dates break a link — Gantt shifts the dependent tasks — and so on down the chain. Completed
+// successors, those the user cannot edit and those whose dates follow their subtasks stay; returns the moved ones.
+func (s *Store) shiftSuccessors(ctx context.Context, tx pgx.Tx, userID, taskID string) (int, error) {
+	type bar struct {
+		start, end time.Time
+	}
+	barOf := func(id string) (b bar, open, movable bool, workTime bool, err error) {
+		var sp, ep, dl, cl *time.Time
+		var created time.Time
+		var st Status
+		var follow bool
+		err = tx.QueryRow(ctx, `SELECT start_plan, end_plan, created_at, deadline, closed_at, status, match_work_time,
+			dates_from_subtasks AND EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.id)
+			FROM tasks t WHERE id = $1`, id).Scan(&sp, &ep, &created, &dl, &cl, &st, &workTime, &follow)
+		b.start, b.end = barDates(sp, ep, created, dl, cl)
+		return b, !st.Closed(), !follow, workTime, err
+	}
+	var sched *worktime.Schedule
+	moved, queue := 0, []string{taskID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		pred, _, _, _, err := barOf(id)
+		if err != nil {
+			return moved, err
+		}
+		rows, err := tx.Query(ctx, `SELECT to_task, type FROM task_links WHERE from_task = $1`, id)
+		if err != nil {
+			return moved, err
+		}
+		type succ struct{ id, typ string }
+		list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (succ, error) {
+			var x succ
+			return x, r.Scan(&x.id, &x.typ)
+		})
+		if err != nil {
+			return moved, err
+		}
+		for _, l := range list {
+			b, open, movable, workTime, err := barOf(l.id)
+			if err != nil {
+				return moved, err
+			}
+			days := linkShift(l.typ, pred.start, pred.end, b.start, b.end)
+			if days == 0 || !open || !movable {
+				continue
+			}
+			if a, err := loadAccess(ctx, tx, userID, l.id, true); err != nil || !(a.Roles.Creator || a.Roles.Manager) {
+				continue
+			}
+			ns, ne := b.start.AddDate(0, 0, days), b.end.AddDate(0, 0, days)
+			if workTime {
+				if sched == nil {
+					sc, err := s.Schedule(ctx)
+					if err != nil {
+						return moved, err
+					}
+					sched = &sc
+				}
+				ns = *sched.AdjustDay(&ns)
+				if ne = *sched.AdjustDay(&ne); ne.Before(ns) {
+					ne = ns
+				}
+			}
+			var oldS, oldE *time.Time
+			if err := tx.QueryRow(ctx, `SELECT start_plan, end_plan FROM tasks WHERE id = $1`, l.id).Scan(&oldS, &oldE); err != nil {
+				return moved, err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE tasks SET start_plan = $2, end_plan = $3, version = version + 1, updated_at = now()
+				WHERE id = $1`, l.id, ns, ne); err != nil {
+				return moved, err
+			}
+			if err := addHistory(ctx, tx, l.id, userID, "start_plan", dateText(oldS), dateText(&ns)); err != nil {
+				return moved, err
+			}
+			if err := addHistory(ctx, tx, l.id, userID, "end_plan", dateText(oldE), dateText(&ne)); err != nil {
+				return moved, err
+			}
+			moved++
+			queue = append(queue, l.id)
+		}
+	}
+	return moved, nil
 }
 
 // SetPlanDates moves the task's plan dates (the bar of the Gantt chart), keeping its other fields.

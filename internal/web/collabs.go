@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,11 +84,13 @@ func (s *Server) projectLeave(w http.ResponseWriter, r *http.Request, sess auth.
 func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/p/" + r.PathValue("key")
 	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	msgTTL, _ := strconv.Atoi(r.FormValue("msg_ttl"))
 	if err == nil {
 		err = s.Tasks.SetCollabSettings(r.Context(), p, sess.UserID, tasks.CollabSettings{
 			InvitePerm: r.FormValue("invite_perm"), GuestInvitePerm: r.FormValue("guest_invite_perm"),
 			ChatHistory: r.FormValue("chat_history") == "on", GuestTasks: r.FormValue("guests_tasks") == "on",
 			GuestFiles: r.FormValue("guests_files") == "on", EditPerm: r.FormValue("edit_perm"), ChatPerm: r.FormValue("chat_perm"),
+			MsgTTL: msgTTL,
 		})
 	}
 	if err != nil {
@@ -95,7 +98,7 @@ func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 	s.Log.Info("collab settings", "user_id", sess.UserID, "collab", p.Key)
-	s.Matrix.Wake() // the chat's history for new members, who writes in it
+	s.Matrix.Wake() // the chat's history for new members, who writes in it, its auto-delete
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "collab.settings_saved"))+"#settings", http.StatusSeeOther)
 }
 
@@ -152,7 +155,7 @@ func (s *Server) collabData(r *http.Request, p tasks.Project, data map[string]an
 	data["CanAddMembers"] = s.Tasks.CanAddMembers(r.Context(), p)
 	data["CanDelete"] = p.MyRole == "owner" || p.MyRole == "admin"
 	if set, err := s.Tasks.CollabSettings(r.Context(), p); err == nil {
-		data["Settings"] = set
+		data["Settings"], data["MsgTTLs"] = set, tasks.MsgTTLs
 	}
 	if p.CanManage() {
 		if log, err := s.Tasks.CollabLog(r.Context(), p, 100); err == nil {

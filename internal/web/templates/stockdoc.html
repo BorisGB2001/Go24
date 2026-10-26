@@ -10,7 +10,9 @@
   {{if $w}}
   <div><label>{{t "stock.doc_date"}}</label><input type="date" name="date" value="{{dinput (ptr $v.Date)}}"></div>
   <div><label>{{t "stock.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$v.Title}}"></div>
-  {{if eq $k "arrival"}}<div><label>{{t "stock.supplier"}}</label><select name="supplier"><option value="">—</option>{{range $d.Suppliers}}<option value="{{.ID}}" {{if eq .ID $v.Supplier.ID}}selected{{end}}>{{.Title}}</option>{{end}}</select></div>
+  {{if eq $k "arrival"}}<div><label>{{t "stock.supplier"}}</label><select name="supplier"><option value="">—</option>
+    {{with $d.Suppliers}}<optgroup label="{{t "crm.companies"}}">{{range .}}<option value="{{.ID}}" {{if and (ne $v.SupplierKind "contact") (eq .ID $v.Supplier.ID)}}selected{{end}}>{{.Title}}</option>{{end}}</optgroup>{{end}}
+    {{with $d.SupplierContacts}}<optgroup label="{{t "crm.contacts"}}">{{range .}}<option value="contact:{{.ID}}" {{if and (eq $v.SupplierKind "contact") (eq .ID $v.Supplier.ID)}}selected{{end}}>{{.Name}}{{with .Company.Name}} · {{.}}{{end}}</option>{{end}}</optgroup>{{end}}</select></div>
   <div><label>{{t "stock.incoming_number"}}</label><input type="text" name="incoming_number" maxlength="100" value="{{$v.IncomingNumber}}"></div>
   <div><label>{{t "stock.incoming_date"}}</label><input type="date" name="incoming_date" value="{{dinput $v.IncomingDate}}"></div>{{end}}
   {{if $v.Deal.ID}}<div><label>{{t "stock.deal"}}</label><p><a href="/crm/deals/{{$v.Deal.ID}}">{{$v.Deal.Name}}</a></p></div>{{end}}
@@ -19,7 +21,7 @@
   <div><label>{{t "crm.f.responsible"}}</label>{{template "upick" (upick "responsible" $v.Responsible.ID $d.Users "required")}}</div>
   {{else}}<div class="props"><span class="k">{{t "stock.doc_date"}}</span><span>{{day $v.Date}}</span>
     {{with $v.Title}}<span class="k">{{t "stock.doc_title"}}</span><span>{{.}}</span>{{end}}
-    {{if $v.Supplier.ID}}<span class="k">{{t "stock.supplier"}}</span><span><a href="/crm/companies/{{$v.Supplier.ID}}">{{$v.Supplier.Name}}</a></span>{{end}}
+    {{if $v.Supplier.ID}}<span class="k">{{t "stock.supplier"}}</span><span><a href="/crm/{{if eq $v.SupplierKind "contact"}}contacts{{else}}companies{{end}}/{{$v.Supplier.ID}}">{{$v.Supplier.Name}}</a></span>{{end}}
     {{with $v.IncomingNumber}}<span class="k">{{t "stock.incoming_number"}}</span><span>{{.}}{{with $v.IncomingDate}} · {{day (deref .)}}{{end}}</span>{{end}}
     {{if $v.Deal.ID}}<span class="k">{{t "stock.deal"}}</span><span><a href="/crm/deals/{{$v.Deal.ID}}">{{$v.Deal.Name}}</a></span>{{end}}
     {{with $v.Reason}}<span class="k">{{t "stock.reason"}}</span><span>{{.}}</span>{{end}}

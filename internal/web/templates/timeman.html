@@ -15,7 +15,7 @@
   <h2 style="padding:12px 16px 0">{{icon "users"}} {{t "workday.team"}} <span class="muted small">{{len $d.Team}} / {{$d.TeamSize}}</span></h2>
   {{if $d.Team}}<table class="tlist"><thead><tr><th>{{t "workday.col.who"}}</th><th>{{t "workday.col.start"}}</th><th>{{t "workday.col.end"}}</th><th>{{t "workday.col.worked"}}</th><th>{{t "workday.col.report"}}</th></tr></thead>
   <tbody>{{range $d.Team}}<tr><td><a href="/u/{{.UserID}}">{{.Name}}</a> <span class="pill wd-{{.State}}">{{t (print "workday." .State)}}</span></td>
-    <td>{{clock .Started}}{{if .Late $d.Start}} <span class="dl over" title="{{t "workday.late"}}">{{t "workday.late"}}</span>{{end}}</td>
+    <td>{{clock .Started}}{{if index $d.Late (print .UserID "|" (.Day.Format "2006-01-02"))}} <span class="dl over" title="{{t "workday.late"}}">{{t "workday.late"}}</span>{{end}}</td>
     <td>{{with .Ended}}{{clock .}}{{else}}—{{end}}</td><td>{{dur (.Worked $d.Now)}}</td><td class="small">{{.Report}}</td></tr>{{end}}</tbody></table>
   {{else}}<div class="empty">{{t "workday.team_none"}}</div>{{end}}
 </div>{{end}}
@@ -23,7 +23,7 @@
   <div class="row" style="padding:12px 16px 0"><h2 style="flex:1;margin:0">{{icon "calendar-event"}} {{t "workday.mine"}} · {{t (print "month_full." ($d.Month.Format "1"))}} {{$d.Month.Year}}</h2>
     <a href="/worktime?month={{$d.Prev}}" class="button ghost">{{icon "chevron-left"}}</a><a href="/worktime?month={{$d.Next}}" class="button ghost">{{icon "chevron-right"}}</a></div>
   {{if $d.Days}}<table class="tlist"><thead><tr><th>{{t "workday.col.day"}}</th><th>{{t "workday.col.start"}}</th><th>{{t "workday.col.end"}}</th><th>{{t "workday.col.pause"}}</th><th>{{t "workday.col.worked"}}</th><th>{{t "workday.col.report"}}</th></tr></thead>
-  <tbody>{{range $d.Days}}<tr><td><a href="/worktime/d/{{$d.Me}}/{{.Day.Format "2006-01-02"}}">{{day .Day}}</a></td><td>{{clock .Started}}{{if .Late $d.Start}} <span class="dl over">{{t "workday.late"}}</span>{{end}}</td>
+  <tbody>{{range $d.Days}}<tr><td><a href="/worktime/d/{{$d.Me}}/{{.Day.Format "2006-01-02"}}">{{day .Day}}</a></td><td>{{clock .Started}}{{if index $d.Late (print $d.Me "|" (.Day.Format "2006-01-02"))}} <span class="dl over">{{t "workday.late"}}</span>{{end}}</td>
     <td>{{with .Ended}}{{clock .}}{{else}}<span class="pill wd-{{.State}}">{{t (print "workday." .State)}}</span>{{end}}</td>
     <td>{{if .PauseSecs}}{{dur .PauseSecs}}{{else}}—{{end}}</td><td>{{dur (.Worked $d.Now)}}</td><td class="small">{{.Report}}</td></tr>{{end}}</tbody>
     <tfoot><tr><th colspan="4">{{t "workday.total"}}</th><th>{{dur $d.Total}}</th><th></th></tr></tfoot></table>

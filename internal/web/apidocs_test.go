@@ -233,6 +233,21 @@ func TestDocsAPI(t *testing.T) {
 	if sd.Status != "cancelled" {
 		t.Fatalf("cancelled: %+v", sd)
 	}
+	call("GET", "/api/v1/sign/"+sd.ID, bobKey, nil, http.StatusOK, &sd)
+	if n := len(sd.History); n != 3 || sd.History[0].Kind != "created" || sd.History[1].Kind != "sent" ||
+		sd.History[2].Kind != "cancelled" || sd.History[2].Actor == nil || sd.History[2].Actor.ID != bob {
+		t.Fatalf("history: %+v", sd.History)
+	}
+	// several signers of each side
+	call("POST", "/api/v1/sign", bobKey, map[string]any{"document": doc.ID, "signers": []string{anna, bob}, "remind_days": 0,
+		"clients": []map[string]string{{"name": "Иван", "email": "ivan@t"}, {"name": "Пётр", "email": "petr@t"}}}, http.StatusCreated, &sd)
+	if len(sd.Parties) != 4 || sd.Parties[1].UserID != bob || sd.Parties[3].Email != "petr@t" || sd.Parties[3].Link == "" {
+		t.Fatalf("several: %+v", sd)
+	}
+	if d, _ := srv.Sign.Get(ctx, sd.ID); d.RemindDays != 0 {
+		t.Fatalf("remind_days: %d", d.RemindDays)
+	}
+	call("POST", "/api/v1/sign/"+sd.ID+"/cancel", bobKey, nil, http.StatusOK, &sd)
 	sd = apiSignDoc{}
 	upload("/api/v1/sign", annaKey, map[string]string{"signer": bob}, docx("Акт"), http.StatusCreated, &sd)
 	if sd.Title != "dog" || sd.Entity != "" {

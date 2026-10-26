@@ -4,21 +4,28 @@
 <h1>{{t "invite.title"}}</h1>
 <div class="sub">{{t "invite.subtitle"}}</div>
 {{if not $d.Ready}}<div class="flash">{{icon "alert-triangle"}} {{t "invite.not_ready"}}</div>{{else}}
-<div class="card" style="max-width:640px">
+<div class="card" style="max-width:720px">
   <form method="post" action="/company/invite">
+    <label>{{t "invite.people"}} <span class="req">*</span></label>
+    <textarea name="people" rows="5" required placeholder="{{t "invite.people_hint"}}"></textarea>
+    <div class="small muted">{{t "invite.people_help"}}</div>
     <div class="grid">
-      <div><label>{{t "company.col.email"}} <span class="req">*</span></label><input type="email" name="email" required maxlength="254"></div>
-      <div><label>{{t "invite.name"}} <span class="req">*</span></label><input type="text" name="name" required maxlength="200" placeholder="{{t "invite.name_hint"}}"></div>
+      <div><label>{{t "invite.department"}}</label><select name="department"><option value="">{{t "invite.department_none"}}</option>
+        {{range $d.Depts}}<option value="{{.ID}}"{{if eq .ID $d.Dept}} selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select></div>
     </div>
+    <div class="small muted">{{if $d.Mail}}{{t "invite.by_mail"}}{{else}}{{t "invite.no_mail"}}{{end}}</div>
     <p><button class="primary">{{icon "send"}} {{t "invite.send"}}</button></p>
   </form>
 </div>{{end}}
 {{with $d.Invites}}<div class="card flush">
-  <table class="tlist"><thead><tr><th>{{t "invite.col.who"}}</th><th>{{t "invite.col.link"}}</th><th>{{t "invite.col.state"}}</th><th>{{t "invite.col.by"}}</th></tr></thead>
-  <tbody>{{range .}}<tr{{if eq .Email $d.New}} class="hl"{{end}}><td>{{.Name}}<div class="small muted">{{.Email}}</div></td>
-    <td>{{if or .Joined (.Expires.Before $d.Now)}}<span class="muted">—</span>{{else}}<button type="button" class="ghost" data-copy="{{.Link}}" title="{{.Link}}">{{icon "copy"}} {{t "invite.copy"}}</button>{{end}}</td>
-    <td>{{if .Joined}}<span class="pill st-completed">{{t "invite.joined"}}</span>{{else if .Expires.Before $d.Now}}<span class="pill st-deferred">{{t "invite.expired"}}</span>{{else}}<span class="pill st-pending">{{t "invite.waiting" (day .Expires)}}</span>{{end}}</td>
-    <td class="small">{{.InvitedBy}} · {{datetime .Created}}</td></tr>{{end}}</tbody></table>
+  <table class="tlist"><thead><tr><th>{{t "invite.col.who"}}</th><th>{{t "invite.department"}}</th><th>{{t "invite.col.state"}}</th><th>{{t "invite.col.by"}}</th><th></th></tr></thead>
+  <tbody>{{range .}}{{$st := .State $d.Now}}<tr{{if eq .Email $d.New}} class="hl"{{end}}><td>{{.Name}}<div class="small muted">{{.Email}}</div></td>
+    <td class="small">{{with .Department}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{if eq $st "joined"}}<span class="pill st-completed">{{t "invite.joined"}}</span>{{else if eq $st "revoked"}}<span class="pill st-deferred">{{t "invite.cancelled"}}</span>{{else if eq $st "expired"}}<span class="pill st-deferred">{{t "invite.expired"}}</span>{{else}}<span class="pill st-pending">{{t "invite.waiting" (day .Expires)}}</span>{{if .Mailed}} <span class="small muted">{{icon "mail"}} {{t "invite.mail_sent"}}</span>{{end}}{{end}}</td>
+    <td class="small">{{.InvitedBy}} · {{datetime .Created}}</td>
+    <td class="nowrap">{{if eq $st "waiting"}}<button type="button" class="ghost" data-copy="{{.Link}}" title="{{.Link}}">{{icon "copy"}} {{t "invite.copy"}}</button>{{end}}
+      {{if or (eq $st "waiting") (eq $st "expired")}}<form method="post" action="/company/invite/{{.ID}}/resend" class="inline"><button class="ghost">{{icon "refresh"}} {{t "invite.resend"}}</button></form>
+      <form method="post" action="/company/invite/{{.ID}}/cancel" class="inline" data-confirm="{{t "invite.cancel_confirm" .Email}}"><button class="ghost danger">{{icon "x"}} {{t "invite.cancel"}}</button></form>{{end}}</td></tr>{{end}}</tbody></table>
 </div>{{end}}
 </div>
 <script src="{{asset "js/task.js"}}"></script>

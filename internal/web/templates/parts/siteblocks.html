@@ -16,7 +16,7 @@
 {{else if eq .Type "contacts"}}<section class="lp-contacts"><div class="lp-wrap">{{with .Get "title"}}<h2>{{.}}</h2>{{end}}
   {{with .Get "phone"}}<p><a href="tel:{{.}}">{{.}}</a></p>{{end}}{{with .Get "email"}}<p><a href="mailto:{{.}}">{{.}}</a></p>{{end}}
   {{range .Paragraphs "address"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></section>
-{{else if eq .Type "form"}}<section class="lp-form" id="b-{{.ID}}"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
+{{else if eq .Type "form"}}<section class="lp-form"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
   {{with .Get "title"}}<h2>{{.}}</h2>{{end}}{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
   {{if eq .State "sent"}}<div class="lp-thanks">{{range .Paragraphs "thanks"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{else}}<p>{{t "site.def.form.thanks"}}</p>{{end}}</div>
   {{else}}<form method="post" class="lp-fields"><input type="hidden" name="block" value="{{.ID}}"><input type="hidden" name="t" value="{{.Stamp}}">
@@ -26,5 +26,12 @@
       {{if eq $f "comment"}}<textarea name="comment" rows="4" maxlength="5000"{{if eq $ask "req"}} required{{end}}></textarea>
       {{else}}<input type="{{if eq $f "email"}}email{{else if eq $f "phone"}}tel{{else}}text{{end}}" name="{{$f}}" maxlength="300"{{if eq $ask "req"}} required{{end}} autocomplete="{{if eq $f "name"}}name{{else if eq $f "phone"}}tel{{else}}email{{end}}">{{end}}</label>{{end}}{{end}}
     <button class="lp-btn"{{if eq .State "preview"}} disabled title="{{t "site.form_preview"}}"{{end}}>{{or (.Get "button") (t "site.def.form.button")}}</button></form>{{end}}</div></section>
+{{else if eq .Type "booking"}}<section class="lp-form lp-booking"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
+  {{with .Get "title"}}<h2>{{.}}</h2>{{end}}{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
+  {{with .Get "booking"}}<iframe class="lp-bkframe" src="/bk/{{.}}?embed=1" title="{{t "booking.title"}}" loading="lazy" data-go24-booking></iframe>
+  <script>window.go24bk || (window.go24bk = addEventListener('message', e => document.querySelectorAll('iframe[data-go24-booking]').forEach(f => {
+    if (f.contentWindow === e.source && e.data && e.data.go24booking > 0) f.style.height = e.data.go24booking + 'px';
+  })) || 1);</script>
+  {{else}}<p class="lp-err">{{t "site.booking_none"}}</p>{{end}}</div></section>
 {{else if eq .Type "footer"}}<footer class="lp-footer"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</div></footer>
 {{end}}{{end}}

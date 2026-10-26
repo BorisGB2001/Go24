@@ -66,8 +66,8 @@ func importedOf(text string) ([]calendar.Imported, error) {
 // eventOfInvite is a meeting of a calendar file as go24 keeps it.
 func eventOfInvite(in mail.Invite) calendar.Event {
 	e := calendar.Event{Title: in.Summary, Description: in.Description, Where: in.Location, Start: in.Start, End: in.End,
-		AllDay: in.AllDay, Repeat: in.Repeat, Every: in.Every, Until: in.Until, Skip: in.Skip, Reminds: in.Alarms,
-		Private: in.Private, Accessibility: "busy"}
+		AllDay: in.AllDay, Repeat: in.Repeat, Every: in.Every, Until: in.Until, Days: in.Days, Count: in.Count, Skip: in.Skip, Reminds: in.Alarms,
+		Private: in.Private, Accessibility: "busy", TZ: in.TZ}
 	if strings.TrimSpace(e.Title) == "" {
 		e.Title = "—"
 	}

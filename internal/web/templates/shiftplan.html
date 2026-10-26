@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$d := .Data}}{{$ws := $d.WS}}
+<div class="row"><h1 style="flex:1">{{t "wschedule.plan"}} · {{$ws.Name}}</h1>
+  <a href="/worktime/schedules/{{$ws.ID}}" class="button ghost">{{icon "settings"}} {{t "wschedule.settings"}}</a>
+  <a href="/worktime/table?month={{$d.Month.Format "2006-01"}}" class="button ghost">{{icon "table"}} {{t "worksheet.title"}}</a></div>
+<div class="sub">{{t "wschedule.plan_subtitle"}}</div>
+<div class="card flush">
+  <div class="row" style="padding:12px 16px 0">
+    <h2 style="flex:1;margin:0">{{t (print "month_full." ($d.Month.Format "1"))}} {{$d.Month.Year}}</h2>
+    <a href="?month={{$d.Prev}}" class="button ghost" title="{{t "worksheet.prev"}}">{{icon "chevron-left"}}</a>
+    <a href="?month={{$d.Next}}" class="button ghost" title="{{t "worksheet.next"}}">{{icon "chevron-right"}}</a>
+  </div>
+  <div class="wslegend">{{range $ws.Shifts}}<span class="hint"><b>{{.Name}}</b> {{.Start}}–{{.End}}{{with index $d.Counts .ID}} · {{t "wschedule.shifts_n" .}}{{end}}</span>{{end}}
+    <span class="ws-absence">{{t "worksheet.legend.absence"}}</span></div>
+  {{if $d.People}}<form method="post" action="/worktime/schedules/{{$ws.ID}}/plan?month={{$d.Month.Format "2006-01"}}">
+  <div class="wsheet-wrap"><table class="wsheet shplan"><thead><tr><th class="who">{{t "workday.col.who"}}</th>
+    {{range $d.Dates}}{{$k := .Format "2006-01-02"}}<th class="{{if ge (wdnum .) 6}}off{{end}}{{if eq $k $d.Today}} today{{end}}">{{.Day}}<br><span class="muted">{{t (print "wd." (wdnum .))}}</span></th>{{end}}</tr></thead>
+  <tbody>{{range $p := $d.People}}{{$can := index $d.Can $p.ID}}<tr><td class="who"><a href="/u/{{$p.ID}}">{{$p.Name}}</a>{{with $p.Position}}<div class="muted small">{{.}}</div>{{end}}</td>
+    {{range $d.Dates}}{{$k := .Format "2006-01-02"}}{{$key := print $p.ID "|" $k}}{{$cur := index $d.Plan $key}}{{$abs := index $d.Absent $key}}
+    <td class="{{if $abs}}ws-absence{{else if $cur}}ws-set{{end}}" title="{{with $abs}}{{t (print "absence.kind." .)}}{{end}}">
+      {{if $can}}<select name="c|{{$key}}" aria-label="{{$p.Name}} {{$k}}"><option value=""></option>{{range $ws.Shifts}}<option value="{{.ID}}" {{if eq .ID $cur}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+      {{else}}<span>{{range $ws.Shifts}}{{if eq .ID $cur}}{{.Name}}{{end}}{{end}}</span>{{end}}</td>{{end}}</tr>{{end}}</tbody></table></div>
+  {{if $d.Editable}}<p class="row" style="padding:0 16px 12px"><button class="primary">{{t "common.save"}}</button><span class="small muted">{{t "wschedule.plan_hint"}}</span></p>{{end}}
+  </form>{{else}}<div class="empty">{{t "wschedule.plan_empty"}} <a href="/worktime/schedules/{{$ws.ID}}">{{t "wschedule.settings"}}</a></div>{{end}}
+</div>
+{{end}}

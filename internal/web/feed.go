@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +68,12 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		return
 	}
 	s.fillProcesses(r.Context(), sess.UserID, items, pinned)
+	if general && f.Before.IsZero() && !tasks.IsGuestCtx(r.Context()) { // the menu counter starts over, what came since is marked new
+		if since, err := s.Feed.Seen(r.Context(), sess.UserID); err == nil {
+			feed.MarkNew(items, sess.UserID, since)
+			feed.MarkNew(pinned, sess.UserID, since)
+		}
+	}
 	projects, err := s.Tasks.ListProjects(r.Context(), sess.UserID)
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
@@ -96,7 +104,18 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			return
 		}
 	}
+	mayAll, mayImportant, err := s.Feed.May(r.Context(), sess.UserID)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	side, err := s.feedSide(r, sess)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
 	data := map[string]any{
+		"Side": side, "MayAll": mayAll, "MayImportant": mayImportant, // the rights of «Настройки ленты»
 		"Items": items, "View": q.Get("view"), "Projects": mine, "More": more, "Me": sess.UserID, "Admin": sess.AdminActive(),
 		"Users": users, "Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji,
 		"Pinned": pinned, "General": general, "F": f, "FromText": q.Get("from"), "Keep": keep.Encode(), "Kinds": feed.Kinds, "Untils": []string{"always", "day", "week", "month", "date"}, "Reactions": reactionList(), "Filtered": len(keep) > 0,
@@ -140,7 +159,7 @@ func (s *Server) feedPost(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		in.Gratitude = &newGratitude{Badge: r.FormValue("badge"), People: r.Form["thank"]}
 	}
 	if q := r.FormValue("poll_question"); strings.TrimSpace(q) != "" {
-		in.Poll = &newPoll{Question: q, Options: strings.Split(r.FormValue("poll_options"), "\n"), Multiple: r.FormValue("poll_multiple") == "on"}
+		in.Poll = formPoll(r)
 	}
 	var id string
 	until, err := importantUntil(r)
@@ -192,7 +211,7 @@ type newGratitude struct {
 type newPoll struct {
 	Question string
 	Options  []string
-	Multiple bool
+	feed.PollKind
 }
 
 // publishPost creates the post with its files, gratitude and poll; it is kept in Matrix: the post exists only if
@@ -224,7 +243,7 @@ func (s *Server) publishPost(r *http.Request, sess auth.Session, in newPost) (st
 		err = s.Feed.SetGratitude(ctx, sess.UserID, id, in.Gratitude.Badge, in.Gratitude.People)
 	}
 	if err == nil && in.Poll != nil {
-		err = s.Feed.AddPoll(ctx, sess.UserID, id, in.Poll.Question, in.Poll.Options, in.Poll.Multiple)
+		err = s.Feed.AddPoll(ctx, sess.UserID, id, in.Poll.Question, in.Poll.Options, in.Poll.PollKind)
 	}
 	if err == nil && s.Matrix != nil {
 		if perr := s.Matrix.PublishPost(ctx, id); perr != nil {
@@ -603,6 +622,85 @@ func (s *Server) feedVote(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	writeJSON(w, http.StatusOK, map[string]string{"html": html})
 }
 
+// formPoll: the poll of the post form.
+func formPoll(r *http.Request) *newPoll {
+	return &newPoll{Question: r.FormValue("poll_question"), Options: strings.Split(r.FormValue("poll_options"), "\n"),
+		PollKind: feed.PollKind{Multiple: r.FormValue("poll_multiple") == "on", Anonymous: r.FormValue("poll_anonymous") == "on"}}
+}
+
+// feedPollVoters: «Кто голосовал» — the people by answer (not of an anonymous poll).
+func (s *Server) feedPollVoters(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	list, err := s.Feed.PollVoters(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	out := make([]map[string]string, len(list))
+	for i, x := range list {
+		out[i] = map[string]string{"option": x.OptionID, "id": x.ID, "name": x.Name, "photo": company.PhotoURL(x.ID, x.Photo)}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// feedPollClose: «Остановить опрос» (…/stop) / «Возобновить опрос» (…/resume) — the author or an admin; the answer
+// is the post.
+func (s *Server) feedPollClose(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("id")
+	err := s.Feed.ClosePoll(r.Context(), sess.UserID, id, strings.HasSuffix(r.URL.Path, "/stop"))
+	var html string
+	if err == nil {
+		html, err = s.feedItemHTML(r, sess, id)
+	}
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"html": html})
+}
+
+// feedPollExport: «Выгрузить результаты» for Excel — the answers with their votes and, unless the poll is anonymous,
+// who voted; the post's author or an admin.
+func (s *Server) feedPollExport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	ctx, id := r.Context(), r.PathValue("id")
+	err := s.Feed.CanChange(ctx, sess.UserID, id)
+	var it feed.Item
+	if err == nil {
+		it, err = s.Feed.Item(ctx, sess.UserID, id)
+	}
+	if err == nil && (it.Post == nil || it.Post.Poll == nil) {
+		err = feed.ErrNotFound
+	}
+	var voters []feed.PollVoter
+	if err == nil && !it.Post.Poll.Anonymous {
+		voters, err = s.Feed.PollVoters(ctx, sess.UserID, id)
+	}
+	if err != nil {
+		s.taskErr(w, r, err, "/feed")
+		return
+	}
+	poll := it.Post.Poll
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=poll-"+time.Now().Format(time.DateOnly)+".csv")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{poll.Question})
+	head := []string{s.tr(r, "poll.csv_option"), s.tr(r, "poll.csv_votes"), "%"}
+	if !poll.Anonymous {
+		head = append(head, s.tr(r, "poll.csv_person"))
+	}
+	_ = cw.Write(head)
+	for _, o := range poll.Options {
+		_ = cw.Write([]string{o.Text, strconv.Itoa(o.Votes), strconv.Itoa(poll.Percent(o))})
+		for _, v := range voters {
+			if v.OptionID == o.ID {
+				_ = cw.Write([]string{"", "", "", v.Name})
+			}
+		}
+	}
+	_ = cw.Write([]string{s.tr(r, "poll.voters", poll.Voters)})
+	cw.Flush()
+}
+
 func (s *Server) feedRead(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	n, err := s.Feed.MarkRead(r.Context(), sess.UserID, r.PathValue("id"))
 	if err != nil {
@@ -610,6 +708,15 @@ func (s *Server) feedRead(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"count": n, "text": s.tr(r, "feed.readers", n)})
+}
+
+// feedSeen: the open feed showed the person what came live — the menu counter starts over.
+func (s *Server) feedSeen(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if _, err := s.Feed.Seen(r.Context(), sess.UserID); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"news": 0})
 }
 
 func (s *Server) feedDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -636,9 +743,17 @@ func (s *Server) removePost(ctx context.Context, sess auth.Session, id string) e
 
 // feedItemHTML renders one post for a script (after publishing or editing, and for live updates).
 func (s *Server) feedItemHTML(r *http.Request, sess auth.Session, id string) (string, error) {
+	return s.feedItem(r, sess, id, false)
+}
+
+// feedItem renders a post; fresh marks it new when someone else wrote it (it came live).
+func (s *Server) feedItem(r *http.Request, sess auth.Session, id string, fresh bool) (string, error) {
 	it, err := s.Feed.Item(r.Context(), sess.UserID, id)
 	if err != nil {
 		return "", err
+	}
+	if fresh && it.Post != nil {
+		it.Post.New = it.Post.AuthorID != sess.UserID
 	}
 	s.fillProcesses(r.Context(), sess.UserID, []feed.Item{it})
 	return s.feedFragment(r, "fitem", map[string]any{"I": it, "Me": sess.UserID, "Admin": sess.AdminActive(), "Guest": tasks.IsGuestCtx(r.Context())})
@@ -768,7 +883,7 @@ func (s *Server) feedLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case id := <-events:
-			html, err := s.feedItemHTML(r, sess, id)
+			html, err := s.feedItem(r, sess, id, true)
 			if err != nil {
 				continue // not for this viewer
 			}
@@ -792,4 +907,37 @@ func markHashtags(escaped string) string {
 		}
 		return m[:i] + `<a class="ftag" href="/feed?tag=` + url.QueryEscape(tag) + `">` + m[i:] + `</a>`
 	})
+}
+
+// feedSide is the right column of the feed: the coming birthdays of colleagues (with «Поздравить» — a
+// gratitude to them), the important posts the viewer has not confirmed yet; «Мои задачи» are the page's counters.
+func (s *Server) feedSide(r *http.Request, sess auth.Session) (map[string]any, error) {
+	side := map[string]any{}
+	if tasks.IsGuestCtx(r.Context()) {
+		return side, nil
+	}
+	if s.Company != nil {
+		list, err := s.Company.Birthdays(r.Context(), 14)
+		if err != nil {
+			return nil, err
+		}
+		side["Birthdays"] = list[:min(len(list), 5)]
+	}
+	imp, err := s.Feed.List(r.Context(), sess.UserID, feed.Filter{Important: true, Posts: true})
+	if err != nil {
+		return nil, err
+	}
+	type note struct{ ID, Author, Text string }
+	var unread []note
+	for _, it := range imp {
+		if p := it.Post; p != nil && !p.Read && p.AuthorID != sess.UserID && len(unread) < 3 {
+			text := p.Title
+			if text == "" {
+				text = clipText(strings.Join(strings.Fields(p.Body), " "), 90)
+			}
+			unread = append(unread, note{p.ID, p.AuthorName, text})
+		}
+	}
+	side["Important"] = unread
+	return side, nil
 }

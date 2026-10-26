@@ -1,5 +1,6 @@
-// «Открытые линии» (openlines.html): «Быстрые ответы» — typed after «/» in the reply or picked by the button; the
-// dialogue list, its tabs and the open dialogue refresh by themselves when a dialogue changes.
+// «Открытые линии» (openlines.html): «Быстрые ответы» — typed after «/» in the reply or picked by the button; a file to
+// the reply, «печатает…» both ways; the dialogue list, its tabs and the open dialogue refresh by themselves when a
+// dialogue changes.
 (() => {
   const root = document.querySelector('[data-ol]');
   if (!root) return;
@@ -84,6 +85,27 @@
     });
   }
 
+  // ---------- the reply: a file, «печатает…» ----------
+  const form = root.querySelector('[data-ol-typing-url]');
+  if (form) {
+    const file = form.querySelector('[data-ol-file]'), label = form.querySelector('[data-ol-file-name]'), text = form.querySelector('[name="body"]');
+    file?.addEventListener('change', () => { label.textContent = file.files[0]?.name || ''; });
+    form.addEventListener('submit', e => { // a text, a file or both
+      if (!text.value.trim() && !file?.files.length) { e.preventDefault(); text.focus(); }
+    });
+    const hidden = form.querySelector('[data-ol-hidden]'), ph = text.placeholder;
+    hidden?.addEventListener('change', () => { // «Скрытое»: only employees see the message
+      text.placeholder = hidden.checked ? hidden.dataset.ph : ph;
+      form.classList.toggle('hidden-msg', hidden.checked);
+    });
+    let typed = 0;
+    text.addEventListener('input', () => { // a hidden message is not shown to the visitor as «печатает…»
+      if (Date.now() - typed < 3000 || !text.value.trim() || hidden?.checked) return;
+      typed = Date.now();
+      fetch(form.dataset.olTypingUrl, { method: 'POST', headers: { Accept: 'application/json' } }).catch(() => {});
+    });
+  }
+
   // ---------- live ----------
   if (!window.EventSource) return;
   let timer = null, current = false;
@@ -107,8 +129,16 @@
     current = false;
   };
   const es = new EventSource('/openlines/live');
+  let typing = null;
+  es.addEventListener('typing', e => { // the visitor is typing in the open dialogue
+    const t = root.querySelector('[data-ol-typing]');
+    if (!t || e.data !== root.dataset.current) return;
+    t.hidden = false;
+    clearTimeout(typing);
+    typing = setTimeout(() => { t.hidden = true; }, 6000);
+  });
   es.addEventListener('session', e => {
-    if (e.data === root.dataset.current) current = true;
+    if (e.data === root.dataset.current) { current = true; const t = root.querySelector('[data-ol-typing]'); if (t) t.hidden = true; }
     if (!timer) timer = setTimeout(refresh, 400);
   });
   addEventListener('pagehide', () => es.close());

@@ -63,4 +63,21 @@ func TestWidths(t *testing.T) {
 	if got, _ = s.Widths(ctx, a); len(got) != 1 || got["tasks"] != nil {
 		t.Fatalf("after forgetting: %v", got)
 	}
+
+	// the sort of task lists: one per user, an unknown column refused, "" — the usual order again
+	must(s.SetSort(ctx, a, "-deadline"))
+	must(s.SetSort(ctx, b, "title"))
+	if v, err := s.Sort(ctx, a); err != nil || v != "-deadline" {
+		t.Fatalf("sort = %q, %v", v, err)
+	}
+	if s.SetSort(ctx, a, "-password") == nil {
+		t.Fatal("an unknown sort accepted")
+	}
+	must(s.SetSort(ctx, a, ""))
+	if v, _ := s.Sort(ctx, a); v != "" {
+		t.Fatalf("sort after reset = %q", v)
+	}
+	if v, _ := s.Sort(ctx, b); v != "title" {
+		t.Fatalf("other user's sort = %q", v)
+	}
 }

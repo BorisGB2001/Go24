@@ -41,6 +41,7 @@ type Letter struct {
 	Receipt, Delivery bool         // ask for a read receipt, a delivery receipt
 	Voting, Vote      string       // the voting buttons it asks for («A;B»), the choice an answer votes for (voting.go)
 	Refs              []string     // the letters it answers: the conversation's root first, the answered one last
+	Sign, Encrypt     bool         // S/MIME: signed with the user's certificate, encrypted to the recipients' (smime.go)
 	CRM               []CRMRef     // the CRM cards whose timeline gets it at once (the card's «Письмо»; Entity, EntityID)
 	// sent by go24 itself (rules, automatic replies): Auto-Submitted, a Reply-To, a redirect's Resent-From and
 	// sender's name, no copy in «Отправленные»
@@ -183,16 +184,25 @@ func (s *Store) SendLetter(ctx context.Context, userID, mailboxID string, l Lett
 			rcpts = append(rcpts, r.Address)
 		}
 	}
+	e.WithBCC = true // the sender's own copy shows whom it went to blind
+	copyMsg, _ := compose(e, l)
+	var sec secured
+	if l.Sign || l.Encrypt {
+		out, x, err := s.secure(ctx, userID, e.From.Address, rcpts, l, e.Now, msg, copyMsg)
+		if err != nil {
+			return err
+		}
+		msg, copyMsg, sec = out[0], out[1], x
+	}
 	if err := sendSMTP(a, rcpts, msg, l.Delivery); err != nil {
 		return i18n.E("err.mail_send", err.Error())
 	}
 	if l.noCopy {
 		return nil
 	}
-	e.WithBCC = true // the sender's own copy shows whom it went to blind
-	copyMsg, _ := compose(e, l)
 	return s.keepSent(ctx, a, copyMsg, sentCopy{From: e.From.Address, To: joinAddrs(e.To), CC: joinAddrs(e.CC), BCC: joinAddrs(e.BCC), Subject: l.Subject,
-		Body: l.Text, HTML: l.HTML, Own: own, Thread: threadOf(own, l.Refs), Importance: l.Importance, Voting: l.Voting, Vote: l.Vote, CRM: l.CRM}, l.Files)
+		Body: l.Text, HTML: l.HTML, Own: own, Thread: threadOf(own, l.Refs), Importance: l.Importance, Voting: l.Voting, Vote: l.Vote, CRM: l.CRM,
+		Sign: sec.sign, Signer: sec.signer, Enc: sec.enc}, l.Files)
 }
 
 // SendBulk sends a letter of a campaign («Маркетинг») from the user's mailbox: no copy in «Отправленные», the
@@ -208,6 +218,7 @@ type sentCopy struct {
 	Importance                                          int
 	Voting, Vote                                        string
 	CRM                                                 []CRMRef
+	Sign, Signer, Enc                                   string // S/MIME (smime.go)
 }
 
 // keepSent puts the sent letter into the server's «Отправленные» (and fetches it from there); a server without
@@ -236,9 +247,10 @@ func (s *Store) keepSent(ctx context.Context, a account, msg []byte, c sentCopy,
 	}
 	var id string
 	err = s.db.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, to_addr, cc_addr, bcc_addr, subject, body,
-		body_html, importance, sent_at, seen, message_id, thread, voting, vote) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15)
+		body_html, importance, sent_at, seen, message_id, thread, voting, vote, smime_sign, smime_signer, smime_enc)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id`, a.ID, f.ID, time.Now().UnixNano(), c.From, clip(c.To, 2000), clip(c.CC, 2000), clip(c.BCC, 2000), c.Subject, c.Body,
-		c.HTML, c.Importance, c.Own, c.Thread, c.Voting, c.Vote).Scan(&id)
+		c.HTML, c.Importance, c.Own, c.Thread, c.Voting, c.Vote, c.Sign, c.Signer, c.Enc).Scan(&id)
 	if err != nil {
 		return err
 	}

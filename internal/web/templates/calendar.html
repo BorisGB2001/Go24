@@ -20,6 +20,7 @@
   <div class="tabs calviews">{{range list "day" "week" "month" "list"}}<a href="/calendar?view={{.}}&date={{$d.Day.Format "2006-01-02"}}{{$d.Q}}" {{if eq . $d.View}}class="on"{{end}}>{{t (print "calendar.view." .)}}</a>{{end}}</div>
   <span style="flex:1"></span>
   {{if not (or $d.Project $d.Person)}}<a href="/calendar/sync" class="button ghost" title="{{t "calsync.title"}}">{{icon "refresh"}} {{t "calsync.short"}}</a>
+  {{if not $.Guest}}<a href="/calendar/open" class="button ghost" title="{{t "calendar.open.title"}}">{{icon "world"}} {{t "calendar.open.short"}}</a>{{end}}
   <a href="/calendar/slots" class="button ghost" title="{{t "calslots.title"}}">{{icon "share"}} {{t "calslots.short"}}</a>
   <a href="/calendar/settings" class="button ghost" title="{{t "calset.title"}}">{{icon "settings"}}</a>{{end}}
   {{if not $frozen}}<a href="/calendar/new?{{if ne $d.View "month"}}date={{$d.Day.Format "2006-01-02"}}{{end}}{{$d.Q}}" class="button create">{{icon "plus"}} {{t "calendar.add"}}</a>{{end}}
@@ -34,7 +35,7 @@
     <button type="button" class="ghost calsec-edit" data-cal-edit="main" data-color="{{$d.MainColor}}" title="{{t "calendar.section_edit"}}">{{icon "edit"}}</button></span>
   {{range $d.Sections}}<span class="calsec"><label class="check"><input type="checkbox" value="c:{{.ID}}" checked> <i class="caldot" style="--evc:{{.Color}}"></i> {{.Name}}</label>
     <button type="button" class="ghost calsec-edit" data-cal-edit="{{.ID}}" data-name="{{.Name}}" data-color="{{.Color}}" title="{{t "calendar.section_edit"}}">{{icon "edit"}}</button></span>{{end}}
-  {{range list "company" "task" "absence" "birthday"}}<label class="check"><input type="checkbox" value="{{.}}" checked> {{t (print "calendar.cals." .)}}</label>{{end}}
+  {{range list "company" "task" "crm" "booking" "absence" "birthday"}}{{if or (ne . "booking") $d.Booking}}<label class="check"><input type="checkbox" value="{{.}}" checked> {{t (print "calendar.cals." .)}}</label>{{end}}{{end}}
   {{range $d.People}}<span class="calsec calperson"><label class="check"><input type="checkbox" value="u:{{.ID}}" checked> <i class="caldot" style="--evc:{{.Color}}"></i></label>
     <a href="/calendar?user={{.ID}}" title="{{t "calendar.of" .Name}}">{{.Name}}</a>
     <form method="post" action="/calendar/people/{{.ID}}/delete" class="inline"><input type="hidden" name="back" data-cal-back>
@@ -79,7 +80,7 @@
 <div class="card flush callist">
   {{range $d.Days}}<div class="cl-day{{if .Today}} today{{end}}">
     <a class="cl-date" href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}{{$d.Q}}"><b>{{.Date.Day}}</b> <span>{{t (print "wd." (printf "%d" (wdnum .Date)))}}, {{day .Date}}</span></a>
-    <div class="cl-items">{{range .Items}}<div class="cl-item"><span class="cl-time muted small">{{if .AllDay}}{{t "calendar.all_day"}}{{else if eq .Kind "task"}}{{clock .Start}}{{else}}{{clock .Start}}–{{clock .End}}{{end}}</span>{{template "calitem" .}}</div>{{end}}</div>
+    <div class="cl-items">{{range .Items}}<div class="cl-item"><span class="cl-time muted small">{{if .AllDay}}{{t "calendar.all_day"}}{{else if or (eq .Kind "task") (eq .Kind "crm")}}{{clock .Start}}{{else}}{{clock .Start}}–{{clock .End}}{{end}}</span>{{template "calitem" .}}</div>{{end}}</div>
   </div>{{else}}<p class="muted" style="padding:16px">{{t "calendar.list_empty"}}</p>{{end}}
 </div>
 {{else if ne $d.View "month"}}
@@ -88,8 +89,8 @@
   <div class="cg-row cg-allday"><div class="muted small">{{t "calendar.all_day"}}</div>{{range $d.Cols}}<div>{{range .AllDay}}{{template "calitem" .}}{{end}}</div>{{end}}</div>
   <div class="cg-row cg-body"><div class="cg-hours">{{range $d.Hours}}<div>{{printf "%02d:00" .}}</div>{{end}}</div>
     {{range $d.Cols}}<div class="cg-col{{if .Today}} today{{end}}{{if .Off}} off{{end}}" style="height:{{$d.GridPx}}px" data-date="{{.Date.Format "2006-01-02"}}">
-      {{range .Timed}}<a class="calitem cg-ev{{if .E.Company}} company{{else if .E.ProjectKey}} project{{end}}{{if eq .E.MyStatus "invited"}} invited{{end}}{{if eq .E.MyStatus "declined"}} declined{{end}}{{if .E.Paint}} colored{{end}}{{if .E.Important}} important{{end}}"
-        style="top:{{.Top}}px;height:{{.Height}}px{{with .E.Paint}};--evc:{{.}}{{end}}" {{template "calmove" .E}} {{template "calkind" .E}} {{if not .E.Hidden}}href="/calendar/{{.E.ID}}{{if .E.Repeat}}?at={{.E.Start.Format "2006-01-02T15:04"}}{{end}}"{{end}} title="{{if .E.Hidden}}{{t "calendar.private_busy"}}{{else}}{{.E.Title}}{{end}}"><b>{{clock .E.Start}}–{{clock .E.End}}</b> {{if .E.Hidden}}{{icon "lock"}} {{t "calendar.private_busy"}}{{else}}{{if .E.Important}}{{icon "exclamation-mark"}} {{end}}{{if .E.Private}}{{icon "lock"}} {{end}}{{if .E.Video}}{{icon "video"}} {{end}}{{.E.Title}}{{end}}{{if .E.RoomName}}<br><span class="small">🚪 {{.E.RoomName}}</span>{{else}}{{with .E.Where}}<br><span class="small">{{.}}</span>{{end}}{{end}}</a>{{end}}
+      {{range .Timed}}{{if eq .E.Kind "booking"}}<a class="calitem cg-ev booking bk-{{.E.Status}}" style="top:{{.Top}}px;height:{{.Height}}px" data-cal="booking" href="/booking?date={{.E.Start.Format "2006-01-02"}}&amp;b={{.E.ID}}" title="{{t "booking.title"}}: {{.E.Title}} · {{.E.Where}} · {{t (print "booking.st." .E.Status)}}"><b>{{clock .E.Start}}–{{clock .E.End}}</b> {{icon "clock"}} {{.E.Title}}<br><span class="small">{{.E.Where}} · {{t (print "booking.st." .E.Status)}}</span></a>{{else}}<a class="calitem cg-ev{{if .E.Company}} company{{else if .E.ProjectKey}} project{{end}}{{if eq .E.MyStatus "invited"}} invited{{end}}{{if eq .E.MyStatus "declined"}} declined{{end}}{{if .E.Paint}} colored{{end}}{{if .E.Important}} important{{end}}"
+        style="top:{{.Top}}px;height:{{.Height}}px{{with .E.Paint}};--evc:{{.}}{{end}}" {{template "calmove" .E}} {{template "calkind" .E}} {{if not .E.Hidden}}href="/calendar/{{.E.ID}}{{if .E.Repeat}}?at={{.E.Start.Format "2006-01-02T15:04"}}{{end}}"{{end}} title="{{if .E.Hidden}}{{t "calendar.private_busy"}}{{else}}{{.E.Title}}{{end}}"><b>{{clock .E.Start}}–{{clock .E.End}}</b> {{if .E.Hidden}}{{icon "lock"}} {{t "calendar.private_busy"}}{{else}}{{if .E.Important}}{{icon "exclamation-mark"}} {{end}}{{if .E.Private}}{{icon "lock"}} {{end}}{{if .E.Video}}{{icon "video"}} {{end}}{{.E.Title}}{{end}}{{if .E.RoomName}}<br><span class="small">🚪 {{.E.RoomName}}</span>{{else}}{{with .E.Where}}<br><span class="small">{{.}}</span>{{end}}{{end}}</a>{{end}}{{end}}
     </div>{{end}}</div>
 </div>
 {{else}}
@@ -116,11 +117,13 @@
 {{define "calitem"}}{{if eq .Kind "absence"}}<a class="calitem absence" data-cal="absence" href="/company/absences" title="{{.Title}}: {{t (print "absence.kind." .AbsenceKind)}}">{{.Title}} · {{t (print "absence.kind." .AbsenceKind)}}</a>
 {{else if eq .Kind "birthday"}}<a class="calitem birthday" data-cal="birthday" href="/u/{{.PersonID}}" data-user="{{.PersonID}}" title="{{t "birthdays.title"}}">🎂 {{.Title}}</a>
 {{else if eq .Kind "task"}}<a class="calitem task{{if .Overdue}} over{{end}}" data-cal="task" href="/t/{{.TaskKey}}" title="{{.TaskKey}} {{.Title}}">{{icon "checkbox"}} {{clock .Start}} {{.Title}}</a>
+{{else if eq .Kind "booking"}}<a class="calitem booking bk-{{.Status}}" data-cal="booking" href="/booking?date={{.Start.Format "2006-01-02"}}&amp;b={{.ID}}" title="{{t "booking.title"}}: {{.Title}} · {{.Where}} · {{t (print "booking.st." .Status)}}">{{icon "clock"}} {{clock .Start}} {{.Title}}</a>
+{{else if eq .Kind "crm"}}<a class="calitem task crmact{{if .Overdue}} over{{end}}" data-cal="crm" href="{{.Card.Path}}" title="{{t (print "crm.act." .ActKind)}}: {{.Title}} · {{t (print "crm." .Card.Entity)}}: {{.Where}}">{{if eq .ActKind "call"}}{{icon "phone"}}{{else if eq .ActKind "meeting"}}{{icon "users"}}{{else}}{{icon "list-check"}}{{end}} {{clock .Start}} {{.Title}}</a>
 {{else}}<a class="calitem{{if .Company}} company{{else if .ProjectKey}} project{{end}}{{if eq .MyStatus "invited"}} invited{{end}}{{if eq .MyStatus "declined"}} declined{{end}}{{if .Paint}} colored{{end}}{{if .Important}} important{{end}}"{{with .Paint}} style="--evc:{{.}}"{{end}}
   {{template "calmove" .}} {{template "calkind" .}} {{if not .Hidden}}href="/calendar/{{.ID}}{{if .Repeat}}?at={{.Start.Format "2006-01-02T15:04"}}{{end}}"{{end}} title="{{if .Hidden}}{{t "calendar.private_busy"}}{{else}}{{.Title}}{{end}}{{with .Where}} · {{.}}{{end}}">{{if .Repeat}}{{icon "history"}} {{end}}{{if and .Important (not .Hidden)}}{{icon "exclamation-mark"}} {{end}}{{if or .Private .Hidden}}{{icon "lock"}} {{end}}{{if and .Video (not .Hidden)}}{{icon "video"}} {{end}}{{if not .AllDay}}{{clock .Start}} {{end}}{{if .Hidden}}{{t "calendar.private_busy"}}{{else}}{{.Title}}{{end}}</a>{{end}}{{end}}
 
 {{/* what dragging a meeting needs (static/js/calendar.js): who organizes it, its time, its occurrence */}}
-{{define "calmove"}}data-id="{{.ID}}" data-owner="{{.OwnerID}}" data-start="{{.Start.Format "2006-01-02T15:04"}}" data-end="{{.End.Format "2006-01-02T15:04"}}"{{if .Repeat}} data-at="{{.Start.Format "2006-01-02T15:04"}}"{{end}}{{if .AllDay}} data-allday{{end}}{{end}}
+{{define "calmove"}}data-id="{{.ID}}" data-owner="{{if not .ReadOnly}}{{.OwnerID}}{{end}}" data-start="{{.Start.Format "2006-01-02T15:04"}}" data-end="{{.End.Format "2006-01-02T15:04"}}"{{if .Repeat}} data-at="{{.Start.Format "2006-01-02T15:04"}}"{{end}}{{if .AllDay}} data-allday{{end}}{{end}}
 
 {{/* which calendar a meeting is of, for the panel «Календари» (static/js/calendar.js); one from a colleague's calendar — theirs */}}
 {{define "calkind"}}{{if .Of}}data-cal="u:{{.Of}}"{{else if .Company}}data-cal="company"{{else if .ProjectKey}}data-cal="p:{{.ProjectKey}}" data-cal-name="{{.ProjectName}}"{{else if .CalendarID}}data-cal="c:{{.CalendarID}}"{{else}}data-cal="personal"{{end}}{{end}}

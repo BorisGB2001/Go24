@@ -45,6 +45,9 @@ func TestRender(t *testing.T) {
 		strings.Contains(conf, "GO24_RECORD") {
 		t.Errorf("recording: the dialplan does not know or knows when off:\n%s", rec)
 	}
+	if strings.Count(conf, "set_var = TRANSFER_CONTEXT=go24-transfer\n") != 2 {
+		t.Errorf("a transferred call does not go to go24-transfer:\n%s", conf)
+	}
 	if p := Password(12); len(p) != 12 || strings.ContainsAny(p, "0O1lI") {
 		t.Errorf("password %q", p)
 	}
@@ -145,6 +148,10 @@ func TestLines(t *testing.T) {
 		}
 		if r.Method == http.MethodPut && r.URL.Path == "/ari/asterisk/modules/pbx_config.so" {
 			dialplans.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/ari/asterisk/modules/") { // the queues and their music
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -284,6 +291,37 @@ func TestLines(t *testing.T) {
 	if dialplans.Load() != dir2+1 {
 		t.Fatal("the dialplan reloaded with nothing changed")
 	}
+	// the black list: a number by its last 10 digits (8…, +7… — one number), the lines' calls from it hear «busy»
+	if e := string(ext); !strings.Contains(e, "[go24-black]\n") ||
+		!strings.Contains(e, "exten => s,1,Set(GO24_BNUM=${FILTER(0123456789,${CALLERID(num)})})\n same => n,GotoIf(${DIALPLAN_EXISTS(go24-black,${GO24_BNUM:-10},1)}?black,1)\n") ||
+		!strings.Contains(e, "exten => black,1,Busy(5)\n") {
+		t.Fatalf("no black list in the dialplan:\n%s", e)
+	}
+	for _, bad := range []string{"", "12", "abc"} {
+		if err := s.Block(ctx, ann, bad, ""); !errors.As(err, &ie) {
+			t.Errorf("blocked %q: %v", bad, err)
+		}
+	}
+	must(s.Block(ctx, ann, "8 (900) 111-22-33", "спам"))
+	must(s.Block(ctx, ann, "+79001112233", "")) // the same number: the comment stays
+	must(s.Block(ctx, ann, "555", "короткий"))
+	bl, err := s.Blacklist(ctx)
+	must(err)
+	if len(bl) != 2 || bl[1].Number != "89001112233" || bl[1].Comment != "спам" || bl[1].ByName != "ann" {
+		t.Fatalf("black list: %+v", bl)
+	}
+	must(pbx.Sync(ctx))
+	ext, err = os.ReadFile(filepath.Join(dir, "extensions.conf"))
+	must(err)
+	if e := string(ext); !strings.Contains(e, "[go24-black]\nexten => 555,1,Return()\nexten => 9001112233,1,Return()\n") || dialplans.Load() != dir2+2 {
+		t.Fatalf("the black list's dialplan:\n%s", e)
+	}
+	must(s.Unblock(ctx, bl[0].ID))
+	must(s.Unblock(ctx, bl[1].ID))
+	if err := s.Unblock(ctx, bl[1].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unblocked twice: %v", err)
+	}
+	must(pbx.Sync(ctx))
 	// working hours and what happens to a call nobody answered: the voicemail with the line's greeting, a forward
 	// out through the line; bad hours or numbers are not saved
 	line := trunks[0]
@@ -353,6 +391,27 @@ func TestLines(t *testing.T) {
 	} else if n, dir, emp := got[0].Outside(); n != "+79001234567" || dir != "in" || emp != bob {
 		t.Fatalf("its outside: %s %s %s", n, dir, emp)
 	}
+	// transferred: by whom and to whom, with their names; nonsense dropped
+	_, err = s.SaveCall(ctx, CDR{UniqueID: "2.2", From: "+79001234568", To: "+74951234567", By: "105", Line: "+74951234567", Dial: "ANSWER",
+		XFrom: "w1", XTo: "105", Start: t0, Answer: t0.Add(time.Second), End: t0.Add(time.Minute)})
+	must(err)
+	_, err = s.SaveCall(ctx, CDR{UniqueID: "2.3", From: "+79001234569", To: "+74951234567", By: "105", Line: "+74951234567", Dial: "ANSWER",
+		XFrom: "999", XTo: "105", Start: t0, Answer: t0.Add(time.Second), End: t0.Add(time.Minute)})
+	must(err)
+	if got, _ := s.Calls(ctx, CallFilter{UserID: bob, Number: "+7900123456"}); len(got) != 3 {
+		t.Fatalf("transferred calls: %+v", got)
+	} else {
+		x := map[string]Call{}
+		for _, c := range got {
+			x[c.From] = c
+		}
+		if c := x["+79001234569"]; c.XFrom != "999" || c.XTo != "105" || c.XToName != "bob" || c.XFromName != "" {
+			t.Fatalf("a transferred call: %+v", c)
+		}
+		if c := x["+79001234568"]; c.XFrom != "" || c.XTo != "" {
+			t.Fatalf("a bad transfer kept: %+v", c)
+		}
+	}
 
 	// a voicemail: not answered by the employees, the message kept; none left — just a call nobody answered
 	_, err = s.SaveCall(ctx, CDR{UniqueID: "3.1", From: "+79001234567", To: "+74951234567", By: "105", Line: "+74951234567", Dial: "NOANSWER",
@@ -371,6 +430,32 @@ func TestLines(t *testing.T) {
 		if vm := byStatus[StatusVoicemail]; vm.Record != "vm.wav" || vm.Answered != nil || vm.Seconds != 20 || byStatus[StatusNoAnswer].ID == "" {
 			t.Fatalf("voicemail: %+v", got)
 		}
+	}
+	// «Статистика звонков»: the calls of the lines (not the inner ones) by employee and by day; the voicemail's message
+	// is not a conversation
+	_, err = s.SaveCall(ctx, CDR{UniqueID: "4.1", From: "105", To: "+79005550000", Line: "+74951234567", Dial: "ANSWER",
+		Start: t0, Answer: t0.Add(10 * time.Second), End: t0.Add(130 * time.Second)})
+	must(err)
+	_, err = s.SaveCall(ctx, CDR{UniqueID: "4.2", From: "105", To: "+79005550001", Line: "+74951234567", Dial: "NOANSWER", Start: t0})
+	must(err)
+	day := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
+	st, err := s.Stats(ctx, StatFilter{From: day.AddDate(0, 0, -1), To: day.AddDate(0, 0, 1)}, time.UTC)
+	must(err)
+	if len(st.Users) != 1 || st.Users[0].UserID != bob || st.Users[0].Name != "bob" {
+		t.Fatalf("stats by employee: %+v", st.Users)
+	}
+	if r := st.Total; r.In != 5 || r.Missed != 2 || r.Answered() != 3 || r.MissedPct() != 40 || r.Out != 2 || r.OutOK != 1 ||
+		r.Seconds != 3*59+120 || r.AvgTalk() != 74 || r.AvgWait() != 1 {
+		t.Fatalf("stats: %+v", r)
+	}
+	if len(st.Days) != 2 || st.Days[0].In != 0 || st.Days[1].In != 5 || st.Days[1].Answered() != 3 || st.Days[1].Out != 2 || !st.Days[1].Day.Equal(day) {
+		t.Fatalf("stats by day: %+v", st.Days)
+	}
+	if st, _ := s.Stats(ctx, StatFilter{From: day, To: day.AddDate(0, 0, 1), Line: "+70000000000"}, time.UTC); st.Total.In+st.Total.Out != 0 {
+		t.Fatalf("another line's stats: %+v", st.Total)
+	}
+	if st, _ := s.Stats(ctx, StatFilter{From: day, To: day.AddDate(0, 0, 1), UserID: ann}, time.UTC); len(st.Users) != 0 {
+		t.Fatalf("ann's stats: %+v", st.Users)
 	}
 	must(s.SetEnabled(ctx, ann, false))
 	if n, _ := s.NumberOf(ctx, bob); n != "" {

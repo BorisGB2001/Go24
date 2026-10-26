@@ -14,6 +14,15 @@ type Stat struct {
 	Bookings          int // all of them but the cancelled ones
 	Statuses          map[string]int
 	Load, NoShowShare int // percent; NoShowShare is of those who came or did not, -1 when none of them yet
+	Rated, Stars      int // the bookings the clients rated and their stars together
+}
+
+// AvgRating: the clients' average rating, 0 — none rated.
+func (st Stat) AvgRating() float64 {
+	if st.Rated == 0 {
+		return 0
+	}
+	return float64(st.Stars) / float64(st.Rated)
 }
 
 // Stats: the load of the resources (typeID — of one type) for the days [from, to) in loc, and the total of them all
@@ -38,9 +47,15 @@ func (s *Store) Stats(ctx context.Context, typeID string, from, to time.Time, lo
 				continue
 			}
 			st.Statuses[b.Status]++
+			if b.Rating > 0 {
+				st.Rated, st.Stars = st.Rated+1, st.Stars+b.Rating
+			}
 			if !seen[b.ID] {
 				seen[b.ID] = true
 				total.Statuses[b.Status]++
+				if b.Rating > 0 {
+					total.Rated, total.Stars = total.Rated+1, total.Stars+b.Rating
+				}
 			}
 		}
 		st.finish()
@@ -92,9 +107,13 @@ func Load(r Resource, list []Booking, from, to time.Time, loc *time.Location) (w
 		if !r.WorksOn(d) {
 			continue
 		}
-		a := time.Date(d.Year(), d.Month(), d.Day(), 0, r.From, 0, 0, loc)
-		b := time.Date(d.Year(), d.Month(), d.Day(), 0, r.To, 0, 0, loc)
-		work += r.To - r.From
+		h0, h1 := r.HoursOn(d)
+		a := time.Date(d.Year(), d.Month(), d.Day(), 0, h0, 0, 0, loc)
+		b := time.Date(d.Year(), d.Month(), d.Day(), 0, h1, 0, 0, loc)
+		work += h1 - h0
+		if r.InBreak(h0, h1) {
+			work -= min(h1, r.BreakTo) - max(h0, r.BreakFrom)
+		}
 		for _, x := range merged {
 			if x.a.Before(b) && x.b.After(a) {
 				busy += int(minTime(x.b, b).Sub(maxTime(x.a, a)).Minutes())

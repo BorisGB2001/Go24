@@ -347,6 +347,22 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); cur
 .colpick > summary:hover { background: var(--hover); color: var(--text); }
 .colpick .pop { left: 0; right: auto; text-transform: none; letter-spacing: 0; font-size: var(--font-size); color: var(--text); font-weight: 400; }
 .colpick .check { margin: 4px 0; }
+/* task lists: headers sort, ☰ of a row is its menu, a click on the deadline changes it */
+.tlist .tsort { display: inline; }
+.tlist .tsort button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; font: inherit; color: inherit; }
+.tlist .tsort button:hover { color: var(--text); }
+.tlist .tsort .i { width: 14px; height: 14px; }
+.trowmenu, .tdl { position: relative; display: inline-block; }
+.trowmenu > summary, .tdl > summary { list-style: none; cursor: pointer; border-radius: 6px; }
+.trowmenu > summary::-webkit-details-marker, .tdl > summary::-webkit-details-marker { display: none; }
+.trowmenu > summary { color: var(--muted); display: grid; place-items: center; width: 26px; height: 26px; opacity: .55; }
+.tlist tr:hover .trowmenu > summary, .trowmenu[open] > summary { opacity: 1; }
+.trowmenu > summary:hover, .tdl > summary:hover { background: var(--hover); color: var(--text); }
+.tdl > summary { padding: 2px 4px; margin: -2px -4px; }
+.trowmenu .pop, .tdl .pop { left: 0; right: auto; white-space: normal; font-weight: 400; }
+.tdl .pop { min-width: 280px; gap: 6px; }
+.trowmenu .pop a.button.ghost { border-color: transparent; background: none; box-shadow: none; justify-content: flex-start; padding: 6px 8px; color: var(--text); font-weight: 400; }
+.trowmenu .pop a.button.ghost:hover { background: var(--hover); }
 
 /* left menu sections (Задачи, Проекты, Файлы…): a click on the name or icon opens the section's own items */
 .side .msec > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm);
@@ -394,10 +410,19 @@ button.danger { color: var(--danger); }
 /* the search and drags in the structure (structure.js) */
 .structbar { align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .structfind { width: 320px; max-width: 100%; }
-.dept.struct-hide { display: none; }
+.dept.struct-hide, .teamcard.struct-hide { display: none; }
 .dcard.found { box-shadow: 0 0 0 2px var(--accent); }
 .dcard .person.found { background: var(--accent-soft); border-radius: 6px; }
 .orgtree .dhead[draggable], .orgtree .dpeople .person[draggable] { cursor: grab; }
+/* «Команды» under a department (GO24DEV-689) */
+.dteams { display: flex; flex-wrap: wrap; gap: 0 10px; margin-left: 28px; }
+.teamcard { min-width: 260px; max-width: 360px; margin-bottom: 10px; padding: 10px 12px; position: relative; border-left: 3px solid var(--violet); }
+.teamcard .teamname { flex: 1; }
+.teamcard .teamname a { color: var(--text); }
+.teamcard .teamdesc { margin: 6px 0 0; white-space: pre-line; }
+.teamcard.found { box-shadow: 0 0 0 2px var(--violet); }
+.teamcard .person.found { background: var(--accent-soft); border-radius: 6px; }
+.pill.team-pill { background: var(--violet-soft); color: var(--violet); }
 .orgtree .dragging { opacity: .5; }
 .dcard.drop-in { outline: 2px dashed var(--accent); outline-offset: 2px; }
 @media (max-width: 1000px) { .profile { grid-template-columns: 1fr; } }
@@ -477,7 +502,10 @@ label .req { color: var(--danger); }
 .composer input[type=text] { margin-bottom: 8px; }
 .composer textarea { margin-bottom: 8px; }
 .fpost.important { border-color: var(--danger); }
-.fhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+/* new since the feed was last opened */
+.fpost.fnew { box-shadow: inset 3px 0 0 var(--accent); }
+.fc.fnew { box-shadow: inset 2px 0 0 var(--accent); padding-left: 8px; }
+.fhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .fimp { color: var(--danger); font-weight: 600; margin-bottom: 6px; }
 .fpost h3 { margin: 4px 0 6px; font-size: var(--font-size-h2); }
 .fbody { line-height: 1.6; overflow-wrap: anywhere; }
@@ -497,7 +525,10 @@ label .req { color: var(--danger); }
 .fcomment-files:not(:has(.dpick-chip)):has([data-files-names]:empty) { display: none; }
 .fdrop { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .fc .ffiles .fimg img { max-width: 160px; max-height: 120px; }
-.fcomment-form input { flex: 1; }
+.fcomment-form input, .fcomment-form textarea { flex: 1; }
+.fcomment-form textarea { resize: none; min-height: 36px; max-height: 240px; overflow-y: auto; }
+.fc-more { display: block; margin: 6px 0; }
+.fc blockquote { margin: 4px 0; padding: 2px 10px; border-left: 3px solid var(--line); color: var(--muted); }
 .fevent { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: var(--font-size-sm); }
 .fedit input, .fedit textarea { margin-bottom: 8px; }
 /* reactions of the feed: the button, the summary, the picker and «Кто оценил» */
@@ -631,18 +662,35 @@ img.im-ico { object-fit: cover; padding: 0; }
 .sp-hint { text-align: center; }
 .sp-links { display: flex; justify-content: center; gap: 12px; }
 .sp-who a { color: inherit; }
+.sp-xfer { padding: 10px; border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); gap: 8px; }
 /* «Детализация звонков» */
 .phonefilter { flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
 .pill.tel-missed { background: var(--danger-soft); color: var(--danger); }
 .pill.tel-in { background: var(--ok-soft); color: var(--ok); }
 .pill.tel-out { background: var(--accent-soft); color: var(--accent); }
+/* «Статистика звонков»: the calls by day, a stacked bar each (answered, missed, outgoing) */
+.telbars { display: flex; align-items: flex-end; gap: 2px; height: 160px; overflow-x: auto; padding-bottom: 18px; }
+.telbar { position: relative; flex: 1 0 14px; height: 100%; display: flex; flex-direction: column-reverse; }
+.telbar small { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; color: var(--muted); font-size: 10px; }
+.telbar span { display: block; min-height: 0; }
+.tb-in { background: var(--ok); } .tb-missed { background: var(--danger); } .tb-out { background: var(--accent); }
+.telbars-legend { gap: 14px; } .telbars-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .phonecalls audio { height: 32px; max-width: 220px; }
+.tel-text { margin-top: 4px; max-width: 420px; } .tel-text p { margin: 4px 0 0; white-space: normal; color: var(--text); }
 .crmcall audio { height: 30px; max-width: 240px; vertical-align: middle; }
 /* «Внешние линии» в настройках телефонии */
 details.trunk { border-top: 1px solid var(--line); padding: 8px 0; }
 details.trunk > summary { cursor: pointer; }
 .trunkform { margin-top: 8px; }
 .trunkform .grow { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 4px; }
+/* voice menu (IVR): an item shows only the fields of its action */
+.ivr-act .ivr-p { display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ivr-act .ivr-ring .upick { min-width: 240px; }
+.ivr-act:has(option[value="ring"]:checked) .ivr-ring,
+.ivr-act:has(option[value="forward"]:checked) .ivr-forward,
+.ivr-act:has(option[value="menu"]:checked) .ivr-menu,
+.ivr-act:has(option[value="group"]:checked) .ivr-group { display: flex; }
+table.ivr td { vertical-align: top; }
 /* the chat list: a row's own menu, its marks (pinned, muted, marked unread) */
 .im-row { position: relative; }
 .im-row[hidden] { display: none; }
@@ -707,6 +755,13 @@ details.trunk > summary { cursor: pointer; }
 .im-quote { display: block; border-left: 3px solid var(--accent); padding: 2px 8px; margin: 2px 0 4px; color: var(--text); background: var(--hover); border-radius: 4px; }
 .im-quote span { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .im-fwd { margin-bottom: 2px; }
+/* the buttons of a bot's message (KEYBOARD) and the list of commands on «/» */
+.im-kbd { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+.im-kbd-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.im-kbd-row > * { flex: 1 1 auto; justify-content: center; }
+.im-kbd-row > .ghost { border: 1px solid var(--line); }
+.im-cmds { width: 360px; }
+.im-cmds .mention-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* the card of a link under the message: the picture, the site, the title and the text of the page */
 .im-link { display: block; border-left: 3px solid var(--accent); padding: 4px 8px; margin: 4px 0 2px; max-width: 360px; color: var(--text); text-decoration: none; background: var(--hover); border-radius: 4px; }
 .im-link:hover { text-decoration: none; filter: brightness(.98); }
@@ -929,6 +984,9 @@ a.newcmt:hover { color: #fff; text-decoration: none; filter: brightness(1.1); }
 .calleg { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .calleg .calitem { display: inline-block; }
 .evwhen { flex-wrap: wrap; gap: 8px; }
+.evwhen .evtz { width: auto; max-width: 260px; }
+.openev { flex-wrap: wrap; } .openev .openwhen { min-width: 190px; }
+.callink { align-items: flex-start; } .callink > span { display: flex; flex-direction: column; gap: 2px; } .callink-url { overflow-wrap: anywhere; } .callink .err { color: var(--danger); }
 .evwhen input[type=datetime-local] { width: auto; }
 .evanswer { align-items: center; gap: 8px; margin-bottom: 12px; }
 .evtools { gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -1063,6 +1121,11 @@ body:has(#bulk) .tlist .bulkcol { display: table-cell; }
 .fpoll-res i { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); z-index: 0; }
 .fpoll-res span { position: relative; z-index: 1; }
 .fpoll-res.mine { font-weight: 600; }
+.fpoll { position: relative; }
+.fpoll-res button { position: relative; z-index: 1; }
+.fpoll .rwho .person span:last-child { margin-left: 0; }
+.fpoll-peek summary { cursor: pointer; color: var(--accent); width: max-content; }
+.fpoll-peek[open] { display: grid; gap: 6px; }
 .fpoll-new { display: inline-block; }
 .fpoll-new[open] { display: grid; gap: 6px; flex-basis: 100%; }
 /* gratitudes («Благодарности»): in the feed and the profile */
@@ -1097,6 +1160,18 @@ body:has(#bulk) .tlist .bulkcol { display: table-cell; }
 .pill.wd-running { color: var(--st-completed-fg); }
 .workday .wd-forgotten { color: var(--danger); border-color: currentColor; }
 .workday .wd-report-due { color: var(--warn); }
+/* «План на день» in the working day window */
+.workday .pop { width: min(360px, calc(100vw - 32px)); left: auto; right: 0; } /* the day plan: long titles are cut, not widening it */
+@media (max-width: 600px) { .workday .pop { position: fixed; left: 16px; right: 16px; top: auto; width: auto; min-width: 0; } } /* a phone: the whole screen width under the button */
+.dayplan { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+.dp-item { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dp-item > a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-item.done > a { text-decoration: line-through; color: var(--muted); }
+.dp-item form { margin: 0; }
+.dayplan .dp-item button { padding: 2px 4px; width: auto; }
+.dp-add { display: flex; gap: 4px; margin: 0; }
+.dp-add select { flex: 1; min-width: 0; width: auto; }
+.dayplan .dp-add button { width: auto; flex: none; }
 /* «Рабочие отчёты»: marks, facts of a report, the departments' rules */
 .pill.wr-good { background: var(--ok-soft); color: var(--ok); }
 .pill.wr-bad { background: var(--danger-soft); color: var(--danger); }
@@ -1126,6 +1201,21 @@ body:has(#bulk) .tlist .bulkcol { display: table-cell; }
 .wslegend .ws-absence::before { background: var(--st-deferred-bg); }
 .wslegend .ws-run::before { background: var(--st-in_progress-bg); }
 .wslegend .ws-off::before { background: var(--line); }
+.wsheet td.ws-free { color: var(--muted); }
+.wsheet td .ws-plan { display: block; max-width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--muted); margin: 0 auto; }
+/* «Графики работы»: the parts of the form of the other kinds are hidden */
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
+.wsform:has([name=kind][value=fixed]:checked) :is(.ws-k-shift, .ws-k-flexible),
+.wsform:has([name=kind][value=shift]:checked) :is(.ws-k-fixed, .ws-k-flexible),
+.wsform:has([name=kind][value=flexible]:checked) :is(.ws-k-fixed, .ws-k-shift) { display: none; }
+.wstime { border-top: 1px solid var(--line); padding: 8px 0; }
+.wstime:first-of-type { border-top: 0; }
+.wsshifts input { width: 100%; }
+.wspeople { margin-top: 10px; }
+.wspeople .row { gap: 6px 14px; padding-top: 6px; }
+.wsheet.shplan td select { border: 0; background: transparent; font-size: 11px; width: 100%; min-width: 58px; height: 34px; padding: 0 2px; }
+.wsheet.shplan td.ws-set { background: var(--st-in_progress-bg); color: var(--st-in_progress-fg); }
+.wsheet.shplan td span { display: block; padding: 0 4px; line-height: 34px; white-space: nowrap; }
 /* «База знаний» */
 .kbspaces { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .kbcard { display: grid; gap: 4px; color: inherit; text-decoration: none; }
@@ -1248,6 +1338,9 @@ li.open > .kbtoggle::before { content: "▾"; }
 .crmpresets .crmpreset-def.on, .crmpresets .crmpreset-def:hover { opacity: 1; color: var(--warn); }
 .crmstages { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
 .crmstages form { display: contents; }
+.crmcommlist { display: flex; flex-direction: column; gap: 2px; }
+.crmcomms { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.crmcomms [data-comm-add] { align-self: flex-start; }
 .crmst { border: 1px solid var(--line); border-bottom: 3px solid var(--c); border-radius: 6px; background: var(--card); padding: 4px 10px; cursor: pointer; }
 .crmdicts { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .crmdicts .tlist form { margin: 0; }
@@ -1269,6 +1362,11 @@ li.open > .kbtoggle::before { content: "▾"; }
 .crmbar { display: grid; grid-template-columns: minmax(110px, 30%) 1fr auto auto; gap: 8px; align-items: center; padding: 3px 0; }
 .crmbar .bar { background: var(--line); border-radius: 4px; height: 14px; overflow: hidden; }
 .crmbar .bar i { display: block; height: 100%; min-width: 2px; }
+.crmplan .planbar { grid-template-columns: minmax(80px, 1fr) auto; min-width: 140px; }
+.crmplan .planbar .bar i { background: var(--accent); }
+.crmplan .planbar .bar i.done { background: var(--ok); }
+.crmplan tr.sub th { text-align: left; background: var(--hover); font-weight: 600; }
+.crmplanform input[name$=amount], .crmplanform input[name=company] { max-width: 200px; }
 /* the CRM list: the view and filter bar, the group actions */
 .crmtools { margin: 0 0 10px; gap: 8px; }
 .crmtools .seg { display: inline-flex; gap: 4px; }
@@ -1491,6 +1589,8 @@ li.open > .kbtoggle::before { content: "▾"; }
 .mdraft { color: var(--danger); font-weight: 600; }
 .msched { color: var(--accent); }
 .mc-banner { gap: 8px; align-items: center; padding: 8px 10px; margin: 0 0 10px; border-radius: 6px; background: var(--accent-soft); font-size: 13px; }
+.mc-banner.msmime { flex-wrap: wrap; gap: 14px; }
+.mc-banner.msmime-bad { background: var(--danger-soft); color: var(--danger); }
 .munsub summary { list-style: none; cursor: pointer; gap: 8px; align-items: center; }
 .munsub summary::-webkit-details-marker { display: none; }
 .munsub[open] summary .button { display: none; }
@@ -1624,6 +1724,10 @@ button.mc-label:hover { color: var(--accent); }
 /* «Поля для шаблонов» of the document templates: a field to copy by a click and what it is */
 .docfields { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; align-items: center; margin: 6px 0 10px; }
 .docfields button { justify-content: flex-start; padding: 2px 6px; }
+.docimages { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin: 8px 0; }
+.docimage { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.docimage-pic { height: 90px; display: flex; align-items: center; justify-content: center; background: var(--bg); border-radius: 6px; }
+.docimage-pic img { max-height: 86px; max-width: 100%; object-fit: contain; }
 .mpicker { align-items: center; justify-content: center; }
 .mpicker-card { width: min(560px, calc(100vw - 32px)); max-height: 80vh; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
 .mpicker-path { flex-wrap: wrap; gap: 2px; }
@@ -1677,6 +1781,13 @@ button.mc-label:hover { color: var(--accent); }
 .olm.op { align-self: flex-end; background: var(--accent-soft); }
 .olm.auto { border: 1px dashed var(--line); background: transparent; }
 .olnote { align-self: center; text-align: center; }
+.olm.secret { background: var(--warn-soft); border: 1px dashed var(--warn); }
+.olhide { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
+.olreply.hidden-msg textarea { background: var(--warn-soft); }
+.olfile { margin-top: 4px; }
+.olfile img { max-width: 240px; max-height: 200px; border-radius: 6px; display: block; }
+.olread { text-align: right; margin-top: 2px; }
+.oltyping { margin: -6px 0 8px; font-style: italic; }
 .olquick-wrap { position: relative; }
 .olquick-wrap textarea { width: 100%; }
 .olquick { bottom: 100%; left: 0; right: auto; margin-bottom: 6px; max-height: 260px; overflow: auto; }
@@ -1688,6 +1799,7 @@ button.mc-label:hover { color: var(--accent); }
 .olvotes { gap: 16px; align-items: center; margin-top: 6px; }
 details.olline { margin-top: 10px; }
 details.olline > summary { cursor: pointer; font-weight: 600; }
+.pill.ol-kpi { background: var(--danger-soft); color: var(--danger); }
 .olcode { background: var(--hover); padding: 8px; border-radius: 6px; overflow-x: auto; user-select: all; }
 /* «Приложения»: the application's page fills the main area */
 .app-frame iframe { display: block; width: 100%; height: calc(100vh - 110px); border: 0; border-radius: 8px; background: var(--card); }
@@ -1885,10 +1997,20 @@ button.busy::after, .button.busy::after { content: ""; position: absolute; inset
 .pill.sg-cancelled, .pill.sg-pwait { background: var(--hover); color: var(--muted); }
 .pill.sg-me { background: var(--accent-soft); color: var(--accent); }
 .sgp-signed { color: var(--ok); } .sgp-refused { color: var(--danger); } .sgp-ready { font-weight: 600; }
+.sgbar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 2px 0 4px; max-width: 220px; }
+.sgbar > span { display: block; height: 100%; background: var(--ok); }
+.sgremind { gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.sgremind select { width: auto; }
+.sgclient { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; margin-bottom: 6px; }
+@media (max-width: 560px) { .sgclient { grid-template-columns: minmax(0, 1fr) auto; } .sgclient input[type=email] { grid-row: 2; } }
 .sgwrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 .sgwrap .pubdoc-view { height: calc(100vh - 160px); }
 .sgparty { padding: 8px 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
 .sgparty:first-of-type { border-top: 0; }
+.sgev { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+.sghist h2 + .sgev { border-top: 0; }
+.sgev-done > div { color: var(--ok); }
+.sgev-refused > div, .sgev-warn { color: var(--danger); }
 .sgturn { border-color: var(--accent); }
 .sgturn form.row { flex-wrap: wrap; gap: 8px; }
 @media (max-width: 900px) { .sgwrap { grid-template-columns: 1fr; } }
@@ -1943,6 +2065,7 @@ button.busy::after, .button.busy::after { content: ""; position: absolute; inset
 .calsec-edit .i { width: 13px; height: 13px; }
 button.calsec-add { color: var(--accent); }
 .calperson form.inline { display: inline; margin: 0; }
+.flash form.inline { display: inline; margin: 0; } /* «Прочитать все» of the new comments */
 .calperson > a { color: inherit; }
 .calshare { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 6px; }
 .reminds { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
@@ -2157,6 +2280,21 @@ form .callext .lbl { display: inline; }
 .sitegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
 .sitecard { display: grid; gap: 4px; }
 .sitethumb { display: grid; place-items: center; height: 96px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 40px; }
+.sitetpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 8px; }
+.sitenav .sitetpls { grid-template-columns: 1fr; gap: 4px; }
+.sitetpl { display: grid; gap: 2px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; margin: 0; color: var(--text); }
+.sitetpl:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.sitetpl input { position: absolute; opacity: 0; pointer-events: none; }
+.sitetpl .sitethumb { height: 56px; font-size: 28px; }
+.sitearea-header, .sitearea-footer { background: repeating-linear-gradient(135deg, transparent 0 10px, var(--hover) 10px 11px); }
+.sitearea-header { border-bottom: 1px dashed var(--accent); }
+.sitearea-footer { border-top: 1px dashed var(--accent); }
+.sitearea-header .siteblk, .sitearea-footer .siteblk { background: #fff; }
+.sitenavtools { display: grid; gap: 4px; justify-items: start; margin-top: 10px; }
+.sitenavtools form { margin: 0; }
+.sitecols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+@media (max-width: 800px) { .sitecols { grid-template-columns: 1fr; } }
+.sitefav { width: 24px; height: 24px; object-fit: contain; }
 .sitepub { padding: 1px 6px; border-radius: 4px; background: var(--hover); }
 .sitepub.on { background: var(--ok-soft); }
 .sitelayout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
@@ -2195,6 +2333,27 @@ form .callext .lbl { display: inline; }
 .bk-ev.bk-no_show { border-left-color: #d9534f; }
 .bk-ev.bk-cancelled { opacity: .55; text-decoration: line-through; }
 .bk-ev.bk-late { border-left-color: #d9534f; box-shadow: inset 0 0 0 1px #d9534f; }
+.bk-presets { margin-bottom: 8px; }
+.bk-filter { flex-wrap: wrap; gap: 8px; }
+.bk-filter input[type=search] { width: 260px; }
+.bk-list-wrap { overflow-x: auto; }
+.bk-list td { vertical-align: top; }
+.bk-stars { color: #e8a33d; letter-spacing: 1px; white-space: nowrap; }
+.bk-rate { display: grid; gap: 8px; margin: 12px 0; }
+.bk-rate-form { display: grid; gap: 8px; }
+.bk-starpick { display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; gap: 2px; font-size: 32px; line-height: 1; }
+.bk-starpick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.bk-starpick label { cursor: pointer; color: #c9ced6; font-size: 32px; line-height: 1; margin: 0; }
+.bk-rate-form button { justify-self: start; }
+.bk-starpick input:checked ~ label, .bk-starpick label:hover, .bk-starpick label:hover ~ label { color: #e8a33d; }
+.bk-starpick input:focus-visible + label { outline: 2px solid var(--accent); }
+.bk-list td:first-child, .bk-list .bk-phone { white-space: nowrap; }
+.bk-list tr.bk-cancelled td { opacity: .55; }
+.pill.bk-st { background: var(--accent-soft); color: var(--accent); }
+.pill.bk-st.bk-unconfirmed { background: #fdf0dc; color: #a86a12; }
+.pill.bk-st.bk-came { background: var(--ok-soft); color: var(--ok); }
+.pill.bk-st.bk-no_show, .pill.bk-st.bk-late { background: var(--danger-soft); color: var(--danger); }
+.pill.bk-st.bk-cancelled { background: var(--hover); color: var(--muted); }
 .bk-dlg .row label { flex: 1; }
 .bk-crm { display: grid; gap: 4px; }
 .bk-chips { flex-wrap: wrap; gap: 4px; }
@@ -2282,6 +2441,18 @@ form .callext .lbl { display: inline; }
 .mkt-tpl-thumb { height: 240px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fff; pointer-events: none; }
 .mkt-tpl-thumb > div { width: 640px; zoom: .36; overflow-wrap: anywhere; }
 .mkt-tpl .row { margin-top: auto; flex-wrap: nowrap; }
+.mkt-blocks { gap: 4px; margin: 2px 0 6px; }
+.mkt-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.mkt-panel[hidden] { display: none; }
+.pill.mkt-r-held { background: var(--hover); color: var(--muted); }
+.mkt-script { white-space: pre-wrap; }
+.mkt-ab-tabs { margin: 2px 0 6px; align-items: center; }
+.mkt-ab-tabs[hidden], .mkt-ab [hidden] { display: none; }
+.mkt-ab-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; margin-bottom: -1px; padding: 6px 14px; color: var(--muted); }
+.mkt-ab-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.mkt-ab-res tr.mkt-ab-win td { background: var(--ok-soft); }
+.mkt-panel input[type=url], .mkt-panel input[type=text] { flex: 1 1 180px; width: auto; }
+.mkt-panel input[type=color] { width: 40px; padding: 2px; }
 .mkt-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; }
 .tlist td.num, .tlist th.num { text-align: right; white-space: nowrap; }
 .mkt-scroll { overflow-x: auto; }
@@ -2314,3 +2485,33 @@ form .callext .lbl { display: inline; }
 /* Definition of Done in a task card */
 .dodlist { list-style: none; padding: 0; margin: 6px 0; }
 .dodlist li { padding: 3px 0; }
+/* «Параметры» of a business process: a table of fields to edit */
+.bpfields .tablewrap { overflow-x: auto; }
+.bpfields td { padding: 2px 4px; }
+.bpfields td input, .bpfields td select { width: 100%; min-width: 90px; }
+.bpfields td select { width: auto; min-width: 0; }
+.bpfields td input[name$=_label] { min-width: 160px; }
+/* «Онлайн-запись»: the break of a resource on the grid; its schedule by days in the form */
+.bkgrid .bk-break { background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--line) 6px 7px); }
+.bkgrid .bk-cal { background-color: transparent; background-image: repeating-linear-gradient(45deg, transparent 0 5px, color-mix(in srgb, var(--accent) 35%, transparent) 5px 6px); }
+.calitem.booking { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--text); border-left-color: var(--accent); }
+.calitem.booking.bk-unconfirmed { border-left-color: #e8a33d; }
+.bk-days td { padding: 2px 8px 2px 0; }
+.bk-days input[type=time], .bk-offdates input[type=date] { width: auto; }
+/* feed: the event of another section a post is of (GO24DEV-468) */
+.fsrc { display: flex; gap: 12px; align-items: center; padding: 8px 0; }
+/* feed: the right column (GO24DEV-659) */
+.feedwrap { display: grid; grid-template-columns: minmax(0, 860px) 280px; gap: 20px; align-items: start; }
+.fside { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 12px; }
+.fside .card { padding: 12px 14px; }
+.fside h3 { margin: 0 0 8px; }
+.fside-row { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+.fside-row:first-of-type { border-top: 0; }
+.fside-row.line { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+@media (max-width: 1100px) { .feedwrap { grid-template-columns: minmax(0, 1fr); } .fside { position: static; } }
+/* «Онлайн-запись» in a frame of a website: no page margins, the background of the site shows through */
+body:has(.bk-embed) { background: transparent; }
+.share.bk-embed { margin: 0 auto; padding: 8px; }
+.bk-embed .share-foot { display: none; }
+.bk-code { width: 100%; font-family: var(--mono, monospace); font-size: 12px; }
+.bk-qr { width: 180px; height: 180px; image-rendering: pixelated; }

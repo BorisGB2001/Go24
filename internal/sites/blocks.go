@@ -20,7 +20,8 @@ type Block struct {
 
 // Field is a field of a block type. Kind: text, textarea, url, image (a link or an uploaded picture), color,
 // pairs (lines «Заголовок | текст» — the items of a menu or of advantages), show (a field of a form: "" — not asked,
-// on — asked, req — required), user (an employee: the responsible of a form's leads).
+// on — asked, req — required), user (an employee: the responsible of a form's leads), booking (the token of a link
+// of «Онлайн-запись»: its page is shown in the block).
 type Field struct{ Name, Kind string }
 
 // BlockType is a block of the library («Добавить блок»); its title and texts by default are locale keys
@@ -43,6 +44,7 @@ var BlockTypes = []BlockType{
 	{"contacts", "phone", []Field{{"title", "text"}, {"phone", "text"}, {"email", "text"}, {"address", "textarea"}}},
 	{"form", "send", []Field{{"title", "text"}, {"text", "textarea"}, {"ask_name", "show"}, {"ask_phone", "show"},
 		{"ask_email", "show"}, {"ask_comment", "show"}, {"button", "text"}, {"thanks", "textarea"}, {"responsible", "user"}, {"color", "color"}}},
+	{"booking", "calendar-event", []Field{{"title", "text"}, {"text", "textarea"}, {"booking", "booking"}, {"color", "color"}}},
 	{"footer", "layout-bottombar", []Field{{"text", "textarea"}, {"color", "color"}}},
 }
 
@@ -61,6 +63,7 @@ const maxField = 10000
 var (
 	colorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 	uuidRe  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	tokenRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 // SafeURL keeps a link a visitor may follow: http(s), mailto, tel, an address of this server or an anchor; others
@@ -100,6 +103,10 @@ func clean(t BlockType, data map[string]string) map[string]string {
 			}
 		case "user":
 			if !uuidRe.MatchString(v) {
+				v = ""
+			}
+		case "booking":
+			if !tokenRe.MatchString(v) {
 				v = ""
 			}
 		case "text":

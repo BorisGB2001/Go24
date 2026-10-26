@@ -122,18 +122,25 @@ func actingOf(userID, actingID string, rights []string) (any, []string) {
 // AddAbsence records an absence (own; a manager's, an HR officer's or an administrator's for others).
 func (s *Store) AddAbsence(ctx context.Context, actor, userID, kind string, from, to time.Time, comment string, admin bool,
 	actingID string, rights []string) error {
+	_, err := s.CreateAbsence(ctx, actor, userID, kind, from, to, comment, admin, actingID, rights)
+	return err
+}
+
+// CreateAbsence is AddAbsence returning the new absence's id.
+func (s *Store) CreateAbsence(ctx context.Context, actor, userID, kind string, from, to time.Time, comment string, admin bool,
+	actingID string, rights []string) (string, error) {
 	hr, err := s.checkAbsence(ctx, actor, userID, kind, from, to, admin)
 	if err != nil {
-		return err
+		return "", err
 	}
 	acting, clean := actingOf(userID, actingID, rights)
 	var id string
 	if err := s.db.QueryRow(ctx, `INSERT INTO absences (user_id, kind, starts_on, ends_on, comment, created_by, acting_id, acting_rights)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id::text`,
 		userID, kind, from.Format("2006-01-02"), to.Format("2006-01-02"), strings.TrimSpace(comment), actor, acting, clean).Scan(&id); err != nil {
-		return err
+		return "", err
 	}
-	return s.notifyIfHR(ctx, hr, actor, "added", id)
+	return id, s.notifyIfHR(ctx, hr, actor, "added", id)
 }
 
 // notifyIfHR: an HR officer's action — the absence (as it is now) to the officer, the employee and the managers.

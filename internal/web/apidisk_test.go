@@ -147,6 +147,28 @@ func TestDiskAPI(t *testing.T) {
 	if len(versions) != 2 || versions[0].Size != 2 {
 		t.Fatalf("versions %+v", versions)
 	}
+	// «Документы»: office documents only; «Недавние» — those opened in the editor
+	docx := upload("", "План.docx", "d", annaKey, 201)[0].ID
+	var docs []apiDoc
+	call("GET", "/api/v1/disk/docs", readOnly, nil, 200, &docs)
+	if len(docs) != 1 || docs[0].ID != docx || docs[0].Drive != "my" || docs[0].Kind != "doc" || docs[0].Opened != nil {
+		t.Fatalf("documents %+v", docs)
+	}
+	call("GET", "/api/v1/disk/docs?scope=recent", annaKey, nil, 200, &docs)
+	if len(docs) != 0 {
+		t.Fatalf("recent before opening %+v", docs)
+	}
+	must(srv.Drive.Opened(ctx, anna, docx))
+	call("GET", "/api/v1/disk/docs?scope=recent&type=doc", annaKey, nil, 200, &docs)
+	if len(docs) != 1 || docs[0].Opened == nil {
+		t.Fatalf("recent %+v", docs)
+	}
+	call("GET", "/api/v1/disk/docs?type=sheet", annaKey, nil, 200, &docs)
+	if len(docs) != 0 {
+		t.Fatalf("spreadsheets %+v", docs)
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM files WHERE id = $1`, docx) // not to be in the top folder and the trash below
+	must(err)
 	if l := list(folder.ID); len(l.Path) != 1 || l.Path[0].Name != "Отчёты" || len(l.Files) != 1 || l.Files[0].URL != "/api/v1/disk/files/"+file {
 		t.Fatalf("the folder %+v", l)
 	}
@@ -158,6 +180,90 @@ func TestDiskAPI(t *testing.T) {
 	send(req, borisKey, 403) // not his
 	call("GET", "/api/v1/disk/drives/sh:"+folder.ID, borisKey, nil, 404, nil)
 	call("GET", "/api/v1/disk/drives/NOPE", annaKey, nil, 404, nil)
+
+	// the public link, as disk.file.getExternalLink
+	fileLink, folderLink := "/api/v1/disk/drives/my/files/"+file+"/link", "/api/v1/disk/drives/my/folders/"+folder.ID+"/link"
+	call("GET", fileLink, annaKey, nil, 404, nil)
+	call("PUT", fileLink, readOnly, map[string]any{}, 403, nil)
+	var link apiDiskLinkOut
+	call("PUT", fileLink, annaKey, map[string]any{"password": "секрет", "expires": "2099-12-31", "edit": true}, 200, &link)
+	if !strings.Contains(link.URL, "/s/") || !link.Password || !link.Edit || link.ExpiresAt == nil || link.ExpiresAt.Year() != 2099 {
+		t.Fatalf("the link %+v", link)
+	}
+	var again apiDiskLinkOut
+	call("GET", fileLink, readOnly, nil, 200, &again) // a read-only key of the one who writes there
+	call("PUT", fileLink, annaKey, map[string]any{"clear_password": true}, 200, &again)
+	if again.URL != link.URL || again.Password || again.Edit || again.ExpiresAt != nil {
+		t.Fatalf("the link changed %+v", again)
+	}
+	call("PUT", fileLink, annaKey, map[string]any{"expires": "вчера"}, 422, nil)
+	call("GET", "/api/v1/disk/drives/my/files/"+file+"/link", borisKey, nil, 404, nil) // not on his drive
+	call("PUT", folderLink, annaKey, map[string]any{"edit": true}, 200, &link)
+	if link.Edit || link.URL == again.URL {
+		t.Fatalf("the folder's link %+v", link)
+	}
+	call("DELETE", fileLink, annaKey, nil, 204, nil)
+	call("GET", fileLink, annaKey, nil, 404, nil)
+
+	// «Общий доступ», as disk.folder.sharetouser
+	fileShares := "/api/v1/disk/drives/my/files/" + file + "/shares"
+	var shares []apiDiskShare
+	call("POST", fileShares, annaKey, map[string]string{"whom": "user:" + boris, "access": "full"}, 404, nil) // a file: read or edit
+	call("POST", fileShares, annaKey, map[string]string{"whom": "user:" + boris, "access": "edit"}, 200, &shares)
+	if len(shares) != 1 || shares[0].Kind != "user" || shares[0].Whom.ID != boris || shares[0].Whom.Name != "Борис" || shares[0].Access != "edit" {
+		t.Fatalf("shares %+v", shares)
+	}
+	call("GET", "/api/v1/disk/drives", borisKey, nil, 200, &drives)
+	if last := drives[len(drives)-1]; last.ID != "sf:"+file || last.Access != "edit" {
+		t.Fatalf("boris's drives %+v", drives)
+	}
+	call("POST", "/api/v1/disk/drives/my/folders/"+folder.ID+"/shares", annaKey, map[string]string{"whom": "user:" + boris, "access": "read"}, 200, &shares)
+	if len(shares) != 1 || shares[0].Access != "read" {
+		t.Fatalf("the folder's shares %+v", shares)
+	}
+	call("DELETE", "/api/v1/disk/drives/my/shares/"+shares[0].ID, annaKey, nil, 204, nil)
+	call("GET", "/api/v1/disk/drives/my/folders/"+folder.ID+"/shares", annaKey, nil, 200, &shares)
+	if len(shares) != 0 {
+		t.Fatalf("unshared %+v", shares)
+	}
+	call("GET", "/api/v1/disk/drives/company/files/"+file+"/shares", annaKey, nil, 403, nil) // «Мой диск» only
+
+	// «Обсуждение» of the file
+	comments := "/api/v1/disk/files/" + file + "/comments"
+	var cm struct{ ID string }
+	call("POST", comments, annaKey, map[string]string{"body": "Проверь итоги"}, 201, &cm)
+	call("POST", comments, borisKey, map[string]string{"body": "Проверил"}, 201, nil) // the file is shared with him
+	call("POST", comments, annaKey, map[string]string{"body": " "}, 422, nil)
+	var list2 []apiDiskComment
+	call("GET", comments, readOnly, nil, 200, &list2)
+	if len(list2) != 2 || list2[0].Body != "Проверь итоги" || list2[0].Author.ID != anna || list2[1].Author.Name != "Борис" {
+		t.Fatalf("comments %+v", list2)
+	}
+	call("DELETE", comments+"/"+cm.ID, borisKey, nil, 404, nil) // not his
+	call("DELETE", comments+"/"+cm.ID, annaKey, nil, 204, nil)
+	var notes int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'disk_comment'`, anna).Scan(&notes))
+	if notes != 1 {
+		t.Fatalf("anna heard of %d comments", notes)
+	}
+	call("DELETE", "/api/v1/disk/drives/my/shares/"+func() string {
+		call("GET", fileShares, annaKey, nil, 200, &shares)
+		return shares[0].ID
+	}(), annaKey, nil, 204, nil)
+	call("GET", comments, borisKey, nil, 403, nil)
+
+	// a version brought back, as disk.file.restoreFromVersion
+	call("POST", "/api/v1/disk/drives/my/files/"+file+"/versions/"+versions[1].ID+"/restore", readOnly, nil, 403, nil)
+	call("POST", "/api/v1/disk/drives/my/files/"+file+"/versions/"+versions[1].ID+"/restore", annaKey, nil, 204, nil)
+	req, _ = http.NewRequest("GET", hs.URL+"/api/v1/disk/files/"+file, nil)
+	if got := send(req, annaKey, 200); string(got) != "1" {
+		t.Fatalf("restored %q", got)
+	}
+	call("GET", "/api/v1/disk/files/"+file+"/versions", annaKey, nil, 200, &versions)
+	if len(versions) != 3 || versions[0].Size != 1 {
+		t.Fatalf("versions after the restore %+v", versions)
+	}
+	call("POST", "/api/v1/disk/drives/my/files/"+file+"/versions/"+anna+"/restore", annaKey, nil, 404, nil)
 
 	call("PATCH", "/api/v1/disk/drives/my/files/"+file, annaKey, map[string]string{"name": "итоги-2026.txt"}, 204, nil)
 	call("PATCH", "/api/v1/disk/drives/my/folders/"+folder.ID, annaKey, map[string]string{"name": "Отчёты 2026"}, 204, nil)

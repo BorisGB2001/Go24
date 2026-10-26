@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +21,13 @@ import (
 
 // Entities are the kinds of CRM cards.
 var Entities = map[string]bool{"deal": true, "lead": true, "contact": true, "company": true}
+
+// TemplateEmployee is the kind of templates of HR documents («Подпись для сотрудников»), filled from the employee's
+// profile, not a card.
+const TemplateEmployee = "employee"
+
+// TemplateInvoice is the kind of templates of the quotes and invoices («Счета»): their print forms.
+const TemplateInvoice = "invoice"
 
 // DocTemplate is a template and where its file is.
 type DocTemplate struct {
@@ -139,7 +147,7 @@ func (s *Store) AddDocTemplate(ctx context.Context, userID, name, entity, fileID
 // NewDocTemplate is AddDocTemplate giving the template's id.
 func (s *Store) NewDocTemplate(ctx context.Context, userID, name, entity, fileID string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || len([]rune(name)) > 200 || !Entities[entity] {
+	if name == "" || len([]rune(name)) > 200 || !(Entities[entity] || entity == TemplateEmployee || entity == TemplateInvoice) {
 		return "", i18n.E("err.doc_template")
 	}
 	var id string
@@ -217,7 +225,7 @@ const docCols = `d.id, coalesce(d.template_id::text, ''), d.template_name, d.ent
 
 // AddDocument keeps a made document at its card and notes it in the card's history.
 func (s *Store) AddDocument(ctx context.Context, d Document) (string, error) {
-	if !Entities[d.Entity] {
+	if !Entities[d.Entity] && d.Entity != TemplateInvoice {
 		return "", i18n.E("err.doc_template")
 	}
 	tx, err := s.db.Begin(ctx)
@@ -236,7 +244,14 @@ func (s *Store) AddDocument(ctx context.Context, d Document) (string, error) {
 	if d.Number != "" {
 		body += " № " + d.Number
 	}
-	if err := s.event(ctx, tx, d.Entity, d.EntityID, d.AuthorID, "document", body); err != nil {
+	entity, card := d.Entity, d.EntityID
+	if entity == TemplateInvoice { // the note goes to the deal or the lead of the invoice
+		if err := tx.QueryRow(ctx, `SELECT CASE WHEN deal_id IS NULL THEN 'lead' ELSE 'deal' END, coalesce(deal_id, lead_id)::text
+			FROM crm_invoices WHERE id::text = $1`, card).Scan(&entity, &card); err != nil {
+			return "", err
+		}
+	}
+	if err := s.event(ctx, tx, entity, card, d.AuthorID, "document", body); err != nil {
 		return "", err
 	}
 	return id, tx.Commit(ctx)
@@ -363,6 +378,61 @@ func (s *Store) MyCompany(ctx context.Context) (string, error) {
 		err = json.Unmarshal(raw, &id)
 	}
 	return id, err
+}
+
+// DocImageKinds are the pictures of «Моя компания» the templates have as {MyCompany.<kind>}: the stamp and the
+// facsimile signatures of the director and the chief accountant, as the requisites have them.
+var DocImageKinds = []string{"Stamp", "DirectorSignature", "AccountantSignature"}
+
+// DocImages are the files of the pictures of «Моя компания» by their kinds (those uploaded).
+func (s *Store) DocImages(ctx context.Context) (map[string]string, error) {
+	var raw []byte
+	err := s.db.QueryRow(ctx, `SELECT value FROM company_settings WHERE key = 'doc_images'`).Scan(&raw)
+	out := map[string]string{}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &out)
+	}
+	return out, err
+}
+
+// SetDocImage keeps the file of a picture of «Моя компания» (fileID "" — removes it); the file it had before ("" —
+// none), to delete.
+func (s *Store) SetDocImage(ctx context.Context, userID, kind, fileID string) (string, error) {
+	if !slices.Contains(DocImageKinds, kind) {
+		return "", ErrNotFound
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var raw []byte
+	err = tx.QueryRow(ctx, `SELECT value FROM company_settings WHERE key = 'doc_images' FOR UPDATE`).Scan(&raw)
+	images := map[string]string{}
+	switch {
+	case err == nil:
+		err = json.Unmarshal(raw, &images)
+	case errors.Is(err, pgx.ErrNoRows):
+		err = nil
+	}
+	if err != nil {
+		return "", err
+	}
+	old := images[kind]
+	if fileID == "" {
+		delete(images, kind)
+	} else {
+		images[kind] = fileID
+	}
+	raw, _ = json.Marshal(images)
+	if _, err := tx.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ('doc_images', $1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`, raw, userID); err != nil {
+		return "", err
+	}
+	return old, tx.Commit(ctx)
 }
 
 // SetMyCompany chooses «Моя компания» ("" — none).

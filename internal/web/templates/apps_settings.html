@@ -29,6 +29,7 @@
     <span class="small" title="{{t "apps.access_hint"}}">{{t "apps.access"}}:</span><div style="flex:1">{{template "upick" (upick "to" (index $d.Access $a.ID) nil "multi" "depts" "ph" (t "apps.access_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
   <div class="small muted">{{with $a.InstalledAt}}{{t "apps.installed_at" (datetime (deref .))}} · {{end}}{{t "apps.users" $a.Users}}{{with $a.InstallStatus}} · HTTP {{.}}{{end}}{{with $a.InstallError}} · <span class="dl over">{{.}}</span>{{end}}</div>
   {{with index $d.Places $a.ID}}<div class="small"><b>{{t "apps.places"}}:</b>{{range .}}<div>{{t (print "apps.place." .Kind)}} <code>{{.Placement}}</code> — {{.Tab}} · <code>{{.Handler}}</code></div>{{end}}</div>{{end}}
+  {{with index $d.Bots $a.ID}}<div class="small" title="{{t "apps.bots_hint"}}"><b>{{t "apps.bots"}}:</b>{{range .}}<div>{{icon "robot"}} {{.FullName}} · <code>{{.Code}}</code>{{with .WorkPosition}} · {{.}}{{end}}</div>{{end}}</div>{{end}}
   {{with index $d.Events $a.ID}}<div class="small"><b>{{t "apps.events"}}:</b>{{range .}}<div><code>{{.Event}}</code> · <code>{{.Handler}}</code>{{with .LastAt}} · {{t "apps.event_last" (datetime (deref .))}}{{end}}{{with .LastStatus}} · HTTP {{.}}{{end}}{{with .LastError}} · <span class="dl over">{{.}}</span>{{end}}{{if .Pending}} · {{t "apps.event_pending" .Pending}}{{end}}</div>{{end}}</div>{{end}}
   <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
     <form method="post" action="/settings/apps/{{$a.ID}}"><input type="hidden" name="op" value="save">
@@ -41,5 +42,5 @@
   <form method="post" action="/settings/apps/new"><input type="hidden" name="op" value="save">
     {{template "appform" (dict "A" $d.Empty "Scopes" $d.Scopes)}}
     <p><button class="primary">{{t "common.create"}}</button></p></form></details>
-<div class="card small">{{t "apps.howto" $d.Base}}<p>{{t "apps.howto_places" $d.Base}}</p><p>{{t "apps.howto_events" $d.Base}}</p></div>
+<div class="card small">{{t "apps.howto" $d.Base}}<p>{{t "apps.howto_places" $d.Base}}</p><p>{{t "apps.howto_events" $d.Base}}</p><p>{{t "apps.howto_sdk" $d.Base}}</p></div>
 {{end}}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"go24/internal/web"
@@ -11,6 +12,8 @@ import (
 // startBackground runs the scheduled work of go24 worker: meeting reminders, regular tasks, cleaning old
 // notifications. (The messenger bridge, its deliveries and the task log start with the Matrix service.)
 func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
+	// open lines: the Telegram bots' messages and the answers to them
+	go srv.OpenLines.RunTelegram(ctx, log)
 	go func() { // meeting, task and CRM activity reminders; CRM robots that waited, mail triggers, recurring deals; task robots; open lines
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -45,6 +48,34 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 			if _, err := srv.OpenLines.Due(ctx, time.Now()); err != nil && ctx.Err() == nil { // open lines: the queue, automatic messages, closing
 				log.Error("open lines", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // calendars connected by their iCal links: loaded again every half an hour
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			if err := srv.SyncCalendarLinks(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("calendar links", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // calendars of CalDAV servers connected two ways: every five minutes, within a minute after a change
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			if err := srv.SyncCalendarDav(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("calendar caldav", "err", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -121,6 +152,11 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 				} else if n > 0 {
 					log.Info("kb trash purged", "items", n)
 				}
+				if n, err := srv.Sites.PurgeExpired(ctx, time.Now().AddDate(0, 0, -days)); err != nil && ctx.Err() == nil {
+					log.Error("sites trash", "err", err)
+				} else if n > 0 {
+					log.Info("sites trash purged", "items", n)
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -143,14 +179,15 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+			case <-srv.Apps.Woken(): // a message to a chat bot: its application hears it at once
 			}
 		}
 	}()
-	go func() { // «Бизнес-процессы»: pauses that are over, autostart on CRM cards added or changed — every 15 s
+	go func() { // «Бизнес-процессы»: pauses that are over, autostart on CRM cards and documents of «Общий диск» added or changed — every 15 s
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
-			for _, err := range append(srv.BP.WakeDue(ctx, time.Now()), srv.BP.AutoStart(ctx)...) {
+			for _, err := range slices.Concat(srv.BP.WakeDue(ctx, time.Now()), srv.BP.AutoStart(ctx), srv.BP.AutoStartFiles(ctx)) {
 				log.Error("business process", "err", err)
 			}
 			select {
@@ -180,6 +217,20 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 		for {
 			for _, err := range srv.RunMailExports(ctx) {
 				log.Warn("mail export", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // «Почта»: «Импорт из файла», one after another
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			for _, err := range srv.RunMailImports(ctx) {
+				log.Warn("mail import", "err", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -240,6 +291,20 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 		for {
 			if err := srv.BookingDue(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("booking due", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // «Подпись»: the signers whose turn has lasted are reminded
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			if err := srv.SignDue(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Warn("sign reminders", "err", err)
 			}
 			select {
 			case <-ctx.Done():

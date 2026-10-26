@@ -1,0 +1,11 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "adjustments"}} {{t "sections.title"}}</h1>
+<div class="sub">{{t "sections.subtitle"}}</div>
+<form method="post" action="/settings/tools" class="card">
+  {{range $d.Sections}}<label class="check" style="display:flex;padding:4px 0"><input type="checkbox" name="on" value="{{.ID}}" {{if not (has $d.Off .ID)}}checked{{end}}> {{t .TitleKey}}</label>
+  {{end}}
+  <p class="muted small">{{t "sections.hint"}}</p>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>
+{{end}}

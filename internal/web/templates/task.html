@@ -23,6 +23,8 @@
         {{range $m := list "favorite" "pin" "mute"}}{{$on := index $.Data.Marks $m}}
         <form method="post" action="/t/{{$key}}/mark"><input type="hidden" name="mark" value="{{$m}}"><input type="hidden" name="on" value="{{if $on}}0{{else}}1{{end}}">
           <button class="ghost">{{icon (print "mark-" $m)}} {{t (print "mark." $m (ifs $on ".off" ".on"))}}</button></form>{{end}}
+        {{if not $.Guest}}{{$on := index $.Data.Marks "dayplan"}}<form method="post" action="/t/{{$key}}/dayplan"><input type="hidden" name="on" value="{{if $on}}0{{else}}1{{end}}">
+          <button class="ghost">{{icon "list-check"}} {{t (ifs $on "dayplan.card_off" "dayplan.card_on")}}</button></form>{{end}}
         {{if not (or $c.Frozen $.Guest)}}<a class="button ghost" href="/tasks/new?copy={{$key}}">{{icon "copy"}} {{t "task.copy"}}</a>{{end}}
         {{if and $c.Roles.Responsible (not $c.Status.Closed)}}<button type="button" class="ghost" data-show="delegate" data-focus="#delegate input">{{icon "arrow-forward-up"}} {{t "task.delegate"}}</button>{{end}}
         {{if not (or $c.Frozen $.Guest)}}<a class="button ghost" href="/templates/new?from={{$key}}">{{icon "copy"}} {{t "templates.from_task"}}</a>{{end}}

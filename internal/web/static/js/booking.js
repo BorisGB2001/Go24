@@ -14,6 +14,7 @@
   const hour0 = +grid.dataset.hour0, hourPx = +grid.dataset.hourPx;
   const hhmm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   const title = dlg.querySelector('h3'), by = dlg.querySelector('[data-booking-by]'), del = dlg.querySelector('[data-booking-delete]');
+  const rating = dlg.querySelector('[data-booking-rating]');
   const deal = dlg.querySelector('[data-booking-deal]'), crm = dlg.querySelector('[data-bk-crm]');
   const toWait = dlg.querySelector('[data-booking-towait]'), extras = [...form.querySelectorAll('[name=extra]')];
   // the resource of the booking is not one of its others
@@ -116,6 +117,11 @@
       f('status').value = b.dataset.status;
       title.textContent = title.dataset.titleEdit;
       by.textContent = b.dataset.by ? by.dataset.label + ': ' + b.dataset.by : '';
+      if (rating) { // the client's rating of the visit
+        const n = +(b.dataset.rating || 0);
+        rating.hidden = !n;
+        rating.textContent = n ? rating.dataset.label + ': ' + '★'.repeat(n) + '☆'.repeat(5 - n) + (b.dataset.ratingNote ? ' — ' + b.dataset.ratingNote : '') : '';
+      }
       del.hidden = false;
       del.setAttribute('formaction', '/booking/item/' + b.dataset.bk + '/delete');
       if (toWait) {
@@ -134,6 +140,7 @@
       f('minutes').value = slot;
       title.textContent = title.dataset.titleNew;
       by.textContent = '';
+      if (rating) rating.hidden = true;
       del.hidden = true;
       if (toWait) toWait.hidden = true;
       if (deal) deal.hidden = true;
@@ -159,14 +166,16 @@
     f('client_name').focus();
   };
   // slotAt: the start (minutes of the day) of the slot of col under the pointer, by the resource's own slot size from
-  // the start of its work; null — not a working time
+  // the start of its work; null — not a working time or its break
   const slotAt = (col, clientY) => {
     if (!col || col.classList.contains('off')) return null;
     const y = clientY - col.getBoundingClientRect().top;
     const from = +col.dataset.from, to = +col.dataset.to, slot = +col.dataset.slot;
     const at = hour0 * 60 + y / hourPx * 60;
     if (at < from || at >= to) return null;
-    return Math.min(from + Math.floor((at - from) / slot) * slot, to - slot);
+    const m = Math.min(from + Math.floor((at - from) / slot) * slot, to - slot);
+    const b0 = +col.dataset.breakFrom, b1 = +col.dataset.breakTo;
+    return b0 < b1 && m < b1 && m + slot > b0 ? null : m;
   };
   grid.addEventListener('click', e => {
     const b = e.target.closest('[data-bk]');

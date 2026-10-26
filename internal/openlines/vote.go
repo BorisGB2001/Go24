@@ -159,14 +159,14 @@ func (s *Store) SendHistory(ctx context.Context, widgetID, token, email string) 
 	for _, m := range msgs {
 		who := x.visitor
 		switch {
-		case m.Kind == "note":
+		case m.Internal():
 			continue
 		case m.Auto():
 			who = x.line
 		case m.Operator != "":
 			who = m.Operator
 		}
-		b.WriteString(who + " (" + m.At.Local().Format("02.01.2006 15:04") + "):\n" + m.Body + "\n\n")
+		b.WriteString(who + " (" + m.At.Local().Format("02.01.2006 15:04") + "):\n" + m.Text() + "\n\n")
 	}
 	if err := s.SendMail(ctx, x.from, email, s.tr("ol.history_subject", x.line), b.String()); err != nil {
 		return i18n.E("err.ol_history")

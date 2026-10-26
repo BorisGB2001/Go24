@@ -38,6 +38,8 @@ func (s *Server) apiDiskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/restore", s.api("disk:write", s.apiDiskRestore))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}", s.api("disk:read", s.apiDiskDownload))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}/versions", s.api("disk:read", s.apiDiskVersions))
+	mux.HandleFunc("GET /api/v1/disk/docs", s.api("disk:read", s.apiDiskDocs))
+	s.apiDiskLinkRoutes(mux)
 }
 
 type apiDrive struct {

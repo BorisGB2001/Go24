@@ -199,6 +199,24 @@ func (s *Store) SetShare(ctx context.Context, userID string, d Drive, folderID, 
 	return tx.Commit(ctx)
 }
 
+// SharesOf are the shares of a folder (or, with fileID, a file) of the user's own «Мой диск».
+func (s *Store) SharesOf(ctx context.Context, userID string, d Drive, folderID, fileID string) ([]Share, error) {
+	if d.Kind != "user" || d.Root != "" || d.File != "" || d.OwnerID != userID {
+		return nil, ErrForbidden
+	}
+	itemID := folderID
+	if fileID != "" {
+		itemID = fileID
+		if _, _, err := s.fileOf(ctx, s.db, d, fileID); err != nil {
+			return nil, err
+		}
+	} else if _, err := s.path(ctx, d, folderID); err != nil {
+		return nil, err
+	}
+	shares, err := s.Shares(ctx, []string{itemID})
+	return shares[itemID], err
+}
+
 // DeleteShare closes a folder or a file of the user's own «Мой диск» to the one it was shared with.
 func (s *Store) DeleteShare(ctx context.Context, userID string, d Drive, shareID string) error {
 	if d.Kind != "user" || d.Root != "" || d.File != "" || d.OwnerID != userID {

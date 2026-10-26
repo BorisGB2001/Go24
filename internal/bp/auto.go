@@ -8,7 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The autostart of the templates: «при добавлении» and «при изменении» of a CRM card. The worker reads the
+// The autostart of the templates: «при добавлении» and «при изменении» of a CRM card (of a document of
+// «Общий диск» — AutoStartFiles). The worker reads the
 // cards' timeline — a card added by a form, REST, a CSV, mail or a robot leaves «created» there, an edit «changed»,
 // a move «stage» or «pipeline» — so every way a card changes starts the processes alike.
 
@@ -97,7 +98,70 @@ func (s *Store) AutoStart(ctx context.Context) []error {
 				continue
 			}
 			started[key] = true
-			if _, err := s.start(ctx, e.author, t, e.card, nil, true); err != nil {
+			if _, err := s.start(ctx, e.author, t, e.card, nil, true, ""); err != nil {
+				out = append(out, err)
+			}
+		}
+	}
+	return out
+}
+
+// AutoStartFiles starts the templates of files set to start by themselves on the documents added to «Общий диск» or
+// changed there since the last call (the worker calls it), alike: not on an event made while a process of the template
+// ran on the document, and once on one document by one batch.
+func (s *Store) AutoStartFiles(ctx context.Context) []error {
+	type event struct {
+		id           int64
+		file, author string
+		created      bool
+	}
+	var last int64
+	if err := s.db.QueryRow(ctx, `SELECT file_id FROM bp_cursor`).Scan(&last); err != nil {
+		return []error{err}
+	}
+	rows, err := s.db.Query(ctx, `SELECT id, file_id::text, coalesce(author_id::text, ''), created FROM drive_events
+		WHERE id > $1 AND created_at <= now() - make_interval(secs => $3) ORDER BY id LIMIT $2`, last, autoBatch, autoLag)
+	if err != nil {
+		return []error{err}
+	}
+	events, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (event, error) {
+		var e event
+		return e, r.Scan(&e.id, &e.file, &e.author, &e.created)
+	})
+	if err != nil || len(events) == 0 {
+		return errs(err)
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE bp_cursor SET file_id = $2 WHERE file_id = $1`, last, events[len(events)-1].id)
+	if err != nil || tag.RowsAffected() == 0 {
+		return errs(err)
+	}
+	var out []error
+	started := map[[2]string]bool{} // a file uploaded and at once changed starts a template set to both once
+	for _, e := range events {
+		if e.author == "" {
+			continue
+		}
+		rows, err := s.db.Query(ctx, templateSQL+` t WHERE active AND entity = $1 AND (auto_create AND $3 OR auto_change AND NOT $3)
+			AND EXISTS (SELECT 1 FROM files f WHERE f.id::text = $2 AND f.drive = 'company' AND f.deleted_at IS NULL)
+			AND NOT EXISTS (SELECT 1 FROM bp_instances i WHERE i.template_id = t.id AND i.entity_id::text = $2
+				AND (i.status = 'running' OR i.finished_at >= (SELECT created_at FROM drive_events WHERE id = $4)))
+			ORDER BY lower(name)`, EntityFile, e.file, e.created, e.id)
+		if err != nil {
+			out = append(out, err)
+			continue
+		}
+		list, err := pgx.CollectRows(rows, scanTemplate)
+		if err != nil {
+			out = append(out, err)
+			continue
+		}
+		for _, t := range list {
+			key := [2]string{t.ID, e.file}
+			if started[key] {
+				continue
+			}
+			started[key] = true
+			if _, err := s.start(ctx, e.author, t, e.file, nil, true, ""); err != nil {
 				out = append(out, err)
 			}
 		}

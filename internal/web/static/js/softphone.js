@@ -1,5 +1,6 @@
 // The softphone of go24 (/phone, a window of its own): JsSIP registers the employee's account "w<number>" on go24's
-// Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking). Pages of go24 send it
+// Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking), transfer — at once (REFER)
+// or after talking to the colleague first (a second call, then REFER with Replaces). Pages of go24 send it
 // their «Позвонить», «Ответить», «Отклонить» (/telephony/live), and it tells them what the line does
 // (/telephony/state) — they show an incoming call too. One window per browser: a second one hands its number to the
 // first and closes.
@@ -12,10 +13,13 @@
   const who = $('[data-sp-who]'), photo = $('[data-sp-photo]'), name = $('[data-sp-name]'), link = $('[data-sp-link]'), num = $('[data-sp-num]'), timer = $('[data-sp-timer]');
   const callBtn = $('[data-sp-call]'), callText = $('[data-sp-call-text]'), hangBtn = $('[data-sp-hang]'), hangText = $('[data-sp-hang-text]');
   const muteBtn = $('[data-sp-mute]'), holdBtn = $('[data-sp-hold]');
+  const xferBtn = $('[data-sp-xfer]'), xfer = $('[data-sp-xfer-panel]'), xferAsk = $('[data-sp-xfer-ask]'), xferTalk = $('[data-sp-xfer-talk]');
+  const xferTo = $('[data-sp-xfer-to]'), xferWho = $('[data-sp-xfer-who]'), completeBtn = $('[data-sp-complete]'), audio2 = $('[data-sp-audio2]');
   const host = t.host || location.hostname;
   const pc = { iceServers: [] }; // Asterisk is in the office network: no STUN, no TURN
   const title = document.title;
   let ua = null, session = null, state = 'idle', registered = false, since = 0, tick = null;
+  let consult = null, transferred = ''; // the call to the colleague before a transfer; the number the call went to
 
   const say = (text, cls) => { status.textContent = text; dot.className = 'sp-dot' + (cls ? ' ' + cls : ''); };
   const post = (url, data) => fetch(url, { method: 'POST', body: new URLSearchParams(data), headers: { Accept: 'application/json' } })
@@ -47,6 +51,8 @@
     hangBtn.hidden = !session;
     hangText.textContent = ringingIn ? hangText.dataset.decline : hangText.dataset.hangup;
     muteBtn.hidden = holdBtn.hidden = state !== 'talking';
+    xferBtn.hidden = state !== 'talking' || !!consult;
+    if (state !== 'talking') xfer.hidden = true;
   };
   const startTimer = () => {
     since = Date.now();
@@ -81,7 +87,7 @@
   };
   let note = null;
 
-  const remoteAudio = conn => conn.addEventListener('track', e => { audio.srcObject = e.streams[0]; audio.play?.().catch(() => {}); });
+  const remoteAudio = (conn, el = audio) => conn.addEventListener('track', e => { el.srcObject = e.streams[0]; el.play?.().catch(() => {}); });
 
   const wire = (s, number, dir) => {
     session = s;
@@ -99,11 +105,13 @@
       tune(false); note?.close?.(); note = null;
       clearInterval(tick);
       const c = JsSIP.C.causes;
-      let text = t.ended;
-      if (e && [c.BUSY, c.REJECTED, c.UNAVAILABLE, c.NOT_FOUND, c.NO_ANSWER].includes(e.cause)) text = t.busy;
+      let text = transferred ? t.transferred.replace('%s', transferred) : t.ended;
+      if (transferred) transferred = '';
+      else if (e && [c.BUSY, c.REJECTED, c.UNAVAILABLE, c.NOT_FOUND, c.NO_ANSWER].includes(e.cause)) text = t.busy;
       else if (e && e.originator !== 'local' && ![c.BYE, c.CANCELED, c.ANSWERED_ELSEWHERE].includes(e.cause) && e.cause) text = t.failed.replace('%s', e.cause);
       say(text, registered ? 'ok' : '');
       session = null; audio.srcObject = null;
+      if (consult) try { consult.terminate(); } catch { /* gone already */ }
       muteBtn.classList.remove('on'); holdBtn.classList.remove('on');
       report('idle', number, dir); buttons();
       setTimeout(() => { if (!session) { who.hidden = true; if (registered) say(t.ready, 'ok'); } }, 4000);
@@ -165,6 +173,75 @@
     on ? session.hold() : session.unhold();
     holdBtn.classList.toggle('on', on);
     holdBtn.title = on ? t.unhold : t.hold;
+  });
+
+  // ---- transfer: at once, or after talking to the colleague (the client on hold meanwhile) ----
+  const clean = v => (v || '').replace(/[\s\-().]/g, '');
+  const target = () => {
+    const n = clean(xferTo.value);
+    if (!/^\+?[0-9*#]{1,20}$/.test(n)) { say(t.badNumber, 'err'); xferTo.focus(); return ''; }
+    return n;
+  };
+  const xferMode = talking => { xferAsk.hidden = talking; xferTalk.hidden = !talking; };
+  const refer = (to, opts = {}) => {
+    try {
+      session.refer(to, { ...opts, eventHandlers: {
+        accepted: () => { transferred = clean(xferTo.value); },
+        requestFailed: () => say(t.xferFailed, 'err'),
+        failed: () => say(t.xferFailed, 'err'),
+      } });
+    } catch { say(t.xferFailed, 'err'); }
+  };
+  const setHold = on => {
+    if (!session || session.isOnHold().local === on) return;
+    on ? session.hold() : session.unhold();
+    holdBtn.classList.toggle('on', on);
+    holdBtn.title = on ? t.unhold : t.hold;
+  };
+  xferBtn.addEventListener('click', () => {
+    xfer.hidden = !xfer.hidden;
+    xferMode(false);
+    if (!xfer.hidden) xferTo.focus();
+  });
+  $('[data-sp-xfer-cancel]').addEventListener('click', () => { xfer.hidden = true; });
+  $('[data-sp-blind]').addEventListener('click', () => {
+    const n = target();
+    if (n && session) refer(`sip:${n}@${host}`);
+  });
+  $('[data-sp-consult]').addEventListener('click', () => {
+    const n = target();
+    if (!n || !session || consult) return;
+    setHold(true);
+    xferMode(true);
+    xferWho.textContent = t.xferCalling.replace('%s', n);
+    completeBtn.disabled = true;
+    try {
+      consult = ua.call(`sip:${n}@${host}`, { mediaConstraints: { audio: true, video: false }, pcConfig: pc,
+        rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false } });
+    } catch { consult = null; xferMode(false); say(t.xferFailed, 'err'); return; }
+    const c = consult;
+    c.on('peerconnection', e => remoteAudio(e.peerconnection, audio2));
+    if (c.connection) remoteAudio(c.connection, audio2);
+    c.on('icecandidate', e => { if (e.candidate.type === 'host') e.ready(); });
+    c.on('confirmed', () => { xferWho.textContent = t.xferTalking.replace('%s', n); completeBtn.disabled = false; });
+    const gone = () => {
+      if (consult !== c) return;
+      consult = null; audio2.srcObject = null;
+      if (session && !transferred) { xferMode(false); say(t.xferEnded, 'busy'); }
+      buttons();
+    };
+    c.on('ended', gone);
+    c.on('failed', gone);
+    buttons();
+  });
+  completeBtn.addEventListener('click', () => {
+    if (!session || !consult) return;
+    refer(consult.remote_identity.uri, { replaces: consult });
+  });
+  $('[data-sp-return]').addEventListener('click', () => {
+    if (consult) try { consult.terminate(); } catch { /* gone already */ }
+    setHold(false);
+    xfer.hidden = true;
   });
   // a notification needs the permission, asked on a click
   addEventListener('click', () => { if (window.Notification?.permission === 'default') Notification.requestPermission().catch(() => {}); }, { once: true });

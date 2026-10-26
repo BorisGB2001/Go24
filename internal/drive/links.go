@@ -20,14 +20,17 @@ type Link struct {
 	ExpiresAt *time.Time
 	Downloads int
 	CreatedAt time.Time
+	Edit      bool // a document edited by those who open it («Разрешить редактирование»)
 }
 
 // ErrLinksOff: the company has turned public links off.
 var ErrLinksOff = i18n.E("err.disk_links_off")
 
 // SetLink makes (or changes) the public link of a file (kind "file") or a folder of the drive: those who write in the
-// drive. An empty password keeps the one set before unless clear is asked; expires nil — no end.
-func (s *Store) SetLink(ctx context.Context, userID string, d Drive, kind, id, password string, clearPassword bool, expires *time.Time) (string, error) {
+// drive. An empty password keeps the one set before unless clear is asked; expires nil — no end. Edit (a file only)
+// lets those who open it edit the document; openedAs is how the user opened the drive (see LinkEditor).
+func (s *Store) SetLink(ctx context.Context, userID string, d Drive, kind, id, password string, clearPassword bool, expires *time.Time,
+	edit bool, openedAs string) (string, error) {
 	if !d.CanWrite {
 		return "", ErrForbidden
 	}
@@ -53,12 +56,16 @@ func (s *Store) SetLink(ctx context.Context, userID string, d Drive, kind, id, p
 	col := "folder_id"
 	if kind == "file" {
 		col = "file_id"
+	} else {
+		edit = false
 	}
-	var token string
-	err := s.db.QueryRow(ctx, `INSERT INTO drive_links (token, `+col+`, password_hash, expires_at, created_by) VALUES ($1, $2, $3, $4, $5)
+	var token string // the one who changes the link last is the one whose rights its editing goes by
+	err := s.db.QueryRow(ctx, `INSERT INTO drive_links (token, `+col+`, password_hash, expires_at, created_by, edit, opened_as)
+		VALUES ($1, $2, $3, $4, $5, $7, $8)
 		ON CONFLICT (`+col+`) WHERE `+col+` IS NOT NULL DO UPDATE SET expires_at = EXCLUDED.expires_at,
-			password_hash = CASE WHEN $6 THEN '' WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash ELSE drive_links.password_hash END
-		RETURNING token`, randomHex(16), id, hash, expires, userID, clearPassword).Scan(&token)
+			password_hash = CASE WHEN $6 THEN '' WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash ELSE drive_links.password_hash END,
+			edit = EXCLUDED.edit, opened_as = EXCLUDED.opened_as, created_by = EXCLUDED.created_by
+		RETURNING token`, randomHex(16), id, hash, expires, userID, clearPassword, edit, openedAs).Scan(&token)
 	return token, err
 }
 
@@ -95,10 +102,30 @@ func (s *Store) DeleteLink(ctx context.Context, userID string, d Drive, kind, id
 	return err
 }
 
+// LinkOf is the public link of a file (kind "file") or a folder of the drive, for those who may change it
+// (ErrNotFound — there is none).
+func (s *Store) LinkOf(ctx context.Context, d Drive, kind, id string) (Link, error) {
+	if !d.CanWrite {
+		return Link{}, ErrForbidden
+	}
+	if err := s.mayLink(ctx, d, kind, id); err != nil {
+		return Link{}, err
+	}
+	links, err := s.Links(ctx, []string{id})
+	if err != nil {
+		return Link{}, err
+	}
+	l, ok := links[id]
+	if !ok {
+		return l, ErrNotFound
+	}
+	return l, nil
+}
+
 // Links are the public links of the things of a drive's folder, by the file's or folder's id.
 func (s *Store) Links(ctx context.Context, ids []string) (map[string]Link, error) {
 	rows, err := s.db.Query(ctx, `SELECT token, coalesce(file_id::text, ''), coalesce(folder_id::text, ''), password_hash <> '',
-			expires_at, downloads, created_at
+			expires_at, downloads, created_at, edit
 		FROM drive_links WHERE (file_id::text = ANY($1) OR folder_id::text = ANY($1))
 			AND NOT EXISTS (SELECT 1 FROM drive_limits WHERE kind = 'no_links' AND bytes = 1)`, ids)
 	if err != nil {
@@ -119,6 +146,8 @@ type Shared struct {
 	Drive Drive // as nobody in particular may read it
 	Name  string
 	Size  int64
+	By    string // who made the link, and how they opened the drive: the editing by the link goes by their rights
+	As    string
 }
 
 // Expired: the link's time is over.
@@ -134,12 +163,12 @@ func (s *Store) OpenLink(ctx context.Context, token string) (Shared, error) {
 	}
 	var kind, owner string
 	err := s.db.QueryRow(ctx, `SELECT l.token, coalesce(l.file_id::text, ''), coalesce(l.folder_id::text, ''), l.password_hash <> '',
-			l.expires_at, l.downloads, l.created_at, l.password_hash,
+			l.expires_at, l.downloads, l.created_at, l.edit, l.password_hash, l.created_by::text, l.opened_as,
 			coalesce(f.drive, d.drive), coalesce(f.drive_owner::text, d.owner_id::text, ''), coalesce(f.name, d.name), coalesce(f.size, 0)
 		FROM drive_links l LEFT JOIN files f ON f.id = l.file_id AND f.deleted_at IS NULL
 			LEFT JOIN drive_folders d ON d.id = l.folder_id
 		WHERE l.token = $1 AND (f.id IS NOT NULL OR d.id IS NOT NULL)`, token).
-		Scan(&sh.Token, &sh.FileID, &sh.FolderID, &sh.Password, &sh.ExpiresAt, &sh.Downloads, &sh.CreatedAt, &sh.hash, &kind, &owner, &sh.Name, &sh.Size)
+		Scan(&sh.Token, &sh.FileID, &sh.FolderID, &sh.Password, &sh.ExpiresAt, &sh.Downloads, &sh.CreatedAt, &sh.Edit, &sh.hash, &sh.By, &sh.As, &kind, &owner, &sh.Name, &sh.Size)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sh, ErrNotFound
 	}

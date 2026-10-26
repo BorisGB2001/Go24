@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -22,8 +24,10 @@ import (
 	"go24/internal/crm"
 	"go24/internal/docgen"
 	"go24/internal/i18n"
+	"go24/internal/inwords"
 	"go24/internal/mail"
 	"go24/internal/office"
+	"go24/internal/payqr"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -52,6 +56,11 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 		s.taskErr(w, r, err, "/crm")
 		return
 	}
+	images, err := s.CRM.DocImages(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
 	refs, err := s.CRM.DocTemplateAccess(r.Context())
 	if err != nil {
 		s.taskErr(w, r, err, "/crm")
@@ -65,7 +74,7 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 	}
 	s.render(w, r, "documents", page{TitleKey: "docs.templates", Nav: "crm_deals", Data: map[string]any{"Templates": list,
 		"Fields": docFields, "PartyFields": partyFields, "ProductFields": productFields, "MyCompany": my, "Companies": companies, "Office": s.Office != nil,
-		"Access": access, "Builtins": docBuiltins}})
+		"Access": access, "Builtins": docBuiltins, "Images": images, "ImageKinds": crm.DocImageKinds}})
 }
 
 // docMyCompany chooses «Моя компания» of the templates (administrators).
@@ -81,12 +90,135 @@ func (s *Server) docMyCompany(w http.ResponseWriter, r *http.Request, sess auth.
 	http.Redirect(w, r, "/crm/documents?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
 }
 
+// docImageMax is the biggest picture of «Моя компания».
+const docImageMax = 2 << 20
+
+// docImageWidth is how wide each picture of «Моя компания» is in a document, cm: the stamp, a signature.
+func docImageWidth(kind string) float64 {
+	if kind == "Stamp" {
+		return 4
+	}
+	return 3.5
+}
+
+// docImage uploads a picture of «Моя компания» — the stamp or a facsimile signature, PNG or JPEG — or removes it
+// (remove=1); administrators.
+func (s *Server) docImage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	back := "/crm/documents"
+	r.Body = http.MaxBytesReader(w, r.Body, docImageMax+1<<16)
+	kind := r.FormValue("kind")
+	if !slices.Contains(crm.DocImageKinds, kind) {
+		s.taskErr(w, r, crm.ErrNotFound, back)
+		return
+	}
+	fileID := ""
+	if r.FormValue("remove") != "1" {
+		f, hdr, err := r.FormFile("file")
+		var data []byte
+		if err == nil {
+			defer f.Close()
+			data, err = io.ReadAll(io.LimitReader(f, docImageMax+1))
+		}
+		var ctype string
+		if err == nil {
+			_, ctype, err = image.DecodeConfig(bytes.NewReader(data))
+		}
+		if err != nil || len(data) > docImageMax || (ctype != "png" && ctype != "jpeg") {
+			s.taskErr(w, r, i18n.E("docs.err.image"), back)
+			return
+		}
+		name := kind + "." + ctype
+		key := path.Join("go24", "doc-images", randomHex(16), name)
+		if err = s.Storages.Put(r.Context(), sess.UserID, false, "", key, bytes.NewReader(data), int64(len(data)), "image/"+ctype); err == nil {
+			fileID, err = s.Storages.AddFile(r.Context(), storages.NewFile{Key: key, Name: path.Base(strings.ReplaceAll(hdr.Filename, "\\", "/")),
+				ContentType: "image/" + ctype, Size: int64(len(data)), UploadedBy: sess.UserID})
+		}
+		if err != nil {
+			s.taskErr(w, r, err, back)
+			return
+		}
+	}
+	old, err := s.CRM.SetDocImage(r.Context(), sess.UserID, kind, fileID)
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	if old != "" {
+		_, _ = s.DB.Exec(r.Context(), `DELETE FROM files WHERE id::text = $1`, old)
+	}
+	s.Log.Info("doc image", "user_id", sess.UserID, "kind", kind, "removed", fileID == "")
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#my-company", http.StatusSeeOther)
+}
+
+// docImages are the pictures of «Моя компания» for the generator: every kind, those not uploaded empty (their
+// placeholders leave nothing).
+func (s *Server) docImages(r *http.Request) (map[string]docgen.Image, error) {
+	files, err := s.CRM.DocImages(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]docgen.Image{}
+	for _, kind := range crm.DocImageKinds {
+		img := docgen.Image{Width: docgen.Cm(docImageWidth(kind)), Float: true}
+		if id := files[kind]; id != "" {
+			m, err := s.Storages.FileMeta(r.Context(), id)
+			if err == nil {
+				img.Data, err = s.readFile(r, m, docImageMax)
+			}
+			if err != nil {
+				s.Log.Warn("doc image", "kind", kind, "err", err)
+			}
+		}
+		out["MyCompany."+kind] = img
+	}
+	return out, nil
+}
+
+// docPayQR is the QR code of the payment of the document ({PaymentQR}), as the invoices have it: to «Моя
+// компания»'s account, the document's total in roubles, «Оплата по счёту № … от …»; none with no bank details.
+func (s *Server) docPayQR(r *http.Request, v map[string]string) docgen.Image {
+	img := docgen.Image{Width: docgen.Cm(3.5)}
+	p := payqr.Payee{Name: cmp.Or(v["MyCompany.FullName"], v["MyCompany.Title"]), Account: v["MyCompany.Account"],
+		Bank: v["MyCompany.Bank"], BIK: v["MyCompany.BIK"], CorrAccount: v["MyCompany.CorrAccount"], INN: v["MyCompany.INN"],
+		KPP: v["MyCompany.KPP"]}
+	if !p.Ok() {
+		return img
+	}
+	var sum int64
+	if c := v["Currency"]; c == "" || c == "RUB" {
+		sum = payqr.Kopecks(v["Total"])
+	}
+	data, err := payqr.PNG(payqr.Text(p, sum, s.tr(r, "docs.qr_purpose", v["DocumentNumber"], v["DocumentDate"])))
+	if err != nil {
+		s.Log.Warn("doc payment qr", "err", err)
+		return img
+	}
+	img.Data = data
+	return img
+}
+
+// docImageField: the placeholder is a picture of «Моя компания» or the QR code of the payment.
+func docImageField(n string) bool {
+	if n == "PaymentQR" {
+		return true
+	}
+	k, ok := strings.CutPrefix(n, "MyCompany.")
+	return ok && slices.Contains(crm.DocImageKinds, k)
+}
+
 // docFields are the placeholders of each kind of card, as the settings page lists them.
 var docFields = map[string][]string{
-	"deal":    {"Title", "Amount", "Currency", "Stage", "Company", "Contact", "Responsible", "CloseDate", "Comment", "Date", "Number"},
-	"lead":    {"Title", "Name", "CompanyTitle", "Phone", "Email", "Source", "Amount", "Currency", "Stage", "Responsible", "Comment", "Date"},
-	"contact": {"Name", "Position", "Phone", "Email", "Company", "Responsible", "Comment", "Date"},
-	"company": {"Title", "Phone", "Email", "Website", "Address", "Responsible", "Comment", "Date"},
+	"deal":     {"Title", "Amount", "Currency", "Stage", "Company", "Contact", "Responsible", "CloseDate", "Comment", "Date", "Number"},
+	"lead":     {"Title", "Name", "CompanyTitle", "Phone", "Email", "Source", "Amount", "Currency", "Stage", "Responsible", "Comment", "Date"},
+	"contact":  {"Name", "Position", "Phone", "Email", "Company", "Responsible", "Comment", "Date"},
+	"company":  {"Title", "Phone", "Email", "Website", "Address", "Responsible", "Comment", "Date"},
+	"employee": employeeFields,
+	"invoice": {"Kind", "Number", "Title", "IssueDate", "DueDate", "Status", "Amount", "Currency", "Company", "Contact", "Responsible",
+		"Comment", "Card", "Date"},
 }
 
 // storeTemplateFile keeps the DOCX of a template as a file of go24.
@@ -222,7 +354,7 @@ func (s *Server) addTemplate(ctx context.Context, userID, name, entity, filename
 	if _, err := docgen.Fill(data, nil); err != nil { // a Word document at all?
 		return "", i18n.E("err.doc_not_docx")
 	}
-	if !crm.Entities[entity] {
+	if !crm.Entities[entity] && entity != crm.TemplateEmployee && entity != crm.TemplateInvoice {
 		return "", i18n.E("err.doc_template")
 	}
 	fileID, err := s.storeTemplateFile(ctx, userID, path.Base(strings.ReplaceAll(filename, "\\", "/")), data)
@@ -287,6 +419,26 @@ func (s *Server) docTemplateDelete(w http.ResponseWriter, r *http.Request, sess 
 	http.Redirect(w, r, "/crm/documents", http.StatusSeeOther)
 }
 
+// docEntity is the entity of the documents of a kind of cards: the CRM cards and the quotes and invoices.
+func docEntity(kind string) string {
+	if kind == "invoices" {
+		return crm.TemplateInvoice
+	}
+	return crmEntities[kind]
+}
+
+// docCheck: the user may do the action with the card of the documents (an invoice — by its deal or lead).
+func (s *Server) docCheck(r *http.Request, sess auth.Session, kind, id, action string) error {
+	if kind != "invoices" {
+		return s.crmCheck(r, sess, kind, id, action)
+	}
+	v, err := s.CRM.Invoice(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	return s.invoiceCheck(r, sess, v, action)
+}
+
 // docValues are the placeholders' values of a card.
 func (s *Server) docValues(r *http.Request, kind, id string) (map[string]string, string, error) {
 	stage := func(st crm.Stage) string {
@@ -296,7 +448,7 @@ func (s *Server) docValues(r *http.Request, kind, id string) (map[string]string,
 		return st.Name
 	}
 	v := map[string]string{"Date": time.Now().Format(s.tr(r, "format.date"))}
-	switch crmEntities[kind] {
+	switch docEntity(kind) {
 	case "deal":
 		d, err := s.CRM.Deal(r.Context(), id)
 		if err != nil {
@@ -345,6 +497,22 @@ func (s *Server) docValues(r *http.Request, kind, id string) (map[string]string,
 			return nil, "", err
 		}
 		return v, c.Title, nil
+	case crm.TemplateInvoice:
+		x, err := s.CRM.Invoice(r.Context(), id)
+		if err != nil {
+			return nil, "", err
+		}
+		date := s.tr(r, "format.date")
+		v["Kind"], v["Number"], v["Title"], v["Status"] = s.tr(r, "crm.doc."+x.Kind), x.Code(), x.Title, s.tr(r, "crm.inv."+x.Status)
+		v["IssueDate"], v["DueDate"], v["Amount"], v["Currency"] = x.IssueDate.Format(date), "", crm.Amount(x.Amount), x.Currency
+		v["Company"], v["Contact"], v["Responsible"], v["Comment"], v["Card"] = x.Company.Name, x.Contact.Name, x.Responsible.Name, x.Comment, x.CardTitle
+		if x.DueDate != nil {
+			v["DueDate"] = x.DueDate.Format(date)
+		}
+		if err := s.docParties(r, v, kind, id, x.Company.ID, x.Contact.ID, x.Amount); err != nil {
+			return nil, "", err
+		}
+		return v, cmp.Or(x.Title, v["Kind"]+" № "+v["Number"]), nil
 	}
 	return nil, "", i18n.E("err.bad_form")
 }
@@ -414,14 +582,22 @@ func (s *Server) docParties(r *http.Request, v map[string]string, kind, id, comp
 		total, vat = crm.RowsTotal(rows)
 	}
 	v["Total"], v["TaxTotal"], v["TotalNet"] = crm.Amount(total), crm.Amount(vat), crm.Amount(total-vat)
+	v["TotalWords"] = inwords.Amount(s.lang(r), int64(math.Round(total*100)), v["Currency"])
 	v["ProductsCount"] = strconv.Itoa(len(rows))
 	return nil
 }
 
-// docRows are the products of a deal or a lead (none of the other cards).
+// docRows are the products of a deal, a lead or an invoice (none of the other cards).
 func (s *Server) docRows(r *http.Request, kind, id string) ([]crm.ProductRow, error) {
-	if e := crmEntities[kind]; e == "deal" || e == "lead" {
+	switch e := docEntity(kind); e {
+	case "deal", "lead":
 		return s.CRM.ProductRows(r.Context(), e, id)
+	case crm.TemplateInvoice:
+		x, err := s.CRM.Invoice(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		return s.CRM.ProductRows(r.Context(), x.Kind, id)
 	}
 	return nil, nil
 }
@@ -455,10 +631,14 @@ func (s *Server) cardValues(r *http.Request, kind, id string) (values map[string
 		return nil, "", nil, err
 	}
 	known = map[string]bool{}
-	for _, f := range docFields[crmEntities[kind]] {
+	for _, f := range docFields[docEntity(kind)] {
 		known[f] = true
 	}
-	fields, err := s.Tasks.FieldValuesOf(r.Context(), tasks.CRMFieldSets[crmEntities[kind]], id)
+	set, ok := tasks.CRMFieldSets[docEntity(kind)]
+	if !ok {
+		return values, title, known, nil
+	}
+	fields, err := s.Tasks.FieldValuesOf(r.Context(), set, id)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -488,8 +668,13 @@ func (s *Server) docTemplateAllowed(r *http.Request, sess auth.Session, id strin
 
 // docTemplateFile is the DOCX of a template of the card's kind.
 func (s *Server) docTemplateFile(r *http.Request, kind, id string) (crm.DocTemplate, []byte, error) {
+	return s.docTemplateOf(r, docEntity(kind), id)
+}
+
+// docTemplateOf is the DOCX of a template of the entity (employee — of an HR document).
+func (s *Server) docTemplateOf(r *http.Request, entity, id string) (crm.DocTemplate, []byte, error) {
 	t, err := s.CRM.DocTemplate(r.Context(), id)
-	if err == nil && t.Entity != crmEntities[kind] {
+	if err == nil && (entity == "" || t.Entity != entity) {
 		err = crm.ErrNotFound
 	}
 	if err != nil {
@@ -524,7 +709,12 @@ const docxType = "application/vnd.openxmlformats-officedocument.wordprocessingml
 
 // storeDocument fills the template and keeps the document as a file of go24.
 func (s *Server) storeDocument(r *http.Request, sess auth.Session, tpl []byte, values map[string]string, lists docgen.Rows, name string) (string, error) {
-	doc, err := docgen.FillRows(tpl, values, lists)
+	images, err := s.docImages(r)
+	if err != nil {
+		return "", err
+	}
+	images["PaymentQR"] = s.docPayQR(r, values)
+	doc, err := docgen.Make(tpl, values, lists, images)
 	if err != nil {
 		return "", i18n.E("err.doc_not_docx")
 	}
@@ -541,7 +731,7 @@ func (s *Server) storeDocument(r *http.Request, sess auth.Session, tpl []byte, v
 func (s *Server) crmDocument(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
@@ -556,12 +746,16 @@ func (s *Server) crmDocument(w http.ResponseWriter, r *http.Request, sess auth.S
 // makeDocument makes the document of a card the user sees by a template they may use; the values given go over
 // those of the card. The pages and the REST API make documents by it.
 func (s *Server) makeDocument(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string) (crm.Document, error) {
-	err := s.docTemplateAllowed(r, sess, tplID)
-	var t crm.DocTemplate
-	var tpl []byte
-	if err == nil {
-		t, tpl, err = s.docTemplateFile(r, kind, tplID)
+	if err := s.docTemplateAllowed(r, sess, tplID); err != nil {
+		return crm.Document{}, err
 	}
+	return s.makeDocumentBy(r, sess, kind, id, tplID, over)
+}
+
+// makeDocumentBy makes the document of the card by the template, whoever may use it: the step «Создание документа» of
+// a business process makes it so.
+func (s *Server) makeDocumentBy(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string) (crm.Document, error) {
+	t, tpl, err := s.docTemplateFile(r, kind, tplID)
 	if err != nil {
 		return crm.Document{}, err
 	}
@@ -580,7 +774,7 @@ func (s *Server) makeDocument(r *http.Request, sess auth.Session, kind, id, tplI
 	if err != nil {
 		return crm.Document{}, err
 	}
-	doc := crm.Document{TemplateID: t.ID, TemplateName: t.Name, Entity: crmEntities[kind], EntityID: id, Number: number,
+	doc := crm.Document{TemplateID: t.ID, TemplateName: t.Name, Entity: docEntity(kind), EntityID: id, Number: number,
 		Values: values, AuthorID: sess.UserID}
 	doc.FileID, err = s.storeDocument(r, sess, tpl, values, lists, t.Name+" № "+number+" — "+title)
 	if err == nil {
@@ -597,7 +791,7 @@ type docField struct{ Name, Value string }
 func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
@@ -605,7 +799,7 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 	tplID := r.URL.Query().Get("template")
 	if docID := r.URL.Query().Get("doc"); docID != "" {
 		var err error
-		if doc, err = s.CRM.Document(r.Context(), crmEntities[kind], id, docID); err == nil && doc.TemplateID == "" {
+		if doc, err = s.CRM.Document(r.Context(), docEntity(kind), id, docID); err == nil && doc.TemplateID == "" {
 			err = crm.ErrNotFound
 		}
 		if err != nil {
@@ -637,8 +831,8 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 	}
 	fields := make([]docField, 0, len(names))
 	for _, n := range names {
-		if n == "DocumentNumber" && doc.ID == "" || strings.HasPrefix(n, "Product.") {
-			continue // given when it is made; the products are the card's
+		if n == "DocumentNumber" && doc.ID == "" || strings.HasPrefix(n, "Product.") || docImageField(n) {
+			continue // given when it is made; the products are the card's; the pictures are «Моя компания»'s
 		}
 		fields = append(fields, docField{n, values[n]})
 	}
@@ -650,11 +844,11 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 func (s *Server) crmDocumentRemake(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	doc, err := s.CRM.Document(r.Context(), crmEntities[kind], id, r.PathValue("doc"))
+	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	if err == nil {
 		err = s.remakeDocument(r, sess, doc, docFormValues(r))
 	}
@@ -667,6 +861,9 @@ func (s *Server) crmDocumentRemake(w http.ResponseWriter, r *http.Request, sess 
 
 // crmKind is the path's kind of cards of an entity ("deal" → "deals").
 func crmKind(entity string) string {
+	if entity == crm.TemplateInvoice {
+		return "invoices"
+	}
 	for k, e := range crmEntities {
 		if e == entity {
 			return k
@@ -707,11 +904,11 @@ func (s *Server) remakeDocument(r *http.Request, sess auth.Session, doc crm.Docu
 func (s *Server) crmDocumentFile(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
-	doc, err := s.CRM.Document(r.Context(), crmEntities[kind], id, r.PathValue("doc"))
+	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	var m storages.FileMeta
 	if err == nil {
 		m, err = s.Storages.FileMeta(r.Context(), doc.FileID)
@@ -736,11 +933,11 @@ func (s *Server) crmDocumentFile(w http.ResponseWriter, r *http.Request, sess au
 func (s *Server) crmDocumentDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	doc, err := s.CRM.Document(r.Context(), crmEntities[kind], id, r.PathValue("doc"))
+	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	if err == nil {
 		err = s.CRM.DeleteDocument(r.Context(), doc.ID)
 	}
@@ -884,11 +1081,11 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request, m storages.Fil
 func (s *Server) crmDocumentPDF(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
-	doc, err := s.CRM.Document(r.Context(), crmEntities[kind], id, r.PathValue("doc"))
+	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	var pdf string
 	if err == nil {
 		pdf, err = s.documentPDF(r, doc)
@@ -912,11 +1109,11 @@ func (s *Server) crmDocumentPDF(w http.ResponseWriter, r *http.Request, sess aut
 func (s *Server) crmDocumentPublic(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.crmCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	doc, err := s.CRM.Document(r.Context(), crmEntities[kind], id, r.PathValue("doc"))
+	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	if err == nil {
 		_, err = s.CRM.SetDocumentPublic(r.Context(), doc.ID, r.FormValue("on") == "1")
 	}
@@ -997,4 +1194,24 @@ func (s *Server) documentAttachments(r *http.Request, entity, id string) ([]mail
 		out = append(out, mail.Attachment{Name: m.Name, ContentType: m.ContentType, Data: data})
 	}
 	return out, nil
+}
+
+// BPDocument is the hook of business processes (bp.Store.Document): the document of the card by the template, made by
+// the user, and its id.
+func (s *Server) BPDocument(ctx context.Context, userID, entity, entityID, tplID string, values map[string]string) (string, error) {
+	kind := ""
+	for k, e := range crmEntities {
+		if e == entity {
+			kind = k
+		}
+	}
+	if kind == "" {
+		return "", crm.ErrNotFound
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	if err != nil {
+		return "", err
+	}
+	doc, err := s.makeDocumentBy(r, auth.Session{UserID: userID}, kind, entityID, tplID, values)
+	return doc.ID, err
 }

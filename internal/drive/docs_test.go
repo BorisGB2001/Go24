@@ -105,6 +105,22 @@ func TestDriveDocuments(t *testing.T) {
 	if list, _ = s.Documents(ctx, anna, exts, DocFilter{Q: "бюдж"}, 100); len(list) != 1 || list[0].ID != budget {
 		t.Errorf("anna finds «бюдж»: %+v", list)
 	}
+	// «Недавние»: what the user opened, the last opened first; ivan's opening is not anna's
+	if list, _ = s.Documents(ctx, anna, exts, DocFilter{Scope: "recent"}, 100); len(list) != 0 {
+		t.Errorf("anna's recent before opening = %+v", list)
+	}
+	must(s.Opened(ctx, anna, budget))
+	must(s.Opened(ctx, anna, plan))
+	must(s.Opened(ctx, ivan, slides))
+	_, err = pool.Exec(ctx, `UPDATE doc_opens SET opened_at = now() - interval '1 hour' WHERE file_id = $1`, budget)
+	must(err)
+	if list, _ = s.Documents(ctx, anna, exts, DocFilter{Scope: "recent"}, 100); len(list) != 2 || list[0].ID != plan || list[1].ID != budget || list[0].Opened == nil {
+		t.Errorf("anna's recent = %+v", list)
+	}
+	must(s.Opened(ctx, anna, budget)) // opened again: first
+	if list, _ = s.Documents(ctx, anna, exts, DocFilter{Scope: "recent"}, 100); len(list) != 2 || list[0].ID != budget {
+		t.Errorf("anna's recent after opening again = %+v", list)
+	}
 	// the shared folder in the trash: nothing of it for ivan; a guest has no company drive
 	_, err = pool.Exec(ctx, `UPDATE drive_folders SET deleted_at = now() WHERE id = $1`, shared)
 	must(err)

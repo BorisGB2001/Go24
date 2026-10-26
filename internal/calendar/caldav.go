@@ -99,7 +99,7 @@ func DavCTag(list []DavItem) string {
 
 // DavItemOf is the meeting named name in the viewer's collection (nil — none).
 func (s *Store) DavItemOf(ctx context.Context, viewer, calendarID, name string) (*DavItem, error) {
-	list, err := s.DavEvents(ctx, viewer, calendarID)
+	list, err := s.DavResources(ctx, viewer, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +208,12 @@ func synced(old *Event, in Event) (Event, []string) {
 	e := *old
 	e.Title, e.Description, e.Start, e.End, e.AllDay = in.Title, in.Description, in.Start, in.End, in.AllDay
 	e.Repeat, e.Every, e.Until, e.Reminds, e.Private = in.Repeat, in.Every, in.Until, in.Reminds, in.Private
+	e.Days, e.Count = in.Days, in.Count
 	// the file tells the room in the place (see writeEvent)
 	e.Where = in.Where
+	if in.TZ != "" || in.AllDay { // a time in UTC keeps the zone the meeting had
+		e.TZ = in.TZ
+	}
 	if e.RoomName != "" {
 		e.Where = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(in.Where), e.RoomName))
 	}

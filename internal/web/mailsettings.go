@@ -22,9 +22,10 @@ import (
 // «CRM»: each mailbox's «Привязывать письма к CRM» and «Создавать лид для новых адресов».
 // «Быстрые действия»: the user's quick steps (mailquick.go). «Списки контактов»: the user's lists (maillists.go).
 // «Макет»: the density of the list, the text size, what a row shows (mail.Layout).
-// /mail/settings?tab=signatures|templates|compose|handling|layout|lists|focused|rules|quick|sweep|ooo|forwarding|senders|crm.
+// «Безопасность»: the user's S/MIME certificates, signing and encrypting by default (mailsmime.go).
+// /mail/settings?tab=signatures|templates|compose|handling|layout|lists|focused|rules|quick|sweep|ooo|forwarding|senders|crm|security.
 
-var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "layout", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm"}
+var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "layout", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm", "security"}
 
 type mailSettingsData struct {
 	Tab                          string
@@ -70,6 +71,8 @@ type mailSettingsData struct {
 	Safe                         []mail.Sender
 	Lists                        []mail.ContactList
 	List                         *mail.ContactList // the contact list being edited
+	Certs                        []mail.Cert       // «Безопасность»
+	Security                     mail.Security
 }
 
 func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -129,6 +132,9 @@ func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess a
 	}
 	if err == nil && d.Tab == "lists" {
 		err = s.mailListsData(r, sess.UserID, d)
+	}
+	if err == nil && d.Tab == "security" {
+		err = s.mailSMIMEData(r, sess.UserID, d)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/mail")

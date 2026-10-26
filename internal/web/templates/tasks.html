@@ -43,7 +43,7 @@
     <input type="text" name="name" maxlength="60" required placeholder="{{t "preset.name"}}" style="flex:1">
     <button>{{icon "check"}} {{t "preset.save"}}</button></form>{{end}}
 </details>
-<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true)}}</div>
+<div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true $)}}</div>
 {{if $d.Tasks}}{{template "bulkbar" $d.Bulk}}{{end}}
 {{if ge (len $d.Tasks) $d.Limit}}<p class="small muted">{{t "tasks.limit" $d.Limit}}</p>{{end}}
 {{end}}

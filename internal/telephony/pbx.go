@@ -27,7 +27,7 @@ const Realm = "go24"
 
 // Render is the PJSIP configuration of the lines (deploy/asterisk/pjsip.conf includes it): an endpoint, its password
 // and its registrations for the SIP phone and for the softphone (WebRTC) of each employee. record: their calls are
-// recorded (the dialplan sees GO24_RECORD).
+// recorded (the dialplan sees GO24_RECORD). A call they transfer goes to go24-transfer of the dialplan.
 func Render(lines []Line, record bool) string {
 	var b strings.Builder
 	b.WriteString("; go24 writes this file (Settings → Telephony): do not edit it by hand\n")
@@ -36,9 +36,9 @@ func Render(lines []Line, record bool) string {
 			continue
 		}
 		cid := fmt.Sprintf("\"%s\" <%s>", callerName(l.Name), l.Number)
-		vars := ""
+		vars := "set_var = TRANSFER_CONTEXT=go24-transfer\n" // a transferred call goes there
 		if record {
-			vars = "set_var = GO24_RECORD=1\n"
+			vars += "set_var = GO24_RECORD=1\n"
 		}
 		for _, acc := range []struct {
 			login, password, media string
@@ -150,6 +150,8 @@ type PBX struct {
 	mu       sync.Mutex
 	pjsip    confFile // the accounts (go24/pjsip.conf)
 	dialplan confFile // go24's part of the dialplan: the external lines (go24/extensions.conf)
+	queues   confFile // the queue groups (go24/queues.conf)
+	moh      confFile // their music (go24/musiconhold.conf)
 	once     sync.Once
 	kick     chan struct{}
 }
@@ -173,6 +175,10 @@ func (p *PBX) Sync(ctx context.Context) error {
 	}
 	var lines []Line
 	var trunks []Trunk
+	var menus []Menu
+	black := map[string]bool{}
+	var callbacks []Callback
+	var groups []Group
 	record := false
 	if on {
 		if lines, err = p.Lines(ctx); err != nil {
@@ -184,6 +190,18 @@ func (p *PBX) Sync(ctx context.Context) error {
 		if trunks, err = p.Trunks(ctx); err != nil {
 			return err
 		}
+		if menus, err = p.Menus(ctx); err != nil {
+			return err
+		}
+		if black, err = p.BlackKeys(ctx); err != nil {
+			return err
+		}
+		if callbacks, err = p.Callbacks(ctx); err != nil {
+			return err
+		}
+		if groups, err = p.Groups(ctx); err != nil {
+			return err
+		}
 	}
 	numbers := map[string]string{}
 	for _, l := range lines {
@@ -191,10 +209,33 @@ func (p *PBX) Sync(ctx context.Context) error {
 			numbers[l.UserID] = l.Number
 		}
 	}
-	if err := p.sounds(ctx, trunks); err != nil {
+	if err := p.sounds(ctx, trunks, menus, groups); err != nil {
 		return err
 	}
-	accounts, dialplan := RenderTrunks(trunks, numbers, record, time.Local.String())
+	keys := map[string]string{}
+	for _, m := range menus {
+		keys[m.ID] = MenuKey(m.ID)
+	}
+	queues := map[string]string{}
+	for _, g := range groups {
+		keys[g.ID], queues[g.ID] = GroupKey(g.ID), GroupKey(g.ID)
+	}
+	users := make([]string, 0, len(numbers))
+	for u := range numbers {
+		users = append(users, u)
+	}
+	limits, err := p.OutLimits(ctx, users)
+	if err != nil {
+		return err
+	}
+	accounts, dialplan := RenderTrunks(trunks, numbers, keys, limits, record, time.Local.String())
+	queueConf, mohConf, queuePlan := RenderGroups(groups, numbers)
+	dialplan += RenderMenus(menus, numbers, queues) + queuePlan + RenderBlacklist(black)
+	byID := map[string]Trunk{}
+	for _, t := range trunks {
+		byID[t.ID] = t
+	}
+	dialplan += RenderCallbacks(callbacks, byID, numbers, record)
 	for _, f := range []struct {
 		file   *confFile
 		name   string
@@ -202,6 +243,8 @@ func (p *PBX) Sync(ctx context.Context) error {
 		module string
 	}{
 		{&p.pjsip, "pjsip.conf", Render(lines, record) + accounts, "res_pjsip.so"},
+		{&p.queues, "queues.conf", queueConf, "app_queue.so"},
+		{&p.moh, "musiconhold.conf", mohConf, "res_musiconhold.so"},
 		{&p.dialplan, "extensions.conf", dialplan, "pbx_config.so"},
 	} {
 		if err := f.file.sync(ctx, p.ARI, filepath.Join(p.Dir, f.name), f.text, f.module); err != nil {
@@ -211,27 +254,42 @@ func (p *PBX) Sync(ctx context.Context) error {
 	return nil
 }
 
-// sounds writes the beep and the lines' greetings the dialplan plays (files named by their checksums, so a written one
-// stays as it is) and removes the greetings no line has any more.
-func (p *PBX) sounds(ctx context.Context, trunks []Trunk) error {
+// sounds writes the beep and the greetings of the lines and the voice menus the dialplan plays (files named by their
+// checksums, so a written one stays as it is) and removes the greetings nobody has any more.
+func (p *PBX) sounds(ctx context.Context, trunks []Trunk, menus []Menu, groups []Group) error {
 	beep := filepath.Join(p.Dir, "beep.wav")
 	if _, err := os.Stat(beep); errors.Is(err, os.ErrNotExist) {
 		if err := writeFile(beep, Beep()); err != nil {
 			return err
 		}
 	}
-	keep := map[string]bool{}
+	type sound struct {
+		sum, id string
+		get     func(context.Context, string) ([]byte, error)
+	}
+	var all []sound
 	for _, t := range trunks {
-		if t.GreetingSum == "" {
+		all = append(all, sound{t.GreetingSum, t.ID, p.TrunkGreeting})
+		all = append(all, sound{t.RateSum, t.ID, p.TrunkRatePrompt})
+	}
+	for _, m := range menus {
+		all = append(all, sound{m.GreetingSum, m.ID, p.MenuGreeting})
+	}
+	for _, g := range groups {
+		all = append(all, sound{g.MusicSum, g.ID, p.GroupMusic})
+	}
+	keep := map[string]bool{}
+	for _, x := range all {
+		if x.sum == "" {
 			continue
 		}
-		name := filepath.Base(GreetingFile(t.GreetingSum)) + ".wav"
+		name := filepath.Base(GreetingFile(x.sum)) + ".wav"
 		keep[name] = true
 		file := filepath.Join(p.Dir, name)
 		if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		g, err := p.TrunkGreeting(ctx, t.ID)
+		g, err := x.get(ctx, x.id)
 		if err != nil || g == nil {
 			return err
 		}

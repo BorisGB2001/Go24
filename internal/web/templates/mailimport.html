@@ -1,0 +1,41 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/mail">{{t "mail.title"}}</a> {{icon "chevron-right"}} {{t "mail.fimport.title"}}</div>
+<div class="pagehead"><h1>{{icon "cloud-upload"}} {{t "mail.fimport.title"}}</h1>
+  <div class="actions"><a class="button ghost" href="/mail/export?box={{$d.Box}}">{{icon "download"}} {{t "mail.export.menu"}}</a></div></div>
+{{if not $d.Boxes}}<div class="card"><p class="muted">{{t "mail.export.no_boxes"}}</p></div>{{else}}
+<div class="layout2 mexport">
+<div class="card"><h2>{{t "mail.fimport.new"}}</h2>
+  <form method="get" action="/mail/import" class="row"><label>{{t "mail.fimport.box"}}</label>
+    <select name="box" data-export-box>{{range $d.Boxes}}<option value="{{.ID}}"{{if eq .ID $d.Box}} selected{{end}}>{{.Email}}</option>{{end}}</select></form>
+  <form method="post" action="/mail/import" enctype="multipart/form-data" class="msettings-form" data-import-form>
+    <input type="hidden" name="box" value="{{$d.Box}}">
+    <label>{{t "mail.fimport.where"}}</label>
+    <label class="check"><input type="radio" name="where" value="same"{{if not $d.Folder}} checked{{end}}> {{t "mail.fimport.same"}}</label>
+    <p class="small muted">{{t "mail.fimport.same_hint"}}</p>
+    <label class="check"><input type="radio" name="where" value="folder"{{if $d.Folder}} checked{{end}}> {{t "mail.fimport.into"}}</label>
+    <select name="into" data-import-into>{{range $d.Folders}}{{if and .Selectable (not .Local)}}<option value="{{.ID}}"{{if eq .ID $d.Folder}} selected{{end}}>{{indent .Depth}}{{if .Role}}{{t (print "mail.folder." .Role)}}{{else}}{{.Title}}{{end}}</option>{{end}}{{end}}</select>
+    <label>{{t "mail.fimport.dupes"}}</label>
+    <label class="check"><input type="radio" name="dupes" value="skip" checked> {{t "mail.fimport.dupes_skip"}}</label>
+    <label class="check"><input type="radio" name="dupes" value="allow"> {{t "mail.fimport.dupes_allow"}}</label>
+    {{if $d.Files}}<label>{{t "mail.fimport.drive"}}</label>
+    <select name="drive_file" data-import-drive><option value="">{{t "mail.fimport.drive_none"}}</option>{{range $d.Files}}<option value="{{.ID}}"{{if eq .ID $d.File}} selected{{end}}>{{.Name}} · {{size .Size}}</option>{{end}}</select>{{end}}
+    <label>{{t "mail.fimport.file"}}</label>
+    <input type="file" name="file" accept=".pst,.mbox,.mbx,.zip,.eml" data-import-file>
+    <p class="small muted">{{t "mail.fimport.formats"}}</p>
+    <p class="small muted">{{t "mail.fimport.hint"}}</p>
+    <progress max="100" value="0" hidden data-import-progress></progress>
+    <p><button class="primary">{{icon "cloud-upload"}} {{t "mail.fimport.start"}}</button></p></form>
+</div>
+<div class="card"{{if $d.Busy}} data-export-busy{{end}}><h2>{{t "mail.fimport.list"}}</h2>
+  {{range $d.Imports}}<div class="row mexport-item">
+    <div style="flex:1"><b>{{.Name}}</b> → {{.Email}}
+      <div class="small muted">{{datetime .CreatedAt}} · {{if .FolderID}}{{t "mail.fimport.into_short"}}{{else}}{{t "mail.fimport.same_short"}}{{end}}
+        {{if ne .Status "queued"}} · {{t "mail.export.letters_n" .Letters}}{{if .Same}} · {{t "mail.fimport.same_n" .Same}}{{end}}{{if .Skipped}} · {{t "mail.fimport.skipped_n" .Skipped}}{{end}}{{if .Folders}} · {{t "mail.fimport.folders_n" .Folders}}{{end}}{{end}}</div>
+      {{with .Error}}<div class="small dl over">{{.}}</div>{{end}}</div>
+    <span class="pill mexport-{{.Status}}">{{t (print "mail.fimport.status_" .Status)}}</span>
+    {{if ne .Status "running"}}<form method="post" action="/mail/import/{{.ID}}/delete"{{if eq .Status "queued"}} data-confirm="{{t "mail.fimport.cancel_confirm"}}"{{end}}><button class="ghost small" title="{{if eq .Status "queued"}}{{t "common.cancel"}}{{else}}{{t "mail.fimport.remove"}}{{end}}">{{icon "x"}}</button></form>{{end}}
+  </div>{{else}}<p class="muted">{{t "mail.fimport.none"}}</p>{{end}}
+</div>
+</div>{{end}}
+<script src="{{asset "js/mailimport.js"}}"></script>
+{{end}}

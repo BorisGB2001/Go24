@@ -28,11 +28,11 @@
 {{if $d.Enabled}}
 <div class="card">
   <h2>{{icon "plus"}} {{t "storages.new"}}</h2>
-  <form method="post" action="/settings/storages" id="storage-form">
+  <form method="post" action="/settings/storages" id="storage-form" data-native>
     <div class="grid">
       <div><label>{{t "form.name"}}</label><input type="text" name="name" placeholder="{{t "storages.name_placeholder"}}" required></div>
       <div><label>{{t "col.type"}}</label>
-        <select name="type" id="storage-type">{{range $d.Types}}<option value="{{.}}">{{t (print "storage_type." .)}}</option>{{end}}</select></div>
+        <select name="type" id="storage-type">{{range $d.Types}}<option value="{{.}}">{{t (print "storage_type." .)}}</option>{{end}}{{range $d.Clouds}}<option value="{{.}}">{{t (print "storage_type." .)}}</option>{{end}}</select></div>
       <div><label>{{t "storages.root"}}</label><input type="text" name="root" placeholder="go24"></div>
     </div>
     <div class="grid" data-for="webdav">
@@ -51,6 +51,7 @@
     <p class="small muted" data-for="yandex">{{t "storages.yandex_hint"}}</p>
     <p class="small muted" data-for="mailru">{{t "storages.mailru_hint"}}</p>
     <p class="small muted" data-for="smb">{{t "storages.smb_hint"}}</p>
+    <p class="small muted" data-for="gdrive dropbox onedrive" data-cloud-hint>{{t "storages.cloud_hint"}}</p>
     <div class="grid" data-for="s3">
       <div style="grid-column:span 2"><label>Endpoint</label><input type="text" name="endpoint" placeholder="https://storage.example.ru"></div>
       <div><label>{{t "storages.region"}}</label><input type="text" name="region" placeholder="ru-central1"></div>
@@ -59,6 +60,7 @@
     </div>
     {{if $d.CanShare}}<label class="check"><input type="checkbox" name="shared"> {{t "storages.make_shared"}}</label>{{end}}
     <p class="small muted">{{t "storages.secrets_hint"}}</p>
+    {{if $.User.AdminActive}}<p class="small muted" data-cloud-apps>{{t "storages.cloud_apps"}} <code>{{$d.Redirect}}</code></p>{{end}}
     <p><button class="primary">{{icon "database"}} {{t "storages.connect"}}</button></p>
   </form>
 </div>

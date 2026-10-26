@@ -1,4 +1,5 @@
-// «Структура компании»: the search above the tree leaves the departments whose name or people match
+// «Структура компании»: the search above the tree leaves the departments whose name or people (or a team
+// of theirs) match
 // (with the departments above them; under a found department — all of it), marks the people found and opens their
 // lists; Enter scrolls to the first one. Administrators (.orgtree[data-struct-edit]) drag: a person of a department's
 // list onto another department's card — moved there (op=move_user), a department by its title row onto another
@@ -25,9 +26,28 @@
       list.open = true;
       list.dataset.foundOpen = '';
     }
+    // its teams: found by name or by a person; under a found department — all of them
+    let team = false;
+    for (const tc of dept.querySelectorAll(':scope > .dteams > .teamcard')) {
+      const tnamed = tc.querySelector('.teamname')?.textContent.toLowerCase().includes(q);
+      let thit = false;
+      for (const p of tc.querySelectorAll('.person')) {
+        const found = p.textContent.toLowerCase().includes(q);
+        p.classList.toggle('found', found);
+        thit ||= found;
+      }
+      const tlist = tc.querySelector('.dpeople');
+      if (tlist?.querySelector('.found') && !tlist.open) {
+        tlist.open = true;
+        tlist.dataset.foundOpen = '';
+      }
+      tc.classList.toggle('found', !!tnamed);
+      tc.classList.toggle('struct-hide', !(all || named || tnamed || thit));
+      team ||= tnamed || thit;
+    }
     let below = false;
     for (const k of kids(dept)) below = show(k, q, all || named) || below;
-    const stays = all || named || hit || below;
+    const stays = all || named || hit || team || below;
     dept.classList.toggle('struct-hide', !stays);
     card.classList.toggle('found', !!named);
     return stays;
@@ -58,7 +78,7 @@
   });
 
   if (!('structEdit' in tree.dataset)) return;
-  for (const p of tree.querySelectorAll('.dpeople .person')) p.draggable = true;
+  for (const p of tree.querySelectorAll('.dcard .dpeople .person')) p.draggable = true;
   for (const d of tree.querySelectorAll('.dkids .dept > .dcard > .dhead')) d.draggable = true;
 
   let dragged = null; // {kind: user|dept, id, from (user: their department; dept: its element)}
@@ -74,7 +94,7 @@
   };
 
   tree.addEventListener('dragstart', e => {
-    const p = e.target.closest?.('.dpeople .person');
+    const p = e.target.closest?.('.dcard .dpeople .person');
     const head = e.target.closest?.('.dhead[draggable]');
     if (p) {
       dragged = { kind: 'user', id: p.dataset.user, from: p.closest('.dept').dataset.dept, el: p };

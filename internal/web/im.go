@@ -70,7 +70,7 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 						s.Log.Warn("im group", "err", err)
 					}
 				}
-				if rm.Kind == "dm" || rm.Kind == "group" || rm.Kind == "channel" {
+				if rm.Kind == "dm" || rm.Kind == "group" || rm.Kind == "channel" || rm.Kind == "collab" { // a collab's — its settings
 					if ttl, can, err := s.Matrix.AutoDelete(r.Context(), sess.UserID, rm.ID); err == nil {
 						data["AutoDelete"], data["AutoDeleteCan"], data["AutoDeleteTTLs"] = ttl, can, matrixsync.AutoDeleteTTLs
 					} else {
@@ -85,6 +85,9 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 					if pid := s.Matrix.RoomCollab(r.Context(), rm.ID); pid != "" { // its tasks, drive, calendar, people in the header
 						if c, err := s.Tasks.CollabCard(r.Context(), sess.UserID, pid); err == nil {
 							data["Collab"] = c
+							if _, off := s.offSection(r.Context(), "/sign"); !off && !tasks.IsGuestCtx(r.Context()) && !c.Project.Archived {
+								data["CollabSign"] = true // «Документ на подпись»: its guest signs as the client
+							}
 							if s.Tasks.CanInviteGuests(r.Context(), c.Project, sess.UserID) { // «Пригласить»: guests, else colleagues
 								data["CollabInvite"] = "guests"
 							} else if ok, _ := s.Tasks.CanInvite(r.Context(), c.Project); ok {

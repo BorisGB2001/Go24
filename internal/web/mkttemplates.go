@@ -1,13 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"embed"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"go24/internal/auth"
+	"go24/internal/i18n"
 	mailpkg "go24/internal/mail"
 	"go24/internal/marketing"
 	"go24/internal/tasks"
@@ -139,4 +143,72 @@ func (s *Server) mktTemplateUse(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 	http.Redirect(w, r, "/marketing/campaigns/"+id, http.StatusSeeOther)
+}
+
+// The pictures of letters: uploaded from the letter's editor («Картинка»), kept in go24's storage and served to
+// anyone by their name (/m/i/{name}, no sign-in) — the addressees' mail clients load them. Images only, by content.
+
+// mktImage is the name of a letter's picture: random, with its format's extension.
+var mktImage = regexp.MustCompile(`^[0-9a-f]{32}\.(jpg|png|webp|gif)$`)
+
+const mktImageMax = 5 << 20
+
+// mktImageUpload keeps a picture sent as "file"; JSON {url}: its address for the letters.
+func (s *Server) mktImageUpload(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if err := s.mktAllowed(r, sess); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, mktImageMax+1<<20)
+	f, hdr, err := r.FormFile("file")
+	if err != nil || hdr.Size > mktImageMax {
+		s.jsonErr(w, r, i18n.E("err.photo"))
+		return
+	}
+	defer f.Close()
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	ct := http.DetectContentType(head[:n])
+	ext, ok := photoTypes[ct]
+	if !ok {
+		s.jsonErr(w, r, i18n.E("err.photo"))
+		return
+	}
+	name := randomHex(16) + ext
+	if err := s.Storages.Put(r.Context(), sess.UserID, false, "", "go24/marketing/images/"+name, io.MultiReader(bytes.NewReader(head[:n]), f), hdr.Size, ct); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	s.Log.Info("letter picture", "user_id", sess.UserID, "name", name)
+	writeJSON(w, http.StatusOK, map[string]string{"url": strings.TrimRight(s.BaseURL, "/") + "/m/i/" + name})
+}
+
+// mktImageFile is a letter's picture, no sign-in.
+func (s *Server) mktImageFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !mktImage.MatchString(name) || s.Storages == nil {
+		http.NotFound(w, r)
+		return
+	}
+	obj, err := s.Storages.Open(r.Context(), nil, "go24/marketing/images/"+name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer obj.Close()
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(obj, head)
+	if n == 0 { // the storage opens a missing object lazily: nothing comes
+		http.NotFound(w, r)
+		return
+	}
+	for ct, ext := range photoTypes {
+		if strings.HasSuffix(name, ext) {
+			w.Header().Set("Content-Type", ct)
+		}
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // a new picture gets a new name
+	_, _ = io.Copy(w, io.MultiReader(bytes.NewReader(head[:n]), obj))
 }

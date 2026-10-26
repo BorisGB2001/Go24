@@ -17,7 +17,7 @@
   <select name="template" onchange="this.form.submit()"><option value="">{{t "bp.any_template"}}</option>{{range $d.AllTemplates}}<option value="{{.ID}}" {{if eq .ID $d.Template}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
 <div class="card flush">{{if $d.Instances}}<table class="tlist"><thead><tr><th>{{t "bp.process"}}</th><th>{{t "bp.started_by"}}</th><th>{{t "bp.state"}}</th><th>{{t "bp.started_at"}}</th><th></th></tr></thead><tbody>
   {{$back := print "/bp?tab=all&status=" $d.Status "&template=" $d.Template "&page=" $d.Page}}
-  {{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a>{{if ne .Entity "none"}} <span class="muted small">· {{t (print "crm." .Entity)}}</span>{{end}}</td>
+  {{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a>{{if eq .Entity "file"}} <span class="muted small">· {{t "bp.entity_file"}}</span>{{else if ne .Entity "none"}} <span class="muted small">· {{t (print "crm." .Entity)}}</span>{{end}}</td>
   <td class="small">{{.StartedBy.Name}}</td><td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span></td><td class="small">{{datetime .CreatedAt}}</td>
   <td class="row">{{if eq .Status "running"}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}
     <form method="post" action="/bp/i/{{.ID}}/delete" data-confirm="{{t "bp.delete_instance_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>

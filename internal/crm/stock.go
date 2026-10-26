@@ -39,8 +39,9 @@ type StockDoc struct {
 	ID, Kind, Title, Status   string
 	Number                    int
 	Date                      time.Time
-	Supplier                  Ref // an arrival's supplier: a company of the CRM
-	Deal                      Ref // a shipment's («Реализация») deal
+	Supplier                  Ref    // an arrival's supplier: a company or a contact of the CRM
+	SupplierKind              string // "company" (or empty) or "contact"
+	Deal                      Ref    // a shipment's («Реализация») deal
 	IncomingNumber            string
 	IncomingDate              *time.Time
 	Reason, Comment, Currency string
@@ -282,12 +283,14 @@ type StockFilter struct {
 	Kinds, Warehouses []string
 }
 
-const stockDocCols = `d.id::text, d.kind, d.number, d.title, d.status, d.doc_date, coalesce(d.supplier_id::text, ''), coalesce(c.title, ''),
+const stockDocCols = `d.id::text, d.kind, d.number, d.title, d.status, d.doc_date, coalesce(d.supplier_id::text, d.supplier_contact_id::text, ''),
+	coalesce(c.title, sc.name, ''), CASE WHEN d.supplier_contact_id IS NOT NULL THEN 'contact' WHEN d.supplier_id IS NOT NULL THEN 'company' ELSE '' END,
 	d.incoming_number, d.incoming_date, d.reason, d.comment, d.currency, d.amount::float8, d.responsible_id::text, ur.name,
 	d.created_by::text, uc.name, coalesce(d.conducted_by::text, ''), coalesce(ux.name, ''), d.conducted_at, d.created_at, d.updated_at,
 	coalesce(d.deal_id::text, ''), coalesce(dl.title, '')`
 
-const stockDocFrom = ` FROM crm_stock_docs d LEFT JOIN crm_companies c ON c.id = d.supplier_id JOIN users ur ON ur.id = d.responsible_id
+const stockDocFrom = ` FROM crm_stock_docs d LEFT JOIN crm_companies c ON c.id = d.supplier_id
+	LEFT JOIN crm_contacts sc ON sc.id = d.supplier_contact_id JOIN users ur ON ur.id = d.responsible_id
 	JOIN users uc ON uc.id = d.created_by LEFT JOIN users ux ON ux.id = d.conducted_by LEFT JOIN crm_deals dl ON dl.id = d.deal_id`
 
 func scanStockDocs(rows pgx.Rows, err error) ([]StockDoc, error) {
@@ -296,7 +299,7 @@ func scanStockDocs(rows pgx.Rows, err error) ([]StockDoc, error) {
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (StockDoc, error) {
 		var d StockDoc
-		err := r.Scan(&d.ID, &d.Kind, &d.Number, &d.Title, &d.Status, &d.Date, &d.Supplier.ID, &d.Supplier.Name, &d.IncomingNumber,
+		err := r.Scan(&d.ID, &d.Kind, &d.Number, &d.Title, &d.Status, &d.Date, &d.Supplier.ID, &d.Supplier.Name, &d.SupplierKind, &d.IncomingNumber,
 			&d.IncomingDate, &d.Reason, &d.Comment, &d.Currency, &d.Amount, &d.Responsible.ID, &d.Responsible.Name, &d.CreatedBy.ID,
 			&d.CreatedBy.Name, &d.ConductedBy.ID, &d.ConductedBy.Name, &d.ConductedAt, &d.CreatedAt, &d.UpdatedAt, &d.Deal.ID, &d.Deal.Name)
 		return d, err
@@ -310,7 +313,7 @@ func (s *Store) StockDocs(ctx context.Context, f StockFilter) ([]StockDoc, error
 	}
 	return scanStockDocs(s.db.Query(ctx, `SELECT `+stockDocCols+stockDocFrom+`
 		WHERE ($1 = '' OR d.kind = $1) AND ($2 = '' OR d.status = $2)
-			AND ($3 = '%%' OR d.title ILIKE $3 OR d.number::text = $4 OR d.incoming_number ILIKE $3 OR c.title ILIKE $3)
+			AND ($3 = '%%' OR d.title ILIKE $3 OR d.number::text = $4 OR d.incoming_number ILIKE $3 OR c.title ILIKE $3 OR sc.name ILIKE $3)
 			AND ($5 = '' OR EXISTS (SELECT 1 FROM crm_stock_doc_rows r WHERE r.doc_id = d.id AND r.product_id::text = $5))
 			AND ($7 = '' OR d.deal_id::text = $7) AND ($8::text[] IS NULL OR d.kind = ANY($8))
 			AND ($9::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM crm_stock_doc_rows r WHERE r.doc_id = d.id AND (r.from_warehouse IS NOT NULL OR r.to_warehouse IS NOT NULL))
@@ -441,18 +444,19 @@ func (s *Store) SaveStockDoc(ctx context.Context, userID string, d StockDoc) (st
 				deal = optional(d.Deal.ID)
 			}
 			err := tx.QueryRow(ctx, `INSERT INTO crm_stock_docs (kind, number, title, doc_date, supplier_id, incoming_number, incoming_date,
-					reason, comment, currency, amount, responsible_id, created_by, deal_id)
-				VALUES ($1, (SELECT coalesce(max(number), 0) + 1 FROM crm_stock_docs), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-				d.Kind, d.Title, d.Date, supplier(d), d.IncomingNumber, d.IncomingDate, d.Reason, d.Comment, d.Currency, round2(total),
-				d.Responsible.ID, userID, deal).Scan(&d.ID)
+					reason, comment, currency, amount, responsible_id, created_by, deal_id, supplier_contact_id)
+				VALUES ($1, (SELECT coalesce(max(number), 0) + 1 FROM crm_stock_docs), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+				d.Kind, d.Title, d.Date, supplier(d, "company"), d.IncomingNumber, d.IncomingDate, d.Reason, d.Comment, d.Currency, round2(total),
+				d.Responsible.ID, userID, deal, supplier(d, "contact")).Scan(&d.ID)
 			if err != nil {
 				return err
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `UPDATE crm_stock_docs SET title = $2, doc_date = $3, supplier_id = $4, incoming_number = $5,
-					incoming_date = $6, reason = $7, comment = $8, currency = $9, amount = $10, responsible_id = $11, updated_at = now()
-				WHERE id::text = $1`, d.ID, d.Title, d.Date, supplier(d), d.IncomingNumber, d.IncomingDate, d.Reason, d.Comment, d.Currency,
-				round2(total), d.Responsible.ID); err != nil {
+					incoming_date = $6, reason = $7, comment = $8, currency = $9, amount = $10, responsible_id = $11, supplier_contact_id = $12,
+					updated_at = now()
+				WHERE id::text = $1`, d.ID, d.Title, d.Date, supplier(d, "company"), d.IncomingNumber, d.IncomingDate, d.Reason, d.Comment, d.Currency,
+				round2(total), d.Responsible.ID, supplier(d, "contact")); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `DELETE FROM crm_stock_doc_rows WHERE doc_id::text = $1`, d.ID); err != nil {
@@ -470,9 +474,9 @@ func (s *Store) SaveStockDoc(ctx context.Context, userID string, d StockDoc) (st
 	return d.ID, sectionErr(err)
 }
 
-// supplier: only an arrival has one.
-func supplier(d StockDoc) *string {
-	if d.Kind != "arrival" {
+// supplier: an arrival's supplier if it is of the kind ("company" or "contact"); other documents have none.
+func supplier(d StockDoc, kind string) *string {
+	if d.Kind != "arrival" || (d.SupplierKind == "contact") != (kind == "contact") {
 		return nil
 	}
 	return optional(d.Supplier.ID)

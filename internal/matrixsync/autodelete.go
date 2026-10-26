@@ -70,6 +70,44 @@ func (s *Service) SetAutoDelete(ctx context.Context, userID, room string, ttl in
 	return err
 }
 
+// collabAutoDelete puts a collab's «Автоудаление сообщений» (its settings) into the collab's chat: the room's
+// go24.autodelete state, written by go24 with whom the change is from (the chat's line names them), and the worker's
+// index, deleting first as that person (userID; "" — nobody to name, as for a collab of before).
+func (s *Service) collabAutoDelete(ctx context.Context, room string, ttl int, userID string) error {
+	var had int // the index follows the state: when it says the same, so does the room
+	var hadBy string
+	if err := s.DB.QueryRow(ctx, `SELECT ttl, user_id::text FROM im_autodelete WHERE room_id = $1`, room).Scan(&had, &hadBy); err != nil &&
+		!errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if had == ttl && (ttl == 0 || hadBy == userID || userID == "") {
+		return nil
+	}
+	var st struct {
+		TTL int `json:"ttl"`
+	}
+	if err := s.M.State(ctx, room, autoDeleteType, "", &st); err != nil && !matrix.IsCode(err, "M_NOT_FOUND") {
+		return err
+	}
+	if st.TTL != ttl {
+		var by string
+		if err := s.DB.QueryRow(ctx, `SELECT mxid FROM matrix_users WHERE user_id::text = $1 AND mxid <> ''`, userID).Scan(&by); err != nil &&
+			!errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := s.M.SetState(ctx, room, autoDeleteType, "", map[string]any{"ttl": ttl, "by": by}); err != nil {
+			return err
+		}
+	}
+	if ttl == 0 || userID == "" {
+		_, err := s.DB.Exec(ctx, `DELETE FROM im_autodelete WHERE room_id = $1`, room)
+		return err
+	}
+	_, err := s.DB.Exec(ctx, `INSERT INTO im_autodelete (room_id, ttl, user_id) VALUES ($1, $2, $3)
+		ON CONFLICT (room_id) DO UPDATE SET ttl = $2, user_id = $3 WHERE im_autodelete.ttl <> $2 OR im_autodelete.user_id <> $3`, room, ttl, userID)
+	return err
+}
+
 // ownRoom: the room is one of go24's own chats (a project's, a task's, the company's) — no auto-delete there.
 func (s *Service) ownRoom(ctx context.Context, room string) (bool, error) {
 	var kind string
@@ -185,7 +223,8 @@ func (s *Service) expireRoom(ctx context.Context, room, userID string, from, to 
 	}
 }
 
-// redact deletes one message as tok's owner, or as its author when they may not.
+// redact deletes one message as tok's owner, or as its author when they may not, or else as go24 (a collab's chat,
+// where go24 is the admin).
 func (s *Service) redact(ctx context.Context, tok, room string, ev matrix.Event) error {
 	err := s.M.RedactAs(ctx, tok, room, ev.EventID)
 	if err == nil {
@@ -195,9 +234,11 @@ func (s *Service) redact(ctx context.Context, tok, room string, ev matrix.Event)
 	if s.DB.QueryRow(ctx, `SELECT user_id FROM matrix_users WHERE mxid = $1`, ev.Sender).Scan(&author) != nil {
 		return err
 	}
-	_, atok, aerr := s.token(ctx, author)
-	if aerr != nil {
+	if _, atok, aerr := s.token(ctx, author); aerr == nil && s.M.RedactAs(ctx, atok, room, ev.EventID) == nil {
+		return nil
+	}
+	if own, oerr := s.ownRoom(ctx, room); oerr != nil || !own {
 		return err
 	}
-	return s.M.RedactAs(ctx, atok, room, ev.EventID)
+	return s.M.Redact(ctx, room, ev.EventID, "")
 }

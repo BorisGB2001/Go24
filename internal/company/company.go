@@ -84,6 +84,7 @@ type Profile struct {
 	Username     string // Authentik login: also the Matrix ID (@username:server)
 	Guest        bool   // from outside the company: a collab's guest
 	Departments  []DeptRef
+	Teams        []DeptRef // the teams the person is in
 	Collabs      []DeptRef // a guest's collabs (ID — the key); filled for the list of guests
 }
 
@@ -147,6 +148,7 @@ type Department struct {
 	HeadPhoto string   // photo key of the head
 	Deputies  []Person // заместители руководителя
 	Employees []Person
+	Teams     []*Team // the teams under the department
 	Children  []*Department
 	Depth     int
 }
@@ -235,6 +237,15 @@ func (s *Store) Tree(ctx context.Context) (*Department, []*Department, error) {
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
+	teams, err := s.Teams(ctx, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, t := range teams {
+		if d := byID[t.DepartmentID]; d != nil {
+			d.Teams = append(d.Teams, t)
+		}
+	}
 	var root *Department
 	for _, d := range flat {
 		if d.ParentID == "" {
@@ -277,15 +288,23 @@ func nullable(id string) any {
 
 // AddDepartment creates a sub-department (administrators only — checked by the caller).
 func (s *Store) AddDepartment(ctx context.Context, parentID, name, headID string) error {
+	_, err := s.CreateDepartment(ctx, parentID, name, headID)
+	return err
+}
+
+// CreateDepartment is AddDepartment returning the new department's id.
+func (s *Store) CreateDepartment(ctx context.Context, parentID, name, headID string) (string, error) {
 	name, err := cleanName(name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if parentID == "" {
-		return i18n.E("err.bad_form")
+		return "", i18n.E("err.bad_form")
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO departments (parent_id, name, head_id) VALUES ($1, $2, $3)`, parentID, name, nullable(headID))
-	return err
+	var id string
+	err = s.db.QueryRow(ctx, `INSERT INTO departments (parent_id, name, head_id) VALUES ($1, $2, $3) RETURNING id::text`,
+		parentID, name, nullable(headID)).Scan(&id)
+	return id, err
 }
 
 // UpdateDepartment renames a department, changes its head and moves it under another parent
@@ -391,7 +410,8 @@ func (s *Store) Superiors(ctx context.Context, userID string) ([]Person, error) 
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Person])
 }
 
-// DeleteDepartment removes an empty department: no sub-departments and no employees.
+// DeleteDepartment removes an empty department: no sub-departments and no employees. Its teams go to the department
+// above.
 func (s *Store) DeleteDepartment(ctx context.Context, id string) error {
 	var root bool
 	var children, people int
@@ -408,8 +428,14 @@ func (s *Store) DeleteDepartment(ctx context.Context, id string) error {
 	if root || children > 0 || people > 0 {
 		return i18n.E("err.department_not_empty")
 	}
-	_, err = s.db.Exec(ctx, `DELETE FROM departments WHERE id = $1`, id)
-	return err
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE teams SET department_id = (SELECT parent_id FROM departments WHERE id = $1)
+			WHERE department_id = $1`, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM departments WHERE id = $1`, id)
+		return err
+	})
 }
 
 // ---------- employees ----------
@@ -432,6 +458,7 @@ func scanProfile(row pgx.Row) (Profile, error) {
 type Filter struct {
 	Query        string // name, position, e-mail or phone
 	DepartmentID string // with its sub-departments
+	TeamID       string // the people of a team
 	Fired        bool   // show dismissed employees instead of active ones
 	Guests       bool   // the guests of collabs instead of employees (the «Гости коллабов»), for administrators
 	// Preset is a quick filter of the list: here — the working day is going on (started, not finished),
@@ -462,6 +489,10 @@ func (s *Store) Employees(ctx context.Context, f Filter) ([]Profile, error) {
 		where = append(where, `EXISTS (WITH RECURSIVE sub AS (SELECT id FROM departments WHERE id = $`+strconv.Itoa(len(args))+`
 			UNION ALL SELECT d.id FROM departments d JOIN sub ON d.parent_id = sub.id)
 			SELECT 1 FROM user_departments ud WHERE ud.user_id = u.id AND ud.department_id IN (SELECT id FROM sub))`)
+	}
+	if f.TeamID != "" {
+		args = append(args, f.TeamID)
+		where = append(where, "EXISTS (SELECT 1 FROM team_members m WHERE m.user_id = u.id AND m.team_id::text = $"+strconv.Itoa(len(args))+")")
 	}
 	if slices.Contains(EmployeePresets, f.Preset) {
 		today := f.Today
@@ -556,7 +587,11 @@ func (s *Store) fillDepartments(ctx context.Context, list []Profile) error {
 		}
 		list[idx[uid]].Departments = append(list[idx[uid]].Departments, d)
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	return s.fillTeams(ctx, list, idx, ids)
 }
 
 func (s *Store) Profile(ctx context.Context, id string) (Profile, error) {

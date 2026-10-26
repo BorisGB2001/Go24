@@ -12,7 +12,8 @@ import (
 // The planner of a meeting: when people are busy (their meetings, absences) and the nearest time
 // all of them are free.
 
-// Slot is a span of a person's busy time: busy | tentative (not answered yet or «maybe») | absent. Title and EventID
+// Slot is a span of a person's busy time: busy | tentative (not answered yet or «maybe») | absent | booking (a
+// client's booking of «Онлайн-запись»). Title and EventID
 // are given only when the viewer may see that meeting.
 type Slot struct {
 	Start, End time.Time
@@ -58,7 +59,7 @@ func (s *Store) Busy(ctx context.Context, viewer string, people []string, from, 
 	}
 	// the meetings of each person: organized, or invited and not declined; a free meeting keeps them free
 	rows, err = s.db.Query(ctx, `SELECT x.uid::text, e.id::text, e.title, e.starts_at, e.ends_at, e.all_day,
-			e.repeat, e.repeat_every, e.repeat_until, e.accessibility, x.status,
+			e.repeat, e.repeat_every, e.repeat_until, e.repeat_days, e.repeat_count, e.accessibility, x.status,
 			(`+visible+` AND (NOT e.private OR e.owner_id = $1 OR EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id = e.id AND a.user_id = $1)))
 		FROM (SELECT id AS event_id, owner_id AS uid, 'accepted' AS status FROM events
 		      UNION ALL SELECT event_id, user_id, status FROM event_attendees WHERE status <> 'declined') x
@@ -78,7 +79,7 @@ func (s *Store) Busy(ctx context.Context, viewer string, people []string, from, 
 	for rows.Next() {
 		var x row
 		e := Event{}
-		if err := rows.Scan(&x.uid, &e.ID, &e.Title, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until,
+		if err := rows.Scan(&x.uid, &e.ID, &e.Title, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Days, &e.Count,
 			&e.Accessibility, &x.status, &x.seen); err != nil {
 			rows.Close()
 			return nil, err
@@ -112,6 +113,15 @@ func (s *Store) Busy(ctx context.Context, viewer string, people []string, from, 
 			p := &list[at[x.uid]]
 			p.Slots = append(p.Slots, sl)
 		}
+	}
+	// the bookings of «Онлайн-запись» on them as resources
+	books, err := s.bookingsOf(ctx, ids, from, to)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range books {
+		p := &list[at[b.OwnerID]]
+		p.Slots = append(p.Slots, Slot{Start: b.Start, End: b.End, Kind: BookingKind})
 	}
 	// absences: whole days away
 	rows, err = s.db.Query(ctx, `SELECT user_id::text, starts_on, ends_on FROM absences

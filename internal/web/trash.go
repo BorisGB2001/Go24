@@ -40,7 +40,15 @@ func (s *Server) taskDelete(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	s.Log.Info("task deleted", "task", key, "user_id", sess.UserID)
-	http.Redirect(w, r, "/my?msg="+url.QueryEscape(s.tr(r, "trash.deleted", key)), http.StatusSeeOther)
+	back := "/my" // the card goes away; a row menu of a list returns to its list
+	if b, _, _ := strings.Cut(r.FormValue("back"), "#"); localPath(b) {
+		back = b
+	}
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, back+sep+"msg="+url.QueryEscape(s.tr(r, "trash.deleted", key)), http.StatusSeeOther)
 }
 
 func (s *Server) trashRestore(w http.ResponseWriter, r *http.Request, sess auth.Session) {

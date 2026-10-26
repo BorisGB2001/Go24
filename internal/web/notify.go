@@ -126,6 +126,31 @@ func (s *Server) notifyLive(w http.ResponseWriter, r *http.Request, sess auth.Se
 		rings, stopRings = s.Live.Subscribe("c" + sess.UserID)
 		defer stopRings()
 	}
+	var feedNews <-chan string // new posts and comments: the «Лента» counter of the menu, not for a guest
+	if s.Feed != nil && !tasks.IsGuestCtx(r.Context()) {
+		posts, stopPosts := s.Live.Subscribe("feed")
+		defer stopPosts()
+		comments, stopComments := s.Live.Subscribe("feedc")
+		defer stopComments()
+		news := make(chan string, 1)
+		feedNews = news
+		go func() { // both into one channel; a burst is counted once
+			for {
+				var v string
+				select {
+				case <-r.Context().Done():
+					return
+				case v = <-posts:
+				case v = <-comments:
+				}
+				select {
+				case news <- v:
+				default:
+				}
+			}
+		}()
+	}
+	lastNews := -1
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -150,6 +175,14 @@ func (s *Server) notifyLive(w http.ResponseWriter, r *http.Request, sess auth.Se
 			flusher.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-feedNews:
+			n, err := s.Feed.News(r.Context(), sess.UserID)
+			if err != nil || n == lastNews {
+				continue
+			}
+			lastNews = n
+			fmt.Fprintf(w, "event: feed\ndata: {\"news\":%d}\n\n", n)
 			flusher.Flush()
 		case news := <-mailNews:
 			fmt.Fprintf(w, "event: mail\ndata: %s\n\n", s.mailNewsEvent(r, sess.UserID, news))

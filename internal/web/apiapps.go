@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -24,6 +25,11 @@ func (s *Server) apiAppsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/events/list", s.api("", s.apiEventList))
 	mux.HandleFunc("POST /api/v1/events", s.api("", s.apiEventBind))
 	mux.HandleFunc("DELETE /api/v1/events", s.api("", s.apiEventUnbind))
+	mux.HandleFunc("GET /api/v1/app", s.api("", s.apiAppInfo))
+	mux.HandleFunc("GET /api/v1/app/options", s.api("", s.apiAppOptions))
+	mux.HandleFunc("POST /api/v1/app/options", s.api("", s.apiAppOptions))
+	mux.HandleFunc("GET /api/v1/app/user-options", s.api("", s.apiAppOptions))
+	mux.HandleFunc("POST /api/v1/app/user-options", s.api("", s.apiAppOptions))
 }
 
 var errAppOnly = i18n.E("err.api_app_only")
@@ -235,5 +241,57 @@ func (s *Server) apiEventUnbind(w http.ResponseWriter, r *http.Request, p apikey
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"count": n})
+	return nil
+}
+
+// apiAppInfo is app.info: the application of the token and its employee.
+func (s *Server) apiAppInfo(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	a, err := s.apiApp(r, p)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": a.ID, "code": a.ClientID, "name": a.Name, "scopes": a.Scopes,
+		"installed": a.Installed(), "status": "L", "user_id": p.UserID, "admin": s.apiAdmin(r.Context(), p.UserID),
+		"member_id": apps.MemberID(s.BaseURL)})
+	return nil
+}
+
+// apiAppOptions is app.option.get/set (/app/options; set — administrators) and user.option.get/set
+// (/app/user-options, the token's employee): GET — all, ?option= — one; POST {"name": value, …} — the named ones,
+// null removes.
+func (s *Server) apiAppOptions(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	a, err := s.apiApp(r, p)
+	if err != nil {
+		return err
+	}
+	user := ""
+	if strings.HasSuffix(r.URL.Path, "/user-options") {
+		user = p.UserID
+	}
+	if r.Method == http.MethodPost {
+		if user == "" && !s.apiAdmin(r.Context(), p.UserID) {
+			return tasks.ErrForbidden
+		}
+		var in map[string]json.RawMessage
+		if err := readJSON(r, &in); err != nil {
+			return err
+		}
+		if err := s.Apps.SetOptions(r.Context(), a.ID, user, in); err != nil {
+			return err
+		}
+	}
+	list, err := s.Apps.Options(r.Context(), a.ID, user)
+	if err != nil {
+		return err
+	}
+	if name := r.URL.Query().Get("option"); name != "" && r.Method == http.MethodGet {
+		v, ok := list[name]
+		if !ok {
+			v = json.RawMessage("null")
+		}
+		writeJSON(w, http.StatusOK, v)
+		return nil
+	}
+	writeJSON(w, http.StatusOK, list)
 	return nil
 }

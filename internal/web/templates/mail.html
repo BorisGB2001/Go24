@@ -43,6 +43,7 @@
               <select name="parent"><option value="">{{t "mail.folder_top"}}</option>{{range $b.Folders}}{{if and .Selectable (not .Local)}}<option value="{{.ID}}">{{indent .Depth}}{{template "mfname" .}}</option>{{end}}{{end}}</select>
               <button class="primary small">{{t "common.create"}}</button></form>
             <a class="button ghost small" href="/mail/export?box={{$b.ID}}">{{icon "download"}} {{t "mail.export.menu"}}</a>
+            <a class="button ghost small" href="/mail/import?box={{$b.ID}}">{{icon "cloud-upload"}} {{t "mail.fimport.menu"}}</a>
             <form method="post" action="/mail/{{$b.ID}}/delete" data-confirm="{{t "mail.remove_confirm"}}" data-native><button class="ghost small">{{icon "x"}} {{t "mail.disconnect"}}</button></form>
           </div></details></div>
       <div class="small muted mbox-state">{{with $b.SyncedAt}}{{t "mail.synced" (datetime (deref .))}}{{end}}{{with $b.Error}} · <span class="dl over" title="{{if hasPrefix . "err."}}{{t .}}{{else}}{{.}}{{end}}">{{t "mail.sync_error"}}</span>{{end}}</div>
@@ -53,6 +54,7 @@
           {{template "mfav" (dict "Ref" $f.ID "On" (index $d.FavSet $f.ID) "Back" $d.Back)}}
           {{if not $f.Local}}<label class="button ghost small" title="{{t "mail.import_hint"}}">{{icon "cloud-upload"}} {{t "mail.import"}}<input type="file" multiple hidden accept=".eml,.msg,message/rfc822,application/vnd.ms-outlook" data-mail-import="{{$f.ID}}"></label>{{end}}
           {{if not $f.Local}}<a class="button ghost small" href="/mail/export?box={{$b.ID}}&amp;folder={{$f.ID}}">{{icon "download"}} {{t "mail.export.menu"}}</a>{{end}}
+          {{if not $f.Local}}<a class="button ghost small" href="/mail/import?box={{$b.ID}}&amp;folder={{$f.ID}}">{{icon "cloud-upload"}} {{t "mail.fimport.menu"}}</a>{{end}}
           {{if or (eq $f.Role "trash") (eq $f.Role "junk")}}<form method="post" action="/mail/folders/{{$f.ID}}/empty" data-confirm="{{t "mail.empty_confirm" (print (t (print "mail.folder." $f.Role)))}}"><button class="ghost small">{{icon "trash"}} {{t "mail.empty_folder"}}</button></form>{{end}}
           {{if $f.Own}}<form method="post" action="/mail/folders/{{$f.ID}}/rename" class="mfolder-form"><input type="text" name="name" required maxlength="100" value="{{$f.Title}}"><button class="small">{{t "mail.folder_rename"}}</button></form>
           <form method="post" action="/mail/folders/{{$f.ID}}/delete" data-confirm="{{t "mail.folder_delete_confirm" $f.Title}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
@@ -174,7 +176,7 @@
         {{if .Flagged}}<button type="button" data-do="done" class="on" title="{{t "mail.a.done"}}">{{icon "flag"}}</button>{{else}}<button type="button" data-do="flag:none" title="{{t "mail.flag"}}">{{icon "flag"}}</button>{{end}}
         {{if .Pinned}}<button type="button" data-do="unpin" class="on" title="{{t "mail.a.unpin"}}">{{icon "pin"}}</button>{{else}}<button type="button" data-do="pin" title="{{t "mail.a.pin"}}">{{icon "pin"}}</button>{{end}}
       </span>
-      <span class="mmarks">{{if eq .Importance 1}}<span class="mimp" title="{{t "mail.imp.high"}}">{{icon "exclamation-mark"}}</span>{{else if eq .Importance -1}}<span class="muted" title="{{t "mail.imp.low"}}">{{icon "arrow-down"}}</span>{{end}}{{if .Attached}}<button type="button" class="mclip" data-clip="{{join .IDs ","}}" title="{{t "mail.files_n" .Attached}}" aria-haspopup="true">{{icon "paperclip"}}</button>{{end}}{{if .Pinned}}<span title="{{t "mail.pinned"}}">{{icon "pin"}}</span>{{end}}{{with .Answered}}<span class="muted" title="{{t (print "mail.answered." .)}}">{{icon (index (dict "reply" "arrow-back-up" "fwd" "arrow-forward-up") .)}}</span>{{end}}{{with .FlagRemind}}<span class="muted" title="{{t "mail.remind_at" (datetime .)}}">{{icon "bell"}}</span>{{end}}{{if .Flagged}}<span class="mflag" title="{{t "mail.flag"}}{{with .FlagDue}} · {{date .}}{{end}}">{{icon "flag"}}</span>{{else if .FlagDone}}<span class="mdone" title="{{t "mail.flag_done"}}">{{icon "check"}}</span>{{end}}</span>
+      <span class="mmarks">{{if eq .Importance 1}}<span class="mimp" title="{{t "mail.imp.high"}}">{{icon "exclamation-mark"}}</span>{{else if eq .Importance -1}}<span class="muted" title="{{t "mail.imp.low"}}">{{icon "arrow-down"}}</span>{{end}}{{if .Attached}}<button type="button" class="mclip" data-clip="{{join .IDs ","}}" title="{{t "mail.files_n" .Attached}}" aria-haspopup="true">{{icon "paperclip"}}</button>{{end}}{{if .Pinned}}<span title="{{t "mail.pinned"}}">{{icon "pin"}}</span>{{end}}{{if .SMIMEEnc}}<span class="muted" title="{{t (print "mail.smime.enc_" .SMIMEEnc)}}">{{icon "lock"}}</span>{{else if .SMIMESign}}<span class="muted" title="{{t "mail.smime.signed"}}">{{icon "shield-check"}}</span>{{end}}{{with .Answered}}<span class="muted" title="{{t (print "mail.answered." .)}}">{{icon (index (dict "reply" "arrow-back-up" "fwd" "arrow-forward-up") .)}}</span>{{end}}{{with .FlagRemind}}<span class="muted" title="{{t "mail.remind_at" (datetime .)}}">{{icon "bell"}}</span>{{end}}{{if .Flagged}}<span class="mflag" title="{{t "mail.flag"}}{{with .FlagDue}} · {{date .}}{{end}}">{{icon "flag"}}</span>{{else if .FlagDone}}<span class="mdone" title="{{t "mail.flag_done"}}">{{icon "check"}}</span>{{end}}</span>
     </div>{{else}}<div class="empty">{{if or $d.Q $d.Search}}{{t "mail.found_none"}}{{else if $l.Filter}}{{t "mail.filter_none"}}{{else}}{{t "mail.empty"}}{{end}}</div>{{end}}
     {{else}}<div class="empty">{{t "mail.no_boxes"}}</div>{{end}}
   </section>
@@ -240,6 +242,8 @@
   </div>
   {{template "mlinks" $d}}{{template "minvite" $d}}
   {{with .Answered}}<div class="row small muted manswered">{{icon (index (dict "reply" "arrow-back-up" "fwd" "arrow-forward-up") .)}} <span>{{if $d.Letter.AnsweredAt}}{{t (print "mail.answered_at." .) (datetime (deref $d.Letter.AnsweredAt))}}{{else}}{{t (print "mail.answered." .)}}{{end}}</span></div>{{end}}
+  {{if or .SMIMESign .SMIMEEnc}}<div class="row mc-banner msmime{{if eq .SMIMESign "bad"}} msmime-bad{{end}}">{{with .SMIMEEnc}}<span>{{icon (index (dict "yes" "lock" "nokey" "lock-open") .)}} {{t (print "mail.smime.enc_" .)}}</span>{{end}}
+    {{with .SMIMESign}}<span>{{icon (index (dict "ok" "shield-check" "untrusted" "alert-triangle" "other" "alert-triangle" "bad" "alert-octagon" "error" "alert-triangle") .)}} {{t (print "mail.smime.sign_" .) $d.Letter.SMIMESigner}}</span>{{end}}</div>{{end}}
   {{if and .ReceiptTo (not .ReceiptDone)}}<form method="post" action="/mail/letters/{{.ID}}/receipt" class="row mc-banner">{{icon "eye"}} <span>{{t "mail.receipt_ask" .ReceiptTo}}</span>
     <button class="small" name="do" value="send">{{t "mail.receipt_send"}}</button><button class="ghost small" name="do" value="decline">{{t "mail.receipt_decline"}}</button></form>{{end}}
   {{if .Options}}{{$v := $d.Votes}}{{if .Outgoing}}<details class="mc-banner mvote-track"{{if $v.Answers}} open{{end}}><summary class="row">{{icon "chart-bar"}} <span>{{t "mail.vote.track" (len $v.Answers) $v.Asked}}</span>{{range .Options}} <span class="mvote-n">{{.}}: <b>{{index $v.Count .}}</b></span>{{end}}</summary>
@@ -352,6 +356,9 @@
     <details class="mbox-menu mc-menu"><summary class="button ghost" title="{{t "mail.options"}}">{{icon "adjustments"}}</summary><div class="card mbox-pop">
       <label class="check"><input type="checkbox" name="receipt" value="1"{{if $d.Receipt}} checked{{end}}> {{t "mail.ask_receipt"}}</label>
       <label class="check"><input type="checkbox" name="delivery" value="1"{{if $d.Delivery}} checked{{end}}> {{t "mail.ask_delivery"}}</label>
+      {{if .SMIME}}<label class="check"><input type="checkbox" name="sign" value="1"{{if $d.Sign}} checked{{end}}> {{icon "shield-check"}} {{t "mail.smime.sign"}}</label>
+      <label class="check"><input type="checkbox" name="encrypt" value="1"{{if $d.Encrypt}} checked{{end}}> {{icon "lock"}} {{t "mail.smime.encrypt"}}</label>
+      {{else}}<a class="small" href="/mail/settings?tab=security" target="_blank">{{icon "lock"}} {{t "mail.smime.setup"}}</a>{{end}}
       <label class="mc-voting">{{icon "list-check"}} {{t "mail.vote.buttons"}}<input type="text" name="voting" value="{{$d.Voting}}" list="mc-votes-{{$d.ID}}" maxlength="1000" placeholder="{{t "mail.vote.preset.approve"}}" title="{{t "mail.vote.hint"}}"></label>
       <datalist id="mc-votes-{{$d.ID}}">{{range .Voting}}<option value="{{t (print "mail.vote.preset." .)}}">{{end}}</datalist></div></details>
     <a class="button ghost" data-popout href="/mail?new=1&pane=off" target="_blank" title="{{t "mail.popout"}}">{{icon "external-link"}}</a>
@@ -465,6 +472,7 @@
 {{else if eq .Tab "notify"}}{{template "mnotifyset" .}}
 {{else if eq .Tab "junk"}}{{template "mjunkset" .}}
 {{else if eq .Tab "crm"}}{{template "mcrmset" .}}
+{{else if eq .Tab "security"}}{{template "msmimeset" .}}
 {{else if eq .Tab "forwarding"}}{{template "mfwdset" .}}
 {{else if eq .Tab "senders"}}{{template "mfromset" .}}
 {{else if eq .Tab "rules"}}{{template "mrules" .}}
@@ -723,6 +731,26 @@
     <label class="check"><input type="checkbox" name="crm_leads" value="1"{{if $c.Leads}} checked{{end}}> {{t "mail.crm_leads"}}</label>
     <p><button class="primary small">{{t "common.save"}}</button></p>
   </form>{{else}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}{{end}}
+
+{{/* «Безопасность» of the mail settings: S/MIME certificates (web.mailSMIMEData), as Outlook's «Защита электронной почты» */}}
+{{define "msmimeset"}}<p class="small muted">{{t "mail.st.security_hint"}}</p>
+  <h3>{{t "mail.smime.certs"}}</h3>
+  {{range .Certs}}<div class="row msnippet msmime-cert"><div style="flex:1"><b>{{.Email}}</b>{{if .Expired}} <span class="pill over">{{t "mail.smime.expired"}}</span>{{end}}
+      <div class="small muted">{{.Subject}} · {{t "mail.smime.issuer"}}: {{.Issuer}} · {{t "mail.smime.until" (date .NotAfter)}}</div>
+      <div class="small muted">{{t "mail.smime.thumb"}}: <code>{{.SHA1}}</code></div></div>
+    <form method="post" action="/mail/certs/{{.ID}}/delete" data-confirm="{{t "mail.smime.delete_confirm"}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></div>
+  {{else}}<p class="muted">{{t "mail.smime.none"}}</p>{{end}}
+  <form method="post" action="/mail/certs" enctype="multipart/form-data" class="msettings-form">
+    <label>{{t "mail.smime.file"}}</label><input type="file" name="file" accept=".pfx,.p12,.pem,.crt,.key" required>
+    <label>{{t "mail.smime.password"}}</label><input type="password" name="password" autocomplete="off">
+    <p class="small muted">{{t "mail.smime.file_hint"}}</p>
+    <p><button class="primary small">{{icon "plus"}} {{t "mail.smime.add"}}</button></p></form>
+  <form method="post" action="/mail/settings/security" class="msettings-form">
+    <h3>{{t "mail.smime.defaults"}}</h3>
+    <label class="check"><input type="checkbox" name="sign" value="1"{{if .Security.Sign}} checked{{end}}> {{t "mail.smime.sign_all"}}</label>
+    <label class="check"><input type="checkbox" name="encrypt" value="1"{{if .Security.Encrypt}} checked{{end}}> {{t "mail.smime.encrypt_all"}}</label>
+    <p class="small muted">{{t "mail.smime.encrypt_hint"}}</p>
+    <p><button class="primary small">{{t "common.save"}}</button></p></form>{{end}}
 
 {{/* «Пересылка» of the mail settings: each mailbox's forwarding (mail.BoxForward) */}}
 {{define "mfwdset"}}{{$s := .}}<p class="small muted">{{t "mail.st.forwarding_hint"}}</p>

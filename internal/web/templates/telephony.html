@@ -1,12 +1,16 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="row"><h1 style="flex:1">{{icon "phone"}} {{t "tel.title"}}</h1>
-  {{if $d.Enabled}}<a class="button ghost" href="/telephony/calls">{{icon "list"}} {{t "tel.calls"}}</a>{{end}}</div>
+  {{if $d.Enabled}}<a class="button ghost" href="/telephony/calls">{{icon "list"}} {{t "tel.calls"}}</a>
+    <a class="button ghost" href="/telephony/stats">{{icon "chart-bar"}} {{t "tel.stats"}}</a>{{end}}
+  {{if .User.Admin}}<a class="button ghost" href="/telephony/rights">{{icon "lock"}} {{t "telroles.link"}}</a>{{end}}</div>
 <form method="post" action="/settings/telephony" class="card stack">
   <label><input type="checkbox" name="enabled" value="1" {{if $d.Enabled}}checked{{end}}> {{t "tel.enable"}}</label>
   <p class="muted small">{{t "tel.enable_hint"}}</p>
   <label><input type="checkbox" name="record" value="1" {{if $d.Record}}checked{{end}}> {{t "tel.record"}}</label>
   <p class="muted small">{{t "tel.record_hint"}}</p>
+  {{if $d.Speech}}<label><input type="checkbox" name="transcribe" value="1" {{if $d.Transcribe}}checked{{end}}> {{t "tel.transcribe_auto"}}</label>
+  <p class="muted small">{{t "tel.transcribe_auto_hint"}}</p>{{else}}{{if $d.Transcribe}}<input type="hidden" name="transcribe" value="1">{{end}}{{end}}
   {{if $d.CRM}}<label><input type="checkbox" name="lead" value="1" {{if $d.Lead}}checked{{end}}> {{t "tel.lead_auto"}}</label>
   <p class="muted small">{{t "tel.lead_auto_hint"}}</p>{{else}}{{if $d.Lead}}<input type="hidden" name="lead" value="1">{{end}}{{end}}
   {{if $d.Down}}<p class="flash">{{t "tel.down"}}</p>{{else}}<p class="muted small">{{t "tel.server" $d.Version}}{{with $d.SIPHost}} · {{t "tel.sip_server"}}: <b>{{.}}</b> (UDP/TCP 5060){{end}}</p>{{end}}
@@ -43,15 +47,109 @@
   {{range $d.Trunks}}<details class="trunk">
     <summary><b>{{.Name}}</b> · {{.Number}} · <span class="muted">{{.Host}}</span>
       {{if index $d.Online .Key}}<span class="pill st-completed">{{t "tel.online"}}</span>{{else}}<span class="muted small">{{t "tel.offline"}}</span>{{end}}</summary>
-    {{template "trunk-form" (dict "T" . "Users" $d.Users)}}
+    {{template "trunk-form" (dict "T" . "Users" $d.Users "Menus" $d.Menus "Groups" $d.Groups)}}
     <form method="post" action="/telephony/trunks/{{.ID}}/delete" data-confirm="{{t "tel.trunk.delete_confirm" .Name}}">
       <button class="ghost small danger">{{icon "trash"}} {{t "tel.trunk.delete"}}</button></form>
   </details>{{else}}<p class="muted">{{t "tel.no_trunks"}}</p>{{end}}
   <details {{if not $d.Trunks}}open{{end}}><summary class="button ghost">{{icon "plus"}} {{t "tel.trunk.add"}}</summary>
-    {{template "trunk-form" (dict "T" $d.NewTrunk "Users" $d.Users)}}</details>
+    {{template "trunk-form" (dict "T" $d.NewTrunk "Users" $d.Users "Menus" $d.Menus "Groups" $d.Groups)}}</details>
+</div>
+<div class="card stack" id="menus">
+  <h2>{{icon "list"}} {{t "tel.menus"}}</h2>
+  <p class="muted small">{{t "tel.menus_hint"}}</p>
+  {{range $d.Menus}}<details class="trunk">
+    <summary><b>{{.Name}}</b>{{with .Items}} · <span class="muted">{{t "tel.menu.keys"}}: {{range $i, $it := .}}{{if $i}}, {{end}}{{$it.Digit}}{{end}}</span>{{end}}</summary>
+    {{template "menu-form" (dict "M" . "Users" $d.Users "Menus" $d.Menus "Groups" $d.Groups)}}
+    <form method="post" action="/telephony/menus/{{.ID}}/delete" data-confirm="{{t "tel.menu.delete_confirm" .Name}}">
+      <button class="ghost small danger">{{icon "trash"}} {{t "tel.menu.delete"}}</button></form>
+  </details>{{else}}<p class="muted">{{t "tel.no_menus"}}</p>{{end}}
+  <details><summary class="button ghost">{{icon "plus"}} {{t "tel.menu.add"}}</summary>
+    {{template "menu-form" (dict "M" $d.NewMenu "Users" $d.Users "Menus" $d.Menus "Groups" $d.Groups)}}</details>
+</div>
+<div class="card stack" id="blacklist">
+  <h2>{{icon "lock"}} {{t "tel.black"}}</h2>
+  <p class="muted small">{{t "tel.black_hint"}}</p>
+  {{if $d.Blacklist}}<table class="list">
+    <thead><tr><th>{{t "tel.col.number"}}</th><th>{{t "tel.black.comment"}}</th><th>{{t "tel.black.added"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Blacklist}}<tr>
+      <td class="nowrap"><b>{{.Number}}</b></td>
+      <td>{{.Comment}}</td>
+      <td class="small muted nowrap">{{datetime .At}}{{with .ByName}} · {{.}}{{end}}</td>
+      <td><form method="post" action="/telephony/blacklist/{{.ID}}/delete" data-confirm="{{t "tel.black.delete_confirm" .Number}}">
+        <button class="ghost small danger" title="{{t "tel.black.delete"}}" aria-label="{{t "tel.black.delete"}}">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody>
+  </table>{{else}}<p class="muted">{{t "tel.black.empty"}}</p>{{end}}
+  <form method="post" action="/telephony/blacklist" class="row wrap">
+    <input type="text" name="number" inputmode="tel" maxlength="30" size="16" required placeholder="{{t "tel.black.number"}}" aria-label="{{t "tel.black.number"}}">
+    <input type="text" name="comment" maxlength="255" style="flex:1;min-width:180px" placeholder="{{t "tel.black.comment"}}" aria-label="{{t "tel.black.comment"}}">
+    <button class="primary">{{icon "plus"}} {{t "tel.black.add"}}</button>
+  </form>
+</div>
+<div class="card stack" id="groups">
+  <h2>{{icon "users"}} {{t "tel.groups"}}</h2>
+  <p class="muted small">{{t "tel.groups_hint"}}</p>
+  {{range $d.Groups}}<details class="trunk">
+    <summary><b>{{.Name}}</b> · <span class="muted small">{{t (print "tel.group.strategy." .Strategy)}}, {{len .Users}} {{t "tel.group.people"}}</span></summary>
+    {{template "group-form" (dict "G" . "Users" $d.Users)}}
+    <form method="post" action="/telephony/groups/{{.ID}}/delete" data-confirm="{{t "tel.group.delete_confirm" .Name}}">
+      <button class="ghost small danger">{{icon "trash"}} {{t "tel.group.delete"}}</button></form>
+  </details>{{else}}<p class="muted">{{t "tel.no_groups"}}</p>{{end}}
+  <details><summary class="button ghost">{{icon "plus"}} {{t "tel.group.add"}}</summary>
+    {{template "group-form" (dict "G" $d.NewGroup "Users" $d.Users)}}</details>
+</div>
+<div class="card stack" id="callbacks">
+  <h2>{{icon "phone"}} {{t "tel.callbacks"}}</h2>
+  <p class="muted small">{{t "tel.callbacks_hint"}}</p>
+  {{range $d.Callbacks}}{{$u := print $d.Root "/cb/" .Token}}<details class="trunk">
+    <summary><b>{{.Name}}</b> · <a href="{{$u}}" target="_blank" rel="noopener" class="small">{{$u}}</a></summary>
+    {{template "callback-form" (dict "C" . "Users" $d.Users "Trunks" $d.Trunks)}}
+    <div class="stack small">
+      <p class="muted">{{t "tel.callback_embed_hint"}}</p>
+      <label>{{t "crm.form_embed_inline"}}<textarea readonly rows="2" class="mono" data-copy>&lt;script src="{{$d.Root}}/static/js/crmform.js" data-form="{{$u}}" async&gt;&lt;/script&gt;</textarea></label>
+      <label>{{t "crm.form_embed_button"}}<textarea readonly rows="2" class="mono" data-copy>&lt;script src="{{$d.Root}}/static/js/crmform.js" data-form="{{$u}}" data-button="{{or .Button (t "tel.callback_button")}}" async&gt;&lt;/script&gt;</textarea></label>
+    </div>
+    {{with index $d.Requests .ID}}<h3 class="small">{{t "tel.callback_requests"}}</h3>
+    <table class="list small"><tbody>{{range .}}<tr><td class="nowrap">{{datetime .Created}}</td><td><a href="tel:{{.Number}}">{{.Number}}</a>{{with .Name}} · {{.}}{{end}}</td>
+      <td>{{t (print "tel.callback_status." .Status)}}</td><td class="muted">{{with .Page}}<a href="{{.}}" target="_blank" rel="noopener noreferrer">{{.}}</a>{{end}}</td></tr>{{end}}</tbody></table>{{end}}
+    <form method="post" action="/telephony/callbacks/{{.ID}}/delete" data-confirm="{{t "tel.callback_delete_confirm" .Name}}">
+      <button class="ghost small danger">{{icon "trash"}} {{t "tel.callback_delete"}}</button></form>
+  </details>{{else}}<p class="muted">{{t "tel.no_callbacks"}}</p>{{end}}
+  {{if $d.Trunks}}<details><summary class="button ghost">{{icon "plus"}} {{t "tel.callback_add"}}</summary>
+    {{template "callback-form" (dict "C" $d.NewCallback "Users" $d.Users "Trunks" $d.Trunks)}}</details>
+  {{else}}<p class="muted small">{{t "tel.callback_no_trunks"}}</p>{{end}}
 </div>
 {{end}}
 {{end}}
+
+{{define "group-form"}}<form method="post" action="/telephony/groups{{with .G.ID}}/{{.}}{{end}}" enctype="multipart/form-data" class="stack trunkform">
+  <label>{{t "tel.group.name"}} <input name="name" value="{{.G.Name}}" required maxlength="100" placeholder="{{t "tel.group.name_ph"}}"></label>
+  <label>{{t "tel.group.users"}}</label>
+  {{template "upick" (upick "users" .G.Users .Users "multi")}}
+  <div class="row wrap">
+    <label>{{t "tel.group.strategy"}} <select name="strategy" style="width:auto">{{$st := .G.Strategy}}{{range list "all" "linear" "evenly"}}<option value="{{.}}" {{if eq . $st}}selected{{end}}>{{t (print "tel.group.strategy." .)}}</option>{{end}}</select></label>
+    <label>{{t "tel.group.ring"}} <input type="number" name="ring" value="{{.G.Ring}}" min="5" max="120" style="width:6em"></label>
+    <label>{{t "tel.group.wait"}} <input type="number" name="wait" value="{{.G.Wait}}" min="10" max="1800" style="width:6em"></label>
+  </div>
+  <label>{{t "tel.group.music"}} <input type="file" name="music" accept=".wav,audio/wav,audio/x-wav"></label>
+  {{if .G.MusicSum}}<div class="row wrap"><audio controls preload="none" src="/telephony/groups/{{.G.ID}}/music"></audio>
+    <label class="check"><input type="checkbox" name="music_drop" value="1"> {{t "tel.trunk.greeting_drop"}}</label></div>{{end}}
+  <p class="muted small">{{t "tel.group.music_hint"}}</p>
+  <div><button class="primary">{{icon "check"}} {{t "common.save"}}</button></div>
+</form>{{end}}
+
+{{define "callback-form"}}<form method="post" action="/telephony/callbacks{{with .C.ID}}/{{.}}{{end}}" class="stack trunkform">
+  <div class="row wrap">
+    <label class="grow">{{t "tel.callback_name_label"}} <input name="name" value="{{.C.Name}}" required maxlength="100" placeholder="{{t "tel.callback_name_ph"}}"></label>
+    <label class="grow">{{t "tel.callback_trunk"}} <select name="trunk" required>{{$tr := .C.Trunk}}{{range .Trunks}}<option value="{{.ID}}" {{if eq .ID $tr}}selected{{end}}>{{.Name}} · {{.Number}}</option>{{end}}</select></label>
+  </div>
+  <label>{{t "tel.callback_ring"}}</label>
+  {{template "upick" (upick "ring" .C.Ring .Users "multi")}}
+  <select name="ring_mode" style="width:auto" aria-label="{{t "tel.callback_ring"}}"><option value="all">{{t "tel.trunk.ring_all"}}</option>
+    <option value="queue" {{if eq .C.RingMode "queue"}}selected{{end}}>{{t "tel.trunk.ring_queue"}}</option></select>
+  <label>{{t "tel.callback_form_title"}} <input name="title" value="{{.C.Title}}" maxlength="200" placeholder="{{t "tel.callback_title"}}"></label>
+  <label>{{t "tel.callback_form_text"}} <textarea name="text" rows="2" maxlength="1000" placeholder="{{t "tel.callback_text"}}">{{.C.Text}}</textarea></label>
+  <label>{{t "tel.callback_form_button"}} <input name="button" value="{{.C.Button}}" maxlength="60" placeholder="{{t "tel.callback_button"}}"></label>
+  <div><button class="primary">{{icon "check"}} {{t "common.save"}}</button></div>
+</form>{{end}}
 
 {{define "trunk-form"}}<form method="post" action="/telephony/trunks{{with .T.ID}}/{{.}}{{end}}" enctype="multipart/form-data" class="stack trunkform">
   <div class="row wrap">
@@ -68,7 +166,14 @@
       <label>{{t "tel.trunk.auth_user"}} <input name="auth_user" value="{{.T.AuthUser}}" maxlength="64" autocomplete="off"></label>
       <label><input type="checkbox" name="register" value="1" {{if .T.Register}}checked{{end}}> {{t "tel.trunk.register"}}</label>
     </div></details>
+  <label>{{t "tel.trunk.menu"}} <select name="menu" style="width:auto"><option value="">{{t "tel.trunk.menu_none"}}</option>
+    {{$m := .T.Menu}}{{range .Menus}}<option value="{{.ID}}" {{if eq .ID $m}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+  <p class="muted small">{{t "tel.trunk.menu_hint"}}</p>
+  <label><input type="checkbox" name="to_owner" value="1" {{if .T.ToOwner}}checked{{end}}> {{t "tel.trunk.to_owner"}}</label>
+  <p class="muted small">{{t "tel.trunk.to_owner_hint"}}</p>
   <label>{{t "tel.trunk.ring"}}</label>
+  {{if .Groups}}<label>{{t "tel.trunk.group"}} <select name="ring_group" style="width:auto"><option value="">{{t "tel.trunk.group_none"}}</option>
+    {{$g := .T.Group}}{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $g}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>{{end}}
   {{template "upick" (upick "ring" .T.Ring .Users "multi")}}
   <select name="ring_mode" style="width:auto" aria-label="{{t "tel.trunk.ring"}}"><option value="all">{{t "tel.trunk.ring_all"}}</option>
     <option value="queue" {{if eq .T.RingMode "queue"}}selected{{end}}>{{t "tel.trunk.ring_queue"}}</option></select>
@@ -86,6 +191,11 @@
     {{if .T.GreetingSum}}<div class="row wrap"><audio controls preload="none" src="/telephony/trunks/{{.T.ID}}/greeting"></audio>
       <label class="check"><input type="checkbox" name="greeting_drop" value="1"> {{t "tel.trunk.greeting_drop"}}</label></div>{{end}}
     <p class="muted small">{{t "tel.trunk.greeting_hint"}}</p>
+    <label><input type="checkbox" name="rate_on" value="1" {{if .T.RateOn}}checked{{end}}> {{t "tel.trunk.rate_on"}}</label>
+    <label>{{t "tel.trunk.rate_prompt"}} <input type="file" name="rate_prompt" accept=".wav,audio/wav,audio/x-wav"></label>
+    {{if .T.RateSum}}<div class="row wrap"><audio controls preload="none" src="/telephony/trunks/{{.T.ID}}/greeting?what=rate"></audio>
+      <label class="check"><input type="checkbox" name="rate_drop" value="1"> {{t "tel.trunk.greeting_drop"}}</label></div>{{end}}
+    <p class="muted small">{{t "tel.trunk.rate_hint"}}</p>
   </fieldset>
   <div><button class="primary">{{t "common.save"}}</button></div>
 </form>{{end}}
@@ -93,3 +203,37 @@
 {{define "trunk-act"}}<select name="{{.Name}}" style="width:auto" aria-label="{{t (print "tel.trunk." .Name)}}">
   {{$a := .Act}}{{range list "hangup" "voicemail" "forward"}}<option value="{{.}}" {{if eq . $a}}selected{{end}}>{{t (print "tel.trunk.act." .)}}</option>{{end}}</select>
   <input name="{{.Name}}_to" value="{{.To}}" inputmode="tel" maxlength="30" size="16" placeholder="{{t "tel.trunk.forward_ph"}}" aria-label="{{t "tel.trunk.forward_ph"}}">{{end}}
+
+{{define "menu-form"}}<form method="post" action="/telephony/menus{{with .M.ID}}/{{.}}{{end}}" enctype="multipart/form-data" class="stack trunkform">
+  <label class="grow">{{t "tel.menu.name"}} <input name="name" value="{{.M.Name}}" required maxlength="100" placeholder="{{t "tel.menu.name_ph"}}"></label>
+  <label>{{t "tel.menu.greeting"}} <input type="file" name="greeting" accept=".wav,audio/wav,audio/x-wav"></label>
+  {{if .M.GreetingSum}}<div class="row wrap"><audio controls preload="none" src="/telephony/menus/{{.M.ID}}/greeting"></audio>
+    <label class="check"><input type="checkbox" name="greeting_drop" value="1"> {{t "tel.trunk.greeting_drop"}}</label></div>{{end}}
+  <p class="muted small">{{t "tel.menu.greeting_hint"}}</p>
+  <div class="row wrap">
+    <label>{{t "tel.menu.wait"}} <input type="number" name="wait" value="{{.M.Wait}}" min="1" max="30" style="width:5em"></label>
+    <label>{{t "tel.menu.repeats"}} <input type="number" name="repeats" value="{{.M.Repeats}}" min="1" max="5" style="width:5em"></label></div>
+  <label><input type="checkbox" name="direct" value="1" {{if .M.Direct}}checked{{end}}> {{t "tel.menu.direct"}}</label>
+  <table class="list ivr">
+    <thead><tr><th>{{t "tel.menu.key"}}</th><th>{{t "tel.menu.action"}}</th></tr></thead>
+    <tbody>{{$f := .}}{{range $i, $it := .M.Rows}}<tr>
+      <td><select name="digit" aria-label="{{t "tel.menu.key"}}">{{range list "1" "2" "3" "4" "5" "6" "7" "8" "9" "0" "*" "#"}}<option {{if eq . $it.Digit}}selected{{end}}>{{.}}</option>{{end}}</select></td>
+      <td>{{template "ivr-act" (dict "P" (print "item" $i) "It" $it "Users" $f.Users "Menus" $f.Menus "Groups" $f.Groups "Self" $f.M.ID "Item" true)}}</td></tr>{{end}}
+    </tbody>
+  </table>
+  <div class="row wrap">{{t "tel.menu.timeout"}} {{template "ivr-act" (dict "P" "timeout" "It" .M.Timeout "Users" .Users "Menus" .Menus "Groups" .Groups "Self" .M.ID)}}</div>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
+
+{{define "ivr-act"}}<div class="row wrap ivr-act">{{$it := .It}}{{$self := .Self}}
+  <select name="{{.P}}_act" style="width:auto" aria-label="{{t "tel.menu.action"}}">{{if .Item}}<option value="">—</option>{{end}}
+    {{range list "ring" "group" "forward" "voicemail" "menu" "repeat" "hangup"}}{{if or $.Item (ne . "repeat")}}<option value="{{.}}" {{if eq . $it.Act}}selected{{end}}>{{t (print "tel.menu.act." .)}}</option>{{end}}{{end}}</select>
+  <div class="ivr-p ivr-ring">{{template "upick" (upick (print .P "_users") .It.Users .Users "multi")}}
+    <select name="{{.P}}_mode" style="width:auto" aria-label="{{t "tel.trunk.ring"}}"><option value="all">{{t "tel.trunk.ring_all"}}</option>
+      <option value="queue" {{if eq .It.Mode "queue"}}selected{{end}}>{{t "tel.trunk.ring_queue"}}</option></select></div>
+  <div class="ivr-p ivr-forward"><input name="{{.P}}_to" value="{{.It.To}}" inputmode="tel" maxlength="30" size="16" placeholder="{{t "tel.trunk.forward_ph"}}" aria-label="{{t "tel.trunk.forward_ph"}}"></div>
+  <div class="ivr-p ivr-group"><select name="{{.P}}_group" style="width:auto" aria-label="{{t "tel.menu.act.group"}}">
+    {{range .Groups}}<option value="{{.ID}}" {{if eq .ID $it.Group}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+  <div class="ivr-p ivr-menu"><select name="{{.P}}_menu" style="width:auto" aria-label="{{t "tel.menu.act.menu"}}">
+    {{range .Menus}}{{if ne .ID $self}}<option value="{{.ID}}" {{if eq .ID $it.Menu}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select></div>
+</div>{{end}}

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/i18n"
+	"go24/internal/msgfmt"
 	"go24/internal/tasks"
 )
 
@@ -37,6 +38,7 @@ type Comment struct {
 	Reactions                      Summary
 	Files                          []File // files and pictures of the comment
 	CanEdit, CanDelete             bool   // the viewer's rights: the author edits, the author or an administrator deletes
+	New                            bool   // someone else's, since the viewer last opened the feed (MarkNew)
 }
 
 type Post struct {
@@ -67,6 +69,10 @@ type Post struct {
 	Tags        []string    // «Теги»: typed ones and the #tags of the text
 	Process     string      // the business process the post is of ("" — none)
 	ProcessCard any         // what the viewer sees of the process (filled by the web layer)
+	New         bool        // someone else's, since the viewer last opened the feed (MarkNew)
+	// the event of another section the post is of (Announce): welcome | meeting | kb, "" — a post of a person
+	Source, SourceID string
+	SourceData       map[string]string
 }
 
 // Recipient is an addressee of a post: a person or a department (with its sub-departments).
@@ -119,7 +125,7 @@ type Filter struct {
 }
 
 // Kinds are the values of Filter.Kind.
-var Kinds = []string{"poll", "gratitude", "bp", "tasks"}
+var Kinds = []string{"poll", "gratitude", "bp", "tasks", SourceWelcome, SourceMeeting, SourceKB}
 
 // posts: the filter leaves posts out (only task events).
 func (f Filter) events() bool {
@@ -213,6 +219,9 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 		where = append(where, "p.bp_instance IS NOT NULL")
 	case "tasks":
 		where = append(where, "false")
+	case SourceWelcome, SourceMeeting, SourceKB:
+		args = append(args, f.Kind)
+		where = append(where, "p.source = $"+strconv.Itoa(len(args)))
 	}
 	rows, err := s.db.Query(ctx, `SELECT p.id, p.author_id, u.name, u.photo_key, coalesce(pr.key, ''), coalesce(pr.name, ''),
 			p.title, p.body, `+important+`, coalesce(p.important_until, 'epoch'), p.created_at, p.edited_at IS NOT NULL,
@@ -221,7 +230,8 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 			EXISTS (SELECT 1 FROM feed_favorites x WHERE x.post_id = p.id AND x.user_id = $1),
 			EXISTS (SELECT 1 FROM feed_pins x WHERE x.post_id = p.id AND x.user_id = $1),
 			`+following+`, `+hidden+`,
-			(SELECT count(*) FROM feed_views v WHERE v.post_id = p.id)::int, coalesce(p.bp_instance::text, '')
+			(SELECT count(*) FROM feed_views v WHERE v.post_id = p.id)::int, coalesce(p.bp_instance::text, ''),
+			p.source, p.source_id, p.source_data
 		FROM feed_posts p JOIN users u ON u.id = p.author_id LEFT JOIN projects pr ON pr.id = p.project_id
 		WHERE `+strings.Join(where, " AND ")+` ORDER BY p.created_at DESC LIMIT `+strconv.Itoa(PageSize), args...)
 	if err != nil {
@@ -230,7 +240,8 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 	posts, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (*Post, error) {
 		p := &Post{}
 		return p, r.Scan(&p.ID, &p.AuthorID, &p.AuthorName, &p.AuthorPhoto, &p.ProjectKey, &p.ProjectName, &p.Title, &p.Body,
-			&p.Important, &p.Until, &p.CreatedAt, &p.Edited, &p.Read, &p.Readers, &p.Fav, &p.Pinned, &p.Following, &p.Hidden, &p.Views, &p.Process)
+			&p.Important, &p.Until, &p.CreatedAt, &p.Edited, &p.Read, &p.Readers, &p.Fav, &p.Pinned, &p.Following, &p.Hidden, &p.Views, &p.Process,
+			&p.Source, &p.SourceID, &p.SourceData)
 	})
 	if err != nil {
 		return nil, err
@@ -415,6 +426,9 @@ func (s *Store) CreatePostTo(ctx context.Context, authorID, projectID string, to
 	}
 	if len([]rune(body)) > 20000 || len([]rune(title)) > 300 {
 		return "", i18n.E("err.post_long")
+	}
+	if err := s.checkRights(ctx, authorID, projectID == "" && !limited, important); err != nil {
+		return "", err
 	}
 	var project any
 	if projectID != "" {
@@ -647,7 +661,7 @@ func (s *Store) AddCommentFiles(ctx context.Context, userID, postID, body string
 	if body == "" && len(files) == 0 {
 		return c, i18n.E("err.comment_empty")
 	}
-	note := body
+	note := msgfmt.Plain(body) // the notification is plain text, without the comment's [quote] and marks
 	if note == "" {
 		note = "📎 " + strings.Join(files, ", ")
 	}
@@ -678,7 +692,7 @@ func (s *Store) AddCommentFiles(ctx context.Context, userID, postID, body string
 			postID, userID, note); err != nil {
 			return err
 		}
-		return s.notifyMentions(ctx, tx, userID, postID, body, mentions)
+		return s.notifyMentions(ctx, tx, userID, postID, note, mentions)
 	})
 	c.CanEdit, c.CanDelete = true, true
 	return c, err
@@ -703,6 +717,46 @@ func (s *Store) Unread(ctx context.Context, userID string) (int, error) {
 	err := s.db.QueryRow(ctx, `SELECT count(*) FROM feed_posts p WHERE `+important+` AND p.author_id <> $1 AND `+visible+`
 		AND NOT EXISTS (SELECT 1 FROM feed_reads r WHERE r.post_id = p.id AND r.user_id = $1)`, userID, false).Scan(&n)
 	return n, err
+}
+
+// newSince: the moment the user $1 last opened the feed; one who never did gets the last week as new.
+const newSince = `coalesce((SELECT v.seen_at FROM feed_seen v WHERE v.user_id = $1), now() - interval '7 days')`
+
+// News counts what is new in the feed of the user since they last opened it — the «Лента» counter of the menu, as
+// : the posts of others they may see (and did not hide), and the comments of others to the posts they follow.
+func (s *Store) News(ctx context.Context, userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(ctx, `WITH since AS (SELECT `+newSince+` AS at)
+		SELECT (SELECT count(*) FROM feed_posts p WHERE p.author_id <> $1 AND p.created_at > (SELECT at FROM since)
+				AND `+visible+` AND NOT `+hidden+`)
+			+ (SELECT count(*) FROM feed_comments c JOIN feed_posts p ON p.id = c.post_id
+				WHERE c.author_id <> $1 AND c.created_at > (SELECT at FROM since) AND `+visible+` AND NOT `+hidden+` AND `+following+`)`,
+		userID, false).Scan(&n)
+	return n, err
+}
+
+// Seen records that the user opened the feed now; the answer is the moment they did before (what is newer is new).
+func (s *Store) Seen(ctx context.Context, userID string) (time.Time, error) {
+	var at time.Time
+	err := s.db.QueryRow(ctx, `WITH old AS (SELECT `+newSince+` AS at)
+		INSERT INTO feed_seen (user_id) VALUES ($1) ON CONFLICT (user_id) DO UPDATE SET seen_at = now()
+		RETURNING (SELECT at FROM old)`, userID).Scan(&at)
+	return at, err
+}
+
+// MarkNew marks the posts and comments of others newer than since as new for the viewer.
+func MarkNew(items []Item, viewer string, since time.Time) {
+	for _, it := range items {
+		p := it.Post
+		if p == nil {
+			continue
+		}
+		p.New = p.AuthorID != viewer && p.CreatedAt.After(since)
+		for i := range p.Comments {
+			c := &p.Comments[i]
+			c.New = c.AuthorID != viewer && c.CreatedAt.After(since)
+		}
+	}
 }
 
 // SetUntil makes an important post important only until the moment (zero — always); its author or an administrator.

@@ -193,6 +193,18 @@ func (c *Client) InviteGuest(ctx context.Context, public, email, name string, tt
 	return c.invite(ctx, public, GuestEnrollmentFlow, email, name, ttl)
 }
 
+// DeleteInvitation cancels an invitation not used yet (one already gone is fine).
+func (c *Client) DeleteInvitation(ctx context.Context, id string) error {
+	if c == nil {
+		return fmt.Errorf("authentik: not configured")
+	}
+	err := c.do(ctx, http.MethodDelete, "/stages/invitation/invitations/"+url.PathEscape(id)+"/", nil, nil)
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) invite(ctx context.Context, public, flowSlug, email, name string, ttl time.Duration) (Invitation, error) {
 	if c == nil {
 		return Invitation{}, fmt.Errorf("authentik: not configured")

@@ -28,6 +28,7 @@ import (
 type Member struct {
 	ID, Name, Photo string
 	Guest, Owner    bool
+	Bot             bool // a chat bot of an application
 	Admin           bool // the chat's admin (not its owner)
 	Me              bool
 	Removable       bool // the employee may remove them from the chat
@@ -143,14 +144,17 @@ func writeRules(pl matrix.PowerLevels, level int) {
 
 func isChannel(pl matrix.PowerLevels) bool { return plLevel(pl, "events_default", 0) >= adminLevel }
 
-// peers are the go24 users the employee may write to (tasks.PeerSQL), with their Matrix IDs.
+// peers are the go24 users the employee may write to (tasks.PeerSQL), with their Matrix IDs, and the chat bots of
+// installed applications (not for guests).
 func (s *Service) peers(ctx context.Context, userID string, ids []string) (map[string]string, error) {
 	out := map[string]string{} // user → mxid
 	if len(ids) == 0 {
 		return out, nil
 	}
 	rows, err := s.DB.Query(ctx, `SELECT u.id::text, m.mxid FROM matrix_users m JOIN users u ON u.id = m.user_id
-		WHERE u.id::text = ANY($1) AND u.active AND `+tasks.PeerSQL("$2", "u"), ids, userID)
+		WHERE u.id::text = ANY($1) AND u.active AND `+tasks.PeerSQL("$2", "u")+`
+		UNION ALL SELECT b.id::text, b.mxid FROM im_bots b JOIN apps a ON a.id = b.app_id
+		WHERE b.id::text = ANY($1) AND a.installed_at IS NOT NULL AND NOT `+tasks.GuestSQL("$2"), ids, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +303,7 @@ func (s *Service) chatPeople(ctx context.Context, me, tok, room string, pl matri
 		m.Admin = pl != nil && !m.Owner && pl.Level(mx) >= adminLevel
 		m.Removable = pl != nil && mx != me && canRemove(pl, me, mx)
 		if p, ok := who[mx]; ok {
-			m.ID, m.Name, m.Photo, m.Guest = p.ID, p.Name, p.Photo, p.Guest
+			m.ID, m.Name, m.Photo, m.Guest, m.Bot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
 		} else {
 			m.Name = strings.TrimPrefix(strings.SplitN(mx, ":", 2)[0], "@")
 		}

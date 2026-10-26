@@ -1,12 +1,28 @@
 {{define "content"}}{{$d := .Data}}
 <div class="pagehead"><h1>{{t "sign.title"}}</h1><span style="flex:1"></span>
+  {{if $d.HR}}<a href="/sign/hr" class="button">{{icon "users"}} {{t "sign.hr.new"}}</a>{{end}}
   <a href="/sign/new" class="button create">{{icon "plus"}} {{t "sign.new"}}</a></div>
-<div class="tabs">{{range $d.Filters}}<a href="/sign{{with .}}?f={{.}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}</div>
-<div class="card flush">{{if $d.Docs}}<div class="tablewrap"><table class="tlist">
+<div class="tabs">{{range $d.Filters}}{{if or (ne . "hr") $d.HR}}<a href="/sign{{with .}}?f={{.}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}{{end}}</div>
+{{if eq $d.Filter "hr"}}<div class="card flush">{{if $d.Batches}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.hr.progress"}}</th><th>{{t "sign.hr.signer"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
+  <tbody>{{range $d.Batches}}<tr><td><a href="/sign/batch/{{.ID}}" class="ttitle">{{icon "users"}} {{.Title}}</a></td>
+    <td class="small">{{template "sgprogress" .}}</td>
+    <td class="small">{{or .Signer "—"}}{{if and .Ready (eq .SignerID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
+    <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{icon "users"}} {{t "sign.hr.empty"}}</div>{{end}}</div>
+{{else if eq $d.Filter "templates"}}<div class="card flush">{{if $d.Templates}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.side.company"}}</th><th>{{t "sign.remind"}}</th><th>{{t "sign.tpl.author"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Templates}}<tr><td><a href="/sign/new?tpl={{.ID}}" class="ttitle">{{icon "file-text"}} {{.Title}}</a><div class="small muted">{{.FileName}}</div></td>
+    <td class="small">{{len .Signers}}</td><td class="small">{{t (print "sign.remind_" .RemindDays)}}</td><td class="small">{{.Author}}</td>
+    <td class="nowrap"><a class="button small" href="/sign/new?tpl={{.ID}}">{{icon "send"}} {{t "sign.tpl.send"}}</a>
+      {{if or (eq .AuthorID $d.Me) $d.Admin}}<form method="post" action="/sign/templates/{{.ID}}/delete" data-confirm="{{t "sign.tpl.delete_confirm"}}" style="display:inline"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{icon "file-text"}} {{t "sign.tpl.empty"}}</div>{{end}}</div>
+{{else}}<div class="card flush">{{if $d.Docs}}<div class="tablewrap"><table class="tlist">
   <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.status"}}</th><th>{{t "sign.parties"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
   <tbody>{{range $d.Docs}}{{$c := .Current}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "signature"}} {{.Title}}</a></td>
     <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span>{{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
     <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{t (print "sign.pst." $p.Status)}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</td>
     <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
-</table></div>{{else}}<div class="empty">{{icon "signature"}} {{t "sign.empty"}}</div>{{end}}</div>
+</table></div>{{else}}<div class="empty">{{icon "signature"}} {{if eq $d.Filter "mine"}}{{t "sign.mine_empty"}}{{else}}{{t "sign.empty"}}{{end}}</div>{{end}}</div>{{end}}
 {{end}}
+

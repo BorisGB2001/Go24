@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"go24/internal/auth"
@@ -49,5 +51,7 @@ func (s *Server) bookingStats(w http.ResponseWriter, r *http.Request, sess auth.
 	s.render(w, r, "bookingstats", page{TitleKey: "booking.stats", Nav: "booking", Data: map[string]any{
 		"From": from.Format("2006-01-02"), "To": to.AddDate(0, 0, -1).Format("2006-01-02"), "Type": typ, "Types": types,
 		"Rows": list, "Total": total,
-		"Statuses": booking.Statuses, "Hours": hours}})
+		"Statuses": booking.Statuses, "Hours": hours, "Rating": func(st booking.Stat) string {
+			return strings.Replace(strconv.FormatFloat(st.AvgRating(), 'f', 1, 64), ".", s.tr(r, "size.point"), 1)
+		}}})
 }

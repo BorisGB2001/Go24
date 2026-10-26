@@ -1,0 +1,21 @@
+{{define "content"}}{{$d := .Data}}{{$b := $d.Batch}}
+<div class="crumbs"><a href="/sign?f=hr">{{t "sign.f.hr"}}</a></div>
+<div class="pagehead"><h1>{{icon "users"}} {{$b.Title}}</h1><span style="flex:1"></span>
+  {{if and $d.Author $b.Signing}}<form method="post" action="/sign/batch/{{$b.ID}}/remind"><button class="ghost">{{icon "bell"}} {{t "sign.hr.remind"}}</button></form>
+  <form method="post" action="/sign/batch/{{$b.ID}}/cancel" data-confirm="{{t "sign.hr.cancel_confirm"}}"><button class="ghost">{{icon "x"}} {{t "sign.hr.cancel"}}</button></form>{{end}}</div>
+<div class="card"><div class="row" style="gap:24px;flex-wrap:wrap;align-items:center">
+  <div style="flex:1;min-width:220px">{{template "sgprogress" $b}}</div>
+  <div class="small">{{t "sign.hr.signer"}}: <b>{{or $b.Signer "—"}}</b>{{if $b.Ready}} · {{t "sign.hr.waits_signer" $b.Ready}}{{end}}</div>
+  <div class="small muted">{{t "sign.sender"}}: {{$b.Author}}, {{$b.CreatedAt.Format "02.01.2006 15:04"}}</div></div></div>
+{{if $d.Mine}}<div class="card sgturn"><h2>{{t "sign.your_turn"}}</h2><p class="small">{{t "sign.hr.sign_all_hint" $b.Ready}}</p>
+  <form method="post" action="/sign/batch/{{$b.ID}}/sign" data-native><label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.hr.agree_all"}}</label>
+    <p><button class="primary">{{icon "signature"}} {{t "sign.hr.sign_all" $b.Ready}}</button></p></form></div>{{end}}
+<div class="card flush"><div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.hr.employee"}}</th><th>{{t "sign.status"}}</th><th>{{t "sign.parties"}}</th><th>{{t "sign.hr.done_at"}}</th></tr></thead>
+  <tbody>{{range $d.Docs}}{{$e := .Employee}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "file-text"}} {{if $e}}{{$e.Name}}{{else}}{{.Title}}{{end}}</a></td>
+    <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span></td>
+    <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{t (print "sign.pst." $p.Status)}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}
+      {{if $e}}{{with $e.Reason}}<div class="small muted">{{t "sign.reason"}}: {{.}}</div>{{end}}{{end}}</td>
+    <td class="small nowrap">{{with .DoneAt}}{{.Format "02.01.2006 15:04"}}{{end}}</td></tr>{{end}}</tbody>
+</table></div></div>
+{{end}}

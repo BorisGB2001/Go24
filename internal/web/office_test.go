@@ -268,6 +268,73 @@ func TestOfficeHTTP(t *testing.T) {
 		}
 	}
 
+	// a public link to the document: opened in the editor by anyone, edited when the link lets and its maker may change it
+	do(anna, "POST", "/disk/my/link", strings.NewReader("file="+mine+"&edit=1"), 200)
+	var token string
+	must(pool.QueryRow(ctx, `SELECT token FROM drive_links WHERE file_id = $1`, mine).Scan(&token))
+	if page, _ := do("", "GET", "/s/"+token, nil, 200); !strings.Contains(page, `href="/s/`+token+`/doc/`+mine+`"`) {
+		t.Error("the link's page has no editor")
+	}
+	public := func() map[string]any {
+		t.Helper()
+		page, _ := do("", "GET", "/s/"+token+"/doc/"+mine, nil, 200)
+		m := regexp.MustCompile(`data-office="([^"]+)"`).FindStringSubmatch(page)
+		if m == nil {
+			t.Fatalf("no editor by the link: %.1000s", page)
+		}
+		var cfg map[string]any
+		must(json.Unmarshal([]byte(html.UnescapeString(m[1])), &cfg))
+		return cfg["editorConfig"].(map[string]any)
+	}
+	pec := public()
+	if pec["mode"] != "edit" || !strings.HasPrefix(pec["user"].(map[string]any)["id"].(string), "guest-") ||
+		pec["customization"].(map[string]any)["goback"].(map[string]any)["url"] != "/s/"+token ||
+		!strings.Contains(pec["callbackUrl"].(string), "u="+anna+"&") || !strings.Contains(pec["callbackUrl"].(string), "w=my") {
+		t.Errorf("the editor by the link = %v", pec)
+	}
+	do("", "GET", "/s/"+token+"/doc/"+doc, nil, 404) // not the file of the link
+	_, res := do("", "GET", "/s/"+token+"/doc/"+mine, nil, 200) // the guest reaches the document server through go24
+	var guest *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == officeGuestCookie {
+			guest = c
+		}
+	}
+	if guest == nil {
+		t.Fatal("no cookie for the document server")
+	}
+	req, _ := http.NewRequest("GET", base+"/office/web-apps/apps/api/documents/api.js", nil)
+	req.AddCookie(guest)
+	if res, err := client.Do(req); err != nil || res.StatusCode != 200 {
+		t.Errorf("the guest's editor: %v %v", res.StatusCode, err)
+	}
+	req.Header.Del("Cookie")
+	req.AddCookie(&http.Cookie{Name: officeGuestCookie, Value: "9999999999.forged"})
+	if res, err := client.Do(req); err != nil || res.StatusCode != 302 {
+		t.Errorf("a forged cookie: %v %v", res.StatusCode, err)
+	}
+	if s3ep != "" { // the guest's save is a version by the link's maker
+		cb := strings.TrimPrefix(pec["callbackUrl"].(string), "http://go24.invalid")
+		key, _ := srv.Storages.FileMeta(ctx, mine)
+		if body := callback(cb, map[string]any{"key": office.Key(mine, key.Key), "status": office.StatusSave, "url": save["url"], "users": []string{"guest-1"}}, "office-secret", 200); !strings.Contains(body, `"error": 0`) {
+			t.Fatalf("save by the link = %s", body)
+		}
+		if vs, _ := srv.Drive.Versions(ctx, mine); len(vs) != 3 || vs[0].AuthorID != anna {
+			t.Errorf("versions after the save by the link = %+v", vs)
+		}
+	}
+	evesDrive, err := srv.Drive.Open(ctx, eve, "sf:"+mine)
+	must(err)
+	must(srv.Drive.Lock(ctx, eve, evesDrive, mine)) // locked by Eve: Anna may not change it, nor those by her link
+	if pec := public(); pec["mode"] != "view" {
+		t.Errorf("the locked document by the link: %v", pec["mode"])
+	}
+	must(srv.Drive.Unlock(ctx, eve, evesDrive, mine))
+	do(anna, "POST", "/disk/my/link", strings.NewReader("file="+mine), 200) // editing switched off
+	if pec := public(); pec["mode"] != "view" {
+		t.Errorf("the link without editing: %v", pec["mode"])
+	}
+
 	// the proxy: signed in only, without go24's cookie, with the address the document server builds its links from
 	do("", "GET", "/office/web-apps/apps/api/documents/api.js", nil, 302)
 	if body, _ := do(anna, "GET", "/office/web-apps/apps/api/documents/api.js?v=1", nil, 200); body != "var DocsAPI = {};" {
