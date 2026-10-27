@@ -158,6 +158,27 @@ func TestDocsAPI(t *testing.T) {
 	if tpl.Numerator != "Д-{NUMBER}" {
 		t.Fatalf("numerator: %+v", tpl)
 	}
+	// «Нумераторы» over REST
+	var num apiNumerator
+	call("POST", "/api/v1/document-numerators", bobKey, map[string]any{"name": "Общий"}, http.StatusForbidden, nil)
+	call("POST", "/api/v1/document-numerators", annaKey, map[string]any{"name": "Общий", "format": "Д-{NUMBER}", "pad": 3, "step": 0}, http.StatusUnprocessableEntity, nil)
+	call("POST", "/api/v1/document-numerators", annaKey, map[string]any{"name": "Общий", "format": "Д-{NUMBER}", "pad": 3}, http.StatusCreated, &num)
+	if num.Next != "Д-001" || num.Reset != "never" || len(num.Templates) != 0 {
+		t.Fatalf("numerator: %+v", num)
+	}
+	call("PATCH", "/api/v1/document-numerators/"+num.ID, annaKey, map[string]any{"pad": 0}, http.StatusOK, &num)
+	call("PATCH", "/api/v1/document-templates/"+tpl.ID, annaKey, map[string]any{"numerator_id": num.ID}, http.StatusOK, &tpl)
+	var nums []apiNumerator
+	call("GET", "/api/v1/document-numerators", annaKey, nil, http.StatusOK, &nums)
+	if tpl.NumberBy != num.ID || len(nums) < 2 {
+		t.Fatalf("numerators: %+v, template %+v", nums, tpl)
+	}
+	for _, n := range nums {
+		if n.ID == num.ID && (n.Next != "Д-1" || len(n.Templates) != 1) {
+			t.Fatalf("shared: %+v", n)
+		}
+	}
+	call("DELETE", "/api/v1/document-numerators/"+num.ID, annaKey, nil, http.StatusUnprocessableEntity, nil) // in use
 	var one apiDocTemplate
 	call("GET", "/api/v1/document-templates/"+tpl.ID, bobKey, nil, http.StatusOK, &one)
 	if strings.Join(one.Fields, ",") != "DocumentNumber,Title,Amount,Currency,Term" || len(one.Access) != 1 || one.Access[0].ID != bob {

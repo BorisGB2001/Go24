@@ -263,29 +263,65 @@ func TestChatBots(t *testing.T) {
 	if kb[0].Command != "weather" || kb[1].Type != "NEWLINE" || kb[2].BgColor != "#29619b" || kb[3].BgColor != "" || kb[3].Action != "COPY" {
 		t.Fatalf("keyboard %+v", kb)
 	}
-	ans, err := s.BotSend(ctx, bot.ID, room, "Солнечно", "", kb)
+	menu, err := NormMenu([]Button{{Text: "Прогноз", Command: "weather", CommandParams: "неделя", BgColor: "#fff"}, {Type: "NEWLINE"},
+		{Text: "Сайт", Link: "https://example.com"}})
+	must(err)
+	if len(menu) != 2 || menu[0].BgColor != "" {
+		t.Fatalf("menu %+v", menu)
+	}
+	ans, err := s.BotSend(ctx, bot.ID, room, "Солнечно", "", BotParts{Keyboard: kb, Menu: menu})
 	must(err)
 	msgs, _, err = s.Messages(ctx, ann, room, "")
 	must(err)
 	if i := slices.IndexFunc(msgs, func(m Message) bool { return m.ID == ans.ID }); i < 0 || len(msgs[i].Keyboard) != 2 ||
-		len(msgs[i].Keyboard[1]) != 2 || msgs[i].Keyboard[0][0].Text != "Ещё" {
+		len(msgs[i].Keyboard[1]) != 2 || msgs[i].Keyboard[0][0].Text != "Ещё" || len(msgs[i].Menu) != 2 {
 		t.Fatalf("the buttons ann sees: %+v", msgs)
 	}
-	must(s.PressButton(ctx, ann, room, ans.ID, "weather", "Москва"))
+	must(s.PressButton(ctx, ann, room, ans.ID, "weather", "Москва", false))
 	if d := deliveries(BotCommand); len(d) != 2 || cmdOf(d[1])["COMMAND_CONTEXT"] != "KEYBOARD" || cmdOf(d[1])["MESSAGE_ID"] != ans.ID {
 		t.Fatalf("a button pressed: %v", d)
 	}
-	if err := s.PressButton(ctx, ann, room, ans.ID, "weather", "Питер"); err == nil {
+	if err := s.PressButton(ctx, ann, room, ans.ID, "weather", "Питер", false); err == nil {
 		t.Fatal("a button the message has not is pressed")
 	}
-	if err := s.PressButton(ctx, ann, room, answer.ID, "weather", "Москва"); err == nil {
+	if err := s.PressButton(ctx, ann, room, ans.ID, "weather", "Москва", true); err == nil {
+		t.Fatal("a button is pressed as an item of the menu")
+	}
+	must(s.PressButton(ctx, ann, room, ans.ID, "weather", "неделя", true))
+	if d := deliveries(BotCommand); len(d) != 3 || cmdOf(d[2])["COMMAND_CONTEXT"] != "MENU" || cmdOf(d[2])["COMMAND_PARAMS"] != "неделя" {
+		t.Fatalf("an item of the menu pressed: %v", d)
+	}
+	if err := s.PressButton(ctx, ann, room, answer.ID, "weather", "Москва", false); err == nil {
 		t.Fatal("a button of a message without buttons is pressed")
 	}
 	// the buttons taken away, the text stays
-	_, err = s.BotEdit(ctx, bot.ID, room, ans.ID, "", []Button{})
+	_, err = s.BotEdit(ctx, bot.ID, room, ans.ID, "", BotParts{Keyboard: []Button{}})
 	must(err)
-	if nc := fake.sent[len(fake.sent)-1].Content["m.new_content"].(map[string]any); nc["body"] != "Солнечно" || nc["go24.keyboard"] != nil {
+	if nc := fake.sent[len(fake.sent)-1].Content["m.new_content"].(map[string]any); nc["body"] != "Солнечно" || nc["go24.keyboard"] != nil ||
+		nc["go24.menu"] == nil {
 		t.Fatalf("the buttons taken away: %v", nc)
+	}
+
+	// a card alone: its text for other clients, not shown; it stays alone while no text is given
+	card, err := ParseAttach([]byte(`{"COLOR":"#29619b","BLOCKS":[{"MESSAGE":"Погода на неделю"},{"GRID":[{"NAME":"Пн","VALUE":"+5","DISPLAY":"LINE"}]}]}`))
+	must(err)
+	cm, err := s.BotSend(ctx, bot.ID, room, "", "", BotParts{Attach: card})
+	must(err)
+	if cm.Attach == nil || !cm.Attach.Only || fake.sent[len(fake.sent)-1].Content["body"] != "Погода на неделю\nПн +5" {
+		t.Fatalf("a card alone: %+v %v", cm.Attach, fake.sent[len(fake.sent)-1].Content)
+	}
+	_, err = s.BotEdit(ctx, bot.ID, room, cm.ID, "", BotParts{Keyboard: kb})
+	must(err)
+	msgs, _, err = s.Messages(ctx, ann, room, "")
+	must(err)
+	if i := slices.IndexFunc(msgs, func(m Message) bool { return m.ID == cm.ID }); i < 0 || msgs[i].Attach == nil || !msgs[i].Attach.Only ||
+		len(msgs[i].Attach.Blocks) != 2 || msgs[i].Attach.Color != "#29619b" || len(msgs[i].Keyboard) == 0 {
+		t.Fatalf("the card ann sees: %+v", msgs)
+	}
+	_, err = s.BotEdit(ctx, bot.ID, room, cm.ID, "Прогноз", BotParts{})
+	must(err)
+	if nc := fake.sent[len(fake.sent)-1].Content["m.new_content"].(map[string]any); nc["body"] != "Прогноз" || attachOf(nc).only() {
+		t.Fatalf("a text to the card: %v", nc)
 	}
 	must(s.DeleteCommand(ctx, app, bot.ID, "weather"))
 	if list, err := s.Commands(ctx, app, bot.ID); err != nil || len(list) != 1 || list[0].Command != "secret" {

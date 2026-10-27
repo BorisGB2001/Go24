@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,15 @@ func TestDiskHTTP(t *testing.T) {
 			t.Errorf("the drive page has no %q", want)
 		}
 	}
+	// «Отправить в чат»: in the file's menu; only who can read the file sends it, and only a file of a drive
+	for _, want := range []string{`data-disk-send="` + b + `" data-name="b.txt"`, "js/disksend.js", `data-l-send=`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the drive page has no %q", want)
+		}
+	}
+	do(anna, "POST", "/files/"+b+"/send", url.Values{}, 422)
+	do(eve, "POST", "/files/"+b+"/send", url.Values{"room": {"!r:go24"}}, 403)
+	do(anna, "POST", "/files/"+b+"/send", url.Values{"room": {"!r:go24"}}, 404) // no messenger in the test
 
 	// «История версий» (empty versions: no stored bytes); someone else sees none of it
 	must(srv.Drive.AddVersion(ctx, anna, my, a, drive.NewVersion{Key: "k/v2-" + randomHex(4), ContentType: "text/plain"}))
@@ -142,6 +152,16 @@ func TestDiskHTTP(t *testing.T) {
 	}
 	if p := do(anna, "GET", "/disk/my?type=doc&sort=date&desc=1", nil, 200); !strings.Contains(p, `data-id="`+a+`"`) || !strings.Contains(p, `data-id="`+b+`"`) {
 		t.Error("the filter by type has not the text files")
+	}
+	// the filter: when changed, who uploaded; the conditions shown, each removable
+	if p := do(anna, "GET", "/disk/my?period=today&author="+anna, nil, 200); !strings.Contains(p, `data-id="`+a+`"`) || !strings.Contains(p, "data-disk-chips") || !strings.Contains(p, `href="/disk/my?period=today"`) {
+		t.Errorf("filter by date and author: %.3000s", p)
+	}
+	if p := do(anna, "GET", "/disk/my?period=yesterday", nil, 200); strings.Contains(p, `data-item="file"`) {
+		t.Error("the files of today are among yesterday's")
+	}
+	if p := do(anna, "GET", "/disk/my?author="+eve, nil, 200); strings.Contains(p, `data-item="file"`) {
+		t.Error("the filter by author shows anna's files as eve's")
 	}
 	if p := do(anna, "GET", "/disk/recent", nil, 200); !strings.Contains(p, `data-id="`+a+`"`) || !strings.Contains(p, "/disk/my?folder="+docs) {
 		t.Errorf("recent: %.3000s", p)
@@ -223,9 +243,9 @@ func TestDiskHTTP(t *testing.T) {
 		t.Errorf("zip holds %v", names)
 	}
 
-	// the viewer: a picture is shown by /raw, a text as HTML; not to someone else
+	// the viewer: a picture is shown by /raw (its tile — by /thumb), a text as HTML; not to someone else
 	pic := addFile("", "фото.png")
-	if page := do(anna, "GET", "/disk/my", nil, 200); !strings.Contains(page, `data-kind="image"`) || !strings.Contains(page, "/files/"+pic+"/raw") {
+	if page := do(anna, "GET", "/disk/my", nil, 200); !strings.Contains(page, `data-kind="image"`) || !strings.Contains(page, "/files/"+pic+"/thumb") {
 		t.Error("the picture has no tile or viewer kind")
 	}
 	if body := do(anna, "GET", "/files/"+a+"/preview", nil, 200); !strings.Contains(body, `"kind": "html"`) && !strings.Contains(body, `"kind":"html"`) {
@@ -374,5 +394,52 @@ func TestDiskSort(t *testing.T) {
 	}
 	if u := diskSortURLs(url.Values{}, "", false); u["name"] != "?desc=1" {
 		t.Errorf("name again = %v", u)
+	}
+}
+
+func TestDiskFilter(t *testing.T) {
+	now := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC) // a Wednesday
+	day := func(d int) time.Time { return time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC) }
+	for _, c := range []struct {
+		f        diskFilter
+		from, to time.Time
+	}{
+		{diskFilter{Period: "today"}, day(28), day(29)},
+		{diskFilter{Period: "yesterday"}, day(27), day(28)},
+		{diskFilter{Period: "week"}, day(26), time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
+		{diskFilter{Period: "month"}, day(1), time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)},
+		{diskFilter{Period: "last_7"}, day(22), day(29)},
+		{diskFilter{Period: "range", From: "2026-10-05", To: "2026-10-06"}, day(5), day(7)},
+		{diskFilter{Period: "range", To: "2026-10-06"}, time.Time{}, day(7)},
+		{diskFilter{}, time.Time{}, time.Time{}},
+	} {
+		if from, to := c.f.span(now); !from.Equal(c.from) || !to.Equal(c.to) {
+			t.Errorf("%+v: %v — %v, want %v — %v", c.f, from, to, c.from, c.to)
+		}
+	}
+	files := []drive.File{{ID: "1", Name: "a.pdf", UploaderID: "u1", CreatedAt: day(28).Add(time.Hour)},
+		{ID: "2", Name: "b.docx", UploaderID: "u2", CreatedAt: day(27)}, {ID: "3", Name: "c.pdf", UploaderID: "u2", CreatedAt: day(20)}}
+	ids := func(fs []drive.File) (s string) {
+		for _, f := range fs {
+			s += f.ID
+		}
+		return s
+	}
+	for _, c := range []struct {
+		f    diskFilter
+		want string
+	}{{diskFilter{Type: "pdf"}, "13"}, {diskFilter{Author: "u2"}, "23"}, {diskFilter{Period: "last_7", Author: "u2"}, "2"}, {diskFilter{Period: "today"}, "1"}} {
+		if got := ids(c.f.Apply(slices.Clone(files), now)); got != c.want {
+			t.Errorf("%+v = %s, want %s", c.f, got, c.want)
+		}
+	}
+	f := diskFilterOf(url.Values{"q": {" x "}, "type": {"bad"}, "period": {"range"}, "sort": {"date"}})
+	if f.Q != "x" || f.Type != "" || f.Period != "" || !f.On() || f.Files() {
+		t.Errorf("of = %+v", f)
+	}
+	f = diskFilterOf(url.Values{"q": {"x"}, "type": {"pdf"}, "period": {"range"}, "from": {"2026-10-01"}, "sort": {"date"}, "folder": {"f"}})
+	chips := f.Chips(url.Values{"q": {"x"}, "type": {"pdf"}, "period": {"range"}, "from": {"2026-10-01"}, "sort": {"date"}, "folder": {"f"}})
+	if len(chips) != 3 || chips[0].URL != "?from=2026-10-01&period=range&sort=date&type=pdf" || chips[2].URL != "?q=x&sort=date&type=pdf" {
+		t.Errorf("chips = %+v", chips)
 	}
 }

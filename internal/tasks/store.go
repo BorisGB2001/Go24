@@ -172,6 +172,10 @@ type Comment struct {
 	AuthorName string
 	Body       string
 	CreatedAt  time.Time
+	ReplyTo    string // the message this one answers ("" = none, or it was deleted)
+	ReplyName  string // its author and the beginning of its text, quoted above this one
+	ReplyBody  string
+	EditedAt   *time.Time // the author changed the text («изменено»)
 	Reactions  []Reaction `db:"-"` // filled by FillReactions
 }
 
@@ -1100,8 +1104,8 @@ func (s *Store) GetCard(ctx context.Context, userID, taskID string) (TaskCard, e
 		c.Checklist = append(c.Checklist, l.Items...)
 	}
 
-	rows, err = s.db.Query(ctx, `SELECT c.id, c.author_id, u.name, c.body, c.created_at FROM task_comments c
-		JOIN users u ON u.id = c.author_id WHERE c.task_id = $1 ORDER BY c.created_at`, taskID)
+	rows, err = s.db.Query(ctx, `SELECT `+commentCols+` FROM task_comments c `+commentJoins+`
+		WHERE c.task_id = $1 ORDER BY c.created_at`, taskID)
 	if err != nil {
 		return c, err
 	}
@@ -1512,10 +1516,18 @@ func (s *Store) AddComment(ctx context.Context, userID, taskID, body string) err
 // mentions, e.g. from the messenger) who are not in the task become its auditors, and get
 // a «mention» notification instead of the usual one.
 func (s *Store) PostComment(ctx context.Context, userID, taskID, body string, mentions ...string) (Comment, error) {
+	return s.PostReply(ctx, userID, taskID, "", body, mentions...)
+}
+
+// PostReply is PostComment answering another message of the chat (replyTo; one of another task is ignored).
+func (s *Store) PostReply(ctx context.Context, userID, taskID, replyTo, body string, mentions ...string) (Comment, error) {
 	var c Comment
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return c, invalid("err.comment_empty")
+	}
+	if !uuidRe.MatchString(replyTo) {
+		replyTo = ""
 	}
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := loadAccess(ctx, tx, userID, taskID, false); err != nil {
@@ -1547,10 +1559,13 @@ func (s *Store) PostComment(ctx context.Context, userID, taskID, body string, me
 				}
 			}
 		}
-		if err := tx.QueryRow(ctx, `WITH n AS (INSERT INTO task_comments (task_id, author_id, body) VALUES ($1, $2, $3)
-				RETURNING id, author_id, body, created_at)
-			SELECT n.id, n.author_id, u.name, n.body, n.created_at FROM n JOIN users u ON u.id = n.author_id`, taskID, userID, body).
-			Scan(&c.ID, &c.AuthorID, &c.AuthorName, &c.Body, &c.CreatedAt); err != nil {
+		var id string
+		if err := tx.QueryRow(ctx, `INSERT INTO task_comments (task_id, author_id, body, reply_to)
+			VALUES ($1, $2, $3, (SELECT r.id FROM task_comments r WHERE r.id = nullif($4, '')::uuid AND r.task_id = $1))
+			RETURNING id`, taskID, userID, body, replyTo).Scan(&id); err != nil {
+			return err
+		}
+		if c, err = commentByID(ctx, tx, taskID, id); err != nil {
 			return err
 		}
 		if len(ids) == 0 {
@@ -1598,14 +1613,7 @@ func (s *Store) Events(ctx context.Context, userID string, before time.Time, lim
 
 // CommentByID loads one message of a task chat (the caller checks that the viewer may see the task).
 func (s *Store) CommentByID(ctx context.Context, taskID, id string) (Comment, error) {
-	var c Comment
-	err := s.db.QueryRow(ctx, `SELECT c.id, c.author_id, u.name, c.body, c.created_at FROM task_comments c
-		JOIN users u ON u.id = c.author_id WHERE c.id = $1 AND c.task_id = $2`, id, taskID).
-		Scan(&c.ID, &c.AuthorID, &c.AuthorName, &c.Body, &c.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return c, ErrNotFound
-	}
-	return c, err
+	return commentByID(ctx, s.db, taskID, id)
 }
 
 // ---------- helpers ----------

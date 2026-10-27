@@ -43,6 +43,7 @@ import (
 	"go24/internal/sign"
 	"go24/internal/sites"
 	"go24/internal/storages"
+	"go24/internal/sysinfo"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 	"go24/internal/worktime"
@@ -151,7 +152,13 @@ func TestPagesRender(t *testing.T) {
 			"Month": now, "Today": now.Format(time.DateOnly), "Counts": map[int64]int{7: 1}, "Prev": "2026-09", "Next": "2026-11"}},
 		"invite": {Data: map[string]any{"Ready": true, "Now": now, "New": "ann@test", "Invites": []company.Invite{
 			{Email: "ann@test", Name: "Анна", Link: "https://sso/x", InvitedBy: "Борис", Expires: now.Add(time.Hour), Created: now},
-			{Email: "bob@test", Name: "Боб", Joined: true, Expires: now, Created: now}}}},
+			{Email: "bob@test", Name: "Боб", Joined: true, Expires: now, Created: now}},
+			"Admin": true, "Link": "https://go24/register/tok", "Requests": []company.JoinRequest{
+				{ID: "j1", Email: "eve@firm.ru", Name: "Ева", IP: "10.0.0.1", State: "pending", Created: now},
+				{ID: "j2", Email: "max@firm.ru", Name: "Макс", State: "rejected", Created: now, DecidedBy: "Борис", DecidedAt: &now}}}},
+		"staffsettings": {Data: map[string]any{"S": company.StaffSettings{InviteAll: true, Register: true, Approve: true,
+			Domains: []string{"firm.ru", "firm.com"}}, "Link": "https://go24/register/tok", "Ready": true}},
+		"register": {Data: map[string]any{"Open": true, "Token": "tok", "Domains": []string{"firm.ru"}, "Approve": true}},
 		"kb": {Data: map[string]any{"Q": "отпуск", "Projects": []tasks.Project{project},
 			"Spaces": []kb.Space{{ID: "s1", Name: "Регламенты", Pages: 3}, {ID: "s2", Name: "go24", ProjectKey: "GO", ProjectName: "go24"}},
 			"Hits":   []kb.Hit{{ID: "p1", SpaceID: "s1", SpaceName: "Регламенты", Title: "Отпуск", Snippet: "как оформить"}}}},
@@ -192,7 +199,9 @@ func TestPagesRender(t *testing.T) {
 			"Doc": sign.Doc{ID: "s1", Title: "Договор № 7", Status: "signing", Author: "Анна", AuthorID: "u1", CreatedAt: now, Hash: "ab", Parties: []sign.Party{
 				{ID: "p1", UserID: "u1", Name: "Анна", Ord: 1, Status: "signed", SignedAt: &now, HasSignature: true}, {ID: "p2", Name: "Иван", Email: "i@t", Token: "tk", Ord: 2, Status: "ready"}}}}},
 		"signhr": {Data: map[string]any{"Users": []tasks.User{{ID: "u1", Name: "Анна"}}, "Fields": employeeFields, "Admin": true,
-			"Templates": []crm.DocTemplate{{ID: "t1", Name: "Приказ", Entity: "employee"}}}},
+			"Templates": []crm.DocTemplate{{ID: "t1", Name: "Приказ", Entity: "employee"}}, "Self": map[string]string{"t1": "u1"}}},
+		"signself": {Data: map[string]any{"Templates": []sign.SelfTemplate{{TemplateID: "t1", Name: "Заявление", SignerID: "u1", Signer: "Анна"}},
+			"Tpl": sign.SelfTemplate{TemplateID: "t1", Name: "Заявление", Signer: "Анна"}, "Fields": []selfField{{Name: "StartDate", Date: true}, {Name: "Reason"}}}},
 		"signbatch": {Data: map[string]any{"Me": "u2", "Author": true, "Mine": true,
 			"Batch": sign.Batch{ID: "b1", Title: "Приказ", SignerID: "u2", Signer: "Боб", Author: "Анна", CreatedAt: now, Total: 3, Signed: 1, Refused: 1, Signing: 1, Ready: 1},
 			"Docs": []sign.Doc{{ID: "s1", Title: "Приказ — Ева", Status: "refused", DoneAt: &now, BatchID: "b1", Parties: []sign.Party{
@@ -265,6 +274,12 @@ func TestPagesRender(t *testing.T) {
 		"callguest": {Data: map[string]any{"Token": "t1", "Title": "GO-1 Отчёт", "Password": true, "Expires": now, "Ask": true, "Wrong": true, "Name": "Гость"}},
 		"settings":  {Data: map[string]any{"Sections": settingsSections}},
 		"sections":  {Data: map[string]any{"Sections": portalSections, "Off": []string{"crm"}}},
+		"sysstate": {Data: map[string]any{"Problems": []string{"Мало места"}, "R": sysReport{Version: "0.5.3", Go: "go1.25", CheckedAt: time.Now(),
+			Nodes:    []sysinfo.Node{{Role: "web", Host: "a", Alive: true}, {Role: "worker", Host: "b"}},
+			Database: &sysinfo.Database{Version: "17.2", Size: 1 << 30, Migration: "547_system_nodes.sql"},
+			Services: []sysinfo.Check{{ID: "matrix", Target: "http://synapse:8008", OK: true}, {ID: "office", Error: "HTTP 503"}},
+			Disks:    []sysinfo.Disk{{ID: "backup", Path: "/backups", Total: 100 << 30, Free: 1 << 30}}, BackupOn: true,
+			Backup:   &backup.Run{Name: "go24-1", Status: "failed", Error: "pg_dump"}}}},
 		"portal": {Data: map[string]any{"S": portal.Settings{Name: "Ромашка", HasLogo: true, DateFormat: "ymd", TimeFormat: "12", TZ: "Europe/Moscow"},
 			"DateFormats": portal.DateFormatNames, "Samples": portalSamples(), "Zones": portalZones, "MaxLogo": 256}},
 		"callsettings": {Data: map[string]any{"Recording": true, "Record": true, "Ready": false, "Services": []calls.ServiceConfig{
@@ -350,6 +365,10 @@ func TestPagesRender(t *testing.T) {
 		"crmrecycle": {Data: map[string]any{"Kind": "recycle", "ActCount": 0, "Days": 30, "Entity": "", "Q": "",
 			"Items": []crm.RecycleItem{{ID: "r1", Entity: "deal", Title: "Поставка", DeletedBy: crm.Ref{Name: "Анна"}, DeletedAt: time.Now()},
 				{ID: "r2", Entity: "deal", TypeName: "Договоры", DeletedAt: time.Now()}}}},
+		"crmdups": {Data: map[string]any{"Kind": "duplicates", "ActCount": 0, "Entity": "contact", "By": "phone",
+			"Criteria": crm.DupCriteria["contact"], "Merge": true, "Limit": 100, "Total": 1,
+			"Groups": []crm.DupGroup{{Value: "+7 900 123-45-67", Cards: []crm.DupCard{{ID: "c1", Title: "Иван", Phone: "+7 900 123-45-67",
+				Responsible: crm.Ref{Name: "Анна"}, CreatedAt: now}, {ID: "c2", Title: "Иван Петров", CreatedAt: now}}}}}},
 		"crmforms": {Data: map[string]any{"Kind": "forms", "Mode": "edit", "ActCount": 0, "Root": "https://go24.test",
 			"Form": crm.Form{ID: "f1", Token: "tk", Name: "Заявка", Scheme: "deal", Active: true, Results: 2},
 			"Choice": []formChoice{{FormField: crm.FormField{Key: "name", Required: true}, On: true},
@@ -455,7 +474,7 @@ func TestPagesRender(t *testing.T) {
 				{Field: tasks.Field{ID: "f2", Name: "VIP", Kind: "bool"}, Value: "1"}, {Field: tasks.Field{ID: "f3", Name: "Дата", Kind: "date"}, Value: "2026-10-20"}},
 			"Rows":      []crm.ProductRow{{ProductID: "p1", Name: "Лицензия", Price: 1000, Quantity: 2, Discount: 10, VATRate: &vat20, VATIncluded: true}, {Name: "Внедрение", Price: 500, Quantity: 1, Unit: "ч"}},
 			"RowsTotal": 2300.0, "RowsVAT": 300.0, "Catalog": []crm.Product{{ID: "p1", Name: "Лицензия", Price: 1000, Currency: "RUB", VATRate: &vat20, VATIncluded: true}},
-			"Timeline": []crm.Event{{ID: 7, AuthorName: "Анна", Kind: "activity", Body: "call:Позвонить", At: now}, {ID: 8, AuthorName: "Анна", Kind: "invoice", Body: "invoice:3:paid", At: now}, {ID: 4, AuthorName: "Анна", Kind: "document", Body: "Анкета", At: now}, {ID: 12, AuthorName: "Анна", Kind: "openline", Body: "c0ffee00-0000-0000-0000-000000000001", At: now}, {ID: 13, AuthorName: "Анна", Kind: "call", Body: `{"id":"c1","dir":"missed","number":"+79001234567","status":"noanswer"}`, At: now}, {ID: 14, AuthorName: "Анна", Kind: "call", Body: `{"id":"c2","dir":"out","number":"+79001234567","sec":75,"status":"answered","rec":true}`, At: now}, {ID: 3, AuthorName: "Анна", Kind: "robot", Body: "task:GO-5", At: now}, {ID: 9, AuthorName: "Анна", Kind: "robot", Body: "fail:mail:err.robot_email", At: now}, {ID: 10, AuthorName: "Анна", Kind: "robot", Body: "activity:call:Позвонить", At: now}, {ID: 11, AuthorName: "Анна", Kind: "robot", Body: "trigger:mail", At: now}, {ID: 15, AuthorName: "Анна", Kind: "robot", Body: "webhook:n8n.test", At: now}, {ID: 16, AuthorName: "Анна", Kind: "repeat", Body: "contact:x1", At: now}, {ID: 2, AuthorName: "Анна", Kind: "stage", Body: "code:lead_new → Своя", At: now}, {ID: 1, AuthorName: "Анна", Kind: "created", At: now},
+			"Timeline": []crm.Event{{ID: 7, AuthorName: "Анна", Kind: "activity", Body: "call:Позвонить", At: now}, {ID: 8, AuthorName: "Анна", Kind: "invoice", Body: "invoice:3:paid", At: now}, {ID: 4, AuthorName: "Анна", Kind: "document", Body: "Анкета", At: now}, {ID: 12, AuthorName: "Анна", Kind: "openline", Body: "c0ffee00-0000-0000-0000-000000000001", At: now}, {ID: 13, AuthorName: "Анна", Kind: "call", Body: `{"id":"c1","dir":"missed","number":"+79001234567","status":"noanswer"}`, At: now}, {ID: 14, AuthorName: "Анна", Kind: "call", Body: `{"id":"c2","dir":"out","number":"+79001234567","sec":75,"status":"answered","rec":true}`, At: now}, {ID: 3, AuthorName: "Анна", Kind: "robot", Body: "task:GO-5", At: now}, {ID: 9, AuthorName: "Анна", Kind: "robot", Body: "fail:mail:err.robot_email", At: now}, {ID: 10, AuthorName: "Анна", Kind: "robot", Body: "activity:call:Позвонить", At: now}, {ID: 11, AuthorName: "Анна", Kind: "robot", Body: "trigger:mail", At: now}, {ID: 15, AuthorName: "Анна", Kind: "robot", Body: "webhook:n8n.test", At: now}, {ID: 17, AuthorName: "Анна", Kind: "robot", Body: "document:Договор № 3", At: now}, {ID: 18, AuthorName: "Анна", Kind: "robot", Body: "close:2", At: now}, {ID: 16, AuthorName: "Анна", Kind: "repeat", Body: "contact:x1", At: now}, {ID: 2, AuthorName: "Анна", Kind: "stage", Body: "code:lead_new → Своя", At: now}, {ID: 1, AuthorName: "Анна", Kind: "created", At: now},
 				{ID: 12, AuthorName: "Анна", Kind: "tunnel_to", Body: "d2|Поставка", At: now}, {ID: 13, AuthorName: "Анна", Kind: "pipeline", Body: "code:default → Тендеры", At: now}},
 			"OtherPipes": []crm.Pipeline{{ID: "p2", Name: "Тендеры", Stages: []crm.Stage{{ID: "s3", Name: "Заявка"}, {ID: "s4", Code: "won"}}}}}},
 		"robots": {Data: map[string]any{"Entity": "deal", "Pipeline": "p1", "Back": "/crm/robots", "Kinds": crm.RobotKinds, "ShareModes": crm.ShareModes,
@@ -471,7 +490,13 @@ func TestPagesRender(t *testing.T) {
 				{ID: "r7", StageID: "s1", Kind: "copy", Active: true, Params: crm.RobotParams{Stage: "s3"}},
 				{ID: "r8", StageID: "s1", Kind: "fields", Active: true, Params: crm.RobotParams{Set: []crm.RobotSet{{Field: "title", Value: "{title}!"}, {Field: "origin", Value: "src1"}, {Field: "uf:f1", Value: "1"}},
 					If: &crm.RobotCond{Field: "responsible", Op: "eq", Value: "u1"}}},
-				{ID: "r9", StageID: "s1", Kind: "webhook", Active: true, Params: crm.RobotParams{URL: "https://n8n.test/webhook/x", If: &crm.RobotCond{Field: "comment", Op: "empty"}}}}},
+				{ID: "r9", StageID: "s1", Kind: "webhook", Active: true, Params: crm.RobotParams{URL: "https://n8n.test/webhook/x", If: &crm.RobotCond{Field: "comment", Op: "empty"}}},
+				{ID: "r10", StageID: "s1", Kind: "document", Active: true, Params: crm.RobotParams{Doc: "dt1"}},
+				{ID: "r11", StageID: "s1", Kind: "bp", Active: true, Params: crm.RobotParams{BP: "bp1"}},
+				{ID: "r12", StageID: "s1", Kind: "observers", Active: true, Params: crm.RobotParams{Obs: "set", Users: []string{"u1"}}},
+				{ID: "r13", StageID: "s1", Kind: "close", Active: true, Params: crm.RobotParams{Act: "call"}}}},
+			"DocTemplates": []crm.DocTemplate{{ID: "dt1", Name: "Договор"}}, "Processes": []bp.Template{{ID: "bp1", Name: "Согласование"}},
+			"ObserverModes": crm.ObserverModes,
 			"Fields": []robotField{{Key: "title"}, {Key: "origin", Pick: "source"}, {Key: "responsible", Pick: "users"}, {Key: "uf:f1", Name: "VIP", Pick: "bool"}, {Key: "uf:f2", Name: "Этап", Pick: "list", Options: []string{"КП"}}},
 			"Dicts":  map[string][]crm.DictItem{"source": {{Dict: crm.Dict{ID: "src1", Code: "WEB"}}}}, "CondOps": crm.RobotCondOps, "SetRows": []int{0, 1, 2},
 			"Tunnels": []crmTunnel{{Robot: crm.Robot{ID: "r7", Kind: "copy"}, FromPipe: crm.Pipeline{ID: "p1", Code: "default"}, From: crm.Stage{ID: "s1", Code: "new"},
@@ -545,6 +570,19 @@ func TestPagesRender(t *testing.T) {
 			"Mine":      &bp.Approval{ID: "a1", Text: "Утвердить?"},
 			"Approvals": []bp.Approval{{User: company.Person{Name: "Борис"}, Decision: "approve", Comment: "ок"}, {User: company.Person{Name: "Анна"}}},
 			"Log":       []bp.Line{{Kind: "started", Actor: "Анна", At: now}, {Kind: "rejected", Text: "нет", At: now}}}},
+		"bplists": {Data: map[string]any{"Lists": []bp.List{{ID: "l1", Name: "Заявки", Description: "На оплату", Count: 3}}}},
+		"bplist": {Data: map[string]any{"L": bp.List{ID: "l1", Name: "Заявки", Fields: []bp.Field{{Key: "sum", Label: "Сумма", Kind: "number"}, {Key: "who", Label: "Кто", Kind: "user"}, {Key: "ok", Label: "Ок", Kind: "bool"}}, Columns: []string{"sum", "who", "ok"}},
+			"Elements": []bp.Element{{ID: "e1", Name: "Командировка", Values: map[string]string{"sum": "1500", "who": "u1", "ok": "Y"}, CreatedAt: now, CreatedBy: bp.Ref{ID: "u1", Name: "Анна"}}},
+			"Users": []tasks.User{user}, "Q": "ком", "Sort": "sum", "Desc": true, "Page": 1, "Next": 2, "CanWrite": true}},
+		"bplistedit": {Data: map[string]any{"L": bp.List{ID: "l1", Name: "Заявки", Fields: []bp.Field{{Key: "sum", Label: "Сумма", Kind: "number"}}, Columns: []string{"sum"}},
+			"FieldRows": bpFieldRows([]bp.Field{{Key: "sum", Label: "Сумма", Kind: "number"}}, nil), "FieldKinds": bp.FieldKinds,
+			"Readers": []tasks.User{{ID: "dept:d1", Name: "Продажи"}}, "Templates": []bp.Template{{ID: "t1", Name: "Согласование", Active: true, AutoCreate: true}}}},
+		"bplistel": {Data: map[string]any{"L": bp.List{ID: "l1", Name: "Заявки", Fields: []bp.Field{{Key: "sum", Label: "Сумма", Kind: "number"}, {Key: "ok", Label: "Ок", Kind: "bool"}}},
+			"E": bp.Element{ID: "e1", Name: "Командировка", Values: map[string]string{"sum": "1500"}, CreatedAt: now, ChangedAt: now.Add(time.Hour)},
+			"Fields": []bp.Field{{Key: "sum", Label: "Сумма", Kind: "number", Default: "1500"}, {Key: "ok", Label: "Ок", Kind: "bool"}}, "Users": []tasks.User{user}, "CanWrite": true,
+			"Log": []bpListLine{{ListLine: bp.ListLine{Author: bp.Ref{Name: "Анна"}, Changes: []bp.Change{{Key: "sum", Old: "1000", New: "1500"}}, At: now},
+				Fields: []bp.Field{{Key: "sum", Label: "Сумма", Kind: "number"}}}, {ListLine: bp.ListLine{Created: true, At: now}}},
+			"BPInstances": []bp.Instance{{ID: "i1", Name: "Согласование", Status: "running", CreatedAt: now}}, "BPTemplates": []bp.Template{{ID: "t1", Name: "Согласование"}}}},
 		"bptemplates": {Data: map[string]any{"Templates": []bp.Template{{ID: "t1", Name: "Отпуск", Entity: "none", Active: true}, {ID: "t2", Name: "Дожать", Entity: "deal"}}}},
 		"bptemplate": {Data: map[string]any{"FieldsText": "from | С | date | *", "Kinds": bp.StepKinds, "Users": []tasks.User{user}, "Projects": []tasks.Project{project},
 			"Stages": []crm.Stage{{ID: "s1", Code: "new"}},
@@ -699,10 +737,58 @@ func TestPagesRender(t *testing.T) {
 			"Filter": company.StaffFilter{Kind: "moved", From: time.Now()}, "Days": []staffDay{{Day: time.Now(), List: []company.StaffChange{
 				{Person: company.Person{ID: "u1", Name: "Ivan"}, Kind: "moved", Was: []string{"IT"}, Departments: []string{"Sales"}, ActorID: "u2", ActorName: "Boss"},
 				{Person: company.Person{ID: "u3", Name: "Olga", Position: "HR"}, Kind: "hired"}}}}}},
+		"meetings": {Data: map[string]any{"Filter": company.MeetingFilter{Role: "owner"}, "Statuses": company.MeetingStatuses, "Me": "u1",
+			"List": []company.Meeting{{ID: 1, Title: "Планёрка", Place: "Зал", Start: now, Minutes: 30, Status: "action", Owner: company.Person{ID: "u1", Name: "Ivan"},
+				Members: []company.Person{{ID: "u2", Name: "Olga"}}}}}},
+		"meetingform": {Data: map[string]any{"M": company.Meeting{ID: 1, Title: "Планёрка", Start: now, Minutes: 30, Owner: company.Person{ID: "u1"}},
+			"Users": []tasks.User{user}, "Back": "/worktime/meetings/1", "Members": []string{"u1"}, "TitleMax": 255, "Durations": []int{30, 60}}},
+		"meeting": {Data: map[string]any{"Can": true, "Owner": true, "Me": "u1", "Users": []tasks.User{user}, "Deadline": now,
+			"Projects": []tasks.Project{{Key: "OPS", Name: "Операции"}},
+			"M": company.Meeting{ID: 2, Title: "Планёрка", Place: "Зал", Start: now, Minutes: 30, Status: "action", Owner: company.Person{ID: "u1", Name: "Ivan"},
+				Keeper: company.Person{ID: "u2", Name: "Olga"}, Members: []company.Person{{ID: "u3", Name: "Petr"}}, PrevID: 1, PrevTitle: "Планёрка", PrevStart: now,
+				EventID: "e1", Protocol: "Итог", Started: &now,
+				Items: []company.MeetingItem{{ID: 1, Num: "1", Title: "Сделки", Reporter: company.Person{ID: "u3", Name: "Petr"}, Minutes: 10, Result: "Дожать",
+					Tasks: []company.MeetingTask{{ItemID: 1, Key: "OPS-1", Title: "Позвонить", Status: "pending", Responsible: company.Person{ID: "u3", Name: "Petr"}, Deadline: &now}}},
+					{ID: 2, ParentID: 1, Num: "1.1", Title: "Крупные"}},
+				Carried: []company.MeetingTask{{ItemID: 9, ItemTitle: "Старое", Key: "OPS-2", Title: "Отчёт", Status: "in_progress", Responsible: company.Person{ID: "u1", Name: "Ivan"}}}}}},
 		"honor": {Data: map[string]any{"Departments": []*company.Department{dept}, "Filter": company.HonorFilter{DepartmentID: dept.ID},
 			"Can": true, "Today": now, "Add": "u1", "ReasonMax": company.HonorReasonMax, "Users": []company.Profile{{ID: "u1", Name: "Ivan", Position: "Dev"}},
 			"List": []company.Honor{{ID: 1, Person: company.Person{ID: "u1", Name: "Ivan"}, Departments: []string{"Sales"}, Reason: "Best\nseller",
 				From: now, ByID: "u2", ByName: "Boss"}, {ID: 2, Person: company.Person{ID: "u3", Name: "Olga"}, From: now.AddDate(0, 0, 3), To: &now}}}},
+		"learning": {Data: map[string]any{"Tab": "people", "Keep": true, "Assign": true, "Today": now, "Departments": []*company.Department{dept},
+			"Filter": company.LearnerFilter{CourseID: "c1", Status: "overdue"}, "Courses": []company.Course{{ID: "c1", Title: "Onboarding"}},
+			"Learners": []company.Learner{{Person: company.Person{ID: "u1", Name: "Ivan"}, CourseID: "c1", CourseTitle: "Onboarding", Due: &now,
+				ByName: "Boss", Assigned: now, Done: 1, Total: 3}, {Person: company.Person{ID: "u2", Name: "Olga"}, Done: 2, Total: 2}}}},
+		"learncourse": {Data: map[string]any{"Keep": true, "Assign": true, "Today": now, "Users": []tasks.User{{ID: "u1", Name: "Ivan"}},
+			"C": company.Course{ID: "c1", Title: "Onboarding", Description: "First\nweek", Color: "green", AuthorName: "Boss", Lessons: 2, Done: 1,
+				Assigned: true, Due: &now, AssignedBy: "Boss"},
+			"Lessons": []company.Lesson{{ID: "l1", Chapter: "Start", Title: "Hello", Done: true}, {ID: "l2", Chapter: "Start", Title: "Tools"}},
+			"Next": &company.Lesson{ID: "l2"}, "Learners": []company.Learner{{Person: company.Person{ID: "u1", Name: "Ivan"}, CourseID: "c1", Done: 1, Total: 2, Assigned: now}}}},
+		"learnlesson": {Data: map[string]any{"Keep": true, "N": 1, "C": company.Course{ID: "c1", Title: "Onboarding", Lessons: 2},
+			"Lessons": []company.Lesson{{ID: "l1", Title: "Hello", Done: true}, {ID: "l2", Title: "Tools"}},
+			"L": company.Lesson{ID: "l1", Title: "Hello", Body: "# Hi\n\n**bold**", Kind: "test", PassPct: 70, Minutes: 10, Done: true},
+			"NextL": company.Lesson{ID: "l2"}, "Questions": 3, "Left": 1, "Tries": []company.Attempt{{ID: 1, Score: 2, Max: 3, Passed: true, Finished: &now},
+				{ID: 2}}}},
+		"learnattempt": {Data: map[string]any{"C": company.Course{ID: "c1", Title: "Onboarding"}, "Seconds": 90,
+			"L": company.Lesson{ID: "t1", Title: "Quiz", Kind: "test", PassPct: 70, Minutes: 5},
+			"A": company.Attempt{ID: 7, Questions: []string{"q1", "q2"}, Answers: map[string]any{}},
+			"Questions": []company.Question{{ID: "q1", Kind: "many", Text: "Pick", Options: []company.Option{{Text: "A", Right: true}, {Text: "B"}}},
+				{ID: "q2", Kind: "text", Text: "Type"}}}},
+		"learnform": {Data: map[string]any{"Colors": company.CourseColors, "TitleMax": 200, "DescMax": 5000,
+			"C": company.Course{ID: "c1", Title: "Onboarding", Color: "blue", Published: true}, "Access": []tasks.User{{ID: "dept:d1", Name: "Sales"}},
+			"Lessons": []company.Lesson{{ID: "l1", Title: "Hello", Chapter: "Start"}, {ID: "l2", Title: "Tools"}}}},
+		"learnlessonform": {Data: map[string]any{"TitleMax": 200, "Chapters": []string{"Start"}, "C": company.Course{ID: "c1", Title: "Onboarding"},
+			"L": company.Lesson{ID: "l1", CourseID: "c1", Title: "Hello", Chapter: "Start", Body: "text", Kind: "test", PassPct: 80},
+			"QKinds": company.QuestionKinds, "Q": company.Question{ID: "q1", Kind: "one", Text: "Pick", Points: 1, Options: []company.Option{{Text: "A", Right: true}, {Text: "B"}}},
+			"Questions": []company.Question{{ID: "q1", Kind: "one", Text: "Pick", Points: 1, Options: []company.Option{{Text: "A", Right: true}, {Text: "B"}}},
+				{ID: "q2", Kind: "text", Text: "Type", Points: 2, Answers: []string{"yes", "да"}}}}},
+		"pulse": {Data: map[string]any{"Period": "week", "Dept": "", "Involved": company.PulseInvolved, "Periods": []string{"today", "week"},
+			"P": &company.Pulse{From: now.AddDate(0, 0, -1), To: now, HasToday: true, Total: 3, Active: 2, Today: 1, Involved: 1,
+				Days:  []company.PulseDay{{Day: now.AddDate(0, 0, -1), Users: 2}, {Day: now, Users: 1}},
+				Tools: []company.PulseTool{{Tool: "tasks", Users: 2, Pct: 67, Daily: []int{2, 1}}, {Tool: "mobile", Users: 0, Daily: []int{0, 0}}},
+				Depts: []company.PulseDept{{ID: "d1", Name: "Sales", Total: 3, Active: 2, Involved: 1}, {ID: "d2", Name: "B2B", Depth: 1, Total: 1}},
+				Users: []company.PulseUser{{Person: company.Person{ID: "u1", Name: "Ivan", Position: "Dev"}, Tools: []string{"tasks", "im", "feed", "crm"}, Days: 2, Involved: true},
+					{Person: company.Person{ID: "u2", Name: "Olga"}}}}}},
 		"thanks": {Data: map[string]any{"Departments": []*company.Department{dept}, "Periods": thanksPeriods, "Period": "", "Person": "Ivan",
 			"Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji, "Filter": feed.BoardFilter{UserID: "u1", Badge: "cup", From: now},
 			"Leaders": []feed.Leader{{Person: feed.Person{ID: "u1", Name: "Ivan"}, Position: "Dev", Count: 3, Badges: []feed.BadgeCount{{Badge: "cup", Count: 2}, {Badge: "star", Count: 1}}}},
@@ -724,7 +810,9 @@ func TestPagesRender(t *testing.T) {
 		"feedsettings": {Data: map[string]any{"Users": []tasks.User{user}, "All": []tasks.User{{ID: "dept:d1", Name: "Отдел продаж"}, user}, "Important": nil}},
 		"feed": {Data: map[string]any{"View": "", "More": "x", "Me": "u1", "Admin": true, "MayAll": true, "MayImportant": false, "Projects": []any{project},
 			"Side": map[string]any{"Important": []struct{ ID, Author, Text string }{{"f9", "Анна", "Собрание в 10"}},
-				"Birthdays": []company.Birthday{{Person: company.Person{ID: "u2", Name: "Анна"}, Date: now, Today: true}, {Person: company.Person{ID: "u3", Name: "Пётр"}, Date: now.AddDate(0, 0, 3)}}},
+				"Birthdays": []company.Birthday{{Person: company.Person{ID: "u2", Name: "Анна"}, Date: now, Today: true}, {Person: company.Person{ID: "u3", Name: "Пётр"}, Date: now.AddDate(0, 0, 3)}},
+				"Events": []feedMeeting{{Event: calendar.Event{ID: "e1", Title: "Планёрка", Start: now, End: now.Add(time.Hour), Video: true, Repeat: "daily"}, Day: "today"},
+					{Event: calendar.Event{ID: "e2", Title: "Обзор", Start: now.AddDate(0, 0, 3), End: now.AddDate(0, 0, 3), MyStatus: "invited", AllDay: true}}}},
 			"Users": []tasks.User{user, {ID: "u2", Name: "Анна"}}, "Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji,
 			"Reactions": reactionList(), "Items": []feed.Item{
 				{Post: &feed.Post{ID: "f1", AuthorID: "u1", AuthorName: "Борис", Title: "Новость", Body: "текст\nстрока", Important: true,
@@ -896,7 +984,7 @@ func TestPagesRender(t *testing.T) {
 		"project/collab-manage": {Data: map[string]any{"Project": tasks.Project{ID: "c1", Key: "CL1", Name: "Клиент", MyRole: "owner", Kind: "collab"}, "Messenger": true,
 			"Members": []tasks.Member{{User: user, Role: "owner"}, {User: tasks.User{ID: "g1", Name: "Гость", Guest: true}, Role: "member"}}, "Users": []tasks.User{user}, "Me": "u1", "DefaultDeadline": now,
 			"CanAddMembers": true, "CanDelete": true,
-			"Settings": tasks.CollabSettings{InvitePerm: "managers", GuestInvitePerm: "owner", ChatHistory: true, GuestFiles: true},
+			"Settings": tasks.CollabSettings{InvitePerm: "managers", GuestInvitePerm: "owner", ChatHistory: true, GuestFiles: true, StartTool: "tasks"}, "StartTools": tasks.StartTools,
 			"Log": []tasks.CollabLogEntry{{At: now, Actor: "Анна", Action: "created", Detail: "Клиент"},
 				{At: now, Actor: "Анна", Target: "Гость", TargetGuest: true, Action: "member_added", Detail: "member"},
 				{At: now, Actor: "Гость", Target: "Гость", TargetGuest: true, Action: "joined", Detail: "link"},
@@ -965,6 +1053,8 @@ func TestPagesRender(t *testing.T) {
 		m[k] = v
 		return m
 	}
+	extra["register/done"] = page{Data: map[string]any{"Open": true, "Done": "ok"}}
+	extra["register/closed"] = page{Data: map[string]any{}}
 	extra["mail/invite-cancel"] = page{Data: withMail("Invite", &invCard{Inv: inv, Cancel: true, State: mail.InviteState{Status: "accepted", EventID: "e1"}})}
 	reply := inv
 	reply.Method, reply.Comment = "REPLY", "Опоздаю"
@@ -1181,10 +1271,32 @@ func TestPagesRender(t *testing.T) {
 		"Product": crm.Product{ID: "p1", Name: "Лицензия", SKU: "L-1"}, "Opening": 10.0,
 		"Moves": []crm.StockMove{{Date: now, DocID: "sd1", Kind: "arrival", Number: 2, Title: "Поставка", Warehouse: crm.Ref{ID: "w1", Name: "Основной"}, Quantity: 10, Balance: 20},
 			{Date: now, DocID: "sd2", Kind: "deduct", Number: 3, Warehouse: crm.Ref{ID: "w1", Name: "Основной"}, Quantity: -3, Balance: 17}}}}
+	for _, st := range []string{"prepare", "done"} { // the other states of a meeting: preparing, finished (read-only)
+		extra["meeting/"+st] = page{Data: map[string]any{"Can": st == "prepare", "Owner": true, "Me": "u1", "Users": []tasks.User{user}, "Deadline": now,
+			"M": company.Meeting{ID: 3, Title: "Совет", Start: now, Minutes: 60, Status: st, Owner: company.Person{ID: "u1", Name: "Ivan"}, NextID: 4,
+				Items: []company.MeetingItem{{ID: 1, Num: "1", Title: "Бюджет", Result: "Утвердить"}}}}}
+	}
 	extra["bifiles/set"] = page{Data: map[string]any{"Admin": false, "UserID": "u1", "MaxMB": 20, "Editable": true, "Types": bi.Types,
 			"F": bi.File{ID: 1, Name: "Продажи", FileName: "a.csv", Rows: 2, AuthorName: "Анна", UpdatedAt: now,
 				Columns: []bi.FileColumn{{Code: "c1", Name: "Город", Header: "Город", Type: "string"}, {Code: "c2", Name: "Сумма", Header: "Сумма", Type: "number"}}},
 			"Unread": map[string]int{"c2": 1}, "Preview": [][]string{{"Тверь", "1 000,5"}, {"Москва", ""}}}}
+	cy := maps.Clone(rd) // «Настроить карточку»: an own section, a hidden field; the editor of the view
+	cy["Layout"] = []crm.CardSection{{Name: "Клиент", Fields: []string{"company", "contacts"}}, {Code: "main", Fields: []string{"amount", "responsible"}}}
+	cy["Hidden"], cy["LayoutKind"], cy["LayoutOwn"], cy["LayoutCommon"] = []string{"comment"}, "deal", true, true
+	cy["LayoutAdmin"] = true
+	extra["crmcard/layout"] = page{Data: cy}
+	cye := maps.Clone(cy)
+	cye["Edit"] = true
+	extra["crmcard/layout-edit"] = page{Data: cye}
+	cyl := maps.Clone(cy)
+	cyl["LayoutEdit"] = true
+	extra["crmcard/layout-editor"] = page{Data: cyl}
+	for name, p := range extra { // the other cards: the standard view of their kind
+		if d, ok := p.Data.(map[string]any); ok && strings.HasPrefix(name, "crmcard/") && d["Layout"] == nil {
+			crmTestLayout(d)
+		}
+	}
+	crmTestLayout(cases["crmcard"].Data.(map[string]any))
 	pages, err := buildPages(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -1232,6 +1344,13 @@ func TestPagesRender(t *testing.T) {
 					!strings.Contains(out, `data-pick="list" data-of="uf:f2"`)) {
 					t.Fatal("robots: the fields and webhook robots or a condition are not shown")
 				}
+				if name == "robots" && l.Code == "ru-RU" && (!strings.Contains(out, "📄 Договор") || !strings.Contains(out, "⚙ Согласование") ||
+					!strings.Contains(out, "Заменить наблюдателей: Борис") || !strings.Contains(out, `name="close_act"`) || !strings.Contains(out, `name="observers"`)) {
+					t.Fatal("robots: the document, process, observers or deeds robots are not shown")
+				}
+				if name == "crmcard" && variant == "" && l.Code == "ru-RU" && (!strings.Contains(out, "создал документ «Договор № 3»") || !strings.Contains(out, "завершил дела: 2")) {
+					t.Fatal("the card's history: what the document and deeds robots did")
+				}
 				if name == "crmcard" && variant == "" && l.Code == "ru-RU" && (!strings.Contains(out, "Повторный лид</b>") || strings.Contains(out, "Лид конвертирован") ||
 					!strings.Contains(out, "повторный лид — найден клиент:")) {
 					t.Fatal("a repeat lead's card: no mark, or shown converted")
@@ -1241,6 +1360,18 @@ func TestPagesRender(t *testing.T) {
 				}
 				if name == "crmcard" && variant == "" && l.Code == "ru-RU" && (!strings.Contains(out, `href="tel:&#43;79001112233"`) || !strings.Contains(out, "мобильный")) {
 					t.Fatal("a card without its second phone and the phones' types")
+				}
+				if name == "crmcard" && variant == "layout" && l.Code == "ru-RU" && (!strings.Contains(out, ">Клиент</h3>") ||
+					strings.Index(out, ">Клиент</h3>") > strings.Index(out, ">О сделке</h3>") || strings.Contains(out, ">Дополнительно</h3>")) {
+					t.Fatal("the card by its own sections")
+				}
+				if name == "crmcard" && variant == "layout-edit" && l.Code == "ru-RU" && (!strings.Contains(out, "<legend>Клиент</legend>") ||
+					strings.Index(out, "Скрытые поля") > strings.Index(out, `name="comment"`)) {
+					t.Fatal("the card's form by sections, the hidden comment under «Скрытые поля»")
+				}
+				if name == "crmcard" && variant == "layout-editor" && l.Code == "ru-RU" && (!strings.Contains(out, `data-crmlayout`) || !strings.Contains(out, `data-code="comment"`) ||
+					!strings.Contains(out, "Сбросить на стандартный") || !strings.Contains(out, "Вернуть общий вид") || strings.Contains(out, `name="comm_value"`)) {
+					t.Fatal("the editor of the card's view")
 				}
 				if name == "crmcard" && variant == "edit" && (strings.Count(out, `name="comm_value"`) != 3 || !strings.Contains(out, `value="&#43;79001112233"`) ||
 					!strings.Contains(out, "data-comm-add")) {
@@ -1263,6 +1394,9 @@ func TestPagesRender(t *testing.T) {
 				}
 				if name == "call" && (!strings.Contains(out, `data-lk="wss://lk"`) || strings.Contains(out, `data-text-on="&#34;`)) {
 					t.Fatal("the call page has no LiveKit address or quoted labels") // html/template: a wss: «url» attribute, «on…» as script
+				}
+				if name == "call" && (!strings.Contains(out, `data-base="/static/js/vendor/mediapipe/"`) || !strings.Contains(out, "js/callbg.js") || !strings.Contains(out, "data-call-noise")) {
+					t.Fatal("the call page has no backgrounds or noise suppression") // GO24DEV-778
 				}
 				// an untranslated key would show up as "word.word" text
 				if m := regexp.MustCompile(`>\s*((?:title|nav|status|action|role|field|scope|priority|props|form|keys|err|reminder|fields|deadlines|filter|preset|crm|bulk|project|projects|invites|poll|gratitude|workday|invite|kb|call|disk|crm|robots|docs|mail|crmroles|bp|ol|widget|hooks|collab|guests|join|office)\.[a-z_:.0-9]+)\s*<`).FindStringSubmatch(out); m != nil {
@@ -1380,4 +1514,22 @@ func TestMessageKeys(t *testing.T) {
 			}
 		}
 	}
+}
+
+// crmTestLayout gives a card's data the standard view of its kind with its own fields «Дополнительно».
+func crmTestLayout(d map[string]any) {
+	e, _ := d["Entity"].(string)
+	typeID := ""
+	if it, ok := d["Item"].(crm.Deal); ok {
+		typeID = it.TypeID
+	}
+	scope := crm.CardScope(e, typeID)
+	ids, by := []string{}, map[string]tasks.FieldValue{}
+	if fs, ok := d["Fields"].([]tasks.FieldValue); ok {
+		for _, f := range fs {
+			ids = append(ids, f.ID)
+			by["f:"+f.ID] = f
+		}
+	}
+	d["Layout"], d["FieldBy"], d["LayoutKind"] = crm.DefaultCardLayout(scope, ids).Sections, by, crm.ColumnKind(scope)
 }

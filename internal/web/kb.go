@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -56,8 +57,13 @@ func (s *Server) kbHome(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	drafts, err := s.KB.Drafts(r.Context(), sess.UserID)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
 	s.render(w, r, "kb", page{TitleKey: "kb.title", Nav: "kb", Data: map[string]any{"Spaces": spaces, "Q": q, "Hits": hits, "Projects": projects,
-		"Templates": templates, "Template": r.URL.Query().Get("template"), "Favs": favs, "Recent": recent}})
+		"Templates": templates, "Template": r.URL.Query().Get("template"), "Favs": favs, "Recent": recent, "Drafts": drafts}})
 }
 
 // kbMark stars («В избранное», kind=fav) or watches («Следить», kind=watch) the base or, with page, a page of it;
@@ -140,19 +146,44 @@ func (s *Server) kbSpace(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if path := kb.Path(tree, parent); len(path) > 0 {
 		under = path[len(path)-1].Title
 	}
+	var tpls []kb.Template
+	if sp.CanEdit {
+		if tpls, err = s.KB.PageTemplates(r.Context(), sess.UserID, s.trFunc(r)); err != nil {
+			s.taskErr(w, r, err, "/kb")
+			return
+		}
+	}
 	s.render(w, r, "kbspace", page{Title: sp.Name, Nav: "kb", Data: map[string]any{"Space": sp, "Tree": tree,
-		"New": sp.CanEdit, "Parent": parent, "Under": under, "Crumbs": kb.Path(tree, parent), "Marks": marks}})
+		"New": sp.CanEdit, "Parent": parent, "Under": under, "Crumbs": kb.Path(tree, parent), "Marks": marks, "PageTemplates": tpls}})
 }
 
+// kbCreatePage writes a new page; with template — a page from the template («Начать с шаблона»), which opens in the
+// editor.
 func (s *Server) kbCreatePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/kb/" + r.PathValue("space")
-	id, err := s.KB.CreatePage(r.Context(), sess.UserID, r.PathValue("space"), r.FormValue("parent"), r.FormValue("title"), r.FormValue("body"))
+	var id string
+	var err error
+	if tpl := r.FormValue("template"); tpl != "" {
+		id, err = s.KB.CreatePageFromTemplate(r.Context(), sess.UserID, r.PathValue("space"), r.FormValue("parent"), tpl, r.FormValue("title"),
+			s.kbPageVars(r, sess), s.trFunc(r), s.Storages.Copy)
+	} else {
+		id, err = s.KB.CreatePage(r.Context(), sess.UserID, r.PathValue("space"), r.FormValue("parent"), r.FormValue("title"), r.FormValue("body"))
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
 	s.feedKBPage(r.Context(), sess.UserID, id)
+	if r.FormValue("template") != "" {
+		http.Redirect(w, r, back+"/"+id+"?edit=1", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, back+"/"+id, http.StatusSeeOther)
+}
+
+// kbPageVars fill in a page template: today in the request's language and the name of who makes the page.
+func (s *Server) kbPageVars(r *http.Request, sess auth.Session) kb.PageVars {
+	return kb.PageVars{Date: time.Now().Format(s.tr(r, "format.date")), User: sess.Name}
 }
 
 // kbPage shows a page (?edit=1 — its editor, ?v=N — an earlier version).
@@ -217,23 +248,120 @@ func (s *Server) kbPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 			return
 		}
 	}
+	edit := r.URL.Query().Get("edit") == "1" && sp.CanEdit
+	var draft *kb.Draft // the user's unsaved text, in the editor instead of the page's
+	var clash []kb.DiffLine
+	if edit {
+		if draft, err = s.KB.DraftOf(r.Context(), sess.UserID, p.ID); err != nil {
+			s.taskErr(w, r, err, "/kb")
+			return
+		}
+		if draft != nil && !draft.Changed {
+			draft = nil
+		}
+		if draft != nil && draft.Stale { // saved by someone since the draft was begun: what saving it would undo
+			clash = kb.Diff("# "+p.Title+"\n"+p.Body, "# "+draft.Title+"\n"+draft.Body)
+		}
+	}
+	editing, err := s.KB.Editing(r.Context(), sess.UserID, p.ID)
+	if err != nil {
+		s.taskErr(w, r, err, "/kb")
+		return
+	}
 	var crumbs, children []*kb.Page // the parents above the page and the pages right under it
 	sub := 0
 	if path := kb.Path(tree, p.ID); len(path) > 0 {
 		crumbs, children, sub = path[:len(path)-1], path[len(path)-1].Children, kb.Descendants(path[len(path)-1])
 	}
 	s.render(w, r, "kbspace", page{Title: p.Title, Nav: "kb", Data: map[string]any{"Space": sp, "Tree": tree, "Page": p, "Old": old,
-		"Diff": diff, "Targets": targets, "Version": r.URL.Query().Get("v"), "Edit": r.URL.Query().Get("edit") == "1" && sp.CanEdit, "Versions": versions,
+		"Diff": diff, "Targets": targets, "Version": r.URL.Query().Get("v"), "Edit": edit, "Versions": versions,
+		"Draft": draft, "Clash": clash, "Editing": editing, "BaseAt": p.Updated.UnixMicro(),
 		"Crumbs": crumbs, "Children": children, "Sub": sub, "TOC": kb.Headings(p.Body), "Pub": pub, "Base": s.BaseURL, "Marks": marks, "Talk": talk}})
 }
 
+// kbSavePage saves the editor's text written over the version «base» of the page; if someone saved the page
+// since, the text stays as the user's draft and the editor opens again with what saving it would undo.
 func (s *Server) kbSavePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/kb/" + r.PathValue("space") + "/" + r.PathValue("page")
-	if err := s.KB.SavePage(r.Context(), sess.UserID, r.PathValue("page"), r.FormValue("title"), r.FormValue("body")); err != nil {
+	ctx, id, title, body, base := r.Context(), r.PathValue("page"), r.FormValue("title"), r.FormValue("body"), kbBase(r.FormValue("base"))
+	err := s.KB.SavePageAt(ctx, sess.UserID, id, title, body, base)
+	if errors.Is(err, kb.ErrChanged) {
+		if err = s.KB.SaveDraft(ctx, sess.UserID, id, title, body, base); err == nil {
+			err = s.KB.LeaveDraft(ctx, sess.UserID, id)
+		}
+		if err == nil {
+			http.Redirect(w, r, back+"?edit=1&msg="+url.QueryEscape(s.I18n.Err(s.lang(r), kb.ErrChanged)), http.StatusSeeOther)
+			return
+		}
+	}
+	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "kb.saved")), http.StatusSeeOther)
+}
+
+// kbBase is the version of a page an editor opened (its updated time in microseconds); zero — none given.
+func kbBase(v string) time.Time {
+	us, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || us <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMicro(us)
+}
+
+// kbDraft: the editor keeps its text by itself — {"saved": when, "editing": who else edits now, "changed": who
+// saved the page meanwhile} for the line under it; act=leave — the editor is closed (sent as it goes), act=drop —
+// «Отменить черновик».
+func (s *Server) kbDraft(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	ctx, id := r.Context(), r.PathValue("page")
+	back := "/kb/" + r.PathValue("space") + "/" + id + "?edit=1"
+	var err error
+	switch r.FormValue("act") {
+	case "drop":
+		if err = s.KB.DropDraft(ctx, sess.UserID, id); err == nil && !wantsJSON(r) {
+			http.Redirect(w, r, back, http.StatusSeeOther)
+			return
+		}
+	case "leave":
+		if err = s.KB.SaveDraft(ctx, sess.UserID, id, r.FormValue("title"), r.FormValue("body"), kbBase(r.FormValue("base"))); err == nil {
+			err = s.KB.LeaveDraft(ctx, sess.UserID, id)
+		}
+	default:
+		err = s.KB.SaveDraft(ctx, sess.UserID, id, r.FormValue("title"), r.FormValue("body"), kbBase(r.FormValue("base")))
+	}
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	out := map[string]string{}
+	if r.FormValue("act") == "" {
+		d, err := s.KB.DraftOf(ctx, sess.UserID, id)
+		if err != nil {
+			s.jsonErr(w, r, err)
+			return
+		}
+		names, err := s.KB.Editing(ctx, sess.UserID, id)
+		if err != nil {
+			s.jsonErr(w, r, err)
+			return
+		}
+		if d != nil && d.Changed {
+			out["saved"] = s.tr(r, "kb.draft_saved", d.Saved.Local().Format("15:04"))
+		}
+		if len(names) > 0 {
+			out["editing"] = s.tr(r, "kb.editing_now", strings.Join(names, ", "))
+		}
+		if d != nil && d.Stale {
+			p, _, err := s.KB.Page(ctx, sess.UserID, id)
+			if err != nil {
+				s.jsonErr(w, r, err)
+				return
+			}
+			out["changed"] = s.tr(r, "kb.changed_meanwhile", p.Editor, p.Updated.Local().Format(s.tr(r, "format.datetime")))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) kbDeletePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -331,12 +459,21 @@ func (s *Server) kbSaveTemplate(w http.ResponseWriter, r *http.Request, sess aut
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "kb.template_saved")), http.StatusSeeOther)
 }
 
+// kbDeleteTemplate deletes a template of a base or, from the form of a new page (back), of a page.
 func (s *Server) kbDeleteTemplate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := r.FormValue("back")
+	if !strings.HasPrefix(back, "/kb/") {
+		back = "/kb"
+	}
 	if err := s.KB.DeleteTemplate(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
-		s.taskErr(w, r, err, "/kb")
+		s.taskErr(w, r, err, back)
 		return
 	}
-	http.Redirect(w, r, "/kb?msg="+url.QueryEscape(s.tr(r, "kb.template_deleted")), http.StatusSeeOther)
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, back+sep+"msg="+url.QueryEscape(s.tr(r, "kb.template_deleted")), http.StatusSeeOther)
 }
 
 func (s *Server) kbSaveSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -404,6 +541,10 @@ func (s *Server) kbMovePage(w http.ResponseWriter, r *http.Request, sess auth.Se
 			if cp, err = s.KB.CopyPage(r.Context(), sess.UserID, id, s.tr(r, "kb.copy_of", p.Title)); err == nil {
 				back = "/kb/" + space + "/" + cp
 			}
+		}
+	case "template": // «Сохранить как шаблон страницы»
+		if _, err = s.KB.SavePageTemplate(r.Context(), sess.UserID, id, r.FormValue("name"), r.FormValue("description"), s.Storages.Copy); err == nil {
+			back += "?msg=" + url.QueryEscape(s.tr(r, "kb.ptpl_saved"))
 		}
 	case "restore":
 		v, perr := strconv.ParseInt(r.FormValue("v"), 10, 64)

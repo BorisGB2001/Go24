@@ -1,0 +1,38 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}{{$l := $d.L}}
+<p class="muted small"><a href="/company/learning">{{icon "school"}} {{t "learn.title"}}</a> › <a href="/company/learning/{{$c.ID}}">{{$c.Title}}</a></p>
+<div class="llayout">
+  <aside class="card lside">
+    <div class="row small"><span class="progress" style="flex:1"><span style="width:{{$c.Percent}}%"></span></span> {{$c.Done}}/{{$c.Lessons}}</div>
+    {{range lchapters $d.Lessons}}{{with .Name}}<h4>{{.}}</h4>{{end}}
+    <ol class="llist">{{range .Lessons}}<li value="{{.N}}" class="{{if .Done}}done{{end}}{{if eq .ID $l.ID}} on{{end}}"><a href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{if .Done}}{{icon "circle-check"}}{{else if .Test}}{{icon "list-check"}}{{end}} {{.Title}}</a></li>{{end}}</ol>
+    {{end}}
+  </aside>
+  <article class="card lbody">
+    <p class="muted small">{{t "learn.lesson_n" $d.N $c.Lessons}}{{with $l.Chapter}} · {{.}}{{end}}</p>
+    <div class="row"><h1 style="flex:1">{{$l.Title}}</h1>
+      {{if $d.Keep}}<a class="button ghost small" href="/company/learning/{{$c.ID}}/l/{{$l.ID}}/edit">{{icon "edit"}} {{if $l.Test}}{{t "learn.edit_test"}}{{else}}{{t "learn.edit_lesson"}}{{end}}</a>{{end}}</div>
+    <div class="kbpage">{{md $l.Body}}</div>
+    {{if $l.Test}}
+    <p class="ltestinfo">{{t "learn.questions_n" $d.Questions}} · {{t "learn.pass_from" $l.PassPct}}{{if $l.Minutes}} · {{t "learn.minutes_n" $l.Minutes}}{{end}}
+      · {{if lt $d.Left 0}}{{t "learn.attempts_any"}}{{else}}{{t "learn.attempts_left" $d.Left}}{{end}}</p>
+    {{with $d.Tries}}<table class="tlist ltries"><thead><tr><th>{{t "learn.f.attempt"}}</th><th>{{t "learn.f.result"}}</th><th></th></tr></thead><tbody>
+      {{range .}}<tr><td class="nowrap"><a href="/company/learning/{{$c.ID}}/l/{{$l.ID}}/a/{{.ID}}">{{datetime .Started}}</a></td>
+        <td>{{if .Finished}}{{.Score}}/{{.Max}} · {{.Pct}}%{{else}}<span class="muted">{{t "learn.going"}}</span>{{end}}</td>
+        <td>{{if .Passed}}<span class="pill l-ok">{{t "learn.test_passed"}}</span>{{else if .Finished}}<span class="pill l-over">{{t "learn.test_failed"}}</span>{{end}}</td></tr>{{end}}
+    </tbody></table>{{end}}
+    {{end}}
+    <div class="row lnav">
+      {{with $d.Prev}}<a class="button ghost" href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{icon "chevron-left"}} {{t "learn.prev"}}</a>{{end}}
+      <span style="flex:1"></span>
+      {{if $l.Test}}{{if $l.Done}}<span class="pill l-ok">{{icon "circle-check"}} {{t "learn.test_passed"}}</span>{{end}}
+        {{if and $d.Questions (ne $d.Left 0)}}<form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/start"><button class="{{if $l.Done}}ghost{{else}}primary{{end}}">{{icon "player-play"}} {{if $d.Tries}}{{t "learn.test_again"}}{{else}}{{t "learn.test_start"}}{{end}}</button></form>{{end}}
+        {{if $l.Done}}{{with $d.NextL}}<a class="button primary" href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{t "learn.next"}} {{icon "chevron-right"}}</a>{{else}}<a class="button primary" href="/company/learning/{{$c.ID}}">{{t "learn.to_course"}}</a>{{end}}{{end}}
+      {{else if $l.Done}}<span class="pill l-ok">{{icon "circle-check"}} {{t "learn.lesson_done"}}</span>
+        <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/done"><input type="hidden" name="undo" value="1"><button class="link muted small">{{t "learn.undo"}}</button></form>
+        {{with $d.NextL}}<a class="button primary" href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{t "learn.next"}} {{icon "chevron-right"}}</a>{{else}}<a class="button primary" href="/company/learning/{{$c.ID}}">{{t "learn.to_course"}}</a>{{end}}
+      {{else}}<form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/done"><button class="primary">{{icon "check"}} {{if $d.NextL}}{{t "learn.done_next"}}{{else}}{{t "learn.done_last"}}{{end}}</button></form>{{end}}
+    </div>
+  </article>
+</div>
+{{end}}

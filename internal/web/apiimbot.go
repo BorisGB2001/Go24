@@ -171,6 +171,8 @@ type botMsg struct {
 	Message  string          `json:"message"`
 	ThreadID string          `json:"thread_id"`
 	Keyboard json.RawMessage `json:"keyboard"`
+	Menu     json.RawMessage `json:"menu"`
+	Attach   json.RawMessage `json:"attach"`
 }
 
 // keyboard is KEYBOARD of the message: nil — none given, empty — "N" (take the buttons away).
@@ -187,6 +189,29 @@ func (m botMsg) keyboard() ([]matrixsync.Button, error) {
 		return nil, i18n.E("err.imbot_keyboard")
 	}
 	return matrixsync.NormKeyboard(kb)
+}
+
+// parts are KEYBOARD, MENU and ATTACH of the message; one not given is nil.
+func (m botMsg) parts() (matrixsync.BotParts, error) {
+	var p matrixsync.BotParts
+	var err error
+	if p.Keyboard, err = m.keyboard(); err != nil {
+		return p, err
+	}
+	if raw := bytes.TrimSpace(m.Menu); len(raw) > 0 && string(raw) != "null" {
+		p.Menu = []matrixsync.Button{}
+		if raw[0] == '[' {
+			var menu []matrixsync.Button
+			if err := json.Unmarshal(raw, &menu); err != nil {
+				return p, i18n.E("err.imbot_keyboard")
+			}
+			if p.Menu, err = matrixsync.NormMenu(menu); err != nil {
+				return p, err
+			}
+		}
+	}
+	p.Attach, err = matrixsync.ParseAttach(m.Attach)
+	return p, err
 }
 
 var brRe = regexp.MustCompile(`(?i)\[br\]`)
@@ -227,7 +252,7 @@ func (s *Server) apiBotSend(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	kb, err := m.keyboard()
+	parts, err := m.parts()
 	if err != nil {
 		return err
 	}
@@ -235,7 +260,7 @@ func (s *Server) apiBotSend(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	msg, err := s.Matrix.BotSend(r.Context(), b.ID, room, botText(m.Message), m.ThreadID, kb)
+	msg, err := s.Matrix.BotSend(r.Context(), b.ID, room, botText(m.Message), m.ThreadID, parts)
 	if err != nil {
 		return err
 	}
@@ -243,7 +268,7 @@ func (s *Server) apiBotSend(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	return nil
 }
 
-// apiBotEdit is imbot.message.update: the bot's own message gets a new text.
+// apiBotEdit is imbot.message.update: the bot's own message gets a new text, buttons, menu or card.
 func (s *Server) apiBotEdit(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	b, err := s.apiBot(r, p)
 	if err != nil {
@@ -253,7 +278,7 @@ func (s *Server) apiBotEdit(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	kb, err := m.keyboard()
+	parts, err := m.parts()
 	if err != nil {
 		return err
 	}
@@ -261,7 +286,7 @@ func (s *Server) apiBotEdit(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	if _, err := s.Matrix.BotEdit(r.Context(), b.ID, room, r.PathValue("id"), botText(m.Message), kb); err != nil {
+	if _, err := s.Matrix.BotEdit(r.Context(), b.ID, room, r.PathValue("id"), botText(m.Message), parts); err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": r.PathValue("id")})
@@ -438,7 +463,7 @@ func (s *Server) apiCommandAnswer(w http.ResponseWriter, r *http.Request, p apik
 	if err := readJSON(r, &q); err != nil {
 		return err
 	}
-	kb, err := q.keyboard()
+	parts, err := q.parts()
 	if err != nil {
 		return err
 	}
@@ -457,7 +482,7 @@ func (s *Server) apiCommandAnswer(w http.ResponseWriter, r *http.Request, p apik
 	if err != nil {
 		return err
 	}
-	msg, err := s.Matrix.BotSend(r.Context(), c.BotID, room, botText(q.Message), thread, kb)
+	msg, err := s.Matrix.BotSend(r.Context(), c.BotID, room, botText(q.Message), thread, parts)
 	if err != nil {
 		return err
 	}

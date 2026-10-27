@@ -22,7 +22,7 @@ func imRoomURL(room string) string { return "/im?room=" + url.QueryEscape(room) 
 // imGroup makes a group chat of the person and the people chosen.
 func (s *Server) imGroup(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	_ = r.ParseForm()
-	room, err := s.Matrix.CreateGroup(r.Context(), sess.UserID, r.FormValue("name"), r.Form["users"], r.FormValue("channel") == "1")
+	room, err := s.Matrix.CreateOpenGroup(r.Context(), sess.UserID, r.FormValue("name"), r.Form["users"], r.FormValue("channel") == "1", r.FormValue("open") == "1")
 	if err != nil {
 		s.taskErr(w, r, err, "/im")
 		return
@@ -31,7 +31,7 @@ func (s *Server) imGroup(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 }
 
 // imGroupAction: a change of a group chat — people added or removed, leaving, a new name or picture; a channel or a
-// group chat, its owner, admins and rights.
+// group chat, open or closed, its owner, admins and rights; joining an open one.
 func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	room := r.FormValue("room")
 	back := imRoomURL(room)
@@ -58,6 +58,10 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 		err = s.Matrix.SetRights(r.Context(), sess.UserID, room, matrixsync.Rights{Add: r.FormValue("add"), Edit: r.FormValue("edit"), Write: r.FormValue("write")})
 	case "channel":
 		err = s.Matrix.SetChannel(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
+	case "open":
+		err = s.Matrix.SetOpen(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
+	case "join":
+		err = s.Matrix.JoinOpen(r.Context(), sess.UserID, room)
 	case "photo":
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 		f, hdr, ferr := r.FormFile("file")

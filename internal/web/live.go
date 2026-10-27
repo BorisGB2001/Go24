@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -54,6 +55,12 @@ func (s *Server) taskLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 				return
 			}
 			c, err := s.Tasks.CommentByID(r.Context(), id, cid)
+			if errors.Is(err, tasks.ErrNotFound) { // deleted: the page takes it away
+				data, _ := json.Marshal(map[string]string{"id": cid})
+				fmt.Fprintf(w, "event: gone\ndata: %s\n\n", data)
+				flusher.Flush()
+				continue
+			}
 			if err != nil {
 				continue
 			}
@@ -62,7 +69,7 @@ func (s *Server) taskLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 				c = one[0]
 			}
 			var buf bytes.Buffer
-			if err := page.ExecuteTemplate(&buf, "chatmsg", chatItem{Comment: &c, Mine: c.AuthorID == sess.UserID, At: c.CreatedAt, Key: r.PathValue("key")}); err != nil {
+			if err := page.ExecuteTemplate(&buf, "chatmsg", s.chatItemOf(r, sess, &c, r.PathValue("key"))); err != nil {
 				s.Log.Error("live render", "err", err)
 				continue
 			}
@@ -101,7 +108,7 @@ func (s *Server) commentReact(w http.ResponseWriter, r *http.Request, sess auth.
 		return
 	}
 	var buf bytes.Buffer
-	if err := s.pages[s.lang(r)]["task"].ExecuteTemplate(&buf, "chatmsg", chatItem{Comment: &one[0], Mine: c.AuthorID == sess.UserID, At: c.CreatedAt, Key: r.PathValue("key")}); err != nil {
+	if err := s.pages[s.lang(r)]["task"].ExecuteTemplate(&buf, "chatmsg", s.chatItemOf(r, sess, &one[0], r.PathValue("key"))); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}

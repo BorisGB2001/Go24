@@ -143,9 +143,51 @@ func TestCRM(t *testing.T) {
 	if n1 != "Д-2026/1" || n2 != "Д-2026/2" {
 		t.Fatalf("numbers = %s, %s", n1, n2)
 	}
-	if got := FormatDocNumber("{DAY}.{MONTH}-{NUMBER}", 7, at); got != "25.10-7" {
+	if got := FormatDocNumber("{DAY}.{MONTH}-{NUMBER}", 7, 3, at); got != "25.10-007" {
 		t.Fatalf("format = %s", got)
 	}
+	// «Нумераторы»: a shared numerator with a start, a step, a length and a monthly reset
+	if _, err := s.SaveNumerator(ctx, Numerator{Name: "Общий", Format: "{NUMBER}", Step: 0, Reset: "never"}); !errors.As(err, &ve) {
+		t.Fatalf("a zero step: %v", err)
+	}
+	shared, err := s.SaveNumerator(ctx, Numerator{Name: "Общий", Format: "О-{MONTH}-{NUMBER}", Start: 10, Step: 5, Pad: 3, Reset: "month"})
+	must(err)
+	var actFile string
+	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('tpl2', 'act.docx', 1, $1) RETURNING id`, anna).Scan(&actFile))
+	must(s.AddDocTemplate(ctx, anna, "Акт", "deal", actFile))
+	tpls, _ = s.DocTemplates(ctx, "deal")
+	if len(tpls) != 2 || tpls[0].NumeratorID == tpls[1].NumeratorID {
+		t.Fatalf("each template has its own numerator: %+v", tpls)
+	}
+	own := tpls[0].NumeratorID // «Акт»'s
+	must(s.SetDocTemplateNumerator(ctx, tpls[0].ID, shared))
+	must(s.SetDocTemplateNumerator(ctx, tpls[1].ID, shared))
+	if n, _ := s.Numerator(ctx, shared); n.Preview(at) != "О-10-010" || len(n.Templates) != 2 {
+		t.Fatalf("shared = %+v", n)
+	}
+	a1, _ := s.NextDocNumber(ctx, tpls[0].ID, at)
+	a2, _ := s.NextDocNumber(ctx, tpls[1].ID, at) // the other template goes on
+	a3, _ := s.NextDocNumber(ctx, tpls[0].ID, at.AddDate(0, 1, 0))
+	if a1 != "О-10-010" || a2 != "О-10-015" || a3 != "О-11-010" {
+		t.Fatalf("shared numbers = %s, %s, %s", a1, a2, a3)
+	}
+	must(s.DeleteNumerator(ctx, own)) // no template numbers by it any more
+	if err := s.DeleteNumerator(ctx, shared); !errors.As(err, &ve) {
+		t.Fatalf("deleted a numerator in use: %v", err)
+	}
+	// a greater start moves the numbering forward
+	n, _ := s.Numerator(ctx, shared)
+	n.Start = 100
+	_, err = s.SaveNumerator(ctx, n)
+	must(err)
+	if a4, _ := s.NextDocNumber(ctx, tpls[0].ID, at.AddDate(0, 1, 0)); a4 != "О-11-100" {
+		t.Fatalf("after a new start = %s", a4)
+	}
+	must(s.DeleteDocTemplate(ctx, tpls[0].ID)) // «Акт»; the shared numerator stays with «Договор»
+	if _, err := s.Numerator(ctx, shared); err != nil {
+		t.Fatalf("shared numerator gone: %v", err)
+	}
+	tpls, _ = s.DocTemplates(ctx, "deal")
 	var docFile, docFile2 string
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('d1', 'Договор.docx', 10, $1) RETURNING id`, anna).Scan(&docFile))
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('d2', 'Договор.docx', 12, $1) RETURNING id`, anna).Scan(&docFile2))

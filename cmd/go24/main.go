@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +59,7 @@ import (
 	"go24/internal/speech"
 	"go24/internal/storage"
 	"go24/internal/storages"
+	"go24/internal/sysinfo"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 	"go24/internal/web"
@@ -197,11 +199,17 @@ func run(log *slog.Logger) error {
 	srv.Marketing = marketing.NewStore(pool, srv.CRM)
 	srv.BP = bp.NewStore(pool, srv.Tasks, srv.CRM, srv.Company)
 	srv.BP.BaseURL = cfg.BaseURL
-	srv.BP.Feed = srv.Feed // standalone processes started by hand are posts
+	srv.BP.Feed = srv.Feed           // standalone processes started by hand are posts
 	srv.BP.Document = srv.BPDocument // «Создание документа» by the document generator
 	// the processes of the documents of «Общий диск»
 	srv.BP.Files = srv.Drive
+	srv.BP.Calendar = srv.Calendar                                                                       // «Событие календаря»
 	srv.BP.Tr = func(key string, args ...any) string { return bundle.T(bundle.Match(""), key, args...) } // «Да»/«Нет» of fields in texts
+	// the robots of the CRM «Создать документ» and «Запустить бизнес-процесс»
+	srv.CRM.MakeDocument = func(ctx context.Context, userID, entity, entityID, tplID string) (string, error) {
+		return srv.BPDocument(ctx, userID, entity, entityID, tplID, nil)
+	}
+	srv.CRM.StartBP = srv.BP.StartRobot
 	srv.Hooks = hooks.NewStore(pool)
 	srv.Apps = apps.NewStore(pool)
 	srv.Audit = audit.NewStore(pool)
@@ -226,6 +234,16 @@ func run(log *slog.Logger) error {
 	}
 	srv.OpenLines.OpenFile = func(ctx context.Context, key string) (io.ReadCloser, error) { return srv.Storages.Open(ctx, nil, key) }
 	srv.Mail = mail.NewStore(pool, cfg.SessionSecret)
+	mailApp := func(id, secret, fallbackID, fallbackSecret string) mail.OAuthApp {
+		if id == "" {
+			return mail.OAuthApp{ClientID: fallbackID, Secret: fallbackSecret}
+		}
+		return mail.OAuthApp{ClientID: id, Secret: secret}
+	}
+	srv.Mail.OAuth = map[string]mail.OAuthApp{
+		"google":    mailApp(cfg.MailGoogleID, cfg.MailGoogleSecret, cfg.GDriveID, cfg.GDriveSecret),
+		"microsoft": mailApp(cfg.MailMicrosoftID, cfg.MailMicrosoftSecret, cfg.OneDriveID, cfg.OneDriveSecret),
+		"yandex":    {ClientID: cfg.MailYandexID, Secret: cfg.MailYandexSecret}}
 	srv.AI = ai.NewStore(pool, cfg.SessionSecret)
 	srv.CRM.SendMail = func(ctx context.Context, userID, to, subject, text string) error { // mail robots: the first mailbox
 		boxes, err := srv.Mail.Mailboxes(ctx, userID)
@@ -278,6 +296,7 @@ func run(log *slog.Logger) error {
 		if serve { // the accounts' configuration is in a volume of the web container
 			go srv.Telephony.Loop(ctx, func(err error) { log.Warn("telephony", "err", err) })
 		}
+		srv.CRM.InfoCall = srv.Telephony.InfoCall // infocall robots
 	}
 	// notifications in outside messengers: the company's bots, the employees' chats with them (GO24DEV-560)
 	srv.NotifyOut = notifyout.New(pool, cfg.SessionSecret)
@@ -291,7 +310,27 @@ func run(log *slog.Logger) error {
 		go srv.NotifyOut.Run(ctx)
 	}
 	srv.Speech = speech.New(cfg.WhisperURL)
+	if background && srv.Recordings != nil && srv.Speech != nil {
+		go srv.TranscriptsLoop(ctx) // the text of saved recordings of calls (GO24DEV-798)
+	}
 	srv.Office = office.New(cfg.OfficeURL, cfg.OfficeSecret, cfg.OfficeSelf)
+	// «Состояние системы»: the services checked, the folders shown, and this copy saying it is alive
+	srv.SysProbes = append([]sysinfo.Probe{{ID: "storage", Target: cfg.S3Endpoint, Check: store.Ping}},
+		slices.Concat(sysinfo.HTTPProbe("authentik", cfg.AuthentikURL, "/-/health/live/"),
+			sysinfo.HTTPProbe("matrix", cfg.MatrixURL, "/_matrix/client/versions"),
+			sysinfo.HTTPProbe("livekit", cfg.LiveKitAPIURL, "/"),
+			sysinfo.HTTPProbe("office", cfg.OfficeURL, "/healthcheck"),
+			sysinfo.HTTPProbe("asterisk", cfg.AsteriskURL, "/ari/asterisk/ping"),
+			sysinfo.HTTPProbe("whisper", cfg.WhisperURL, "/"))...)
+	if rc != nil {
+		srv.SysProbes = append(srv.SysProbes, sysinfo.Probe{ID: "rclone", Target: cfg.RcloneRCURL, Check: rc.Ping})
+	}
+	for _, d := range []web.SysDisk{{ID: "backup", Path: cfg.BackupDir}, {ID: "records", Path: cfg.RecordDir}, {ID: "telephony", Path: cfg.TelephonyDir}} {
+		if d.Path != "" {
+			srv.SysDisks = append(srv.SysDisks, d)
+		}
+	}
+	go sysinfo.NewStore(pool).Beat(ctx, role, func(err error) { log.Warn("system heartbeat", "err", err) })
 	if serve {
 		go srv.RefreshMentionNames(ctx)
 	}

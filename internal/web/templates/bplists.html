@@ -1,0 +1,13 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "bp.title"}}</h1>{{if .User.Admin}}<a class="button create" href="/bp/lists/new/settings">{{icon "plus"}} {{t "lists.new"}}</a>{{end}}</div>
+<div class="tabs">
+  <a href="/bp">{{t "bp.tab.start"}}</a>
+  <a href="/bp?tab=approvals">{{t "bp.tab.approvals"}}</a>
+  <a href="/bp?tab=mine">{{t "bp.tab.mine"}}</a>
+  {{if .User.Admin}}<a href="/bp?tab=all">{{t "bp.tab.all"}}</a>{{end}}
+  <a href="/bp/lists" class="on">{{t "lists.title"}}</a>
+</div>
+<div class="kbspaces">{{range $d.Lists}}<a class="card kbcard" href="/bp/lists/{{.ID}}"><b>{{icon "list"}} {{.Name}}</b>{{with .Description}}<span class="small muted">{{.}}</span>{{end}}
+  <span class="small muted">{{t "lists.count" .Count}}</span></a>{{else}}<div class="empty card">{{t "lists.none"}}{{if $.User.Admin}} {{t "lists.none_admin"}}{{end}}</div>{{end}}</div>
+{{end}}

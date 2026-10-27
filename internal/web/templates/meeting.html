@@ -1,0 +1,108 @@
+{{define "content"}}
+{{$d := .Data}}{{$m := $d.M}}{{$base := print "/worktime/meetings/" $m.ID}}
+<div class="crumbs"><a href="/worktime/meetings">{{t "meeting.title"}}</a>{{if $m.PrevID}} · <a href="/worktime/meetings/{{$m.PrevID}}">{{t "meeting.prev"}}: {{$m.PrevTitle}}, {{datetime $m.PrevStart}}</a>{{end}}</div>
+<div class="pagehead"><h1 style="flex:1">{{$m.Title}} <span class="pill mst-{{$m.Status}}">{{t (print "meeting.st." $m.Status)}}</span></h1>
+  <div class="row">{{if $d.Owner}}
+    {{if eq $m.Status "prepare"}}<form method="post" action="{{$base}}/status"><input type="hidden" name="status" value="action"><button class="primary">{{icon "player-play"}} {{t "meeting.start"}}</button></form>
+    {{else if eq $m.Status "action"}}<form method="post" action="{{$base}}/status"><input type="hidden" name="status" value="done"><button class="primary">{{icon "check"}} {{t "meeting.finish"}}</button></form>
+      <form method="post" action="{{$base}}/status"><input type="hidden" name="status" value="prepare"><button class="ghost">{{t "meeting.back_prepare"}}</button></form>
+    {{else}}<form method="post" action="{{$base}}/status"><input type="hidden" name="status" value="action"><button class="ghost">{{icon "refresh"}} {{t "meeting.reopen"}}</button></form>{{end}}
+    {{if $d.Can}}<a class="button ghost" href="{{$base}}/edit">{{icon "edit"}} {{t "meeting.change"}}</a>{{end}}{{end}}
+    <a class="button ghost" href="{{$base}}?print=1" target="_blank" rel="noopener">{{icon "printer"}} {{t "meeting.print"}}</a></div></div>
+<div class="layout2">
+<div>
+  {{with $m.Description}}<div class="card"><p class="pre">{{.}}</p></div>{{end}}
+  {{if $m.Carried}}<div class="card" id="carried"><h2>{{icon "arrow-back-up"}} {{t "meeting.carried"}}</h2>
+    <p class="muted small">{{t "meeting.carried_hint"}}</p>{{template "mtasks" (dict "Tasks" $m.Carried "Item" true)}}</div>{{end}}
+  <div class="card" id="agenda"><h2>{{icon "list-numbers"}} {{t "meeting.agenda"}}</h2>
+    {{if not $m.Items}}<p class="muted">{{t "meeting.agenda_empty"}}</p>{{end}}
+    {{range $m.Items}}{{$i := .}}<div class="mitem{{if .ParentID}} sub{{end}}" id="item{{.ID}}">
+      <div class="row"><b class="mnum">{{.Num}}.</b> <b style="flex:1">{{.Title}}</b>
+        {{if .Reporter.ID}}<a class="small" href="/u/{{.Reporter.ID}}" data-user="{{.Reporter.ID}}">{{icon "microphone"}} {{.Reporter.Name}}</a>{{end}}
+        {{if .Minutes}}<span class="muted small">{{icon "clock"}} {{dur (mul .Minutes 60)}}</span>{{end}}
+        {{if $d.Can}}<form method="post" action="{{$base}}/items/{{.ID}}/move" class="inline"><input type="hidden" name="dir" value="up"><button class="link muted" title="{{t "meeting.up"}}">{{icon "arrow-up"}}</button></form>
+        <form method="post" action="{{$base}}/items/{{.ID}}/move" class="inline"><input type="hidden" name="dir" value="down"><button class="link muted" title="{{t "meeting.down"}}">{{icon "arrow-down"}}</button></form>
+        <form method="post" action="{{$base}}/items/{{.ID}}/delete" class="inline" data-confirm="{{t "meeting.item_delete_confirm" .Title}}"><button class="link muted" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
+      {{if $d.Can}}{{if ne $m.Status "prepare"}}<form method="post" action="{{$base}}/items/{{.ID}}" class="mresult">
+        <textarea name="result" rows="2" placeholder="{{t "meeting.result_hint"}}">{{.Result}}</textarea>
+        <button class="ghost small">{{t "meeting.result_save"}}</button></form>{{else if .Result}}<p class="pre mres">{{.Result}}</p>{{end}}
+      {{else if .Result}}<p class="pre mres"><span class="muted small">{{t "meeting.result"}}:</span> {{.Result}}</p>{{end}}
+      {{with .Tasks}}{{template "mtasks" (dict "Tasks" .)}}{{end}}
+      {{if $d.Can}}<div class="row small mitemact">
+        <details><summary class="link">{{icon "edit"}} {{t "meeting.change"}}</summary>
+          <form method="post" action="{{$base}}/items/{{.ID}}" class="mform">
+            <input name="title" value="{{.Title}}" required maxlength="255">
+            <div class="row">{{template "upick" (upick "reporter" .Reporter.ID $d.Users "ph" (t "meeting.f.reporter"))}}
+              <input type="number" name="minutes" value="{{.Minutes}}" min="0" max="1440" style="width:90px" title="{{t "meeting.f.item_minutes"}}"></div>
+            <input type="hidden" name="result" value="{{.Result}}"><button class="ghost small">{{t "common.save"}}</button></form></details>
+        {{if not .ParentID}}<details><summary class="link">{{icon "plus"}} {{t "meeting.add_sub"}}</summary>
+          <form method="post" action="{{$base}}/items" class="mform"><input type="hidden" name="parent" value="{{.ID}}">
+            <input name="title" required maxlength="255" placeholder="{{t "meeting.item_hint"}}">
+            <div class="row">{{template "upick" (upick "reporter" "" $d.Users "ph" (t "meeting.f.reporter"))}}
+              <input type="number" name="minutes" min="0" max="1440" style="width:90px" placeholder="{{t "meeting.f.item_minutes"}}"></div>
+            <button class="ghost small">{{t "common.add"}}</button></form></details>{{end}}
+        {{if $d.Projects}}<details><summary class="link">{{icon "checkbox"}} {{t "meeting.task"}}</summary>
+          <form method="post" action="{{$base}}/items/{{.ID}}/task" class="mform">
+            <select name="project" required>{{range $d.Projects}}<option value="{{.Key}}">{{.Name}}</option>{{end}}</select>
+            <input name="title" value="{{.Title}}" required maxlength="255">
+            <textarea name="description" rows="2" placeholder="{{t "meeting.task_desc"}}">{{.Result}}</textarea>
+            <div class="row">{{template "upick" (upick "responsible" (or .Reporter.ID $d.Me) $d.Users "required")}}
+              <input type="datetime-local" name="deadline" value="{{$d.Deadline.Format "2006-01-02T15:04"}}"></div>
+            <button class="ghost small">{{t "meeting.task_create"}}</button></form></details>{{end}}
+      </div>{{end}}
+    </div>{{end}}
+    {{if $d.Can}}<form method="post" action="{{$base}}/items" class="mform madd">
+      <div class="row"><input name="title" required maxlength="255" placeholder="{{t "meeting.item_hint"}}" style="flex:1">
+        {{template "upick" (upick "reporter" "" $d.Users "ph" (t "meeting.f.reporter"))}}
+        <input type="number" name="minutes" min="0" max="1440" style="width:90px" placeholder="{{t "meeting.f.item_minutes"}}">
+        <button class="ghost">{{icon "plus"}} {{t "meeting.add_item"}}</button></div></form>{{end}}
+  </div>
+  {{if or (ne $m.Status "prepare") $m.Protocol}}<div class="card" id="protocol"><h2>{{icon "file-text"}} {{t "meeting.protocol"}}</h2>
+    {{if and $d.Can (ne $m.Status "prepare")}}<form method="post" action="{{$base}}/protocol"><textarea name="text" rows="4" placeholder="{{t "meeting.protocol_hint"}}">{{$m.Protocol}}</textarea>
+      <p><button class="ghost small">{{t "common.save"}}</button></p></form>
+    {{else}}<p class="pre">{{$m.Protocol}}</p>{{end}}</div>{{end}}
+</div>
+<div>
+  <div class="card minfo">
+    <p>{{icon "calendar-event"}} <b>{{datetime $m.Start}}</b> — {{clock $m.End}}{{with $m.EventID}} · <a href="/calendar/{{.}}" class="small">{{t "meeting.in_calendar"}}</a>{{end}}</p>
+    {{with $m.Place}}<p>{{icon "pin"}} {{.}}</p>{{end}}
+    {{with $m.Started}}<p class="muted small">{{t "meeting.started_at"}} {{datetime .}}</p>{{end}}
+    {{with $m.Finished}}<p class="muted small">{{t "meeting.finished_at"}} {{datetime .}}</p>{{end}}
+    <h3>{{t "meeting.f.owner"}}</h3><p><a href="/u/{{$m.Owner.ID}}" data-user="{{$m.Owner.ID}}">{{photo $m.Owner.Name $m.Owner.PhotoURL false}} {{$m.Owner.Name}}</a></p>
+    {{if $m.Keeper.ID}}<h3>{{t "meeting.f.keeper"}}</h3><p><a href="/u/{{$m.Keeper.ID}}" data-user="{{$m.Keeper.ID}}">{{photo $m.Keeper.Name $m.Keeper.PhotoURL false}} {{$m.Keeper.Name}}</a></p>{{end}}
+    <h3>{{t "meeting.f.members"}} <span class="muted">{{len $m.Members}}</span></h3>
+    {{range $m.Members}}<p><a href="/u/{{.ID}}" data-user="{{.ID}}">{{photo .Name .PhotoURL false}} {{.Name}}</a></p>{{else}}<p class="muted small">{{t "meeting.no_members"}}</p>{{end}}
+  </div>
+  {{if $d.Owner}}<div class="card">
+    {{if $m.NextID}}<p><a href="/worktime/meetings/{{$m.NextID}}">{{icon "chevron-right"}} {{t "meeting.next_open"}}</a></p>
+    {{else}}<form method="post" action="{{$base}}/next"><p class="muted small">{{t "meeting.next_hint"}}</p>
+      <input type="datetime-local" name="start" value="{{($m.Start.AddDate 0 0 7).Format "2006-01-02T15:04"}}">
+      <p><button class="ghost">{{icon "calendar-event"}} {{t "meeting.next"}}</button></p></form>{{end}}
+    <form method="post" action="{{$base}}/delete" data-confirm="{{t "meeting.delete_confirm" $m.Title}}"><button class="link muted small">{{icon "trash"}} {{t "meeting.delete"}}</button></form>
+  </div>{{else if $m.NextID}}<div class="card"><p><a href="/worktime/meetings/{{$m.NextID}}">{{icon "chevron-right"}} {{t "meeting.next_open"}}</a></p></div>{{end}}
+</div>
+</div>
+{{end}}
+
+{{define "mtasks"}}<ul class="mtasks">{{range .Tasks}}<li class="{{if not .Open}}done{{end}}"><a href="/t/{{.Key}}">{{.Key}}</a> {{.Title}}
+  <span class="muted small">· <a href="/u/{{.Responsible.ID}}" data-user="{{.Responsible.ID}}">{{.Responsible.Name}}</a>{{with .Deadline}} · {{datetime .}}{{end}}{{if $.Item}} · {{.ItemTitle}}{{end}}</span>
+  <span class="pill small">{{hv "status" .Status}}</span></li>{{end}}</ul>{{end}}
+
+{{define "mprint"}}{{$m := .M}}<!doctype html><html><head><meta charset="utf-8"><title>{{t "meeting.protocol"}}: {{$m.Title}}</title>
+<style>body{font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;background:#fff;margin:24px;max-width:900px}
+h1{font-size:20px;margin:8px 0}h2{font-size:15px;margin:18px 0 6px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
+th{background:#eee}.pre{white-space:pre-wrap}.pbar{margin-bottom:12px}.sub td:first-child{padding-left:18px}.sign{margin-top:40px}@media print{.pbar{display:none}body{margin:0}}</style></head><body>
+<div class="pbar"><button type="button" data-print-now>{{t "meeting.print"}}</button></div>
+<h1>{{t "meeting.protocol"}}: {{$m.Title}}</h1>
+<p>{{datetime $m.Start}} — {{clock $m.End}}{{with $m.Place}} · {{.}}{{end}} · {{t (print "meeting.st." $m.Status)}}</p>
+<p><b>{{t "meeting.f.owner"}}:</b> {{$m.Owner.Name}}{{if $m.Keeper.ID}}<br><b>{{t "meeting.f.keeper"}}:</b> {{$m.Keeper.Name}}{{end}}
+<br><b>{{t "meeting.f.members"}}:</b> {{range $n, $p := $m.Members}}{{if $n}}, {{end}}{{$p.Name}}{{end}}</p>
+{{with $m.Description}}<p class="pre">{{.}}</p>{{end}}
+<h2>{{t "meeting.agenda"}}</h2>
+<table><thead><tr><th>№</th><th>{{t "meeting.f.item"}}</th><th>{{t "meeting.f.reporter"}}</th><th>{{t "meeting.result"}}</th><th>{{t "meeting.tasks"}}</th></tr></thead>
+<tbody>{{range $m.Items}}<tr{{if .ParentID}} class="sub"{{end}}><td>{{.Num}}</td><td>{{.Title}}</td><td>{{.Reporter.Name}}</td><td class="pre">{{.Result}}</td>
+  <td>{{range .Tasks}}{{.Key}} {{.Title}} — {{.Responsible.Name}}{{with .Deadline}}, {{datetime .}}{{end}}<br>{{end}}</td></tr>{{end}}</tbody></table>
+{{with $m.Protocol}}<h2>{{t "meeting.protocol_total"}}</h2><p class="pre">{{.}}</p>{{end}}
+<p class="sign">{{if $m.Keeper.ID}}{{t "meeting.f.keeper"}}: ____________________ {{$m.Keeper.Name}}{{else}}{{t "meeting.f.owner"}}: ____________________ {{$m.Owner.Name}}{{end}}</p>
+<script src="{{asset "js/meeting.js"}}"></script>
+</body></html>{{end}}

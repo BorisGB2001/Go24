@@ -23,6 +23,8 @@ import (
 // «График отсутствий»               — /api/v1/absences (with the rights of the page)
 // user.add (an invitation by e-mail) — /api/v1/users/invite, /api/v1/users/invites (who may invite)
 // «Доска почёта»                    — /api/v1/honors (kept by administrators and HR officers with the right)
+// meeting.* («Собрания и планёрки») — /api/v1/meetings (api_meetings.go)
+// «Обучение» (learning.*)          — /api/v1/learning/… (api_learning.go)
 
 func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users", s.api("company:read", s.apiUsers))
@@ -31,6 +33,8 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users/invites", s.api("company:read", s.apiInvites))
 	mux.HandleFunc("POST /api/v1/users/invites/{id}/resend", s.api("company:write", s.apiInviteResend))
 	mux.HandleFunc("DELETE /api/v1/users/invites/{id}", s.api("company:write", s.apiInviteCancel))
+	mux.HandleFunc("GET /api/v1/users/join-requests", s.api("company:read", s.apiJoinRequests))
+	mux.HandleFunc("POST /api/v1/users/join-requests/{id}/{op}", s.api("company:write", s.apiJoinDecide))
 	mux.HandleFunc("GET /api/v1/users/{id}/schedule", s.api("company:read", s.apiUserSchedule))
 	mux.HandleFunc("GET /api/v1/departments", s.api("company:read", s.apiDepartments))
 	mux.HandleFunc("POST /api/v1/departments", s.api("company:write", s.apiDepartmentAdd))
@@ -52,6 +56,8 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/honors", s.api("company:read", s.apiHonors))
 	mux.HandleFunc("POST /api/v1/honors", s.api("company:write", s.apiHonorAdd))
 	mux.HandleFunc("DELETE /api/v1/honors/{id}", s.api("company:write", s.apiHonorDelete))
+	s.apiMeetingRoutes(mux)
+	s.apiLearningRoutes(mux)
 }
 
 type apiDeptRef struct {

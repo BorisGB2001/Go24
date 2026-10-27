@@ -186,6 +186,52 @@ func TestKBHTTP(t *testing.T) {
 		t.Fatal("unstarred page still in favorites")
 	}
 
+	// the editor keeps a draft: boss sees ann editing; boss saves meanwhile, ann's save over the old version is not
+	// written but kept as her draft, the editor shows what saving it would undo; «Сохранить мою версию» saves it
+	cur, _, err := srv.KB.Page(ctx, ann, pg)
+	must(err)
+	at := strconv.FormatInt(cur.Updated.UnixMicro(), 10)
+	if a := do(ann, "POST", "/kb/"+space+"/"+pg+"/draft", url.Values{"title": {cur.Title}, "body": {"ann: 28 дней"}, "base": {at}}, 200); !strings.Contains(a, "Черновик сохранён") {
+		t.Fatalf("draft answer %s", a)
+	}
+	if page := do(boss, "GET", "/kb/"+space+"/"+pg, nil, 200); !strings.Contains(page, "Сейчас редактирует: Анна") {
+		t.Fatal("no «editing now» on the page")
+	}
+	do(eve, "POST", "/kb/"+space+"/"+pg+"/draft", url.Values{"title": {"x"}, "body": {"x"}}, 404)
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/draft", url.Values{"act": {"leave"}, "title": {cur.Title}, "body": {"ann: 28 дней"}, "base": {at}}, 200)
+	if page := do(ann, "GET", "/kb", nil, 200); !strings.Contains(page, "Мои черновики") || !strings.Contains(page, pg+"?edit=1") {
+		t.Fatal("no «Мои черновики» on the main page")
+	}
+	if page := do(ann, "GET", "/kb/"+space+"/"+pg+"?edit=1", nil, 200); !strings.Contains(page, "Восстановлен черновик") || !strings.Contains(page, "ann: 28 дней") {
+		t.Fatal("the draft is not restored in the editor")
+	}
+	must(srv.KB.SavePage(ctx, boss, pg, cur.Title, "boss: 21 день"))
+	if a := do(ann, "POST", "/kb/"+space+"/"+pg, url.Values{"title": {cur.Title}, "body": {"ann: 28 дней"}, "base": {at}}, 200); !strings.Contains(a, "edit=1") {
+		t.Fatalf("a save over an old version: %s", a)
+	}
+	if p, _, _ := srv.KB.Page(ctx, boss, pg); p.Body != "boss: 21 день" {
+		t.Fatalf("boss's text overwritten: %q", p.Body)
+	}
+	page := do(ann, "GET", "/kb/"+space+"/"+pg+"?edit=1", nil, 200)
+	if !strings.Contains(page, "Пока вы правили, страницу сохранили: Босс") || !strings.Contains(page, "- boss: 21 день") || !strings.Contains(page, "Сохранить мою версию") {
+		t.Fatal("no clash in the editor")
+	}
+	cur, _, err = srv.KB.Page(ctx, ann, pg)
+	must(err)
+	do(ann, "POST", "/kb/"+space+"/"+pg, url.Values{"title": {cur.Title}, "body": {"ann: 28 дней"}, "base": {strconv.FormatInt(cur.Updated.UnixMicro(), 10)}}, 200)
+	if p, _, _ := srv.KB.Page(ctx, boss, pg); p.Body != "ann: 28 дней" {
+		t.Fatalf("my version not saved: %q", p.Body)
+	}
+	if page := do(ann, "GET", "/kb", nil, 200); strings.Contains(page, "Мои черновики") {
+		t.Fatal("the saved draft is still listed")
+	}
+	// «Отменить черновик»
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/draft", url.Values{"title": {"Отпуск"}, "body": {"набросок"}}, 200)
+	do(ann, "POST", "/kb/"+space+"/"+pg+"/draft", url.Values{"act": {"drop"}}, 200)
+	if page := do(ann, "GET", "/kb/"+space+"/"+pg+"?edit=1", nil, 200); strings.Contains(page, "набросок") {
+		t.Fatal("the dropped draft is in the editor")
+	}
+
 	// comments, «Нравится», views under the page
 	if page := do(ann, "GET", "/kb/"+space+"/"+pg, nil, 200); !strings.Contains(page, `id="kbcomments"`) || !strings.Contains(page, "Просмотров:") {
 		t.Fatal("no discussion under the page")
@@ -196,7 +242,7 @@ func TestKBHTTP(t *testing.T) {
 	var cid string
 	must(pool.QueryRow(ctx, `SELECT id FROM kb_comments WHERE page_id = $1`, pg).Scan(&cid))
 	do(boss, "POST", "/kb/"+space+"/"+pg+"/comment", url.Values{"body": {"28"}, "parent": {cid}}, 200)
-	page := do(boss, "GET", "/kb/"+space+"/"+pg, nil, 200)
+	page = do(boss, "GET", "/kb/"+space+"/"+pg, nil, 200)
 	if !strings.Contains(page, `id="c-`+cid+`"`) || !strings.Contains(page, `class="kbreplies"`) || !strings.Contains(page, "Нравится: Анна") ||
 		!strings.Contains(page, "Просмотров: 3") { // the three who opened it so far
 		t.Fatal("discussion not shown")
@@ -358,6 +404,26 @@ func TestKBHTTP(t *testing.T) {
 	}
 	do(eve, "POST", "/kb/templates/"+tpl+"/delete", url.Values{}, 404)
 	do(ann, "POST", "/kb/templates/"+tpl+"/delete", url.Values{}, 200)
+	// «Начать с шаблона»: the form of a new page offers go24's templates, a page from one opens in the editor; a page
+	// saved as a template is offered too and deleted from the form
+	if form := do(ann, "GET", "/kb/"+faq+"?new=1", nil, 200); !strings.Contains(form, `value="p:meeting"`) {
+		t.Fatal("no page templates in the form of a new page")
+	}
+	if ed := do(ann, "POST", "/kb/"+faq+"/pages", url.Values{"template": {"p:retro"}}, 200); !strings.Contains(ed, "?edit=1") {
+		t.Fatal("a page from a template does not open in the editor")
+	}
+	var retro string
+	must(pool.QueryRow(ctx, `SELECT id FROM kb_pages WHERE space_id = $1 ORDER BY created_at DESC LIMIT 1`, faq).Scan(&retro))
+	do(ann, "POST", "/kb/"+faq+"/"+retro+"/template", url.Values{"name": {"Наша ретро"}}, 200)
+	var ptpl string
+	must(pool.QueryRow(ctx, `SELECT id FROM kb_templates WHERE name = 'Наша ретро' AND kind = 'page'`).Scan(&ptpl))
+	if home := do(ann, "GET", "/kb", nil, 200); strings.Contains(home, `value="`+ptpl+`"`) {
+		t.Fatal("a page template in the form of a new base")
+	}
+	if form := do(ann, "GET", "/kb/"+faq+"?new=1", nil, 200); !strings.Contains(form, `value="`+ptpl+`"`) {
+		t.Fatal("the saved page template is not in the form of a new page")
+	}
+	do(ann, "POST", "/kb/templates/"+ptpl+"/delete", url.Values{"back": {"/kb/" + faq + "?new=1"}}, 200)
 
 	if os.Getenv("GO24_TEST_S3") == "" {
 		t.Log("no GO24_TEST_S3: an upload into a page is not checked")

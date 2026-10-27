@@ -23,6 +23,7 @@ type Field struct {
 	Expr   string `json:"-"`
 	CodeOf string `json:"-"`
 	Prefix string `json:"-"`
+	Order  string `json:"-"` // the SQL of its values' own order (the stages' in their pipeline), else by the value
 }
 
 // Dim: the field can group the rows (a measure needs a number).
@@ -106,7 +107,7 @@ const dealFrom = `crm_deals d JOIN crm_stages st ON st.id = d.stage_id JOIN crm_
 // and of the goods of deals.
 var dealFields = []Field{
 	{Code: "pipeline", Type: String, Expr: "pl.name", CodeOf: "pl.code", Prefix: "crm.pipeline."},
-	{Code: "stage", Type: String, Expr: "st.name", CodeOf: "st.code", Prefix: "crm.stage."},
+	{Code: "stage", Type: String, Expr: "st.name", CodeOf: "st.code", Prefix: "crm.stage.", Order: "st.sort"},
 	{Code: "semantic", Type: String, Expr: "st.semantic", Prefix: "bi.semantic."},
 	{Code: "responsible", Type: String, Expr: "u.name"},
 	{Code: "company", Type: String, Expr: "coalesce(co.title, '')"},
@@ -200,7 +201,7 @@ var Datasets = []*Dataset{
 		scope: crmScope("lead", "l"),
 		Fields: []Field{
 			{Code: "title", Type: String, Expr: "l.title"},
-			{Code: "stage", Type: String, Expr: "st.name", CodeOf: "st.code", Prefix: "crm.stage."},
+			{Code: "stage", Type: String, Expr: "st.name", CodeOf: "st.code", Prefix: "crm.stage.", Order: "st.sort"},
 			{Code: "semantic", Type: String, Expr: "st.semantic", Prefix: "bi.semantic."},
 			{Code: "responsible", Type: String, Expr: "u.name"},
 			{Code: "source", Type: String, Expr: "coalesce(src.name, trim(l.source))", CodeOf: "src.code", Prefix: "crm.dict."},
@@ -277,7 +278,7 @@ var Datasets = []*Dataset{
 			{Code: "project", Type: String, Expr: "p.name"},
 			{Code: "status", Type: String, Expr: "t.status", Prefix: "status."},
 			{Code: "priority", Type: String, Expr: "t.priority::text", Prefix: "priority."},
-			{Code: "stage", Type: String, Expr: "ps.title", CodeOf: "ps.code", Prefix: "stage."},
+			{Code: "stage", Type: String, Expr: "ps.title", CodeOf: "ps.code", Prefix: "stage.", Order: "ps.sort"},
 			{Code: "responsible", Type: String, Expr: "r.name"},
 			{Code: "creator", Type: String, Expr: "c.name"},
 			{Code: "created_at", Type: Date, Expr: "t.created_at"},

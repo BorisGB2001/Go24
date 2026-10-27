@@ -49,20 +49,20 @@ func TestRenderGroups(t *testing.T) {
 	// a line rings its group; a menu's item connects with one (a group gone — the line's «nobody answered»)
 	tr := Trunk{ID: "abcdefab-1234-5678-9abc-def012345678", Name: "Линия", Number: "+74951234567", Host: "sip.example.ru", Username: "go24",
 		Ring: []string{"u1"}, Group: sales.ID, NoAnswer: ActVoicemail}
-	_, plan := RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{sales.ID: GroupKey(sales.ID)}, nil, false, "")
+	_, plan := RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{sales.ID: GroupKey(sales.ID)}, nil, nil, false, "")
 	if want := " same => n,Set(GO24_BACK=go24-in-" + tr.Key() + ",s,noans)\n same => n,Set(GO24_RATEP=)\n same => n,Goto(go24-q-111111112222,s,1)\n" +
 		" same => n(noans),Gosub(go24-voicemail,s,1())\n"; !strings.Contains(plan, want) || strings.Contains(plan, "Local/101@go24-ring") {
 		t.Fatalf("no %q in\n%s", want, plan)
 	}
 	// a CRM client's call rings their responsible first (in the working hours), not answered — the group
 	tr.ToOwner, tr.WorkOn, tr.WorkDays, tr.WorkFrom, tr.WorkTo = true, true, []int{1}, "09:00", "18:00"
-	_, plan = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{sales.ID: GroupKey(sales.ID)}, nil, false, "")
+	_, plan = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{sales.ID: GroupKey(sales.ID)}, nil, nil, false, "")
 	if want := " same => n(work),NoOp()\n same => n,Gosub(go24-owner,s,1(20,))\n same => n,GotoIf($[\"${DIALSTATUS}\" = \"ANSWER\"]?done)\n" +
 		" same => n,Set(GO24_BACK=go24-in-" + tr.Key(); !strings.Contains(plan, want) {
 		t.Fatalf("no %q in\n%s", want, plan)
 	}
 	tr.RateOn, tr.RateSum = true, "r1"
-	if _, plan = RenderTrunks([]Trunk{tr}, nil, nil, nil, false, ""); !strings.Contains(plan, "Gosub(go24-owner,s,1(20,g))\n same => n,GotoIf($[\"${DIALSTATUS}\" = \"ANSWER\"]?rate)\n") {
+	if _, plan = RenderTrunks([]Trunk{tr}, nil, nil, nil, nil, false, ""); !strings.Contains(plan, "Gosub(go24-owner,s,1(20,g))\n same => n,GotoIf($[\"${DIALSTATUS}\" = \"ANSWER\"]?rate)\n") {
 		t.Fatalf("the owner rated:\n%s", plan)
 	}
 	menu := Menu{ID: "33333333-2222-3333-4444-555555555555", Name: "М", Wait: 5, Repeats: 1,

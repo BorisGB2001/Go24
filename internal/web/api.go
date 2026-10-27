@@ -45,6 +45,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/mail/boxes/{id}/folders", s.api("mail:write", s.apiMailFolderAdd))
 	mux.HandleFunc("POST /api/v1/mail/folders/{id}/rename", s.api("mail:write", s.apiMailFolderRename))
 	mux.HandleFunc("DELETE /api/v1/mail/folders/{id}", s.api("mail:write", s.apiMailFolderDelete))
+	mux.HandleFunc("GET /api/v1/mail/boxes/{id}/storage", s.api("mail:read", s.apiMailStorage))
+	mux.HandleFunc("POST /api/v1/mail/folders/{id}/clean", s.api("mail:write", s.apiMailClean))
 	mux.HandleFunc("GET /api/v1/mail/messages", s.api("mail:read", s.apiMailMessages))
 	mux.HandleFunc("GET /api/v1/mail/messages/{id}", s.api("mail:read", s.apiMailMessage))
 	mux.HandleFunc("POST /api/v1/mail/move", s.api("mail:write", s.apiMailMove))
@@ -75,6 +77,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/mail/notify", s.api("mail:write", s.apiMailNotify))
 	mux.HandleFunc("GET /api/v1/mail/messages/{id}/links", s.api("mail:read", s.apiMailLinks))
 	mux.HandleFunc("POST /api/v1/mail/messages/{id}/invite", s.api("mail:write", s.apiMailInvite))
+	mux.HandleFunc("POST /api/v1/mail/messages/{id}/propose", s.api("mail:write", s.apiMailPropose))
+	mux.HandleFunc("POST /api/v1/mail/messages/{id}/counter", s.api("mail:write", s.apiMailCounter))
 	mux.HandleFunc("POST /api/v1/mail/messages/{id}/crm", s.api("mail:write", s.apiMailCRM))
 	mux.HandleFunc("GET /api/v1/mail/messages/{id}/votes", s.api("mail:read", s.apiMailVotes))
 	mux.HandleFunc("POST /api/v1/mail/messages/{id}/vote", s.api("mail:write", s.apiMailVote))
@@ -90,6 +94,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/trash/{id}/restore", s.api("tasks:write", s.apiTrashRestore))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/actions/{action}", s.api("tasks:write", s.apiAction))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/comments", s.api("tasks:write", s.apiComment))
+	mux.HandleFunc("PATCH /api/v1/tasks/{key}/comments/{id}", s.api("tasks:write", s.apiCommentEdit))
+	mux.HandleFunc("DELETE /api/v1/tasks/{key}/comments/{id}", s.api("tasks:write", s.apiCommentDelete))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/checklist", s.api("tasks:write", s.apiChecklistAdd))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/checklist/{id}/toggle", s.api("tasks:write", s.apiChecklistToggle))
 	mux.HandleFunc("DELETE /api/v1/tasks/{key}/checklist/{id}", s.api("tasks:write", s.apiChecklistDelete))
@@ -118,6 +124,9 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/im/calls", s.api("im:read", s.apiCalls))
 	mux.HandleFunc("GET /api/v1/settings/portal", s.api("settings:read", s.apiPortal))
 	mux.HandleFunc("PUT /api/v1/settings/portal", s.api("settings:write", s.apiPortal))
+	mux.HandleFunc("GET /api/v1/settings/employees", s.api("settings:read", s.apiStaffSettings))
+	mux.HandleFunc("PUT /api/v1/settings/employees", s.api("settings:write", s.apiStaffSettings))
+	mux.HandleFunc("POST /api/v1/settings/employees/link", s.api("settings:write", s.apiStaffSettings))
 	mux.HandleFunc("GET /api/v1/settings/events", s.api("settings:read", s.apiAudit))
 	mux.HandleFunc("GET /api/v1/settings/admins", s.api("settings:read", s.apiAdmins))
 	mux.HandleFunc("POST /api/v1/settings/admins", s.api("settings:write", s.apiAdmins))
@@ -125,6 +134,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/ip-access", s.api("settings:read", s.apiIPAccess))
 	mux.HandleFunc("GET /api/v1/settings/sections", s.api("settings:read", s.apiSections))
 	mux.HandleFunc("PUT /api/v1/settings/sections", s.api("settings:write", s.apiSections))
+	mux.HandleFunc("GET /api/v1/settings/system", s.api("settings:read", s.apiSystem))
 	mux.HandleFunc("GET /api/v1/settings/backup", s.api("settings:read", s.apiBackup))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", s.api("settings:write", s.apiBackup))
 	mux.HandleFunc("PUT /api/v1/settings/ip-access", s.api("settings:write", s.apiIPAccess))
@@ -136,6 +146,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}/members/{user}", s.api("im:write", s.apiGroupRemove))
 	mux.HandleFunc("PATCH /api/v1/im/rooms/{room}", s.api("im:write", s.apiGroupRename))
 	mux.HandleFunc("GET /api/v1/im/search", s.api("im:read", s.apiSearch))
+	mux.HandleFunc("GET /api/v1/im/open", s.api("im:read", s.apiOpenChats))
+	mux.HandleFunc("POST /api/v1/im/rooms/{room}/join", s.api("im:write", s.apiJoinOpen))
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/marks", s.api("im:write", s.apiRoomMark))
 	mux.HandleFunc("GET /api/v1/im/rooms/{room}/pins", s.api("im:read", s.apiPins))
 	mux.HandleFunc("PUT /api/v1/im/rooms/{room}/pins/{id}", s.api("im:write", s.apiPin))
@@ -188,6 +200,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/crm/{kind}", s.api("crm:read", s.apiCRMList))
 	mux.HandleFunc("POST /api/v1/crm/{kind}", s.api("crm:write", s.apiCRMCreate))
 	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}", s.api("crm:read", s.apiCRMGet))
+	mux.HandleFunc("PATCH /api/v1/crm/{kind}/{id}", s.api("crm:write", s.apiCRMUpdate))
+	mux.HandleFunc("DELETE /api/v1/crm/{kind}/{id}", s.api("crm:write", s.apiCRMDelete))
 	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/stage", s.api("crm:write", s.apiCRMStage))
 	mux.HandleFunc("PUT /api/v1/crm/{kind}/{id}/observers", s.api("crm:write", s.apiCRMObservers))
 	mux.HandleFunc("PUT /api/v1/crm/deals/{id}/parents", s.api("crm:write", s.apiCRMParents))
@@ -233,6 +247,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	s.apiKBRoutes(mux)
 	s.apiCompanyRoutes(mux)
 	s.apiBPRoutes(mux)
+	s.apiListsRoutes(mux)
 	s.apiAIRoutes(mux)
 	s.apiBookingRoutes(mux)
 	s.apiTelephonyRoutes(mux)
@@ -340,7 +355,7 @@ func (s *Server) apiFail(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusForbidden
 	case errors.Is(err, tasks.ErrNotFound), ie.Key == "err.not_found":
 		status = http.StatusNotFound
-	case errors.Is(err, tasks.ErrConflict), ie.Key == "booking.err.overlap":
+	case errors.Is(err, tasks.ErrConflict), ie.Key == "booking.err.overlap", ie.Key == "err.kb_page_changed":
 		status = http.StatusConflict
 	case ie.Key == "err.internal":
 		status = http.StatusInternalServerError
@@ -445,10 +460,12 @@ type apiChecklistItem struct {
 }
 
 type apiComment struct {
-	ID        string    `json:"id"`
-	Author    string    `json:"author"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Author    string     `json:"author"`
+	Body      string     `json:"body"`
+	CreatedAt time.Time  `json:"created_at"`
+	ReplyTo   string     `json:"reply_to,omitempty"`  // the message this one answers
+	EditedAt  *time.Time `json:"edited_at,omitempty"` // the author changed the text
 }
 
 type apiCard struct {
@@ -749,17 +766,47 @@ func (s *Server) apiAction(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 
 func (s *Server) apiComment(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
-		Body string `json:"body"`
+		Body    string `json:"body"`
+		ReplyTo string `json:"reply_to"` // an answer to that message of the chat
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
 	return s.apiTaskOp(w, r, p, func(id string) error {
 		if s.Matrix != nil { // as in the web: the message is kept in the messenger first
-			_, err := s.Matrix.PostTaskComment(r.Context(), p.UserID, id, in.Body)
+			_, err := s.Matrix.PostTaskReply(r.Context(), p.UserID, id, in.ReplyTo, in.Body)
 			return err
 		}
-		return s.Tasks.AddComment(r.Context(), p.UserID, id, in.Body)
+		_, err := s.Tasks.PostReply(r.Context(), p.UserID, id, in.ReplyTo, in.Body)
+		return err
+	})
+}
+
+// apiCommentEdit changes the text of one's own message {"body"}; the answer is the card.
+func (s *Server) apiCommentEdit(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Body string `json:"body"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	return s.apiTaskOp(w, r, p, func(id string) error {
+		if s.Matrix != nil {
+			_, err := s.Matrix.EditTaskComment(r.Context(), p.UserID, id, r.PathValue("id"), strings.TrimSpace(in.Body))
+			return err
+		}
+		_, err := s.Tasks.EditComment(r.Context(), p.UserID, id, r.PathValue("id"), in.Body)
+		return err
+	})
+}
+
+// apiCommentDelete removes one's own message (an administrator — any); the answer is the card.
+func (s *Server) apiCommentDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	return s.apiTaskOp(w, r, p, func(id string) error {
+		if s.Matrix != nil {
+			return s.Matrix.DeleteTaskComment(r.Context(), p.UserID, id, r.PathValue("id"))
+		}
+		return s.Tasks.DeleteComment(r.Context(), p.UserID, id, r.PathValue("id"))
 	})
 }
 
@@ -988,7 +1035,7 @@ func (s *Server) writeCard(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 		out.Checklist = append(out.Checklist, apiChecklistItem{i.ID, i.Title, i.Done, i.Important, i.ListID})
 	}
 	for _, m := range c.Comments {
-		out.Comments = append(out.Comments, apiComment{m.ID, m.AuthorName, m.Body, m.CreatedAt})
+		out.Comments = append(out.Comments, apiComment{m.ID, m.AuthorName, m.Body, m.CreatedAt, m.ReplyTo, m.EditedAt})
 	}
 	out.History = make([]apiHistory, 0, len(c.History))
 	for _, h := range c.History {

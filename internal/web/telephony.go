@@ -237,7 +237,55 @@ func (s *Server) telephonyOf(ctx context.Context, sess auth.Session, userID stri
 	if !ok {
 		return nil
 	}
-	return map[string]any{"Line": l, "SIPHost": s.Telephony.SIPHost, "Realm": telephony.Realm}
+	out := map[string]any{"Line": l, "SIPHost": s.Telephony.SIPHost, "Realm": telephony.Realm, "Forwards": telephony.Forwards}
+	prefs, err := s.Telephony.PrefsOf(ctx, userID)
+	if err != nil {
+		s.Log.Error("profile telephony", "err", err)
+		return out
+	}
+	out["Prefs"] = prefs
+	if lines, err := s.telOutLines(ctx, userID); err == nil {
+		out["OutLines"] = lines
+	} else {
+		s.Log.Error("profile telephony", "err", err)
+	}
+	return out
+}
+
+// telOutLines are the external lines the employee may call out by (none while their calls out are forbidden).
+func (s *Server) telOutLines(ctx context.Context, userID string) ([]telephony.Trunk, error) {
+	limits, err := s.Telephony.OutLimits(ctx, []string{userID})
+	if err != nil || limits[userID] == "none" {
+		return nil, err
+	}
+	trunks, err := s.Telephony.Trunks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return telephony.OutTrunks(trunks, userID), nil
+}
+
+// telephonyPrefs keeps the employee's own telephony settings: the line of their calls out and forwarding to their
+// mobile (they themselves or administrators); the dialplan follows.
+func (s *Server) telephonyPrefs(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("id")
+	back := "/u/" + id
+	if sess.UserID != id && !s.telAdmin(r.Context(), sess) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if s.Telephony == nil {
+		s.taskErr(w, r, i18n.E("err.telephony_off"), back)
+		return
+	}
+	after, _ := strconv.Atoi(r.FormValue("after"))
+	p := telephony.Prefs{OutTrunk: r.FormValue("out"), Forward: r.FormValue("forward"), After: after, To: r.FormValue("to")}
+	if err := s.Telephony.SavePrefs(r.Context(), id, p); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	s.Telephony.Kick()
+	http.Redirect(w, r, "/u/"+id+"?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#ptel", http.StatusSeeOther)
 }
 
 // ---------- The softphone in the browser: a small window of its own, kept open while one works ----------

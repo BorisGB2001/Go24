@@ -2,3 +2,7 @@
 {{define "diskPickL"}}data-l-title="{{t "disk.pick"}}" data-l-top="{{t "disk.top"}}" data-l-empty="{{t "disk.empty"}}" data-l-close="{{t "disk.close"}}" data-l-remove="{{t "common.remove"}}" data-l-failed="{{t "err.internal"}}"{{end}}
 {{/* the template of a new board: «Создать доску» offers them */}}
 {{define "boardTemplate"}}<select name="template" title="{{t "dboard.template"}}" data-board-template><option value="">{{t "dboard.tpl_blank"}}</option>{{range boardTemplates}}<option value="{{.}}">{{t (print "dboard.tpl_" .)}}</option>{{end}}</select>{{end}}
+{{/* diskSend: «Отправить в чат» (disksend.js) — the dialog's texts ride on its script */}}
+{{define "diskSend"}}<script src="{{asset "js/disksend.js"}}" data-l-title="{{t "disk.send_title" "%s"}}" data-l-filter="{{t "disk.send_filter"}}" data-l-none="{{t "disk.send_none"}}" data-l-open="{{t "disk.send_open"}}" data-l-close="{{t "common.cancel"}}" data-l-failed="{{t "err.internal"}}"></script>{{end}}
+{{/* diskNewVersion: «Загрузить новую версию» (diskversion.js) */}}
+{{define "diskNewVersion"}}<script src="{{asset "js/diskversion.js"}}" data-l-failed="{{t "err.internal"}}"></script>{{end}}

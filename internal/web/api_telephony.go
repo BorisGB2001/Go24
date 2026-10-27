@@ -72,6 +72,7 @@ type apiTelCall struct {
 	Comment      string     `json:"comment,omitempty"`
 	TransferFrom string     `json:"transfer_from,omitempty"`
 	TransferTo   string     `json:"transfer_to,omitempty"`
+	Mobile       string     `json:"mobile,omitempty"` // forwarded to the employee's mobile
 	CRM          *apiTelCRM `json:"crm,omitempty"`
 	HasRecord    bool       `json:"has_record"`
 	Record       string     `json:"record,omitempty"`     // the address of the record, for whom «Записи разговоров» lets hear it
@@ -82,7 +83,7 @@ type apiTelCall struct {
 func (s *Server) apiTelCallOf(c telephony.Call, me string, hears bool) apiTelCall {
 	out := apiTelCall{ID: c.ID, Type: "inner", Direction: "inner", Status: c.Status, From: c.From, To: c.To, Line: c.Line,
 		StartedAt: c.Started, AnsweredAt: c.Answered, Seconds: c.Seconds, Rating: c.Rating, Comment: c.Comment,
-		TransferFrom: c.XFrom, TransferTo: c.XTo, HasRecord: c.Record != "" && s.Telephony.Records != ""}
+		TransferFrom: c.XFrom, TransferTo: c.XTo, Mobile: c.Mobile, HasRecord: c.Record != "" && s.Telephony.Records != ""}
 	switch me {
 	case c.FromUser.UserID:
 		out.Type = "out"

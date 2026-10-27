@@ -54,6 +54,10 @@
 .i-chart-bar { --icon: url("../icons/chart-bar.svg"); }
 .i-chart-line { --icon: url("../icons/chart-line.svg"); }
 .i-chart-pie { --icon: url("../icons/chart-pie.svg"); }
+.i-chart-area { --icon: url("../icons/chart-area.svg"); }
+.i-chart-funnel { --icon: url("../icons/chart-funnel.svg"); }
+.i-chart-bar-stacked { --icon: url("../icons/chart-bar-stacked.svg"); }
+.i-table-pivot { --icon: url("../icons/table-pivot.svg"); }
 .i-layout-dashboard { --icon: url("../icons/layout-dashboard.svg"); }
 .i-numbers { --icon: url("../icons/numbers.svg"); }
 .i-speakerphone { --icon: url("../icons/speakerphone.svg"); }
@@ -109,6 +113,9 @@
 .i-layout-columns { --icon: url("../icons/layout-columns.svg"); }
 .i-arrows-split { --icon: url("../icons/arrows-split.svg"); }
 .i-trophy { --icon: url("../icons/trophy.svg"); }
+.i-school { --icon: url("../icons/school.svg"); }
+.i-books { --icon: url("../icons/books.svg"); }
+.i-certificate { --icon: url("../icons/certificate.svg"); }
 .i-list { --icon: url("../icons/list.svg"); }
 .i-list-numbers { --icon: url("../icons/list-numbers.svg"); }
 .i-indent-increase { --icon: url("../icons/indent-increase.svg"); }

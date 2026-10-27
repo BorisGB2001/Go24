@@ -51,6 +51,7 @@ type App struct {
 	InstallURL       string     `json:"install_url"`
 	MenuTitle        string     `json:"menu_title"`
 	APIOnly          bool       `json:"api_only"`
+	Static           bool       `json:"static"` // its page is the archive's files kept in go24 (static.go)
 	Scopes           []string   `json:"scopes"`
 	ClientID         string     `json:"client_id"`
 	ClientSecret     string     `json:"-"`
@@ -119,7 +120,10 @@ func (s *Store) Save(ctx context.Context, userID string, a App) (string, error) 
 	if a.Name == "" || len([]rune(a.Name)) > 100 || len([]rune(a.MenuTitle)) > 100 {
 		return "", i18n.E("err.app_name")
 	}
-	if err := checkURL(a.HandlerURL, !a.APIOnly); err != nil {
+	if a.Static {
+		a.HandlerURL, a.APIOnly = "", false
+	}
+	if err := checkURL(a.HandlerURL, !a.APIOnly && !a.Static); err != nil {
 		return "", err
 	}
 	if err := checkURL(a.InstallURL, false); err != nil {
@@ -136,21 +140,21 @@ func (s *Store) Save(ctx context.Context, userID string, a App) (string, error) 
 	}
 	if a.ID == "" {
 		err := s.db.QueryRow(ctx, `INSERT INTO apps (name, handler_url, install_url, menu_title, api_only, scopes, client_id,
-			client_secret, application_token, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+			client_secret, application_token, created_by, static) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 			a.Name, a.HandlerURL, a.InstallURL, a.MenuTitle, a.APIOnly, scopes, "local."+randomHex(8), randomHex(32),
-			randomHex(16), userID).Scan(&a.ID)
+			randomHex(16), userID, a.Static).Scan(&a.ID)
 		return a.ID, err
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE apps SET name = $2, handler_url = $3, install_url = $4, menu_title = $5, api_only = $6,
-		scopes = $7 WHERE id::text = $1`, a.ID, a.Name, a.HandlerURL, a.InstallURL, a.MenuTitle, a.APIOnly, scopes)
+		scopes = $7, static = $8 WHERE id::text = $1`, a.ID, a.Name, a.HandlerURL, a.InstallURL, a.MenuTitle, a.APIOnly, scopes, a.Static)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = i18n.E("err.not_found")
 	}
 	return a.ID, err
 }
 
-const appCols = `a.id, a.name, a.handler_url, a.install_url, a.menu_title, a.api_only, a.scopes, a.client_id, a.client_secret,
-	a.application_token, a.installed_at, a.install_status, a.install_error, a.created_at,
+const appCols = `a.id, a.name, a.handler_url, a.install_url, a.menu_title, a.api_only, a.static, a.scopes, a.client_id,
+	a.client_secret, a.application_token, a.installed_at, a.install_status, a.install_error, a.created_at,
 	(SELECT count(DISTINCT t.user_id) FROM app_tokens t WHERE t.app_id = a.id AND t.refresh_expires > now())::int`
 
 func (s *Store) list(ctx context.Context, where string, args ...any) ([]App, error) {

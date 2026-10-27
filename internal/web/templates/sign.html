@@ -1,5 +1,6 @@
 {{define "content"}}{{$d := .Data}}
 <div class="pagehead"><h1>{{t "sign.title"}}</h1><span style="flex:1"></span>
+  {{if $d.Self}}<a href="/sign/my" class="button">{{icon "file-plus"}} {{t "sign.self.new"}}</a>{{end}}
   {{if $d.HR}}<a href="/sign/hr" class="button">{{icon "users"}} {{t "sign.hr.new"}}</a>{{end}}
   <a href="/sign/new" class="button create">{{icon "plus"}} {{t "sign.new"}}</a></div>
 <div class="tabs">{{range $d.Filters}}{{if or (ne . "hr") $d.HR}}<a href="/sign{{with .}}?f={{.}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}{{end}}</div>

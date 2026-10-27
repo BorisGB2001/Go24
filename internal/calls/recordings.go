@@ -143,23 +143,44 @@ var ErrNoRoom = errors.New("calls: the room is empty")
 // ErrRecording: the room is being recorded already.
 var ErrRecording = errors.New("calls: the call is being recorded already")
 
-const settingRecording = "call_recording"
+const (
+	settingRecording  = "call_recording"
+	settingTranscribe = "call_transcribe"
+)
 
 // Enabled: the administrators let calls be recorded.
 func (rs *Recordings) Enabled(ctx context.Context) (bool, error) {
+	return rs.setting(ctx, settingRecording)
+}
+
+// SetEnabled lets calls be recorded or not.
+func (rs *Recordings) SetEnabled(ctx context.Context, userID string, on bool) error {
+	return rs.setSetting(ctx, userID, settingRecording, on)
+}
+
+// Transcribing: the administrators let the recordings be turned into text.
+func (rs *Recordings) Transcribing(ctx context.Context) (bool, error) {
+	return rs.setting(ctx, settingTranscribe)
+}
+
+// SetTranscribing lets the recordings be turned into text or not.
+func (rs *Recordings) SetTranscribing(ctx context.Context, userID string, on bool) error {
+	return rs.setSetting(ctx, userID, settingTranscribe, on)
+}
+
+func (rs *Recordings) setting(ctx context.Context, key string) (bool, error) {
 	var on bool
-	err := rs.DB.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingRecording).Scan(&on)
+	err := rs.DB.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, key).Scan(&on)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	return on, err
 }
 
-// SetEnabled lets calls be recorded or not.
-func (rs *Recordings) SetEnabled(ctx context.Context, userID string, on bool) error {
+func (rs *Recordings) setSetting(ctx context.Context, userID, key string, on bool) error {
 	_, err := rs.DB.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-		settingRecording, on, userID)
+		key, on, userID)
 	return err
 }
 
@@ -212,13 +233,50 @@ func (rs *Recordings) Going(ctx context.Context) ([]Recording, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Recording, error) { return scanRecording(row) })
 }
 
-// Finish ends the recording: its file on the Drive (fileID), or what went wrong (failure).
-func (rs *Recordings) Finish(ctx context.Context, id, fileID, failure string) error {
-	state, file := RecordingDone, &fileID
+// Finish ends the recording: its file on the Drive (fileID), or what went wrong (failure); transcribe — its text is
+// to be made (NextTranscript).
+func (rs *Recordings) Finish(ctx context.Context, id, fileID, failure string, transcribe bool) error {
+	state, file, transcript := RecordingDone, &fileID, ""
 	if fileID == "" {
 		state, file = RecordingFailed, nil
+	} else if transcribe {
+		transcript = "pending"
 	}
 	_, err := rs.DB.Exec(ctx, `UPDATE call_recordings SET state = $2, file_id = $3::uuid, error = $4, ended_at = now(),
-		stopped_at = coalesce(stopped_at, now()) WHERE id::text = $1 AND state = 'active'`, id, state, file, failure)
+		stopped_at = coalesce(stopped_at, now()), transcript = $5 WHERE id::text = $1 AND state = 'active'`, id, state, file, failure, transcript)
+	return err
+}
+
+// TranscriptTries is how many times go24-worker begins the text of a recording before giving it up (it may fall
+// over in the middle of a long one).
+const TranscriptTries = 3
+
+// NextTranscript is the oldest saved recording whose text is to be made, with its file on the Drive and which try
+// this is; found false — none waits. A recording tried TranscriptTries times already (go24-worker fell over in the
+// middle) fails.
+func (rs *Recordings) NextTranscript(ctx context.Context) (rec Recording, fileID string, try int, found bool, err error) {
+	if _, err := rs.DB.Exec(ctx, `UPDATE call_recordings SET transcript = 'failed'
+		WHERE transcript = 'pending' AND (transcript_tries >= $1 OR file_id IS NULL)`, TranscriptTries); err != nil {
+		return rec, "", 0, false, err
+	}
+	var r Recording
+	err = rs.DB.QueryRow(ctx, `UPDATE call_recordings SET transcript_tries = transcript_tries + 1
+		WHERE id = (SELECT id FROM call_recordings WHERE transcript = 'pending' ORDER BY ended_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+		RETURNING `+recordingCols+`, file_id::text, transcript_tries`).
+		Scan(&r.ID, &r.Room, &r.Title, &r.Query, &r.EgressID, &r.StartedBy, &r.State, &r.Audio, &r.Started, &r.Stopped, &fileID, &try)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, "", 0, false, nil
+	}
+	return r, fileID, try, err == nil, err
+}
+
+// Transcribed ends the text of the recording: its file on the Drive, or "" — it could not be made.
+func (rs *Recordings) Transcribed(ctx context.Context, id, fileID string) error {
+	state, file := "done", &fileID
+	if fileID == "" {
+		state, file = "failed", nil
+	}
+	_, err := rs.DB.Exec(ctx, `UPDATE call_recordings SET transcript = $2, transcript_file = $3::uuid
+		WHERE id::text = $1 AND transcript = 'pending'`, id, state, file)
 	return err
 }

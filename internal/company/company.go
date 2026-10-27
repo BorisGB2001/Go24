@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/i18n"
+	"go24/internal/portal"
 )
 
 var (
@@ -25,7 +26,10 @@ var (
 	ErrForbidden = i18n.E("err.forbidden")
 )
 
-type Store struct{ db *pgxpool.Pool }
+type Store struct {
+	db   *pgxpool.Pool
+	seen pulseSeen // the marks of «Пульс компании» written today
+}
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
@@ -704,7 +708,7 @@ func (s *Store) SaveProfile(ctx context.Context, id string, u ProfileUpdate) err
 		}
 		u.Website = w
 	}
-	name := strings.Join(strings.Fields(u.FirstName+" "+u.LastName), " ")
+	name := portal.UserName(u.FirstName, u.LastName, u.SecondName)
 	tag, err := s.db.Exec(ctx, `UPDATE users SET last_name = $2, first_name = $3, second_name = $4, position = $5,
 		work_phone = $6, mobile_phone = $7, about = $8, birthday = $9, name = $10,
 		gender = $11, city = $12, inner_phone = $13, employment_date = $14,

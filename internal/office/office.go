@@ -166,7 +166,18 @@ var ErrConvert = errors.New("office: conversion failed")
 // server fetches: go24's, signed); key names this state of the file, so a repeated request is answered from the
 // document server's cache. The result is the converted file's link, for go24 to fetch (Inside).
 func (s *Server) Convert(ctx context.Context, fileURL, fileType, key, title, outputType string) (string, error) {
-	req := map[string]any{"async": false, "filetype": fileType, "key": key, "outputtype": outputType, "title": title, "url": fileURL}
+	return s.convert(ctx, map[string]any{"async": false, "filetype": fileType, "key": key, "outputtype": outputType, "title": title, "url": fileURL})
+}
+
+// Thumbnail has the document server draw the first page of the file at fileURL as a PNG whose longest side is side
+// (the thumbnail of a document on «Диск»); the rest as of Convert.
+func (s *Server) Thumbnail(ctx context.Context, fileURL, fileType, key, title string, side int) (string, error) {
+	return s.convert(ctx, map[string]any{"async": false, "filetype": fileType, "key": key + "-t", "outputtype": "png", "title": title,
+		"url": fileURL, "thumbnail": map[string]any{"aspect": 1, "first": true, "width": side, "height": side}})
+}
+
+// convert asks the document server's ConvertService for the conversion req and gives the converted file's link.
+func (s *Server) convert(ctx context.Context, req map[string]any) (string, error) {
 	token, err := s.Sign(req)
 	if err != nil {
 		return "", err

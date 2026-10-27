@@ -26,6 +26,10 @@
           <form method="post" action="/openlines/s/{{$x.ID}}" class="card pop row"><input type="hidden" name="op" value="form"><input type="hidden" name="back" value="{{$d.Keep}}">
             <select name="form" required aria-label="{{t "ol.form"}}">{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
             <button class="ghost">{{icon "send"}} {{t "ol.form_send"}}</button></form></details>{{end}}
+        {{with $d.BookingLinks}}<details class="tmenu olforms"><summary class="button ghost" title="{{t "ol.booking_hint"}}">{{icon "calendar-event"}} {{t "ol.booking"}}</summary>
+          <form method="post" action="/openlines/s/{{$x.ID}}" class="card pop row"><input type="hidden" name="op" value="booking"><input type="hidden" name="back" value="{{$d.Keep}}">
+            <select name="link" required aria-label="{{t "ol.booking"}}">{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+            <button class="ghost">{{icon "send"}} {{t "ol.form_send"}}</button></form></details>{{end}}
         <form method="post" action="/openlines/s/{{.ID}}" data-confirm="{{t "ol.spam_confirm"}}"><input type="hidden" name="op" value="spam"><input type="hidden" name="back" value="{{$d.Keep}}"><button class="ghost">{{icon "ban"}} {{t "ol.spam"}}</button></form>{{end}}
         <form method="post" action="/openlines/s/{{.ID}}"><input type="hidden" name="op" value="{{if eq .Status "open"}}close{{else}}reopen{{end}}"><input type="hidden" name="back" value="{{$d.Keep}}"><button class="ghost">{{if eq .Status "open"}}{{t "ol.close"}}{{else}}{{t "ol.reopen"}}{{end}}</button></form></div>
       <div class="small muted">{{.Widget}}{{if eq .Channel "telegram"}} · Telegram{{end}}{{with .Phone}} · {{.}}{{end}}{{with .Email}} · {{.}}{{end}}{{with .Page}} · <a href="{{.}}" target="_blank" rel="noopener">{{t "ol.page"}}</a>{{end}}{{with .Operator}} · {{t "ol.operator"}}: {{.}}{{end}}{{with .ConsentAt}} · <span title="{{t "ol.consent"}}">✓ {{t "ol.consent_at" (datetime .)}}</span>{{end}}</div>
@@ -46,6 +50,7 @@
           {{- if index $d.PastOpen .ID}}<div class="muted">{{.Last}}</div>{{end}}</div>{{end}}</details>{{end}}
       <div class="olmsgs" data-ol-msgs>{{range $d.Messages}}{{if eq .Kind "note"}}<div class="olnote small muted">{{.Body}} · {{datetime .At}}</div>{{else}}<div class="olm {{if or .Operator .Auto}}op{{else}}vis{{end}}{{if .Auto}} auto{{end}}{{if eq .Kind "hidden"}} secret{{end}}"><div class="small muted">{{if eq .Kind "hidden"}}{{icon "eye-off"}} {{end}}{{if eq .Kind "bot"}}🤖 {{t "ol.bot_msg"}}{{else if .Auto}}{{t "ol.auto_msg"}}{{else if .Operator}}{{.Operator}}{{else}}{{$x.Title}}{{end}}{{if eq .Kind "hidden"}} · {{t "ol.hidden_mark"}}{{end}} · {{datetime .At}}</div>{{nl2br .Body}}
         {{- if eq .Kind "form"}}<div class="small {{if .FormDone}}ol-formdone{{else}}muted{{end}}">{{if .FormDone}}✓ {{t "ol.form_filled" (datetime .FormDone)}}{{else}}{{t "ol.form_wait"}}{{end}}</div>{{end}}
+        {{- if eq .Kind "booking"}}<div class="small {{if .FormDone}}ol-formdone{{else}}muted{{end}}">{{if .FormDone}}✓ {{t "ol.booking_booked" (datetime .FormDone)}}{{else}}{{t "ol.booking_wait"}}{{end}}</div>{{end}}
         {{- if .FileName}}<div class="olfile">{{if .Image}}<a href="/openlines/file/{{.ID}}" target="_blank" rel="noopener"><img src="/openlines/file/{{.ID}}" alt="{{.FileName}}" loading="lazy"></a>{{else}}<a href="/openlines/file/{{.ID}}">{{icon "paperclip"}} {{.FileName}}</a> <span class="small muted">{{size .FileSize}}</span>{{end}}</div>{{end}}
         {{- if eq .ID $d.Read}}<div class="small muted olread">✓✓ {{t "ol.read"}}</div>{{end}}</div>{{end}}{{end}}</div>
       <div class="small muted oltyping" data-ol-typing hidden>{{t "ol.typing"}}</div>

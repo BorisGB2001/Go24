@@ -145,6 +145,99 @@
     msgs.append(t.content);
     if (near) bottom();
   };
+  const gone = id => {
+    msgs.querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
+    if (ctx.id === id) cancelCtx();
+  };
+  // the message's menu: reply, copy, subtask, edit and delete one's own (an administrator — any)
+  const pop = card.querySelector('[data-msgpop]');
+  const replyTo = form.querySelector('input[name=reply_to]');
+  const bar = form.querySelector('[data-chatctx]');
+  const ctx = { mode: '', id: '' };
+  const textOf = msg => { const t = msg.querySelector('.text'); return t ? (t.innerText ?? t.textContent) : ''; };
+  const cancelCtx = () => {
+    if (ctx.mode === 'edit') text.value = '';
+    ctx.mode = ''; ctx.id = ''; if (replyTo) replyTo.value = '';
+    if (bar) bar.hidden = true;
+    grow();
+  };
+  const setCtx = (mode, msg) => {
+    const body = textOf(msg);
+    ctx.mode = mode; ctx.id = msg.dataset.id;
+    if (replyTo) replyTo.value = mode === 'reply' ? msg.dataset.id : '';
+    if (bar) {
+      const title = bar.querySelector('[data-ctx-title]');
+      title.textContent = mode === 'edit' ? title.dataset.edit : title.dataset.reply + ': ' + msg.dataset.author;
+      bar.querySelector('[data-ctx-body]').textContent = body;
+      bar.hidden = false;
+    }
+    if (mode === 'edit') text.value = body;
+    grow(); text.focus();
+    text.setSelectionRange(text.value.length, text.value.length);
+  };
+  bar?.querySelector('[data-ctx-cancel]')?.addEventListener('click', cancelCtx);
+  text.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && ctx.mode) { e.preventDefault(); cancelCtx(); }
+    if (e.key === 'ArrowUp' && !text.value && !ctx.mode) { // ↑ in an empty field: change one's last message
+      const mine = [...msgs.querySelectorAll('.msg.mine')].pop();
+      if (mine) { e.preventDefault(); setCtx('edit', mine); }
+    }
+  });
+  let popMsg = null;
+  const closePop = () => { if (pop) pop.hidden = true; popMsg = null; };
+  const openPop = (btn, msg) => {
+    if (!pop) return;
+    popMsg = msg;
+    const own = msg.classList.contains('mine');
+    pop.querySelectorAll('[data-do]').forEach(b => {
+      b.hidden = b.hasAttribute('data-own') && !own && !(b.dataset.do === 'delete' && b.hasAttribute('data-any'));
+    });
+    const sub = pop.querySelector('[data-do=subtask]');
+    if (sub) sub.href = sub.getAttribute('href').replace(/comment=[^&]*/, 'comment=' + encodeURIComponent(msg.dataset.id));
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(4, Math.min(r.right - w, innerWidth - w - 4)) + 'px';
+    pop.style.top = (r.bottom + h + 4 > innerHeight ? Math.max(4, r.top - h - 2) : r.bottom + 2) + 'px';
+  };
+  document.addEventListener('click', e => {
+    if (pop && !pop.hidden && !e.target.closest('[data-msgpop]') && !e.target.closest('[data-msg-menu]')) closePop();
+  });
+  addEventListener('scroll', closePop, true);
+  pop?.addEventListener('click', async e => {
+    const b = e.target.closest('[data-do]');
+    const msg = popMsg;
+    if (!b || !msg) return;
+    if (b.dataset.do === 'subtask') { closePop(); return; } // the link opens the form
+    closePop();
+    switch (b.dataset.do) {
+      case 'reply': setCtx('reply', msg); break;
+      case 'edit': setCtx('edit', msg); break;
+      case 'copy':
+        try { await navigator.clipboard.writeText(textOf(msg)); } catch { /* no clipboard */ }
+        break;
+      case 'delete': {
+        if (!confirm(b.dataset.confirm)) return;
+        try {
+          const res = await fetch(`/t/${encodeURIComponent(card.dataset.task)}/comments/${encodeURIComponent(msg.dataset.id)}/delete`, {
+            method: 'POST', headers: { Accept: 'application/json' } });
+          if (res.ok) gone(msg.dataset.id);
+          else { const d = await res.json().catch(() => ({})); alert(d.error || form.dataset.failed); }
+        } catch { alert(form.dataset.failed); }
+        break;
+      }
+    }
+  });
+  // a click on a quote shows the message it answers
+  msgs.addEventListener('click', e => {
+    const q = e.target.closest('[data-goto]');
+    if (!q) return;
+    const m = msgs.querySelector(`.msg[data-id="${CSS.escape(q.dataset.goto)}"]`);
+    if (!m) return;
+    e.preventDefault();
+    m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    m.classList.add('flash-msg');
+    setTimeout(() => m.classList.remove('flash-msg'), 1500);
+  });
   // a message seen in the open chat is not news: its notifications are read (after the bell has heard of them)
   let readTimer = 0;
   const readNews = () => {
@@ -169,6 +262,9 @@
         if (document.visibilityState === 'visible') readNews(); else unseen = true;
       } catch { /* ignore a broken event */ }
     });
+    es.addEventListener('gone', e => { // deleted here or in the messenger
+      try { gone(JSON.parse(e.data).id); } catch { /* ignore a broken event */ }
+    });
   }
   let unseen = false; // came while the tab was hidden: read when the person looks
   document.addEventListener('visibilitychange', () => {
@@ -176,6 +272,12 @@
   });
   // reactions: a click on an emoji under a message puts it or takes it back
   msgs.addEventListener('click', async e => {
+    const mb = e.target.closest('[data-msg-menu]');
+    if (mb) {
+      const msg = mb.closest('.msg');
+      if (pop && !pop.hidden && popMsg === msg) closePop(); else openPop(mb, msg);
+      return;
+    }
     const b = e.target.closest('[data-react]');
     if (!b) return;
     const msg = b.closest('.msg');
@@ -195,7 +297,8 @@
     busy = true;
     let ok = false, data = {};
     try {
-      const res = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(new FormData(form)) });
+      const url = ctx.mode === 'edit' ? `/t/${encodeURIComponent(card.dataset.task)}/comments/${encodeURIComponent(ctx.id)}/edit` : form.action;
+      const res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json' }, body: new URLSearchParams(new FormData(form)) });
       ok = res.ok;
       try { data = await res.json(); } catch { data = {}; }
     } catch { ok = false; }
@@ -207,7 +310,10 @@
       return;
     }
     err?.remove();
+    const edited = ctx.mode === 'edit';
     add(data.id, data.html);
-    form.reset(); grow(); bottom(); text.focus();
+    form.reset(); cancelCtx();
+    if (!edited) bottom();
+    text.focus();
   });
 })();

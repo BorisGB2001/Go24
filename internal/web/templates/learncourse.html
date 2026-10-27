@@ -1,0 +1,58 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}
+<p class="muted small"><a href="/company/learning">{{icon "school"}} {{t "learn.title"}}</a></p>
+<div class="lhead card">
+  <div class="lcover c-{{$c.Color}}">{{icon "school"}}</div>
+  <div style="flex:1;min-width:0">
+    <h1>{{$c.Title}}{{if not $c.Published}} <span class="pill">{{t "learn.draft"}}</span>{{end}}</h1>
+    {{with $c.Description}}<p>{{nl2br .}}</p>{{end}}
+    <p class="muted small">{{t "learn.lessons_n" $c.Lessons}}{{with $c.AuthorName}} · {{t "learn.author"}} {{.}}{{end}}</p>
+    {{if $c.Lessons}}<p class="row"><span class="progress{{if $c.Overdue $d.Today}} over{{end}}" style="width:220px"><span style="width:{{$c.Percent}}%"></span></span>
+      <span class="small">{{t "learn.passed" $c.Done $c.Lessons}}</span>
+      {{if $c.Finished}}<span class="pill l-ok">{{t "learn.finished"}}</span>
+      <a class="button ghost small" href="/company/learning/{{$c.ID}}/certificate" target="_blank">{{icon "certificate"}} {{t "learn.certificate"}}</a>{{end}}</p>{{end}}
+    {{if $c.Assigned}}<p class="small{{if $c.Overdue $d.Today}} l-late{{else}} muted{{end}}">{{t "learn.assigned_you"}}{{with $c.AssignedBy}} ({{.}}){{end}}{{with $c.Due}} · {{t "learn.due"}} {{day (deref .)}}{{end}}</p>{{end}}
+    <p class="row">{{with $d.Next}}<a class="button primary" href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{icon "player-play"}} {{if $c.Finished}}{{t "learn.again"}}{{else if $c.Done}}{{t "learn.continue"}}{{else}}{{t "learn.start"}}{{end}}</a>{{end}}
+      {{if $d.Keep}}<a class="button ghost" href="/company/learning/{{$c.ID}}/edit">{{icon "edit"}} {{t "learn.edit"}}</a>{{end}}
+      {{if $d.Assign}}<button type="button" class="ghost" data-show="assignform">{{icon "user-plus"}} {{t "learn.assign"}}</button>{{end}}</p>
+  </div>
+</div>
+{{if $d.Assign}}<div class="card" id="assignform" style="max-width:640px" hidden>
+  <h2 class="row">{{icon "user-plus"}} {{t "learn.assign"}}<span style="flex:1"></span><button type="button" class="link" data-hide="assignform">{{icon "x"}}</button></h2>
+  <form method="post" action="/company/learning/{{$c.ID}}/assign" data-ajax data-failed="{{t "common.save_failed"}}">
+    <div class="form-error" data-error hidden></div>
+    <label>{{t "learn.assign_to"}} <span class="req">*</span></label>
+    {{template "upick" (upick "to" "" $d.Users "multi" "depts" "noself")}}
+    <label>{{t "learn.f.due"}}</label><input type="date" name="due" style="width:auto">
+    <p class="muted small">{{if $d.Keep}}{{t "learn.assign_hint"}}{{else}}{{t "learn.assign_hint_head"}}{{end}}</p>
+    <p class="row"><button class="primary">{{t "learn.assign"}}</button><button type="button" class="ghost" data-hide="assignform">{{t "common.cancel"}}</button></p>
+  </form>
+</div>{{end}}
+<h2>{{t "learn.lessons"}}</h2>
+{{if $d.Lessons}}<div class="card lplan">{{range lchapters $d.Lessons}}
+  {{with .Name}}<h3>{{.}}</h3>{{end}}
+  <ol class="llist">{{range .Lessons}}<li value="{{.N}}"{{if .Done}} class="done"{{end}}><a href="/company/learning/{{$c.ID}}/l/{{.ID}}">{{if .Done}}{{icon "circle-check"}}{{else if .Test}}{{icon "list-check"}}{{end}} {{.Title}}{{if .Test}} <span class="muted small">· {{t "learn.test"}}</span>{{end}}</a></li>{{end}}</ol>
+{{end}}</div>
+{{else}}<div class="empty">{{t "learn.no_lessons"}}</div>{{end}}
+{{if $d.Assign}}<h2 id="learners">{{t "learn.learners"}}</h2>
+{{template "learners" (dict "List" $d.Learners "Today" $d.Today "Remove" true)}}{{end}}
+{{end}}
+
+{{define "lcert"}}{{$c := .C}}<!doctype html><html><head><meta charset="utf-8"><title>{{t "learn.certificate"}}: {{$c.Title}}</title>
+<style>body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:#111;background:#fff;margin:24px}
+.cert{max-width:860px;margin:0 auto;border:10px double #0d9488;padding:56px 48px;text-align:center}
+.cert h1{font-size:40px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px;color:#0d9488}.cert .who{font-size:30px;font-weight:600;margin:28px 0 6px}
+.cert .course{font-size:24px;font-weight:600;margin:10px 0 28px}.muted{color:#555}.pbar{text-align:center;margin-bottom:16px}
+@media print{.pbar{display:none}body{margin:0}.cert{border-width:8px}}</style></head><body>
+<div class="pbar"><button type="button" data-print-now>{{t "meeting.print"}}</button></div>
+<div class="cert">
+<h1>{{t "learn.certificate"}}</h1>
+<p class="muted">{{t "learn.cert_given"}}</p>
+<p class="who">{{.P.FullName}}</p>
+{{with .P.Position}}<p class="muted">{{.}}</p>{{end}}
+<p>{{t "learn.cert_passed"}}</p>
+<p class="course">«{{$c.Title}}»</p>
+<p class="muted">{{t "learn.lessons_n" $c.Lessons}} · {{day .At}}</p>
+</div>
+<script src="{{asset "js/learn.js"}}"></script>
+</body></html>{{end}}

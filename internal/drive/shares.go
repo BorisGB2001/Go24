@@ -32,11 +32,13 @@ type SharedFolder struct {
 	File                             bool
 }
 
-// mine: the shares of the user $1 — to them or to a department of theirs (or one above it)
+// mine: the shares of the user $1 — to them or to a department of theirs (or one above it), but not of a folder or
+// a file they gave up («Отказаться от доступа»)
 const mine = `(sh.user_id = $1 OR sh.department_id IN (WITH RECURSIVE dep AS (
 		SELECT department_id AS id FROM user_departments WHERE user_id = $1
 		UNION SELECT d.parent_id FROM departments d JOIN dep ON d.id = dep.id WHERE d.parent_id IS NOT NULL)
-	SELECT id FROM dep))`
+	SELECT id FROM dep)) AND NOT EXISTS (SELECT 1 FROM drive_share_declines dc
+		WHERE dc.user_id = $1 AND (dc.folder_id = sh.folder_id OR dc.file_id = sh.file_id))`
 
 // best: the strongest access of the shares grouped
 const best = `(ARRAY['read', 'edit', 'full'])[max(array_position(ARRAY['read', 'edit', 'full'], sh.access))]`
@@ -184,6 +186,11 @@ func (s *Store) SetShare(ctx context.Context, userID string, d Drive, folderID, 
 	if err != nil {
 		return err
 	}
+	if kind == "user" { // opened to them in person: whatever they gave up comes back
+		if _, err := tx.Exec(ctx, `DELETE FROM drive_share_declines WHERE user_id = $1 AND `+item+` = $2`, whomID, itemID); err != nil {
+			return err
+		}
+	}
 	if added { // «Вам открыли папку» (файл): the employee, or everyone in the department and the ones below it
 		whom := `SELECT $1::uuid`
 		if kind == "department" {
@@ -229,6 +236,56 @@ func (s *Store) DeleteShare(ctx context.Context, userID string, d Drive, shareID
 		return ErrNotFound
 	}
 	return err
+}
+
+// LeaveShare is «Отказаться от доступа»: the user gives up a folder (or, with file, a file) of someone's «Мой диск»
+// shared with them — in person or with their department. It goes from «Общие со мной» and their «Моего диска» (if
+// connected), the owner learns of it.
+func (s *Store) LeaveShare(ctx context.Context, userID, itemID string, file bool) error {
+	item, from, owner := "folder_id", "drive_folders", "owner_id"
+	if file {
+		item, from, owner = "file_id", "files", "drive_owner"
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var ownerID, name string
+	err = tx.QueryRow(ctx, `SELECT f.`+owner+`::text, f.name FROM `+from+` f
+		WHERE f.id::text = $2 AND f.drive = 'user' AND f.`+owner+` <> $1
+			AND EXISTS (SELECT 1 FROM drive_shares sh WHERE sh.`+item+` = f.id AND `+mine+`)`, userID, itemID).Scan(&ownerID, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM drive_shares WHERE `+item+`::text = $1 AND user_id = $2`, itemID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO drive_share_declines (user_id, `+item+`) VALUES ($1, $2)
+		ON CONFLICT (user_id, `+item+`) WHERE `+item+` IS NOT NULL DO NOTHING`, userID, itemID); err != nil {
+		return err
+	}
+	if !file {
+		if _, err := tx.Exec(ctx, `DELETE FROM drive_connections WHERE user_id = $1 AND folder_id::text = $2`, userID, itemID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, body, url) VALUES ($1, $2, 'disk_share_left', $3, $4)`,
+		ownerID, userID, name, leftURL(file, itemID)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// leftURL: where the owner's notification of a share given up leads — the folder, or the file's card.
+func leftURL(file bool, itemID string) string {
+	if file {
+		return "/files/" + itemID + "/about"
+	}
+	return "/disk/my?folder=" + itemID
 }
 
 // isFKOrUUID: no such employee or department (or not even an id).

@@ -27,7 +27,9 @@ n8n работает в нашем docker compose (сервис `n8n`, обра�
 `openline.started` (новый диалог открытой линии), `openline.message` (сообщение посетителя или оператора, `data.from` —
 `visitor` | `operator`), `openline.closed` (диалог закрыт, `data.spam` — как спам), `call.ended` (звонок телефонии
 завершён: `data` — звонок, как в `GET /api/v1/telephony/calls/{id}`, без записи). REST открытых линий — `/api/v1/openlines/…`
-(ключ `openlines:read` / `openlines:write`): линии, диалоги и сообщения, ответ, передача, закрытие, лид, быстрые ответы, статистика.
+(ключ `openlines:read` / `openlines:write`): линии, диалоги и сообщения, ответ, передача, закрытие, лид, быстрые ответы, статистика;
+CRM-форма в диалог — `POST …/dialogs/{id}/form` `{"form_id"}`, ссылка для записи — `POST …/dialogs/{id}/booking`
+`{"booking_link_id"}` (сообщения `kind` `booking` / `booking_done`, `booking.done_at` — когда клиент записался).
 
 Запрос — `POST` JSON:
 
@@ -92,6 +94,8 @@ CRM (области `crm:read`, `crm:write`), `{kind}` = `deals`, `leads`, `cont
 | `GET /api/v1/crm/{kind}?q=…` | список (для сделок можно `&pipeline=<id>`, для лидов `&repeat=1` — только повторные, `&repeat=0` — только первичные); у лида `is_repeat: true` — «Повторный лид»: клиент с тем же телефоном или e-mail уже был, `contact_id`/`company_id` — он |
 | `GET /api/v1/crm/{kind}/{id}` | карточка |
 | `POST /api/v1/crm/{kind}` | новая карточка: `{"title", "name", "phone", "email", "source", "amount", "currency", "company_id", "contact_id", "pipeline_id", "stage_id", "responsible_id", "observer_ids", "comment"}` (`observer_ids` — наблюдатели сделки или лида; у лида, контакта и компании вместо `phone`/`email` можно `"phones": [{"value", "type"}]`, `"emails": [...]` — несколько, первый основной; типы телефона `work`, `mobile`, `home`, `other`, e-mail — `work`, `home`, `other`; карточка отдаёт их в `phones`, `emails`) |
+| `PATCH /api/v1/crm/{kind}/{id}` | изменить карточку, как crm.*.update: меняются только переданные поля (те же, что в `POST`); `stage_id` переводит сделку или лид на стадию, `phone`/`email` заменяют основной телефон и e-mail; неизвестное поле — ошибка 422 |
+| `DELETE /api/v1/crm/{kind}/{id}` | удалить карточку, как crm.*.delete: она уходит в корзину CRM, оттуда восстанавливается (204) |
 | `POST /api/v1/crm/{kind}/{id}/stage` | `{"stage_id": …}` — сделки и лиды (сработают роботы стадии) |
 | `PUT /api/v1/crm/{deals\|leads}/{id}/observers` | `{"observer_ids": [...]}` — наблюдатели карточки (весь список); видят её при любых правах и получают уведомления о комментариях и стадиях |
 | `PUT /api/v1/crm/deals/{id}/parents` | «Связи» элемента смарт-процесса: `{"parent_ids": [...]}` — все родители сразу, по одному каждого вида, к которому привязан смарт-процесс (сделка или элемент другого смарт-процесса); `[]` — отвязать; у карточки элемента — `parent_ids`, при создании (`POST /api/v1/crm/deals`) — тоже `parent_ids` |
@@ -177,6 +181,9 @@ ID — владелец ключа:
 | `POST /api/v1/users/invite` | пригласить сотрудников (`user.add`; администратор или сотрудник кадров с правом «Приглашать»): `{"people": [{"email", "name"}], "department_id"}` → `201 {"invites": [{"id", "email", "name", "department_id", "department", "state", "link", "mailed", "expires", "created", "invited_by": {"id", "name"}}]}`; ссылка регистрации Authentik на 7 дней уходит письмом из почтового ящика владельца ключа; при первом входе сотрудник попадает в отдел, в «Кадровых изменениях» — «принят» |
 | `GET /api/v1/users/invites` | последние приглашения; `state` — `waiting`, `joined`, `expired`, `revoked` (`link` — только у ждущих) |
 | `POST /api/v1/users/invites/{id}/resend`, `DELETE /api/v1/users/invites/{id}` | «Пригласить повторно» (новая ссылка ещё на неделю, старая перестаёт работать) и «Отменить» |
+| `GET /api/v1/users/join-requests` | заявки «Быстрой регистрации»: ждущие (`pending`), затем решённые за 30 дней (`accepted` с `invite_id`, `rejected`) |
+| `POST /api/v1/users/join-requests/{id}/accept` `{"department_id"}`, `POST …/{id}/reject` | принять заявку (приглашение, как `POST /users/invite`) или отклонить |
+| `GET`/`PUT /api/v1/settings/employees`, `POST …/employees/link` | «Настройки → Сотрудники» (администратор): `invite_all`, `register`, `approve`, `domains`, `link`; `link` — новая ссылка регистрации |
 | `GET /api/v1/departments` | структура (`department.get`) деревом по порядку: `[{"id", "parent_id", "name", "head_id", "head_name", "deputies": [{"id", "name", "position"}], "employees": […], "depth"}]`; без `parent_id` — сама компания |
 | `POST /api/v1/departments` | `{"name", "parent_id", "head_id"}` — новый отдел (`department.add`; без `parent_id` — под компанией) — ответ `{"id"}` |
 | `PATCH /api/v1/departments/{id}` | `{"name", "parent_id", "head_id", "deputies": [ID]}` — изменить переданное (`department.update`), новый `parent_id` переносит отдел; `DELETE` — удалить пустой отдел |
@@ -191,6 +198,13 @@ ID — владелец ключа:
 | `POST /api/v1/absences` | `{"user_id", "kind", "from", "to", "comment", "acting_id", "acting_rights": ["view", "work", "control", "manage", "notify"]}` — ответ `{"id"}`; `DELETE /api/v1/absences/{id}` — удалить |
 | `GET /api/v1/honors?department_id=&user_id=&archive=1` | «Доска почёта»: кто на доске сейчас (и с будущей даты), `archive=1` — чей срок прошёл: `[{"id", "user_id", "name", "position", "departments", "reason", "from", "to", "by": {"id", "name"}, "created"}]`; нет `to` — бессрочно |
 | `POST /api/v1/honors` | `{"user_id", "reason", "from", "to"}` — поместить на доску (администратор или сотрудник кадров с правом «Доска почёта»; `from` — сегодня, без `to` — пока не снимут), сотруднику — уведомление; `DELETE /api/v1/honors/{id}` — снять с доски |
+| `GET /api/v1/meetings?role=owner\|member&status=prepare\|action\|done&q=` | «Собрания и планёрки» (как `meeting.*` в корпоративном портале): собрания, которые видит сотрудник ключа (организатор, ведёт протокол, участник; администратор — все): `[{"id", "title", "description", "place", "start", "minutes", "status", "owner", "keeper", "members", "prev_id", "next_id", "event_id", "protocol", "started", "finished"}]`; `GET …/meetings/{id}` — ещё `items` (повестка: `id`, `parent_id`, `num`, `title`, `reporter`, `minutes`, `result`, `tasks`) и `carried` — незакрытые задачи прошлого собрания серии |
+| `POST /api/v1/meetings` | `{"title", "start" (RFC 3339 или `2026-10-27T10:00`), "minutes" (60), "place", "description", "owner_id", "keeper_id", "members": [ID], "prev_id"}` — собрание в календаре организатора, участникам — приглашение и уведомление; `PATCH …/{id}` — те же поля и `"protocol"`, `"status": "prepare\|action\|done"` (завершённое — только чтение до `action`); `DELETE …/{id}`; `POST …/{id}/next {"start"}` — следующее собрание серии (через неделю): те же люди, нерешённые вопросы. Меняют организатор, ведущий протокол и администратор |
+| `POST /api/v1/meetings/{id}/items` | `{"title", "reporter_id", "minutes", "result", "parent_id"}` — вопрос повестки (подпункт — с `parent_id`); `PATCH`/`DELETE …/items/{item}`; `POST …/items/{item}/tasks {"project": "KEY", "title", "description", "responsible_id", "deadline"}` — задача по вопросу, ответ `{"key"}` |
+| `GET /api/v1/pulse?period=today\|week\|month\|quarter` (или `?from=&to=` — даты, до года) `&dept=` | «Пульс компании»: администратору — вся компания, руководителю и заместителю — свои отделы с подотделами (остальным — 403): `{"from", "to", "total", "active", "today", "involved", "index", "involved_tools", "days": [{"day", "users"}], "tools": [{"tool", "users", "percent", "daily"}], "departments": [{"id", "name", "depth", "total", "active", "involved", "index"}], "users": [{"id", "name", "position", "departments", "tools", "days", "involved"}]}`; инструменты — `tasks`, `im`, `feed`, `calendar`, `drive`, `docs`, `mail`, `crm`, `telephony`, `openlines`, `kb`, `bp`, `company`, `collabs`, `store`, `sites`, `marketing`, `booking`, `sign`, `bi`, `mobile` (с телефона; во вовлечённость не входит); вовлечён — 4 инструмента и больше за период |
+| `GET /api/v1/learning/courses?mine=1&q=` | «Обучение»: курсы, которые видит владелец ключа (ведущие обучение — все, с черновиками), с его прогрессом: `[{"id", "title", "description", "published", "author", "lessons", "done", "finished", "assigned", "due"}]`; `mine=1` — назначенные и начатые; `GET /api/v1/learning/courses/{id}` — курс с `items`: `[{"id", "kind" (lesson \| test), "chapter", "title", "body", "pass_pct", "attempts", "minutes", "done"}]` |
+| `GET /api/v1/learning/assignments?course_id=&department_id=&status=active\|finished\|overdue` | Кому назначены курсы (ведущие обучение — все, руководители и заместители — сотрудники своих отделов, остальным — 403): `[{"user_id", "name", "course_id", "course", "done", "total", "finished", "overdue", "best_test_pct", "due", "assigned", "assigned_by"}]` |
+| `POST /api/v1/learning/assignments` | `{"course_id", "to": ["ID сотрудника", "dept:ID отдела"], "due": "2026-11-30"}` — назначить курс (отдел — его сотрудники сейчас, с подотделами; руководитель — только своим), новым — уведомление; ответ `{"assigned": N}`; `DELETE /api/v1/learning/assignments?course_id=&user_id=` — снять назначение |
 
 Коллабы (как `socialnetwork.collab.*` в корпоративном портале; области `collabs:read`, `collabs:write`). Ключ видит только коллабы
 своего сотрудника (чужой — `404`), права — как на странице коллаба; коллаб в архиве не меняется (`422`), кроме
@@ -226,7 +240,7 @@ ID — владелец ключа:
 
 | Метод | Что |
 |---|---|
-| `GET /api/v1/bp/templates?entity=` | шаблоны (`deal`, `lead`, `contact`, `company`, `file` — документ Общего диска, `entity_id` — id файла, `none` — без карточки): `[{"id", "name", "description", "entity", "type_id", "active", "auto_create", "auto_change", "fields", "steps", "url"}]`; `steps` — администраторам |
+| `GET /api/v1/bp/templates?entity=` | шаблоны (`deal`, `lead`, `contact`, `company`, `file` — документ Общего диска, `entity_id` — id файла, `list` — элементы списка `list_id`, `entity_id` — id элемента, `none` — без карточки): `[{"id", "name", "description", "entity", "type_id", "active", "auto_create", "auto_change", "fields", "steps", "url"}]`; `steps` — администраторам |
 | `GET /api/v1/bp/templates/{id}` | шаблон |
 | `POST /api/v1/bp/templates` | создать (администраторы): `{"name", "description", "entity", "type_id", "active", "auto_create", "auto_change", "fields": [{"key", "label", "kind": "string"\|"text"\|"number"\|"date", "required"}], "steps": [{"kind", "text", "to", …}]}` — шаги в том виде, в каком их отдаёт `GET` |
 | `PATCH /api/v1/bp/templates/{id}` | изменить: что не передано — остаётся |
@@ -238,5 +252,20 @@ ID — владелец ключа:
 | `DELETE /api/v1/bp/instances/{id}` | удалить процесс с историей (`bizproc.workflow.kill`, администраторы) |
 | `GET /api/v1/bp/tasks` | задания, которые ждут решения владельца ключа (`bizproc.task.list`): `[{"id", "process_id", "process", "kind": "approve"\|"review"\|"request", "text", "step", "fields", "can_reject", "url"}]` |
 | `POST /api/v1/bp/tasks/{id}/complete` | решение (`bizproc.task.complete`): `{"decision": "approve"\|"reject"\|"seen"\|"answer", "comment", "values": {…} (ответ на запрос)}`; ответ — процесс |
+
+Списки (как `lists.get`, `lists.field.get`, `lists.element.*` в корпоративном портале; области `lists:read` — чтение, `lists:write` —
+элементы). Ключ видит списки, которые видит его владелец, и меняет элементы там, где ему можно; сами списки (поля,
+права) настраивают администраторы на странице «Бизнес-процессы → Списки». Бизнес-процессы списка запускаются и от
+элементов, добавленных и изменённых через REST:
+
+| Метод | Что |
+|---|---|
+| `GET /api/v1/lists` | списки: `[{"id", "name", "description", "fields": [{"key", "label", "kind", "required", "options", "default"}], "elements", "can_write", "url"}]` |
+| `GET /api/v1/lists/{id}` | список с полями |
+| `GET /api/v1/lists/{id}/elements` | элементы: `?q=` (в названии и полях), `?sort=name\|created\|changed\|<ключ поля>`, `?desc=1`, `?limit=` (до 500, по умолчанию 50), `?offset=`; `[{"id", "list_id", "name", "values": {ключ: значение}, "created_by", "created_at", "changed_by", "changed_at", "url"}]` |
+| `POST /api/v1/lists/{id}/elements` | добавить: `{"name", "values": {…}}` — «Да/Нет» `Y`/`N`, сотрудник — id, дата `ГГГГ-ММ-ДД`, дата и время `ГГГГ-ММ-ДДTчч:мм`; не переданное — значение по умолчанию; ошибка проверки — 422 |
+| `GET /api/v1/lists/{id}/elements/{element}` | элемент |
+| `PATCH /api/v1/lists/{id}/elements/{element}` | изменить: что не передано — остаётся |
+| `DELETE /api/v1/lists/{id}/elements/{element}` | удалить |
 
 Задачи, проекты, комментарии, уведомления, мессенджер — см. `internal/web/api.go`.

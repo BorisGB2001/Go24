@@ -194,7 +194,7 @@ func (s *Store) SendLetter(ctx context.Context, userID, mailboxID string, l Lett
 		}
 		msg, copyMsg, sec = out[0], out[1], x
 	}
-	if err := sendSMTP(a, rcpts, msg, l.Delivery); err != nil {
+	if err := s.sendSMTP(ctx, a, rcpts, msg, l.Delivery); err != nil {
 		return i18n.E("err.mail_send", err.Error())
 	}
 	if l.noCopy {
@@ -496,7 +496,10 @@ func smtpCmd(c *smtp.Client, code int, format string, args ...any) error {
 }
 
 // sendSMTP sends the letter; delivery — ask the servers for a delivery receipt (DSN) when the server can.
-func sendSMTP(a account, to []string, msg []byte, delivery bool) error {
+func (s *Store) sendSMTP(ctx context.Context, a account, to []string, msg []byte, delivery bool) error {
+	if err := s.authorize(ctx, &a); err != nil {
+		return err
+	}
 	addr := net.JoinHostPort(a.SMTPHost, strconv.Itoa(a.SMTPPort))
 	cfg := &tls.Config{ServerName: a.SMTPHost, MinVersion: tls.VersionTLS12}
 	var conn net.Conn
@@ -522,7 +525,11 @@ func sendSMTP(a account, to []string, msg []byte, delivery bool) error {
 		}
 	}
 	if ok, _ := c.Extension("AUTH"); ok {
-		if err := c.Auth(plainAuth{a.Login, a.password}); err != nil {
+		var auth smtp.Auth = plainAuth{a.Login, a.password}
+		if a.oauth != "" {
+			auth = smtpXOAuth2{xoauth2{a.Login, a.token}}
+		}
+		if err := c.Auth(auth); err != nil {
 			return err
 		}
 	}
@@ -598,7 +605,7 @@ func (s *Store) SendReceipt(ctx context.Context, userID, letterID string, r Rece
 		l.Refs = []string{m.MessageID}
 	}
 	msg, _ := compose(e, l)
-	if err := sendSMTP(a, []string{to.Address}, msg, false); err != nil {
+	if err := s.sendSMTP(ctx, a, []string{to.Address}, msg, false); err != nil {
 		return i18n.E("err.mail_send", err.Error())
 	}
 	return nil

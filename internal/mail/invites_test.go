@@ -17,6 +17,8 @@ import (
 // TestInviteByMail against a mail server (GreenMail) and the test database: the organizer's go24 meeting goes as an
 // invitation (REQUEST) to someone's mailbox, where it is read and accepted with words; the answer (REPLY) comes back
 // to the organizer's mailbox and marks the person accepted; an answer from a shared mailbox goes as the mailbox.
+// «Предложить новое время»: Anna proposes another time (COUNTER), the organizer declines it (DECLINECOUNTER), and
+// Anna's proposal is forgotten.
 func TestInviteByMail(t *testing.T) {
 	url, host := os.Getenv("GO24_TEST_DATABASE_URL"), os.Getenv("GO24_TEST_MAIL_HOST")
 	if url == "" || host == "" {
@@ -141,5 +143,68 @@ func TestInviteByMail(t *testing.T) {
 	must(err)
 	if tk.Status != "progress" || tk.AssigneeID != anna {
 		t.Fatalf("answered request = %+v", tk)
+	}
+
+	// Anna proposes another time, «Под вопросом»: the meeting stays in her calendar, the organizer gets a COUNTER
+	pStart := start.Add(2 * time.Hour)
+	if err := s.Propose(ctx, anna, letter, "accepted", "", pStart, pStart.Add(time.Hour)); err == nil {
+		t.Fatal("proposed with «accepted»")
+	}
+	if err := s.Propose(ctx, anna, letter, "tentative", "", pStart, pStart); err == nil {
+		t.Fatal("proposed an empty time")
+	}
+	must(s.Propose(ctx, anna, letter, "tentative", "Лучше позже", pStart, pStart.Add(time.Hour)))
+	st, err := s.InviteAnswer(ctx, anna, "meet@go24")
+	must(err)
+	if st.Status != "tentative" || st.EventID == "" || st.ProposedStart == nil || !st.ProposedStart.Equal(pStart) {
+		t.Fatalf("Anna's answer = %+v", st)
+	}
+	time.Sleep(time.Second)
+	must(s.Sync(ctx, orgBox))
+	must(pool.QueryRow(ctx, `SELECT status FROM event_externals WHERE event_id = $1`, ev).Scan(&status))
+	if status != "tentative" {
+		t.Fatalf("the organizer's meeting after the proposal: %s", status)
+	}
+	olist, _ = s.List(ctx, org, oin.ID, "", false)
+	var counter string
+	for _, m := range olist {
+		if strings.HasPrefix(m.Subject, "mail.counter.subject") {
+			counter = m.ID
+		}
+	}
+	if counter == "" {
+		t.Fatalf("no proposal came: %+v", olist)
+	}
+	c, ok, err := s.Invite(ctx, org, counter)
+	must(err)
+	if !ok || c.Method != "COUNTER" || !c.Start.Equal(pStart) || c.Comment != "Лучше позже" || len(c.Attendees) != 1 || !strings.EqualFold(c.Attendees[0].Email, annaAddr) {
+		t.Fatalf("proposal = %+v", c)
+	}
+	if d, _ := s.CounterDecision(ctx, org, counter); d != "" {
+		t.Fatalf("decided already: %s", d)
+	}
+	if err := s.DecideCounter(ctx, anna, counter, "declined", ""); err == nil {
+		t.Fatal("Anna decided on the organizer's letter")
+	}
+	must(s.DecideCounter(ctx, org, counter, "declined", "Время занято"))
+	if d, _ := s.CounterDecision(ctx, org, counter); d != "declined" {
+		t.Fatalf("decision = %q", d)
+	}
+	time.Sleep(time.Second)
+	must(s.Sync(ctx, annaBox))
+	st, err = s.InviteAnswer(ctx, anna, "meet@go24")
+	must(err)
+	if st.ProposedStart != nil || st.Status != "tentative" {
+		t.Fatalf("Anna's answer after the decline = %+v", st)
+	}
+	list, _ = s.List(ctx, anna, inbox.ID, "", false)
+	var declined string
+	for _, m := range list {
+		if strings.HasPrefix(m.Subject, "mail.counter.declined_subject") {
+			declined = m.ID
+		}
+	}
+	if d, ok, _ := s.Invite(ctx, anna, declined); !ok || d.Method != "DECLINECOUNTER" || d.Comment != "Время занято" {
+		t.Fatalf("decline = %+v", d)
 	}
 }

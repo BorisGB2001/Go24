@@ -42,6 +42,15 @@ func New(ctx context.Context, endpoint, accessKey, secretKey, bucket string, use
 	return nil, fmt.Errorf("storage not reachable at %s: %w", endpoint, lastErr)
 }
 
+// Ping asks the S3 endpoint whether the bucket is there («Состояние системы»).
+func (s *Store) Ping(ctx context.Context) error {
+	ok, err := s.client.BucketExists(ctx, s.bucket)
+	if err == nil && !ok {
+		err = fmt.Errorf("bucket %s not found", s.bucket)
+	}
+	return err
+}
+
 func (s *Store) ensureBucket(ctx context.Context) error {
 	exists, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {

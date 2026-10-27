@@ -53,7 +53,13 @@ func (s *Server) mailCertAdd(w http.ResponseWriter, r *http.Request, sess auth.S
 		return
 	}
 	s.Log.Info("mail certificate added", "user_id", sess.UserID, "email", c.Email, "sha1", c.SHA1)
-	http.Redirect(w, r, settingsURL("security", "msg", s.tr(r, "mail.smime.added", c.Email)), http.StatusSeeOther)
+	msg := s.tr(r, "mail.smime.added", c.Email)
+	if n, err := s.Mail.Redecrypt(r.Context(), sess.UserID); err != nil { // letters that came before it
+		s.Log.Warn("mail redecrypt", "user_id", sess.UserID, "err", err)
+	} else if n > 0 {
+		msg = s.tr(r, "mail.smime.opened", c.Email, n)
+	}
+	http.Redirect(w, r, settingsURL("security", "msg", msg), http.StatusSeeOther)
 }
 
 func (s *Server) mailCertDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {

@@ -750,6 +750,9 @@ func (s *Service) inbound(ctx context.Context, roomID string, ev matrix.Event) e
 			return err
 		}
 	}
+	if handled, err := s.inboundCommentChange(ctx, sender, ev); handled || err != nil {
+		return err
+	}
 	if ev.Type != "m.room.message" {
 		return nil
 	}
@@ -817,7 +820,14 @@ func (s *Service) inbound(ctx context.Context, roomID string, ev matrix.Event) e
 	if err != nil {
 		return err
 	}
-	c, err := s.Tasks.PostComment(ctx, userID, taskID, body, mentions...)
+	var replyTo string // an answer to a message of the task (not to the thread's header) quotes it
+	if irt, ok := rel["m.in_reply_to"].(map[string]any); ok && rel["is_falling_back"] != true {
+		target, _ := irt["event_id"].(string)
+		if t, id, err := s.Tasks.CommentByEvent(ctx, target); err == nil && t == taskID {
+			replyTo = id
+		}
+	}
+	c, err := s.Tasks.PostReply(ctx, userID, taskID, replyTo, body, mentions...)
 	if errors.Is(err, tasks.ErrForbidden) || errors.Is(err, tasks.ErrNotFound) {
 		return nil
 	}

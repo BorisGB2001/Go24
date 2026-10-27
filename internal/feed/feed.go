@@ -115,13 +115,17 @@ type Filter struct {
 	// it is — poll | gratitude | bp (business processes) | tasks (the events of tasks only), "" — everything
 	Query, Author, Kind string
 	From                time.Time
-	Favorites           bool   // only the viewer's favourites
-	Pinned              bool   // only the posts the viewer pinned (all of them, newest pin first)
-	NoPinned            bool   // without them (they are shown above the feed)
-	Post                string // one post only: the link of a post or of its comment
-	Hidden              bool   // only the posts the viewer hid («Скрытые»); otherwise they are left out
-	Posts               bool   // posts only, without the events of tasks (REST)
-	Tag                 string // only the posts with this tag
+	Favorites           bool      // only the viewer's favourites
+	Pinned              bool      // only the posts the viewer pinned (all of them, newest pin first)
+	NoPinned            bool      // without them (they are shown above the feed)
+	Post                string    // one post only: the link of a post or of its comment
+	Hidden              bool      // only the posts the viewer hid («Скрытые»); otherwise they are left out
+	Posts               bool      // posts only, without the events of tasks (REST)
+	Tag                 string    // only the posts with this tag
+	Till                time.Time // only the posts before it (the end of «по» or of a period)
+	Mentions            bool      // only the posts where the viewer was mentioned, in the text or a comment
+	// only the posts to these addressees (any of them): people or «dept:ID» (a department, as the picker gives it)
+	To []string
 }
 
 // Kinds are the values of Filter.Kind.
@@ -129,7 +133,7 @@ var Kinds = []string{"poll", "gratitude", "bp", "tasks", SourceWelcome, SourceMe
 
 // posts: the filter leaves posts out (only task events).
 func (f Filter) events() bool {
-	return !f.Posts && !f.Important && !f.Hidden && !f.Mine && !f.Favorites && !f.Pinned && f.Project == "" && f.Query == "" && f.Author == "" && f.Post == "" && f.Tag == "" &&
+	return !f.Posts && !f.Important && !f.Hidden && !f.Mine && !f.Favorites && !f.Pinned && !f.Mentions && len(f.To) == 0 && f.Project == "" && f.Query == "" && f.Author == "" && f.Post == "" && f.Tag == "" &&
 		(f.Kind == "" || f.Kind == "tasks")
 }
 
@@ -157,6 +161,9 @@ func (s *Store) List(ctx context.Context, userID string, f Filter) ([]Item, erro
 func (s *Store) list(ctx context.Context, userID string, f Filter, only string) ([]Item, error) {
 	if f.Before.IsZero() {
 		f.Before = time.Now().Add(time.Minute)
+	}
+	if !f.Till.IsZero() && f.Till.Before(f.Before) {
+		f.Before = f.Till
 	}
 	if f.Post != "" {
 		only = f.Post
@@ -200,6 +207,24 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 	if !f.From.IsZero() {
 		args = append(args, f.From)
 		where = append(where, "p.created_at >= $"+strconv.Itoa(len(args)))
+	}
+	if f.Mentions {
+		where = append(where, "EXISTS (SELECT 1 FROM feed_mentions x WHERE x.post_id = p.id AND x.user_id = $1)")
+	}
+	if len(f.To) > 0 {
+		var people, depts []string
+		for _, ref := range f.To {
+			if dept, ok := strings.CutPrefix(ref, "dept:"); ok {
+				depts = append(depts, dept)
+			} else {
+				people = append(people, ref)
+			}
+		}
+		// a person by name or through their department
+		args = append(args, people, depts)
+		pn, dn := "$"+strconv.Itoa(len(args)-1), "$"+strconv.Itoa(len(args))
+		where = append(where, "(EXISTS (SELECT 1 FROM unnest("+pn+"::text[]) t WHERE go24_feed_recipient(p.id, t::uuid))"+
+			" OR EXISTS (SELECT 1 FROM feed_post_recipients x WHERE x.post_id = p.id AND x.department_id::text = ANY("+dn+"::text[])))")
 	}
 	if f.Favorites {
 		where = append(where, "EXISTS (SELECT 1 FROM feed_favorites x WHERE x.post_id = p.id AND x.user_id = $1)")
@@ -472,7 +497,7 @@ func (s *Store) CreatePostTo(ctx context.Context, authorID, projectID string, to
 			if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, post_id, body)
 				SELECT u.id, $2, $3, $1, left(coalesce(nullif($4, ''), $5), 300) FROM users u
 				WHERE u.active AND NOT u.guest AND u.id <> $2 AND go24_feed_recipient($1, u.id) AND NOT go24_quiet()`,
-				id, authorID, kind, title, body); err != nil {
+				id, authorID, kind, title, msgfmt.Plain(body)); err != nil {
 				return err
 			}
 		}
@@ -615,12 +640,17 @@ func (s *Store) notifyMentions(ctx context.Context, tx pgx.Tx, actor, postID, te
 		ON CONFLICT (post_id, user_id) DO NOTHING`, postID, ids); err != nil {
 		return err
 	}
+	// «Упоминания» of their feed
+	if _, err := tx.Exec(ctx, `INSERT INTO feed_mentions (post_id, user_id)
+		SELECT $1, u.id FROM users u WHERE u.id = ANY($2::uuid[]) ON CONFLICT DO NOTHING`, postID, ids); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, post_id, body)
 		SELECT u.id, $3, 'mention', p.id, left($4, 300) FROM users u JOIN feed_posts p ON p.id = $1
 		WHERE u.id = ANY($2::uuid[]) AND u.active AND NOT go24_quiet()
 		  AND `+reader+`
 		  AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = u.id AND n.post_id = p.id AND n.created_at = now())`,
-		postID, ids, actor, strings.TrimSpace(text))
+		postID, ids, actor, strings.TrimSpace(msgfmt.Plain(text)))
 	return err
 }
 

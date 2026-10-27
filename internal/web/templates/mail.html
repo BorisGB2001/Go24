@@ -44,9 +44,10 @@
               <button class="primary small">{{t "common.create"}}</button></form>
             <a class="button ghost small" href="/mail/export?box={{$b.ID}}">{{icon "download"}} {{t "mail.export.menu"}}</a>
             <a class="button ghost small" href="/mail/import?box={{$b.ID}}">{{icon "cloud-upload"}} {{t "mail.fimport.menu"}}</a>
+            {{with $b.OAuth}}<form method="post" action="/mail/oauth" data-native><input type="hidden" name="service" value="{{.}}"><button class="ghost small" title="{{t "mail.oauth_again_hint"}}">{{icon "key"}} {{t "mail.oauth_again"}}</button></form>{{end}}
             <form method="post" action="/mail/{{$b.ID}}/delete" data-confirm="{{t "mail.remove_confirm"}}" data-native><button class="ghost small">{{icon "x"}} {{t "mail.disconnect"}}</button></form>
           </div></details></div>
-      <div class="small muted mbox-state">{{with $b.SyncedAt}}{{t "mail.synced" (datetime (deref .))}}{{end}}{{with $b.Error}} · <span class="dl over" title="{{if hasPrefix . "err."}}{{t .}}{{else}}{{.}}{{end}}">{{t "mail.sync_error"}}</span>{{end}}</div>
+      <div class="small muted mbox-state">{{with $b.SyncedAt}}{{t "mail.synced" (datetime (deref .))}}{{end}}{{with $b.Error}} · <span class="dl over" title="{{if hasPrefix . "err."}}{{t .}}{{else}}{{.}}{{end}}">{{t "mail.sync_error"}}</span>{{if $b.OAuth}} <form method="post" action="/mail/oauth" class="inline" data-native><input type="hidden" name="service" value="{{$b.OAuth}}"><button class="ghost small">{{t "mail.oauth_again"}}</button></form>{{end}}{{end}}{{with $b.OAuth}} · <span title="{{t "mail.oauth_by_hint"}}">{{t (print "mail.oauth_by." .)}}</span>{{end}}</div>
       {{range $f := $b.Folders}}{{if $f.Selectable}}<div class="mfolder-row">
         <a class="mfolder{{if eq $f.ID $d.FolderID}} on{{end}}" href="/mail?folder={{$f.ID}}" data-folder-id="{{$f.ID}}" data-box="{{$b.ID}}"{{if not $f.Local}} data-import{{end}} style="--depth:{{$f.Depth}}">{{template "mficon" $f.Role}}<span class="mf-name">{{template "mfname" $f}}</span>{{if eq $f.Role "drafts"}}{{if $f.Total}}<span class="cnt cnt-total" title="{{t "mail.drafts_n" $f.Total}}">{{$f.Total}}</span>{{end}}{{else if $f.Unseen}}<span class="cnt" data-unseen>{{$f.Unseen}}</span>{{end}}</a>
         <details class="mfolder-menu"><summary class="ghost" title="{{t "common.more"}}">{{icon "dots"}}</summary><div class="card mbox-pop">
@@ -90,6 +91,9 @@
     </div>{{end}}
     {{template "msharednav" $d.Shares}}
     <details class="mconnect"{{if not $d.Boxes}} open{{end}}><summary class="button ghost">{{icon "plus"}} {{t "mail.connect"}}</summary>
+      {{with $d.OAuth}}<div class="mailoauth"><p class="small muted">{{t "mail.oauth_hint"}}</p>
+        {{range .}}<form method="post" action="/mail/oauth" data-native><input type="hidden" name="service" value="{{.}}"><button class="mailoauth-{{.}}">{{icon "key"}} {{t (print "mail.oauth." .)}}</button></form>{{end}}
+        <p class="small muted mailoauth-or">{{t "mail.oauth_or"}}</p></div>{{end}}
       <form method="post" action="/mail" class="mailconnect">
         <input type="email" name="email" required placeholder="{{t "mail.f.email"}}">
         <input type="password" name="password" required placeholder="{{t "mail.f.password"}}" autocomplete="new-password">
@@ -473,6 +477,7 @@
 {{else if eq .Tab "junk"}}{{template "mjunkset" .}}
 {{else if eq .Tab "crm"}}{{template "mcrmset" .}}
 {{else if eq .Tab "security"}}{{template "msmimeset" .}}
+{{else if eq .Tab "storage"}}{{template "mstorage" .}}
 {{else if eq .Tab "forwarding"}}{{template "mfwdset" .}}
 {{else if eq .Tab "senders"}}{{template "mfromset" .}}
 {{else if eq .Tab "rules"}}{{template "mrules" .}}
@@ -731,6 +736,27 @@
     <label class="check"><input type="checkbox" name="crm_leads" value="1"{{if $c.Leads}} checked{{end}}> {{t "mail.crm_leads"}}</label>
     <p><button class="primary small">{{t "common.save"}}</button></p>
   </form>{{else}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}{{end}}
+
+{{/* «Хранилище» of the mail settings (web.mailStorageData), as Outlook's «Хранилище» */}}
+{{define "mstorage"}}{{$s := .}}<p class="small muted">{{t "mail.st.storage_hint"}}</p>
+  {{if gt (len .Boxes) 1}}<div class="tabs">{{range .Boxes}}<a{{if eq .ID $s.StorageBox}} class="on"{{end}} href="/mail/settings?tab=storage&box={{.ID}}">{{.Email}}</a>{{end}}</div>{{end}}
+  {{if not .Boxes}}<p class="muted">{{t "mail.no_boxes"}}</p>{{end}}
+  {{with .StorageErr}}<p class="error">{{.}}</p>{{end}}
+  {{with .Storage}}
+  {{if .Limit}}<p><b>{{t "mail.storage.used" (size .Used) (size .Limit)}}</b></p>
+  <meter class="mstorage-meter" min="0" max="100" low="80" high="95" optimum="0" value="{{.Percent}}" title="{{t "mail.storage.percent" .Percent}}" style="width:100%;max-width:32rem"></meter>
+  {{else}}<p><b>{{t "mail.storage.used_total" (size .Used)}}</b></p>{{end}}
+  {{if .Folders}}<table class="list mstorage">
+    <thead><tr><th>{{t "mail.storage.folder"}}</th><th class="num">{{t "mail.storage.letters"}}</th><th class="num">{{t "mail.storage.size"}}</th><th></th></tr></thead>
+    <tbody>{{range $f := .Folders}}{{$name := $f.Title}}{{if $f.Role}}{{$name = t (print "mail.folder." $f.Role)}}{{end}}
+      {{$forever := or (eq $f.Role "trash") (eq $f.Role "junk")}}
+      <tr data-folder="{{$f.ID}}"><td>{{template "mficon" $f.Role}} {{$name}}</td><td class="num">{{$f.Letters}}</td><td class="num">{{size $f.Size}}</td>
+      <td>{{if and $f.Letters (ne $f.Role "drafts")}}<details class="mbox-menu"><summary class="button ghost small">{{icon "trash"}} {{t "mail.storage.clean"}}</summary>
+        <div class="card mbox-pop">{{range $s.CleanMonths}}{{$what := t (print "mail.clean." .)}}
+          <form method="post" action="/mail/folders/{{$f.ID}}/clean" data-confirm="{{if $forever}}{{t "mail.clean_confirm_forever" $name $what}}{{else}}{{t "mail.clean_confirm" $name $what}}{{end}}"><input type="hidden" name="months" value="{{.}}"><button class="ghost small">{{$what}}</button></form>{{end}}
+        </div></details>{{end}}</td></tr>{{end}}</tbody>
+  </table>{{else}}<p class="muted">{{t "mail.storage.none"}}</p>{{end}}
+  {{end}}{{end}}
 
 {{/* «Безопасность» of the mail settings: S/MIME certificates (web.mailSMIMEData), as Outlook's «Защита электронной почты» */}}
 {{define "msmimeset"}}<p class="small muted">{{t "mail.st.security_hint"}}</p>

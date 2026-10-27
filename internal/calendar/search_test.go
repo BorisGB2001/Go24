@@ -12,7 +12,8 @@ import (
 )
 
 // TestCalendarSearch: the search of the calendar — by text, the presets «Приглашения», «Я организатор», «Отклонённые»,
-// the counter of invitations; someone else's private meeting is not found by its text, a repeated one is found once.
+// the counter of invitations; someone else's private meeting is not found by its text, a repeated one is found once;
+// «Ближайшие события» (Upcoming).
 func TestCalendarSearch(t *testing.T) {
 	url := os.Getenv("GO24_TEST_DATABASE_URL")
 	if url == "" {
@@ -129,4 +130,23 @@ func TestCalendarSearch(t *testing.T) {
 		t.Fatal("an unknown preset")
 	}
 	_ = plan
+
+	// «Ближайшие события»: one's own and invited meetings of the week, the nearest first; a declined one is not there
+	near := func(viewer string, limit int) (out []string) {
+		list, err := s.Upcoming(ctx, viewer, now, 7, limit)
+		must(err)
+		for _, e := range list {
+			out = append(out, e.Title)
+		}
+		return out
+	}
+	if got := near(anna, 5); !eq(got, "Еженедельная планёрка", "Планёрка отдела") {
+		t.Fatalf("anna's upcoming %v", got)
+	}
+	if got := near(anna, 1); !eq(got, "Еженедельная планёрка") {
+		t.Fatalf("the limit: %v", got)
+	}
+	if got := near(boss, 5); len(got) != 3 || got[2] != "Обзор" {
+		t.Fatalf("boss's upcoming %v", got)
+	}
 }

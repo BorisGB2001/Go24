@@ -70,6 +70,11 @@ func (c *RC) do(req *http.Request, out any) error {
 	return nil
 }
 
+// Ping asks rclone whether it answers («Состояние системы»).
+func (c *RC) Ping(ctx context.Context) error {
+	return c.call(ctx, "rc/noop", map[string]any{}, nil)
+}
+
 // CreateRemote adds a remote to rclone's config; secrets are obscured by rclone.
 func (c *RC) CreateRemote(ctx context.Context, name, typ string, params map[string]string) error {
 	return c.call(ctx, "config/create", map[string]any{

@@ -210,6 +210,7 @@ func (p *PBX) Sync(ctx context.Context) error {
 	black := map[string]bool{}
 	var callbacks []Callback
 	var groups []Group
+	prefs := map[string]Prefs{}
 	record := false
 	if on {
 		if lines, err = p.Lines(ctx); err != nil {
@@ -231,6 +232,9 @@ func (p *PBX) Sync(ctx context.Context) error {
 			return err
 		}
 		if groups, err = p.Groups(ctx); err != nil {
+			return err
+		}
+		if prefs, err = p.AllPrefs(ctx); err != nil {
 			return err
 		}
 	}
@@ -259,7 +263,7 @@ func (p *PBX) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	accounts, dialplan := RenderTrunks(trunks, numbers, keys, limits, record, time.Local.String())
+	accounts, dialplan := RenderTrunks(trunks, numbers, keys, limits, prefs, record, time.Local.String())
 	queueConf, mohConf, queuePlan := RenderGroups(groups, numbers)
 	dialplan += RenderMenus(menus, numbers, queues) + queuePlan + RenderBlacklist(black)
 	byID := map[string]Trunk{}
@@ -285,7 +289,7 @@ func (p *PBX) Sync(ctx context.Context) error {
 	return nil
 }
 
-// sounds writes the beep and the greetings of the lines and the voice menus the dialplan plays (files named by their
+// sounds writes the beep and the greetings of the lines, the voice menus and the robots' messages the dialplan plays (files named by their
 // checksums, so a written one stays as it is) and removes the greetings nobody has any more.
 func (p *PBX) sounds(ctx context.Context, trunks []Trunk, menus []Menu, groups []Group) error {
 	beep := filepath.Join(p.Dir, "beep.wav")
@@ -308,6 +312,13 @@ func (p *PBX) sounds(ctx context.Context, trunks []Trunk, menus []Menu, groups [
 	}
 	for _, g := range groups {
 		all = append(all, sound{g.MusicSum, g.ID, p.GroupMusic})
+	}
+	robots, err := p.robotSounds(ctx) // the messages of «Информационный звонок»
+	if err != nil {
+		return err
+	}
+	for _, sum := range robots {
+		all = append(all, sound{sum, sum, p.Sound})
 	}
 	keep := map[string]bool{}
 	for _, x := range all {

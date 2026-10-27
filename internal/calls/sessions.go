@@ -40,6 +40,16 @@ func (ss *Sessions) SetLine(ctx context.Context, id, event string) error {
 	return err
 }
 
+// Starter is who started the call of the LiveKit room that goes on now; "" — none goes on.
+func (ss *Sessions) Starter(ctx context.Context, room string) (string, error) {
+	var id string
+	err := ss.DB.QueryRow(ctx, `SELECT started_by::text FROM call_sessions WHERE lk_room = $1 AND ended_at IS NULL`, room).Scan(&id)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	return id, err
+}
+
 // Going are the calls not over yet.
 func (ss *Sessions) Going(ctx context.Context) ([]Session, error) {
 	rows, err := ss.DB.Query(ctx, `SELECT id::text, lk_room, chat_room, event_id, started_by::text, video, people::text[], started_at

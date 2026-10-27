@@ -202,7 +202,7 @@ func (s *Server) guestPage(w http.ResponseWriter, r *http.Request) {
 		data["Left"] = true
 	default:
 		name := g.Name + " (" + s.tr(r, "call.guest") + ")"
-		token, err := s.Calls.Token(calls.GuestIdentity(g.ID), name, l.Room, time.Now())
+		token, err := s.Calls.Token(calls.GuestIdentity(g.ID), name, l.Room, false, time.Now())
 		if err != nil {
 			s.fail(w, "call token", err)
 			return

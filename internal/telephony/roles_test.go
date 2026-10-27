@@ -19,7 +19,7 @@ import (
 func TestRenderOutLimits(t *testing.T) {
 	tr := Trunk{ID: "11111111-2222-3333-4444-555555555555", Name: "Линия", Number: "+74950000000", Host: "sip.example.com", Username: "u", OutAll: true}
 	_, plan := RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101", "u2": "102", "u3": "103"}, nil,
-		map[string]string{"u1": "none", "u2": "crm"}, false, "")
+		map[string]string{"u1": "none", "u2": "crm"}, nil, false, "")
 	for _, want := range []string{
 		"exten => _X./102,1,Gosub(go24-out-crm,s,1(" + tr.Key() + ",+74950000000,${EXTEN}))\n",
 		"exten => _X./103,1,Gosub(go24-dial-out,s,1(" + tr.Key() + ",+74950000000,${EXTEN}))\n",

@@ -15,6 +15,7 @@ import (
 
 	"go24/internal/i18n"
 	"go24/internal/tasks"
+	"go24/internal/worktime"
 )
 
 // «Поделиться слотами»: a link anyone opens without signing in to pick a free time of one's calendar
@@ -52,7 +53,8 @@ type SlotLink struct {
 	DaysAhead          int
 	Active             bool
 	CreatedAt          time.Time
-	Meetings           int // made by the link and not cancelled
+	Meetings           int      // made by the link and not cancelled
+	Holidays           []string // the company's, when no meetings are offered (see Offers)
 }
 
 // Joint tells a link with colleagues.
@@ -134,6 +136,7 @@ func (s *Store) SlotLinks(ctx context.Context, owner string) ([]SlotLink, error)
 // SlotLink is one of the owner's links.
 func (s *Store) SlotLink(ctx context.Context, owner, id string) (SlotLink, error) {
 	l, err := scanSlotLink(s.db.QueryRow(ctx, slotLinkSQL+` WHERE l.id::text = $1 AND l.owner_id = $2`, id, owner))
+	l.Holidays = s.companySchedule(ctx).Holidays
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -143,6 +146,7 @@ func (s *Store) SlotLink(ctx context.Context, owner, id string) (SlotLink, error
 // SlotLinkByToken is the link of a public page while it is on and its owner works here.
 func (s *Store) SlotLinkByToken(ctx context.Context, tok string) (SlotLink, error) {
 	l, err := scanSlotLink(s.db.QueryRow(ctx, slotLinkSQL+` WHERE l.token = $1 AND l.active AND u.active AND NOT u.guest`, tok))
+	l.Holidays = s.companySchedule(ctx).Holidays
 	if errors.Is(err, pgx.ErrNoRows) || tok == "" {
 		err = ErrNotFound
 	}
@@ -243,9 +247,9 @@ func (l SlotLink) SlotDays(now time.Time) (first, last time.Time) {
 	return first, first.AddDate(0, 0, l.DaysAhead-1)
 }
 
-// Offers tells a weekday the rules of the link offer meetings on.
+// Offers tells a day the rules of the link offer meetings on: one of their weekdays, not a holiday of the company.
 func (l SlotLink) Offers(day time.Time) bool {
-	return slices.ContainsFunc(l.Rules, func(r SlotRule) bool { return slices.Contains(r.Days, Weekday(day)) })
+	return !(worktime.Schedule{Holidays: l.Holidays}).Holiday(day) && slices.ContainsFunc(l.Rules, func(r SlotRule) bool { return slices.Contains(r.Days, Weekday(day)) })
 }
 
 // SlotFree are the starts of the meetings the link offers on day: by its rules, on its length's grid from the start

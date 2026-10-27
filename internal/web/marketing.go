@@ -102,7 +102,7 @@ func (s *Server) mktCampaignPage(w http.ResponseWriter, r *http.Request, sess au
 		}
 		data["AB"], data["LetterB"] = res, template.HTML(mailpkg.Sanitize(c.Variant("b").Body))
 	}
-	if c.ID != "" && c.Editable() && len(c.Segments) > 0 {
+	if c.ID != "" && c.Editable() && (len(c.Segments) > 0 || c.ResendTo != "") {
 		if list, err := s.Marketing.Addressees(ctx, sess.UserID, c); err == nil {
 			data["Count"] = len(list)
 		} else {
@@ -222,7 +222,7 @@ func (s *Server) mktCampaignSave(w http.ResponseWriter, r *http.Request, sess au
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
-// mktCampaignAction: pause, resume, stop, copy, delete.
+// mktCampaignAction: pause, resume, stop, copy, resend-unopened, resend-unclicked, delete.
 func (s *Server) mktCampaignAction(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if err := s.mktAllowed(r, sess); err != nil {
 		s.taskErr(w, r, err, "/marketing")
@@ -245,6 +245,14 @@ func (s *Server) mktCampaignAction(w http.ResponseWriter, r *http.Request, sess 
 		if c, err = s.Marketing.Campaign(ctx, id); err == nil {
 			var nid string
 			if nid, err = s.Marketing.CopyCampaign(ctx, sess.UserID, id, s.tr(r, "mkt.copy_of", c.Title)); err == nil {
+				back = "/marketing/campaigns/" + nid
+			}
+		}
+	case "resend-unopened", "resend-unclicked":
+		var c marketing.Campaign
+		if c, err = s.Marketing.Campaign(ctx, id); err == nil {
+			var nid string
+			if nid, err = s.Marketing.ResendCampaign(ctx, sess.UserID, id, strings.TrimPrefix(a, "resend-"), s.tr(r, "mkt.resend_of", c.Title)); err == nil {
 				back = "/marketing/campaigns/" + nid
 			}
 		}

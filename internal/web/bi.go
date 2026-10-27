@@ -2,7 +2,9 @@ package web
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -84,6 +86,9 @@ func (s *Server) biPanels(r *http.Request, viewer string, list []bi.Widget, from
 }
 
 func (s *Server) biPanel(r *http.Request, viewer string, w bi.Widget, from, to *time.Time, fl biFilters, tr func(string) string) biPanel {
+	if w.Kind == "text" { // no query: its own text
+		return biPanel{W: w, Title: w.Title, Chart: biDraw(w, biResult{}, tr)}
+	}
 	tr = s.biTr(r, w.Query.Dataset, tr)
 	p := biPanel{W: w, Title: biTitle(w, tr)}
 	q, skipped, err := s.BI.Narrow(r.Context(), w.Query, fl.Picked)
@@ -104,6 +109,14 @@ func (s *Server) biPanel(r *http.Request, viewer string, w bi.Widget, from, to *
 		return p
 	}
 	p.Chart = biDraw(w, biNamed(res, tr), tr)
+	if a, b, ok := bi.Before(q.From, q.To); ok && w.Kind == "kpi" && w.Compare && !w.NoPeriod {
+		q.From, q.To = &a, &b
+		if prev, err := s.BI.Run(r.Context(), viewer, q, tr); err == nil {
+			biCompare(&p.Chart, biNamed(prev, tr), tr)
+		} else {
+			s.Log.Error("bi compare", "err", err)
+		}
+	}
 	return p
 }
 
@@ -348,6 +361,53 @@ func (s *Server) biCopy(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	http.Redirect(w, r, "/bi/"+id+"?edit=1", http.StatusSeeOther)
 }
 
+// biExport: «Экспорт в файл» — anyone who sees a dashboard takes it as a file to «Импорт» here or on another portal.
+func (s *Server) biExport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	d, err := s.BI.Dashboard(r.Context(), biViewer(sess), r.PathValue("id"))
+	if err != nil {
+		s.taskErr(w, r, err, "/bi")
+		return
+	}
+	if d.Code != "" {
+		s.biSystem(r, &d)
+	}
+	f, err := s.BI.Export(r.Context(), d, func(k string) string { return s.tr(r, k) })
+	if err != nil {
+		s.taskErr(w, r, err, "/bi/"+d.ID)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(d.Title+".bi.json"))
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(f)
+}
+
+// biImport: «Импорт» of a dashboard's file (file) — a new draft of the user.
+func (s *Server) biImport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Redirect(w, r, "/bi?msg="+url.QueryEscape(s.tr(r, "bi.err.import_file")), http.StatusSeeOther)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 4<<20))
+	if err != nil {
+		s.taskErr(w, r, err, "/bi")
+		return
+	}
+	id, skipped, err := s.BI.Import(r.Context(), sess.UserID, data)
+	if err != nil {
+		http.Redirect(w, r, "/bi?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	msg := s.tr(r, "bi.imported")
+	if skipped > 0 {
+		msg = s.tr(r, "bi.imported_skipped", skipped)
+	}
+	http.Redirect(w, r, "/bi/"+id+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
 func (s *Server) biDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if _, ok := s.biManaged(w, r, sess, r.PathValue("id")); !ok {
 		return
@@ -429,6 +489,12 @@ func (s *Server) biWidgetForm(r *http.Request, x bi.Widget) bi.Widget {
 		x.Width = 6
 	}
 	x.NoPeriod = r.FormValue("no_period") != ""
+	x.Compare = x.Kind == "kpi" && r.FormValue("compare") != ""
+	x.Body = ""
+	if x.Kind == "text" {
+		x.Body = strings.TrimSpace(strings.ReplaceAll(r.FormValue("body"), "\r\n", "\n"))
+		x.NoPeriod = false
+	}
 	ds, _ := s.BI.Dataset(r.Context(), r.FormValue("dataset"))
 	if ds == nil {
 		ds = bi.Datasets[0]
@@ -451,7 +517,7 @@ func (s *Server) biWidgetForm(r *http.Request, x bi.Widget) bi.Widget {
 	}
 	if x.Kind != "kpi" {
 		dim("")
-		if len(q.Dims) > 0 && x.Kind != "pie" {
+		if len(q.Dims) > 0 && x.Kind != "pie" && x.Kind != "funnel" {
 			dim("2")
 		}
 	}
@@ -475,8 +541,8 @@ func (s *Server) biWidgetForm(r *http.Request, x bi.Widget) bi.Widget {
 		case slices.Contains(bi.Aggregates, agg) && ok && f.Type == bi.Number:
 			q.Measures = append(q.Measures, bi.Measure{Agg: agg, Field: code})
 		}
-		if x.Kind == "pie" || (len(q.Dims) > 1 && len(q.Measures) > 0) {
-			break // one measure for a pie and a split chart
+		if slices.Contains([]string{"pie", "funnel", "pivot"}, x.Kind) || (len(q.Dims) > 1 && len(q.Measures) > 0) {
+			break // one measure for a pie, a funnel, a pivot table and a split chart
 		}
 	}
 	if len(q.Measures) == 0 {
@@ -523,6 +589,9 @@ func (s *Server) biWidgetForm(r *http.Request, x bi.Widget) bi.Widget {
 		q.Limit = n
 	}
 	x.Query = q
+	if x.Kind == "text" {
+		x.Query = bi.Query{}
+	}
 	return x
 }
 

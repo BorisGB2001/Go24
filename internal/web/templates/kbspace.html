@@ -63,16 +63,30 @@
     <h2>{{with $d.Under}}{{t "kb.new_sub" .}}{{else}}{{t "kb.new_page"}}{{end}}</h2>
     <form method="post" action="/kb/{{$s.ID}}/pages"><input type="hidden" name="parent" value="{{$d.Parent}}">
       <input type="text" name="title" maxlength="300" required placeholder="{{t "kb.page_title"}}">
+      {{with $d.PageTemplates}}<details class="kbptpls"><summary class="small">{{icon "template"}} {{t "kb.ptpl"}}</summary>
+        <input type="hidden" name="back" value="/kb/{{$s.ID}}?new=1{{with $d.Parent}}&parent={{.}}{{end}}"><p class="small muted">{{t "kb.ptpl_hint"}}</p>
+        <div class="kbtpls">{{range .}}<div class="kbtpl"><button class="ghost" name="template" value="{{.ID}}" formnovalidate>
+          <b>{{if .Builtin}}{{icon "file-text"}}{{else}}{{icon "template"}}{{end}} {{.Name}}</b>
+          <span class="small muted">{{.Description}}{{if not .Builtin}}{{if .Description}} · {{end}}{{.Author}}{{end}}</span></button>
+          {{if .CanDelete}}<button class="ghost small" formaction="/kb/templates/{{.ID}}/delete" formnovalidate data-confirm="{{t "kb.ptpl_delete_confirm"}}" title="{{t "kb.template_delete"}}">{{icon "trash"}}</button>{{end}}</div>{{end}}</div>
+      </details>{{end}}
       {{template "kbtools" $s.ID}}<textarea name="body" rows="18" placeholder="{{t "kb.markdown_hint"}}" data-kb-upload="/kb/{{$s.ID}}/files" data-kb-uploading="{{t "kb.uploading" "%s"}}" data-kb-failed="{{t "kb.upload_failed" "%s"}}" data-kb-leave="{{t "kb.leave_confirm"}}"></textarea>
       <p class="row"><button class="primary">{{t "common.save"}}</button>{{template "kbattach"}}</p></form>
   </div>
   {{else}}{{with $d.Page}}{{$p := .}}
   {{if $d.Edit}}<div class="card">
-    <form method="post" action="/kb/{{$s.ID}}/{{.ID}}">
-      <input type="text" name="title" value="{{.Title}}" maxlength="300" required>
-      {{template "kbtools" $s.ID}}<textarea name="body" rows="22" data-kb-upload="/kb/{{$s.ID}}/files" data-kb-uploading="{{t "kb.uploading" "%s"}}" data-kb-failed="{{t "kb.upload_failed" "%s"}}" data-kb-leave="{{t "kb.leave_confirm"}}">{{.Body}}</textarea>
+    {{with $d.Draft}}{{if .Stale}}<div class="flash">{{icon "alert-triangle"}} {{t "kb.clash" $p.Editor (datetime $p.Updated)}}</div>
+      <details class="kbclash"><summary class="small">{{icon "arrows-exchange"}} {{t "kb.clash_diff"}}</summary><p class="small muted">{{t "kb.clash_hint"}}</p>
+        <div class="kbdiff">{{range $d.Clash}}<div class="{{if eq .Op "+"}}add{{else if eq .Op "-"}}del{{end}}">{{.Op}} {{.Text}}</div>{{end}}</div></details>{{end}}
+    <form method="post" action="/kb/{{$s.ID}}/{{$p.ID}}/draft" class="flash row" data-kb-draft-drop data-confirm="{{t "kb.draft_drop_confirm"}}">{{icon "device-floppy"}} <span style="flex:1">{{t "kb.draft_restored" (datetime .Saved)}}</span>
+      <input type="hidden" name="act" value="drop"><button class="ghost small">{{icon "x"}} {{if .Stale}}{{t "kb.clash_take"}}{{else}}{{t "kb.draft_drop"}}{{end}}</button></form>{{end}}
+    <form method="post" action="/kb/{{$s.ID}}/{{.ID}}" data-kb-draft="/kb/{{$s.ID}}/{{.ID}}/draft">
+      <input type="hidden" name="base" value="{{$d.BaseAt}}">
+      <input type="text" name="title" value="{{with $d.Draft}}{{.Title}}{{else}}{{.Title}}{{end}}" maxlength="300" required>
+      {{template "kbtools" $s.ID}}<textarea name="body" rows="22" data-kb-upload="/kb/{{$s.ID}}/files" data-kb-uploading="{{t "kb.uploading" "%s"}}" data-kb-failed="{{t "kb.upload_failed" "%s"}}" data-kb-leave="{{t "kb.leave_confirm"}}">{{with $d.Draft}}{{.Body}}{{else}}{{.Body}}{{end}}</textarea>
       <p class="small muted">{{t "kb.markdown_hint"}}</p>
-      <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/kb/{{$s.ID}}/{{.ID}}">{{t "common.cancel"}}</a>{{template "kbattach"}}</p></form>
+      <p class="small kbdraftline"><span class="muted" data-kb-draft-saved></span> <span data-kb-editing>{{with $d.Editing}}{{icon "users"}} {{t "kb.editing_now" (join . ", ")}}{{end}}</span> <b class="kbchanged" data-kb-changed></b></p>
+      <p class="row"><button class="primary">{{if and $d.Draft $d.Draft.Stale}}{{t "kb.clash_save"}}{{else}}{{t "common.save"}}{{end}}</button><a class="button ghost" href="/kb/{{$s.ID}}/{{.ID}}">{{t "common.cancel"}}</a>{{template "kbattach"}}</p></form>
   </div>
   {{else}}<article class="card kbpage">
     {{with $d.Old}}<div class="flash row">{{icon "history"}} <span style="flex:1">{{t "kb.old_version" .Editor (datetime .Updated)}} · <a href="/kb/{{$s.ID}}/{{$p.ID}}">{{t "kb.current"}}</a></span>
@@ -80,13 +94,15 @@
       {{if $s.CanEdit}}<form method="post" action="/kb/{{$s.ID}}/{{$p.ID}}/restore" data-confirm="{{t "kb.restore_confirm"}}"><input type="hidden" name="v" value="{{$d.Version}}"><button class="small">{{icon "arrow-back-up"}} {{t "kb.restore"}}</button></form>{{end}}</div>
     {{if $d.Diff}}<p class="small muted">{{t "kb.diff_hint"}}</p><div class="kbdiff">{{range $d.Diff}}<div class="{{if eq .Op "+"}}add{{else if eq .Op "-"}}del{{end}}">{{.Op}} {{.Text}}</div>{{end}}</div>
     {{else}}<h1>{{.Title}}</h1>{{md .Body}}{{end}}
-    {{else}}<div class="row"><h1 style="flex:1">{{.Title}}</h1>
+    {{else}}{{with $d.Editing}}<p class="small kbediting">{{icon "users"}} {{t "kb.editing_now" (join . ", ")}}</p>{{end}}
+    <div class="row"><h1 style="flex:1">{{.Title}}</h1>
       {{with $d.Marks}}{{template "kbmarks" (dict "Space" $s.ID "Page" $p.ID "Fav" .FavPage "Watch" .WatchPage "Via" .Inherited)}}{{end}}
       {{if $s.CanEdit}}<a class="button ghost" href="/kb/{{$s.ID}}/{{.ID}}?edit=1">{{icon "edit"}} {{t "task.change"}}</a>
       <a class="button ghost" href="/kb/{{$s.ID}}?new=1&parent={{.ID}}" title="{{t "kb.add_sub"}}">{{icon "plus"}}</a>
       <details class="tsettings dmore"><summary class="button ghost" title="{{t "disk.actions"}}">{{icon "dots"}}</summary><div class="pop">
         <form method="post" action="/kb/{{$s.ID}}/{{.ID}}/order"><button class="ghost" name="dir" value="up">{{icon "arrow-up"}} {{t "kb.up"}}</button><button class="ghost" name="dir" value="down">{{icon "arrow-down"}} {{t "kb.down"}}</button></form>
         <form method="post" action="/kb/{{$s.ID}}/{{.ID}}/copy"><button class="ghost">{{icon "copy"}} {{t "kb.copy"}}</button></form>
+        <form method="post" action="/kb/{{$s.ID}}/{{.ID}}/template" title="{{t "kb.ptpl_save_hint"}}"><button class="ghost">{{icon "template"}} {{t "kb.ptpl_save"}}</button></form>
         <button type="button" class="ghost" data-toggle="kbmove">{{icon "arrows-exchange"}} {{t "kb.move"}}</button>
         {{if not $d.Pub}}<form method="post" action="/kb/{{$s.ID}}/publish"><input type="hidden" name="page" value="{{.ID}}"><button class="ghost">{{icon "world"}} {{t "kb.publish_page"}}</button></form>{{end}}
       </div></details>{{end}}</div>
@@ -122,5 +138,6 @@
 </div>
 <script src="{{asset "js/kb.js"}}"></script>
 <script src="{{asset "js/kbedit.js"}}"></script>
+<script src="{{asset "js/kbdraft.js"}}"></script>
 <script src="{{asset "js/kbtree.js"}}"></script>
 {{end}}

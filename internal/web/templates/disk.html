@@ -25,15 +25,23 @@
   {{if $d.Searching}} {{icon "chevron-right"}} {{t "disk.found" (len $d.Files)}}{{end}}</div>
   {{if not $d.Aside}}<form method="get" action="{{$dr.Path}}" class="row disk-search" data-disk-filter>
     <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "disk.search"}}" maxlength="200">
-    <select name="type"><option value="">{{t "disk.type_all"}}</option>{{range $d.Types}}<option value="{{.}}" {{if eq . $d.Type}}selected{{end}}>{{t (print "disk.type_" .)}}</option>{{end}}</select>
+    {{$f := $d.Filter}}<details class="tsettings dfilter"><summary class="button ghost{{if $f.Files}} on{{end}}" title="{{t "disk.filter"}}">{{icon "adjustments"}} {{t "disk.filter"}}</summary>
+      <div class="pop"><div class="dfilter-body">
+        <label>{{t "disk.f_type"}}<select name="type"><option value="">{{t "disk.type_all"}}</option>{{range $d.Types}}<option value="{{.}}" {{if eq . $f.Type}}selected{{end}}>{{t (print "disk.type_" .)}}</option>{{end}}</select></label>
+        <label>{{t "disk.f_changed"}}<select name="period" data-disk-period><option value="">{{t "disk.period_any"}}</option>{{range $d.Periods}}<option value="{{.}}" {{if eq . $f.Period}}selected{{end}}>{{t (print "disk.period_" .)}}</option>{{end}}</select></label>
+        <div class="row" data-disk-range><input type="date" name="from" value="{{$f.From}}" aria-label="{{t "disk.f_from"}}"> — <input type="date" name="to" value="{{$f.To}}" aria-label="{{t "disk.f_to"}}"></div>
+        <label>{{t "disk.f_author"}}</label>{{template "upick" (upick "author" $d.Author nil)}}
+        <div class="row"><button class="primary">{{icon "search"}} {{t "disk.f_apply"}}</button>{{if $f.On}}<a class="button ghost" href="{{$dr.Path}}">{{t "disk.search_reset"}}</a>{{end}}</div>
+      </div></div></details>
     {{if $d.Sort}}<input type="hidden" name="sort" value="{{$d.Sort}}">{{end}}{{if $d.Desc}}<input type="hidden" name="desc" value="1">{{end}}
     <button class="ghost" title="{{t "disk.search"}}">{{icon "search"}}</button>
     {{if $d.Searching}}<a class="button ghost" href="{{$dr.Path}}" title="{{t "disk.search_reset"}}">{{icon "x"}}</a>{{end}}</form>{{end}}
   {{if $d.Aside}}<a class="button ghost" href="{{$dr.Path}}">{{icon "arrow-back-up"}} {{t "disk.back_to_drive"}}</a>
-  {{else}}<div class="seg" data-disk-view><button type="button" class="ghost" data-view-mode="list" title="{{t "disk.view_list"}}">{{icon "layout-list"}}</button><button type="button" class="ghost" data-view-mode="tiles" title="{{t "disk.view_tiles"}}">{{icon "photo"}}</button></div>
+  {{else}}<div class="seg" data-disk-view><button type="button" class="ghost" data-view-mode="list" title="{{t "disk.view_list"}}">{{icon "layout-list"}}</button><button type="button" class="ghost" data-view-mode="tiles" title="{{t "disk.view_tiles"}}">{{icon "layout-grid"}}</button><button type="button" class="ghost" data-view-mode="big" title="{{t "disk.view_big"}}">{{icon "photo"}}</button></div>
   {{with $d.Conn}}<form method="post" action="/disk/connect"><input type="hidden" name="which" value="{{.Which}}"><input type="hidden" name="back" value="{{$dr.Path}}">
     {{if .On}}<button class="ghost" name="off" value="1" title="{{t "disk.connected_hint"}}">{{icon "unlink"}} {{t "disk.disconnect"}}</button>{{else}}<button class="ghost" title="{{t "disk.connect_hint"}}">{{icon "link"}} {{t "disk.connect"}}</button>{{end}}</form>{{end}}
   {{if not $dr.Root}}<a class="button ghost" href="{{$dr.Path}}?trash" data-drop-trash>{{icon "trash"}} {{t "trash.title"}}</a>{{end}}{{end}}</div>
+{{if and $d.Chips (not $d.Aside)}}<div class="row dchips" data-disk-chips>{{range $d.Chips}}<a class="pill" href="{{$dr.Path}}{{.URL}}" title="{{t "common.remove"}}">{{t (print "disk.chip_" .Key)}}: {{if eq .Key "type"}}{{t (print "disk.type_" .Value)}}{{else if eq .Key "period"}}{{if eq .Value "range"}}{{$d.Filter.From}} — {{$d.Filter.To}}{{else}}{{t (print "disk.period_" .Value)}}{{end}}{{else if eq .Key "author"}}{{with $d.Author}}{{(index . 0).Name}}{{end}}{{else}}{{.Value}}{{end}} {{icon "x"}}</a>{{end}}</div>{{end}}
 {{if $d.InSpace}}{{template "diskSpace" .}}{{else if $d.InTrash}}{{template "diskTrash" .}}{{else}}
 {{if $dr.CanWrite}}<div class="card row diskbar">
   <form method="post" action="{{$dr.Path}}/upload" enctype="multipart/form-data" class="row" style="flex:1" data-disk-upload>
@@ -57,7 +65,7 @@
 <div class="card flush disk" data-disk="{{$dr.Path}}" data-folder="{{$d.Folder}}" data-write="{{$dr.CanWrite}}"
   data-l-upload="{{t "disk.uploading"}}" data-l-failed="{{t "disk.upload_failed"}}" data-l-skipped="{{t "disk.skipped"}}" data-l-move="{{t "disk.move_here"}}" data-l-copy="{{t "disk.copy_here"}}"
   data-l-move-title="{{t "disk.move_title"}}" data-l-copy-title="{{t "disk.copy_title"}}" data-l-top="{{t "disk.top"}}" data-l-no-write="{{t "disk.no_write"}}"
-  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-base="{{$d.Base}}">
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-l-send="{{t "disk.send_chat"}}" data-base="{{$d.Base}}">
   <div class="disk-bulk row" data-disk-bulk hidden>
     <b data-disk-count></b>
     <button type="button" class="ghost" data-disk-act="zip">{{icon "file-zip"}} {{t "disk.download"}}</button>
@@ -132,7 +140,7 @@
     {{range $d.Files}}{{$f := .}}{{$may := or $dr.CanManage (and $dr.CanWrite (eq .UploaderID $d.Me))}}{{$theirs := and .LockerID (ne .LockerID $d.Me)}}{{$mine := and $may (not $theirs)}}<tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}" {{if $mine}}draggable="true"{{end}}>
       {{$kind := fileKind .Name .ContentType}}<td class="selcol"><input type="checkbox" data-sel></td>
       {{$ok := and $d.Office (officeKind .Name)}}{{if eq $kind "pdf"}}{{$ok = false}}{{end}}
-      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}"{{else if $ok}} data-edit="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{if $mine}}{{t "office.edit"}}{{else}}{{t "office.open"}}{{end}}"{{end}} tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}"{{else if $ok}} data-edit="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{if $mine}}{{t "office.edit"}}{{else}}{{t "office.open"}}{{end}}"{{end}} tabindex="-1">{{if hasThumb .Name .ContentType}}<img src="/files/{{.ID}}/thumb" alt="" loading="lazy" data-thumb><span class="ticon" hidden>{{icon "files"}}<small>{{ext .Name}}</small></span>{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
       <td>{{if isBoard .Name}}<a href="{{$dr.Path}}/board/{{.ID}}?folder={{$d.Folder}}" title="{{t "dboard.open"}}">{{icon "brush"}} {{.Name}}</a>{{else if $ok}}<a href="{{$dr.Path}}/edit/{{.ID}}?folder={{$d.Folder}}" title="{{t "office.open"}}">{{icon "file-pencil"}} {{.Name}}</a>{{else}}<a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a>{{end}}{{if .LockerID}} <span class="dlock" title="{{t "disk.locked_by" .Locker (datetime .LockedAt)}}" data-locked>{{icon "lock"}}</span>{{end}}{{with .Editors}} <span class="pill dediting" title="{{t "disk.editing_by" .}}" data-editing>{{icon "file-pencil"}} {{t "disk.editing"}}</span>{{end}}{{if $d.Searching}}{{template "diskWhere" (dict "dr" $dr "f" .)}}{{if $d.Snippets}}{{with index $d.Snippets .ID}}<div class="dsnip small" title="{{t "disk.found_in_text"}}">{{icon "search"}} {{.}}</div>{{end}}{{end}}{{end}}
         {{$sh := false}}{{if $d.Shares}}{{$sh = index $d.Shares .ID}}{{end}}{{if $sh}}<span class="dlink" title="{{t "disk.share_on" (len $sh)}}">{{icon "users"}}</span>{{end}}{{with index $d.Comments .ID}}<a class="dlink" href="/files/{{$f.ID}}/about#comments" title="{{t "disk.comments_n" .}}">{{icon "message-circle"}} <small>{{.}}</small></a>{{end}}
         {{if $d.Users}}<form method="post" action="{{$dr.Path}}/share" class="linkform" id="sh-{{.ID}}" hidden><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}">
@@ -164,6 +172,7 @@
         {{if and $d.Local (localEdit .Name)}}<a class="button ghost" href="{{$dr.Path}}/local/{{.ID}}?folder={{$d.Folder}}">{{icon "device-desktop"}} {{t "disk.local_edit"}}</a>{{end}}
         <a class="button ghost" href="/files/{{.ID}}">{{icon "download"}} {{t "disk.download"}}</a>
         <button type="button" class="ghost" data-copy="{{$d.Base}}/files/{{.ID}}/about">{{icon "copy"}} {{t "disk.internal_link"}}</button>
+        <button type="button" class="ghost" data-disk-send="{{.ID}}" data-name="{{.Name}}">{{icon "message-circle"}} {{t "disk.send_chat"}}</button>
         {{if $d.Users}}<button type="button" class="ghost" data-toggle="sh-{{.ID}}">{{icon "users"}} {{t "disk.share"}}</button>{{end}}
         {{if and $dr.CanWrite (not $d.LinksOff)}}<button type="button" class="ghost" data-toggle="ln-{{.ID}}">{{icon "link"}} {{t "disk.link"}}</button>{{end}}
         {{if $mine}}<button type="button" class="ghost" data-toggle="rn-{{.ID}}">{{icon "edit"}} {{t "disk.rename"}}</button>
@@ -171,6 +180,7 @@
         <button type="button" class="ghost" data-disk-act="copy">{{icon "copy"}} {{t "disk.copy"}}</button>
         <a class="button ghost" href="/files/{{.ID}}/about">{{icon "file-text"}} {{t "disk.about"}}</a>
         <button type="button" class="ghost" data-disk-versions="{{.ID}}"{{if $mine}} data-mine{{end}}>{{icon "history"}} {{t "disk.versions"}}</button>
+        {{if $mine}}<button type="button" class="ghost" data-disk-newver="{{.ID}}" data-action="{{$dr.Path}}/version-upload" data-folder="{{$d.Folder}}">{{icon "cloud-upload"}} {{t "disk.new_version"}}</button>{{end}}
         {{if and $mine (not .LockerID) (not $d.LocksOff)}}<form method="post" action="{{$dr.Path}}/lock"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost">{{icon "lock"}} {{t "disk.lock"}}</button></form>{{end}}
         {{if and .LockerID (or (eq .LockerID $d.Me) $dr.CanManage)}}<form method="post" action="{{$dr.Path}}/lock"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><input type="hidden" name="unlock" value="1"><button class="ghost">{{icon "lock-open"}} {{t "disk.unlock"}}</button></form>{{end}}
         {{if $mine}}<form method="post" action="{{$dr.Path}}/delete" data-confirm="{{t "disk.delete_file_confirm"}}"><input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file" value="{{.ID}}"><button class="ghost">{{icon "trash"}} {{t "common.remove"}}</button></form>{{end}}
@@ -194,6 +204,7 @@
   <h3>{{t "disk.versions"}}: <span data-disk-ver-name></span></h3>
   <table class="list small"><thead><tr><th>{{t "disk.version"}}</th><th>{{t "col.uploaded"}}</th><th>{{t "col.size"}}</th><th></th></tr></thead><tbody data-disk-ver-list></tbody></table>
   <p class="muted small">{{t "disk.versions_hint"}}</p>
+  <div data-disk-ver-up hidden><button type="button" class="ghost" data-disk-newver data-action="{{$dr.Path}}/version-upload" data-folder="{{$d.Folder}}">{{icon "cloud-upload"}} {{t "disk.new_version"}}</button></div>
   <form method="post" action="{{$dr.Path}}/version-restore" data-disk-ver-form data-confirm="{{t "disk.version_restore_confirm"}}">
     <input type="hidden" name="folder" value="{{$d.Folder}}"><input type="hidden" name="file"><input type="hidden" name="version"></form>
   <div class="row"><span class="spacer"></span><button type="button" class="ghost" data-disk-close>{{t "disk.close"}}</button></div>
@@ -210,7 +221,7 @@
       <span class="spacer"></span><button class="ghost" value="cancel">{{t "disk.clash_cancel"}}</button></div>
   </form>
 </dialog>
-<script src="{{asset "js/disk.js"}}"></script>
+<script src="{{asset "js/disk.js"}}"></script>{{template "diskSend"}}{{template "diskNewVersion"}}
 {{end}}{{end}}{{end}}
 
 {{define "diskTrash"}}{{$d := .Data}}{{$dr := $d.Drive}}
@@ -278,12 +289,12 @@
 {{/* «Последние»: the files the user uploaded or changed lately, on every drive, each opening in the viewer */}}
 {{define "diskRecent"}}{{$d := .Data}}
 <div class="card flush disk" data-disk="/disk/my" data-folder="" data-write="false"
-  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-base="{{$d.Base}}">
+  data-l-prev="{{t "disk.prev"}}" data-l-next="{{t "disk.next"}}" data-l-download="{{t "disk.download"}}" data-l-about="{{t "disk.about"}}" data-l-close="{{t "common.cancel"}}" data-l-none="{{t "disk.no_preview"}}" data-l-loading="{{t "disk.loading"}}" data-l-zoom-in="{{t "disk.zoom_in"}}" data-l-zoom-out="{{t "disk.zoom_out"}}" data-l-zoom-fit="{{t "disk.zoom_fit"}}" data-l-rotate="{{t "disk.rotate"}}" data-l-fullscreen="{{t "disk.fullscreen"}}" data-l-print="{{t "disk.print"}}" data-l-link="{{t "disk.internal_link"}}" data-l-send="{{t "disk.send_chat"}}" data-base="{{$d.Base}}">
   {{if $d.Recent}}<table class="disk-list">
     <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.where"}}</th><th>{{t "col.size"}}</th><th>{{t "col.uploaded"}}</th></tr></thead>
     <tbody>{{range $d.Recent}}{{$kind := fileKind .Name .ContentType}}{{$p := print "/disk/p/" .ProjectKey}}{{if eq .Drive "user"}}{{$p = "/disk/my"}}{{else if eq .Drive "company"}}{{$p = "/disk/company"}}{{end}}
     <tr data-item="file" data-id="{{.ID}}" data-name="{{.Name}}">{{$ok := and $d.Office (officeKind .Name)}}{{if eq $kind "pdf"}}{{$ok = false}}{{end}}
-      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$p}}/board/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{else if $ok}} data-edit="{{$p}}/edit/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{t "office.open"}}"{{end}} tabindex="-1">{{if eq $kind "image"}}<img src="/files/{{.ID}}/raw" alt="" loading="lazy">{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
+      <td class="thumb"><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}"{{if isBoard .Name}} data-edit="{{$p}}/board/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{else if $ok}} data-edit="{{$p}}/edit/{{.ID}}{{with .FolderID}}?folder={{.}}{{end}}"{{end}}{{if or (isBoard .Name) $ok}} data-edit-label="{{t "office.open"}}"{{end}} tabindex="-1">{{if hasThumb .Name .ContentType}}<img src="/files/{{.ID}}/thumb" alt="" loading="lazy" data-thumb><span class="ticon" hidden>{{icon "files"}}<small>{{ext .Name}}</small></span>{{else}}<span class="ticon">{{icon "files"}}<small>{{ext .Name}}</small></span>{{end}}</a></td>
       <td><a href="/files/{{.ID}}" data-view="{{.ID}}" data-kind="{{$kind}}" data-name="{{.Name}}">{{icon "files"}} {{.Name}}</a></td>
       <td class="small"><a href="{{$p}}{{with .FolderID}}?folder={{.}}{{end}}">{{if eq .Drive "user"}}{{t "disk.my"}}{{else if eq .Drive "company"}}{{t "disk.company"}}{{else}}{{.ProjectName}}{{end}}{{with .Where}} › {{.}}{{end}}</a></td>
       <td class="small meta">{{size .Size}}</td>
@@ -291,7 +302,7 @@
     </tbody></table>
   {{else}}<div class="empty">{{t "disk.recent_empty"}}</div>{{end}}
 </div>
-<script src="{{asset "js/disk.js"}}"></script>
+<script src="{{asset "js/disk.js"}}"></script>{{template "diskSend"}}{{template "diskNewVersion"}}
 {{end}}
 
 {{/* «Общие со мной»: the folders and the files others shared with the user */}}
@@ -301,13 +312,16 @@
     <thead><tr><th class="thumb"></th><th>{{t "col.file_name"}}</th><th>{{t "disk.owner"}}</th><th>{{t "disk.access"}}</th><th>{{t "disk.shared_at"}}</th><th></th></tr></thead>
     <tbody>{{range $d.Shared}}{{$u := print "/disk/sh/" .ID}}{{$ic := "folder"}}{{if .File}}{{$u = print "/disk/sf/" .ID}}{{$ic = "files"}}{{end}}<tr{{if .File}} data-shared-file{{end}}>
       <td class="thumb"><a href="{{$u}}" tabindex="-1"><span class="ticon">{{icon $ic}}{{if .File}}<small>{{ext .Name}}</small>{{end}}</span></a></td>
-      <td><a href="{{$u}}" class="ttitle">{{icon $ic}} {{.Name}}</a>{{if .File}} <a class="button ghost" href="/files/{{.ID}}" title="{{t "disk.download"}}" download>{{icon "download"}}</a>{{end}}</td>
+      <td><a href="{{$u}}" class="ttitle">{{icon $ic}} {{.Name}}</a>{{if .File}} <a class="button ghost" href="/files/{{.ID}}" title="{{t "disk.download"}}" download>{{icon "download"}}</a>
+        <button type="button" class="ghost" data-disk-send="{{.ID}}" data-name="{{.Name}}" title="{{t "disk.send_chat"}}">{{icon "message-circle"}}</button>{{end}}</td>
       <td class="small">{{.Owner}}</td>
       <td class="small">{{t (print "disk.access_" .Access)}}</td>
       <td class="small meta">{{datetime .SharedAt}}</td>
-      <td>{{if not .File}}<form method="post" action="/disk/connect"><input type="hidden" name="which" value="sh:{{.ID}}"><input type="hidden" name="back" value="/disk/shared">
-        {{if and $d.ConnectedSet (index $d.ConnectedSet (print "sh:" .ID))}}<button class="ghost" name="off" value="1" title="{{t "disk.connected_hint"}}">{{icon "unlink"}} {{t "disk.disconnect"}}</button>{{else}}<button class="ghost" title="{{t "disk.connect_hint"}}">{{icon "link"}} {{t "disk.connect"}}</button>{{end}}</form>{{end}}</td></tr>{{end}}
+      <td><div class="row">{{if not .File}}<form method="post" action="/disk/connect"><input type="hidden" name="which" value="sh:{{.ID}}"><input type="hidden" name="back" value="/disk/shared">
+        {{if and $d.ConnectedSet (index $d.ConnectedSet (print "sh:" .ID))}}<button class="ghost" name="off" value="1" title="{{t "disk.connected_hint"}}">{{icon "unlink"}} {{t "disk.disconnect"}}</button>{{else}}<button class="ghost" title="{{t "disk.connect_hint"}}">{{icon "link"}} {{t "disk.connect"}}</button>{{end}}</form>{{end}}
+        <form method="post" action="/disk/shared/leave" data-confirm="{{t "disk.leave_confirm" .Name}}"><input type="hidden" name="id" value="{{.ID}}">{{if .File}}<input type="hidden" name="file" value="1">{{end}}
+          <button class="ghost" title="{{t "disk.leave_hint"}}">{{icon "logout"}} {{t "disk.leave"}}</button></form></div></td></tr>{{end}}
     </tbody></table>
   {{else}}<div class="empty">{{t "disk.shared_empty"}}</div>{{end}}
-</div>
+</div>{{template "diskSend"}}
 {{end}}

@@ -21,6 +21,7 @@ import (
 	"go24/internal/calls"
 	"go24/internal/db"
 	"go24/internal/drive"
+	"go24/internal/speech"
 	"go24/internal/storage"
 	"go24/internal/storages"
 	"go24/internal/tasks"
@@ -31,7 +32,9 @@ import (
 // the shared folder, a second start records nothing more; «Остановить» stops Egress. When Egress has written the
 // file, go24-worker puts it on the Drive of the one who started it, in «Записи звонков», among the task's files, and
 // says so in the task; the file in the shared folder goes. A recording whose call everyone left stops by itself, and
-// one Egress failed is told as failed.
+// one Egress failed is told as failed. With «Расшифровывать записи» on, go24-worker has Whisper make the text of
+// the saved recording: a file with the times of speech beside it, among the task's files, told to the task; Whisper
+// failing is tried again, the third failure is told.
 func TestCallRecording(t *testing.T) {
 	dbURL, s3ep := os.Getenv("GO24_TEST_DATABASE_URL"), os.Getenv("GO24_TEST_S3")
 	if dbURL == "" || s3ep == "" {
@@ -115,10 +118,25 @@ func TestCallRecording(t *testing.T) {
 		}
 	}))
 	defer lk.Close()
+	// Whisper: answers with pieces of speech, or fails while whisperDown
+	whisperDown := false
+	var heard string
+	whisper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, h, err := r.FormFile("audio_file")
+		if whisperDown || err != nil || r.URL.Query().Get("output") != "json" {
+			w.WriteHeader(500)
+			return
+		}
+		b, _ := io.ReadAll(f)
+		heard = h.Filename + ":" + string(b)
+		_, _ = io.WriteString(w, `{"segments":[{"start":1.2,"end":4,"text":" Добрый день."},{"start":3725,"end":3730,"text":" Договорились."}]}`)
+	}))
+	defer whisper.Close()
+	ffmpegBin = "go24-no-ffmpeg"
 	prov := calls.New("wss://lk", "key", "secret")
 	prov.APIURL = lk.URL
 	srv := &Server{DB: pool, Tasks: ts, Drive: drive.NewStore(pool, ts), Storages: storages.NewStore(pool, nil, s3),
-		Calls: prov, Recordings: &calls.Recordings{DB: pool}, RecordDir: dir, BaseURL: "http://go24",
+		Calls: prov, Recordings: &calls.Recordings{DB: pool}, RecordDir: dir, BaseURL: "http://go24", Speech: speech.New(whisper.URL),
 		Sessions: auth.NewSessions(strings.Repeat("s", 32), false), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	hs := httptest.NewServer(srv.Routes())
 	defer hs.Close()
@@ -159,10 +177,10 @@ func TestCallRecording(t *testing.T) {
 	if st, _ := do(anna, "POST", "/settings/calls", url.Values{"record": {"1"}}); st != http.StatusForbidden {
 		t.Fatalf("not an administrator let calls be recorded: %d", st)
 	}
-	if st, _ := do(boss, "POST", "/settings/calls", url.Values{"record": {"1"}}); st != http.StatusSeeOther {
+	if st, _ := do(boss, "POST", "/settings/calls", url.Values{"record": {"1"}, "transcribe": {"1"}}); st != http.StatusSeeOther {
 		t.Fatalf("the administrator's setting: %d", st)
 	}
-	if _, page := do(boss, "GET", "/settings/calls", nil); !strings.Contains(page, `name="record" value="1" checked`) {
+	if _, page := do(boss, "GET", "/settings/calls", nil); !strings.Contains(page, `name="record" value="1" checked`) || !strings.Contains(page, `name="transcribe" value="1" checked`) {
 		t.Fatalf("the setting page: %s", page)
 	}
 	if s := state(); s != `{"enabled":true,"on":false}` {
@@ -216,6 +234,59 @@ func TestCallRecording(t *testing.T) {
 		t.Fatalf("the task is told %q", comment)
 	}
 
+	// the text of the recording: Whisper hears it, the file goes beside it, the task is told
+	var transcript string
+	must(pool.QueryRow(ctx, `SELECT transcript FROM call_recordings WHERE egress_id = 'EG_A'`).Scan(&transcript))
+	if transcript != "pending" {
+		t.Fatalf("the recording waits for its text: %q", transcript)
+	}
+	if !srv.transcribeNext(ctx) || srv.transcribeNext(ctx) {
+		t.Fatal("one recording is to be transcribed")
+	}
+	if heard != name+":mp4 bytes!!" {
+		t.Fatalf("Whisper heard %q", heard)
+	}
+	var tname, tfolder, ttask, tkey string
+	must(pool.QueryRow(ctx, `SELECT f.name, fo.name, f.task_id::text, f.object_key FROM call_recordings c
+		JOIN files f ON f.id = c.transcript_file JOIN drive_folders fo ON fo.id = f.folder_id WHERE c.egress_id = 'EG_A' AND c.transcript = 'done'`).
+		Scan(&tname, &tfolder, &ttask, &tkey))
+	if tname != strings.TrimSuffix(name, ".mp4")+" — расшифровка.txt" || tfolder != "Записи звонков" || ttask != taskID {
+		t.Fatalf("the transcript on the Drive: %q %q %s", tname, tfolder, ttask)
+	}
+	obj, err := srv.Storages.Open(ctx, nil, tkey)
+	must(err)
+	body, _ := io.ReadAll(obj)
+	obj.Close()
+	if text := string(body); !strings.HasPrefix(text, "Расшифровка записи звонка «CR-1 Созвон: итоги», ") ||
+		!strings.Contains(text, "\n\n[00:01] Добрый день.\n[1:02:05] Договорились.\n") {
+		t.Fatalf("the transcript: %q", text)
+	}
+	must(pool.QueryRow(ctx, `SELECT body FROM task_comments WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&comment))
+	if !strings.Contains(comment, "Расшифровка записи звонка: "+tname) {
+		t.Fatalf("the task is told %q", comment)
+	}
+	// Whisper is down: tried again a minute later, the third failure is told
+	_, err = pool.Exec(ctx, `UPDATE call_recordings SET transcript = 'pending', transcript_tries = 0 WHERE egress_id = 'EG_A'`)
+	must(err)
+	whisperDown = true
+	for i := 0; i < 2; i++ {
+		if srv.transcribeNext(ctx) {
+			t.Fatal("a failure is not waited out")
+		}
+	}
+	must(pool.QueryRow(ctx, `SELECT transcript FROM call_recordings WHERE egress_id = 'EG_A'`).Scan(&transcript))
+	if transcript != "pending" {
+		t.Fatalf("given up too early: %q", transcript)
+	}
+	if !srv.transcribeNext(ctx) {
+		t.Fatal("the third failure")
+	}
+	must(pool.QueryRow(ctx, `SELECT transcript FROM call_recordings WHERE egress_id = 'EG_A'`).Scan(&transcript))
+	must(pool.QueryRow(ctx, `SELECT body FROM task_comments WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&comment))
+	if transcript != "failed" || comment != "Не удалось расшифровать запись звонка «CR-1 Созвон: итоги»" {
+		t.Fatalf("a failed transcript: %q, told %q", transcript, comment)
+	}
+
 	// everyone left the call: the recording stops by itself; Egress fails it
 	if st, _ := do(anna, "POST", "/call/record"+q, start); st != http.StatusOK || len(started) != 2 {
 		t.Fatalf("a new recording: %d %v", st, started)
@@ -245,5 +316,16 @@ func TestCallRecording(t *testing.T) {
 	must(pool.QueryRow(ctx, `SELECT body FROM task_comments WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&comment))
 	if st != "failed" || !strings.Contains(why, "pipeline") || comment != "Запись звонка не удалась" {
 		t.Fatalf("a failed recording: %s %q, told %q", st, why, comment)
+	}
+}
+
+// TestTranscriptText: the heading, then a line for each piece of speech with its time; nothing heard — said so.
+func TestTranscriptText(t *testing.T) {
+	got := transcriptText("Звонок", []speech.Segment{{Start: 0.4, Text: "Начнём."}, {Start: 125.9, Text: "Итак."}, {Start: 3600, Text: "Всё."}}, "(тихо)")
+	if got != "Звонок\n\n[00:00] Начнём.\n[02:05] Итак.\n[1:00:00] Всё.\n" {
+		t.Fatalf("%q", got)
+	}
+	if got := transcriptText("Звонок", nil, "(тихо)"); got != "Звонок\n\n(тихо)\n" {
+		t.Fatalf("%q", got)
 	}
 }

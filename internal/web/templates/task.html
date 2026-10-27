@@ -431,7 +431,18 @@
     {{end}}
   </div>
   {{if $c.Frozen}}<div class="chatform muted small">{{icon "history"}} {{t "collab.archived_task"}}</div>{{else}}
+  <div class="pop msgpop" data-msgpop hidden>
+    <button type="button" class="ghost" data-do="reply">{{icon "arrow-back-up"}} {{t "chat.reply"}}</button>
+    <button type="button" class="ghost" data-do="copy" data-done="{{t "chat.copied"}}">{{icon "copy"}} {{t "chat.copy"}}</button>
+    {{if $canSub}}<a class="button ghost" data-do="subtask" href="/tasks/new?parent={{$key}}&comment=">{{icon "hierarchy-2"}} {{t "chat.make_subtask"}}</a>{{end}}
+    <button type="button" class="ghost" data-do="edit" data-own>{{icon "edit"}} {{t "chat.edit"}}</button>
+    <button type="button" class="ghost danger" data-do="delete" data-own{{if $.User.AdminActive}} data-any{{end}} data-confirm="{{t "chat.delete_confirm"}}">{{icon "trash"}} {{t "common.delete"}}</button>
+  </div>
   <form method="post" action="/t/{{$key}}/comments" class="chatform" data-chat data-failed="{{t "chat.failed"}}">
+    <div class="chatctx" data-chatctx hidden><span class="chatctx-ico" data-ctx-ico>{{icon "arrow-back-up"}}</span>
+      <div class="chatctx-text"><b data-ctx-title data-reply="{{t "chat.reply_to"}}" data-edit="{{t "chat.editing"}}"></b><span data-ctx-body></span></div>
+      <button type="button" class="ghost" data-ctx-cancel title="{{t "common.cancel"}}">{{icon "x"}}</button></div>
+    <input type="hidden" name="reply_to" value="">
     <textarea name="body" rows="1" placeholder="{{t "chat.placeholder"}}" required data-mention></textarea>
     <button class="primary send" title="{{t "comments.send"}}">{{icon "send"}}</button>
   </form>{{end}}
@@ -443,10 +454,12 @@
 {{define "chatmsg"}}
 {{if .NewDay}}<div class="chatday"><span>{{day .At}}</span></div>{{end}}
 {{with .Comment}}
-<div class="msg{{if $.Mine}} mine{{end}}" data-id="{{.ID}}">
+<div class="msg{{if $.Mine}} mine{{end}}" data-id="{{.ID}}" id="m-{{.ID}}" data-author="{{.AuthorName}}">
   {{if not $.Mine}}{{ava .AuthorName}}{{end}}
   <div class="bubble">{{if not $.Mine}}<b class="who">{{.AuthorName}}</b>{{guestMark .AuthorID}}{{end}}
-    <div class="text">{{nl2br .Body}}</div><span class="time">{{clock .CreatedAt}}</span>
+    <button type="button" class="ghost msg-menu" data-msg-menu title="{{t "chat.msg_menu"}}">{{icon "dots"}}</button>
+    {{if .ReplyTo}}<a class="im-quote" href="#m-{{.ReplyTo}}" data-goto="{{.ReplyTo}}"><b>{{.ReplyName}}</b><span>{{.ReplyBody}}</span></a>{{end}}
+    <div class="text">{{nl2br .Body}}</div><span class="time">{{if .EditedAt}}<span class="edited">{{t "chat.edited"}}</span> {{end}}{{clock .CreatedAt}}</span>
     <div class="reacts">{{range .Reactions}}<button type="button" class="react{{if .Mine}} mine{{end}}" data-react="{{.Key}}" title="{{.Names}}">{{.Key}} <b>{{.Count}}</b></button>{{end}}
       <form method="post" action="/t/{{$.Key}}/comments/{{.ID}}/result" class="resform"><input type="hidden" name="on" value="{{if $.IsResult}}0{{else}}1{{end}}">
         <button class="ghost react-res{{if $.IsResult}} on{{end}}" title="{{if $.IsResult}}{{t "results.remove"}}{{else}}{{t "results.add"}}{{end}}">📌</button></form>

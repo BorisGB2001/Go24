@@ -1,0 +1,50 @@
+{{define "content"}}
+{{$r := .Data.R}}
+<h1>{{icon "server-2"}} {{t "sys.title"}}</h1>
+<div class="sub">{{t "sys.subtitle"}} · {{t "sys.checked" (datetime $r.CheckedAt)}} · <a href="/settings/system">{{t "sys.recheck"}}</a></div>
+{{if .Data.Problems}}<div class="flash" data-sys-problems><b>{{t "sys.problems"}}</b><ul>{{range .Data.Problems}}<li>{{.}}</li>{{end}}</ul></div>
+{{else}}<p data-sys-ok><span class="badge">✓ {{t "sys.ok"}}</span></p>{{end}}
+
+<div class="card stack">
+  <h3>go24</h3>
+  <p>{{t "sys.version"}}: <b>{{$r.Version}}</b> · Go {{$r.Go}}</p>
+  {{if $r.Nodes}}<table>
+    <tr><th>{{t "sys.node.role"}}</th><th>{{t "sys.node.host"}}</th><th>{{t "sys.version"}}</th><th>{{t "sys.node.started"}}</th><th>{{t "sys.node.seen"}}</th></tr>
+    {{range $r.Nodes}}<tr><td>{{t (print "sys.role." .Role)}}</td><td><code>{{.Host}}</code></td><td>{{.Version}}</td><td>{{datetime .StartedAt}}</td>
+      <td>{{if .Alive}}<span class="badge">{{t "sys.alive"}}</span>{{else}}<span class="badge red">{{t "sys.stopped"}}</span> <span class="muted small">{{datetime .SeenAt}}</span>{{end}}</td></tr>
+    {{end}}
+  </table>{{end}}
+</div>
+
+<div class="card stack">
+  <h3>{{t "sys.db"}}</h3>
+  {{with $r.Database}}<p>PostgreSQL {{.Version}} · {{t "sys.db.size"}}: <b>{{size .Size}}</b> · {{t "sys.db.migration"}}: <code>{{.Migration}}</code> · {{t "sys.db.conns"}}: {{.Connections}}</p>
+  {{else}}<p><span class="badge red">{{t "sys.down"}}</span> <span class="muted small">{{$r.DBError}}</span></p>{{end}}
+</div>
+
+<div class="card stack">
+  <h3>{{t "sys.services"}}</h3>
+  {{if $r.Services}}<table data-sys-services>
+    {{range $r.Services}}<tr><td>{{t (print "sys.svc." .ID)}}</td><td><code>{{.Target}}</code></td>
+      <td>{{if .OK}}<span class="badge">{{t "sys.up"}}</span> <span class="muted small">{{t "sys.ms" .Millis}}</span>{{else}}<span class="badge red">{{t "sys.down"}}</span> <span class="muted small">{{.Error}}</span>{{end}}</td></tr>
+    {{end}}
+  </table>{{else}}<p class="muted">{{t "sys.services_none"}}</p>{{end}}
+</div>
+
+{{if $r.Disks}}<div class="card stack">
+  <h3>{{t "sys.disks"}}</h3>
+  <table>
+    {{range $r.Disks}}<tr><td>{{t (print "sys.disk." .ID)}}</td><td><code>{{.Path}}</code></td>
+      <td>{{if .Error}}<span class="badge red">{{.Error}}</span>{{else}}{{t "sys.disk.free" (size .Free) (size .Total)}} <span class="badge{{if .Low}} red{{end}}">{{.UsedPercent}}%</span>{{end}}</td></tr>
+    {{end}}
+  </table>
+</div>{{end}}
+
+<div class="card stack">
+  <h3>{{t "backup.title"}}</h3>
+  {{if not $r.BackupOn}}<p class="muted">{{t "sys.backup_off"}}</p>
+  {{else}}{{with $r.Backup}}<p>{{t "sys.backup_last"}}: <code>{{.Name}}</code> <span class="badge{{if eq .Status "failed"}} red{{end}}">{{t (print "backup.status." .Status)}}</span>{{with .FinishedAt}} {{datetime .}}{{end}}{{if .Error}} <span class="muted small">{{.Error}}</span>{{end}}</p>
+  {{else}}<p class="muted">{{t "sys.backup_none"}}</p>{{end}}
+  <p><a href="/settings/backup">{{t "sys.backup_open"}}</a></p>{{end}}
+</div>
+{{end}}

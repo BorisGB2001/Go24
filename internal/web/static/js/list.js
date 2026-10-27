@@ -47,6 +47,29 @@
     } catch { /* the page already shows the choice; it is saved next time */ }
   });
 
+  // subtasks under their parent task: the arrow shows or hides them; a row shows when every task above it is open.
+  // What is open is kept in this browser.
+  const TREE = 'go24.tasklist.open';
+  let open = new Set();
+  try { open = new Set(JSON.parse(localStorage.getItem(TREE) || '[]')); } catch { /* nothing kept */ }
+  const tree = () => {
+    document.querySelectorAll('tr[data-path]').forEach(tr => {
+      tr.hidden = !tr.dataset.path.split(' ').every(k => open.has(k));
+    });
+    document.querySelectorAll('tr[data-tree] [data-tree-toggle]').forEach(b => {
+      b.setAttribute('aria-expanded', open.has(b.closest('tr').dataset.tree));
+    });
+  };
+  document.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-tree-toggle]');
+    if (!b) return;
+    const k = b.closest('tr').dataset.tree;
+    if (open.has(k)) open.delete(k); else open.add(k);
+    try { localStorage.setItem(TREE, JSON.stringify([...open].slice(-500))); } catch { /* not kept */ }
+    tree();
+  });
+  tree();
+
   // «На странице» under a task list: the choice reloads the list
   document.querySelectorAll('form.pagesize select').forEach(sel => {
     sel.addEventListener('change', () => sel.form.submit());

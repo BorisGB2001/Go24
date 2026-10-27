@@ -10,8 +10,9 @@
   {{range $d.Hits}}<div class="kbhit"><a href="/kb/{{.SpaceID}}/{{.ID}}"><b>{{mark .Title $d.Q}}</b></a> <span class="muted small">· {{.SpaceName}}</span>
     <div class="small muted">{{mark .Snippet $d.Q}}</div></div>{{else}}<p class="muted">{{t "kb.nothing"}}</p>{{end}}
 </div>{{end}}
-{{if or $d.Favs $d.Recent}}<div class="kbquick">
+{{if or $d.Favs $d.Recent $d.Drafts}}<div class="kbquick">
   {{with $d.Favs}}<div class="card"><h3>{{icon "bookmark"}} {{t "kb.favorites"}}</h3><ul class="kblinks">{{range .}}<li>{{if .PageID}}<a href="/kb/{{.SpaceID}}/{{.PageID}}">{{icon "file-text"}} {{.Title}}</a> <span class="muted small">· {{.SpaceName}}</span>{{else}}<a href="/kb/{{.SpaceID}}">{{icon "files"}} {{.SpaceName}}</a>{{end}}</li>{{end}}</ul></div>{{end}}
+  {{with $d.Drafts}}<div class="card"><h3>{{icon "device-floppy"}} {{t "kb.drafts"}}</h3><ul class="kblinks">{{range .}}<li><a href="/kb/{{.SpaceID}}/{{.PageID}}?edit=1">{{icon "edit"}} {{.Title}}</a> <span class="muted small">· {{.SpaceName}} · {{datetime .At}}</span></li>{{end}}</ul></div>{{end}}
   {{with $d.Recent}}<div class="card"><h3>{{icon "history"}} {{t "kb.recent"}}</h3><ul class="kblinks">{{range .}}<li><a href="/kb/{{.SpaceID}}/{{.PageID}}">{{icon "file-text"}} {{.Title}}</a> <span class="muted small">· {{.SpaceName}} · {{datetime .At}}</span></li>{{end}}</ul></div>{{end}}
 </div>{{end}}
 <div class="kbspaces">

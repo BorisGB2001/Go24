@@ -57,15 +57,25 @@
 {{/* the meeting of a letter, as Outlook's card above the text */}}
 {{define "minvite"}}{{$d := .}}{{with .Invite}}{{$c := .}}{{$in := .Inv}}<div class="card minvite{{if .Cancel}} cancelled{{end}}" data-invite>
   <div class="row minv-head">{{icon "calendar-event"}} <b>{{if $in.Summary}}{{$in.Summary}}{{else}}{{t "mail.no_subject"}}{{end}}</b>
-    <span class="pill">{{if .Cancel}}{{t "mail.inv.cancelled"}}{{else if .Reply}}{{t "mail.inv.reply"}}{{else if .Update}}{{t "mail.inv.updated"}}{{else}}{{t "mail.inv.request"}}{{end}}</span></div>
+    <span class="pill">{{if .Cancel}}{{t "mail.inv.cancelled"}}{{else if .Counter}}{{t "mail.counter.pill"}}{{else if .Declined}}{{t "mail.counter.declined_pill"}}{{else if .Reply}}{{t "mail.inv.reply"}}{{else if .Update}}{{t "mail.inv.updated"}}{{else}}{{t "mail.inv.request"}}{{end}}</span></div>
   <div class="props small">
-    <span class="k">{{t "calendar.when"}}</span><span>{{if $in.AllDay}}{{day $in.Start}}{{if ne (day $in.Start) (day $in.End)}} — {{day $in.End}}{{end}}{{else}}{{datetime $in.Start}} — {{if eq (day $in.Start) (day $in.End)}}{{clock $in.End}}{{else}}{{datetime $in.End}}{{end}}{{end}}{{with $in.Repeat}} · {{t (print "repeat.period." .)}}{{end}}</span>
+    {{with .Meeting}}<span class="k">{{t "mail.counter.now"}}</span><span>{{datetime .Start}} — {{if eq (day .Start) (day .End)}}{{clock .End}}{{else}}{{datetime .End}}{{end}}</span>{{end}}
+    <span class="k">{{if .Counter}}{{t "mail.counter.proposed"}}{{else}}{{t "calendar.when"}}{{end}}</span><span>{{if $in.AllDay}}{{day $in.Start}}{{if ne (day $in.Start) (day $in.End)}} — {{day $in.End}}{{end}}{{else}}{{datetime $in.Start}} — {{if eq (day $in.Start) (day $in.End)}}{{clock $in.End}}{{else}}{{datetime $in.End}}{{end}}{{end}}{{with $in.Repeat}} · {{t (print "repeat.period." .)}}{{end}}</span>
     {{with $in.Location}}<span class="k">{{t "calendar.where"}}</span><span>{{.}}</span>{{end}}
     {{with $in.Join}}<span class="k">{{t "mail.inv.online"}}</span><span><a class="button small" href="{{.}}" target="_blank" rel="noopener noreferrer">{{icon "video"}} {{t "mail.inv.join"}}</a></span>{{end}}
     {{with $in.Organizer.Email}}<span class="k">{{t "calendar.organizer"}}</span><span>{{$in.Organizer.Display}} <span class="muted">&lt;{{.}}&gt;</span></span>{{end}}
     {{with $in.Attendees}}<span class="k">{{t "calendar.attendees"}}</span><span>{{range $i, $a := .}}{{if $i}}, {{end}}{{$a.Display}}{{with $a.Status}}{{if ne . "needs-action"}} <span class="muted">({{t (print "mail.inv.st." .)}})</span>{{end}}{{end}}{{end}}</span>{{end}}
   </div>
-  {{if .Reply}}<p>{{.Reply.Display}} — {{t (print "mail.inv.replied." .Reply.Status)}}{{with $in.Comment}}: «{{.}}»{{end}}{{with $c.EventID}} · <a href="/calendar/{{.}}">{{t "mail.inv.open_event"}}</a>{{end}}</p>
+  {{if .Counter}}<p>{{.Counter.Display}} — {{t (print "mail.inv.replied." .Counter.Status)}}, {{t "mail.counter.proposes"}}{{with $in.Comment}}: «{{.}}»{{end}}{{with $c.EventID}} · <a href="/calendar/{{.}}">{{t "mail.inv.open_event"}}</a>{{end}}</p>
+    {{if .Decision}}<p class="small">{{t (print "mail.counter.decided." .Decision)}}</p>
+    {{else}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/counter" class="minv-form"><input type="hidden" name="folder" value="{{$d.FolderID}}">
+      <div class="row">{{if .Meeting}}<button class="primary" name="decision" value="accepted">{{icon "check"}} {{t "mail.counter.accept"}}</button>{{end}}
+        <button class="ghost" name="decision" value="declined">{{icon "x"}} {{t "mail.counter.decline"}}</button></div>
+      {{if not .Meeting}}<p class="small muted">{{t "mail.counter.no_meeting"}}</p>{{end}}
+      <details class="minv-comment"><summary class="small">{{t "mail.inv.comment"}}</summary><textarea name="comment" rows="2" maxlength="2000" placeholder="{{t "mail.inv.comment_hint"}}"></textarea></details>
+    </form>{{end}}
+  {{else if .Declined}}<p class="small">{{t "mail.counter.declined_card"}}{{with $in.Comment}}: «{{.}}»{{end}}</p>
+  {{else if .Reply}}<p>{{.Reply.Display}} — {{t (print "mail.inv.replied." .Reply.Status)}}{{with $in.Comment}}: «{{.}}»{{end}}{{with $c.EventID}} · <a href="/calendar/{{.}}">{{t "mail.inv.open_event"}}</a>{{end}}</p>
   {{else if .Cancel}}<p class="small">{{t "mail.inv.cancelled_text"}}</p>
     {{if and .State.EventID (ne .State.Status "cancelled")}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/invite"><input type="hidden" name="folder" value="{{$d.FolderID}}">
       <button name="status" value="cancelled">{{icon "trash"}} {{t "mail.inv.remove"}}</button></form>{{end}}
@@ -80,6 +90,15 @@
         <label class="check"><input type="radio" name="reply" value="none"> {{t "mail.inv.reply_none"}}</label></div>
       <details class="minv-comment"><summary class="small">{{t "mail.inv.comment"}}</summary><textarea name="comment" rows="2" maxlength="2000" placeholder="{{t "mail.inv.comment_hint"}}"></textarea></details>{{end}}
     </form>
+    {{with .State.ProposedStart}}<p class="small">{{icon "clock"}} {{t "mail.counter.yours"}}: {{datetime .}}{{with $c.State.ProposedEnd}} — {{clock .}}{{end}}</p>{{end}}
+    {{if and (eq $in.Method "REQUEST") $in.Organizer.Email}}<details class="minv-propose"><summary class="small">{{icon "clock"}} {{t "mail.counter.propose"}}</summary>
+      <form method="post" action="/mail/letters/{{$d.Letter.ID}}/propose" class="minv-form"><input type="hidden" name="folder" value="{{$d.FolderID}}">
+        <div class="row small"><input type="datetime-local" name="start" value="{{$in.Start.Local.Format "2006-01-02T15:04"}}" required> —
+          <input type="datetime-local" name="end" value="{{$in.End.Local.Format "2006-01-02T15:04"}}" required></div>
+        <textarea name="comment" rows="2" maxlength="2000" placeholder="{{t "mail.inv.comment_hint"}}"></textarea>
+        <div class="row"><button class="ghost" name="status" value="tentative">{{icon "circle-dashed"}} {{t "mail.counter.tentative"}}</button>
+          <button class="ghost" name="status" value="declined">{{icon "x"}} {{t "mail.counter.declined"}}</button></div>
+      </form></details>{{end}}
   {{end}}
 </div>{{end}}{{end}}
 

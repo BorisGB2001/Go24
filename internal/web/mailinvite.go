@@ -8,11 +8,13 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"go24/internal/auth"
 	"go24/internal/calendar"
+	"go24/internal/i18n"
 	"go24/internal/mail"
 	"go24/internal/tasks"
 )
@@ -22,7 +24,9 @@ import (
 // A letter's meeting shows as Outlook shows it: a card above the text — when, where, who organizes it and who is
 // invited, what of the user's go24 calendar it overlaps — with «Принять», «Под вопросом», «Отклонить» (with words to
 // the organizer, without them, or not telling them at all); an update asks again, a cancel offers «Удалить из
-// календаря»; an answer to the user's own meeting says who answered what. «Создать встречу» and «Ответить
+// календаря»; an answer to the user's own meeting says who answered what. «Предложить новое время» answers with
+// another time for the organizer; a proposal that came to the user's meeting is accepted (the meeting moves) or
+// declined. «Создать встречу» and «Ответить
 // приглашением на собрание» open the meeting's form filled from the letter: its people (go24's own among the invited,
 // the others invited by mail from the user's mailbox — iCalendar REQUEST, CANCEL when the meeting is off).
 
@@ -37,6 +41,12 @@ type invCard struct {
 	EventID   string       // the user's meeting this answer is about
 	Conflicts []calendar.Event
 	Answers   []string
+	// a proposal of a new time for the user's meeting: who proposes it, the meeting as it is now (nil — not in the
+	// user's go24 calendar) and what the user did with it (accepted, declined; "" — nothing yet)
+	Counter  *mail.Person
+	Meeting  *calendar.Event
+	Decision string
+	Declined bool // the organizer declined the time the user proposed
 }
 
 // mailInviteCard is the card of the letter's meeting (nil — none).
@@ -49,6 +59,23 @@ func (s *Server) mailInviteCard(r *http.Request, sess auth.Session, m mail.Messa
 		return nil, err
 	}
 	c := &invCard{Inv: in, Me: in.Attendee(m.MailboxEmail), Cancel: in.Method == "CANCEL" || in.Cancelled, Answers: mail.Answers}
+	if in.Method == "COUNTER" {
+		if len(in.Attendees) > 0 {
+			c.Counter = &in.Attendees[0]
+		}
+		if err := s.DB.QueryRow(r.Context(), `SELECT id::text FROM events WHERE ical_uid = $1 AND owner_id = $2`, in.UID, sess.UserID).
+			Scan(&c.EventID); err == nil {
+			if e, err := s.Calendar.Get(r.Context(), sess.UserID, c.EventID); err == nil {
+				c.Meeting = &e
+			}
+		}
+		c.Decision, err = s.Mail.CounterDecision(r.Context(), sess.UserID, m.ID)
+		return c, err
+	}
+	if in.Method == "DECLINECOUNTER" {
+		c.Declined = true
+		return c, nil
+	}
 	if in.Method == "REPLY" {
 		if len(in.Attendees) > 0 {
 			c.Reply = &in.Attendees[0]
@@ -92,6 +119,79 @@ func (s *Server) mailInviteAnswer(w http.ResponseWriter, r *http.Request, sess a
 		key = "mail.inv.done.cancelled"
 	}
 	http.Redirect(w, r, back+"&msg="+url.QueryEscape(s.tr(r, key)), http.StatusSeeOther)
+}
+
+// mailInvitePropose answers the letter's meeting «Под вопросом» or «Отклонить» (status) and proposes the organizer
+// a new time (start, end), with the words (comment).
+func (s *Server) mailInvitePropose(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("letter")
+	back := mailURL(r.FormValue("folder"), id)
+	start, err := time.ParseInLocation("2006-01-02T15:04", r.FormValue("start"), time.Local)
+	end, err2 := time.ParseInLocation("2006-01-02T15:04", r.FormValue("end"), time.Local)
+	if err != nil || err2 != nil {
+		s.mailErr(w, r, i18n.E("err.event_time"), back)
+		return
+	}
+	if err := s.Mail.Propose(r.Context(), sess.UserID, id, r.FormValue("status"), r.FormValue("comment"), start, end); err != nil {
+		s.mailErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("mail invitation: new time proposed", "user_id", sess.UserID, "letter", id, "start", start)
+	http.Redirect(w, r, back+"&msg="+url.QueryEscape(s.tr(r, "mail.counter.sent")), http.StatusSeeOther)
+}
+
+// mailCounterDecide is the organizer's decision on the letter's proposal of a new time (decision accepted |
+// declined, comment — the words to the attendee).
+func (s *Server) mailCounterDecide(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("letter")
+	back := mailURL(r.FormValue("folder"), id)
+	status := r.FormValue("decision")
+	msg, err := s.counterDecide(r, sess, id, status, r.FormValue("comment"))
+	if err != nil {
+		s.mailErr(w, r, err, back)
+		return
+	}
+	if msg == "" {
+		msg = s.tr(r, "mail.counter.done."+status)
+	}
+	http.Redirect(w, r, back+"&msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// counterDecide decides on the proposal of a new time the letter carries: accepted — the user's meeting moves to it
+// (the invited are asked again), declined — the attendee is told, with the words. It gives what to tell the user.
+func (s *Server) counterDecide(r *http.Request, sess auth.Session, letterID, status, comment string) (string, error) {
+	msg := ""
+	if status == "accepted" {
+		in, ok, err := s.Mail.Invite(r.Context(), sess.UserID, letterID)
+		if err != nil {
+			return "", err
+		}
+		if !ok || in.Method != "COUNTER" || !in.End.After(in.Start) {
+			return "", i18n.E("err.bad_form")
+		}
+		var eventID string
+		err = s.DB.QueryRow(r.Context(), `SELECT id::text FROM events WHERE ical_uid = $1 AND owner_id = $2`, in.UID, sess.UserID).Scan(&eventID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", calendar.ErrNotFound
+		}
+		if err != nil {
+			return "", err
+		}
+		e, err := s.Calendar.Get(r.Context(), sess.UserID, eventID)
+		if err != nil {
+			return "", err
+		}
+		before := e
+		e.Start, e.End, e.AllDay = in.Start.In(time.Local), in.End.In(time.Local), false
+		if msg, err = s.meetingMove(r, sess, sess.UserID, e, before); err != nil {
+			return "", err
+		}
+	}
+	if err := s.Mail.DecideCounter(r.Context(), sess.UserID, letterID, status, comment); err != nil {
+		return "", err
+	}
+	s.Log.Info("mail invitation: proposal decided", "user_id", sess.UserID, "letter", letterID, "decision", status)
+	return msg, nil
 }
 
 // letterPeople are the people of a letter besides the user: go24's employees (by address) and the others.

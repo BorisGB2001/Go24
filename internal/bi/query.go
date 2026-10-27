@@ -61,7 +61,7 @@ type Query struct {
 	From      *time.Time `json:"from,omitempty"`
 	To        *time.Time `json:"to,omitempty"`
 	DateField string     `json:"date_field,omitempty"`
-	Sort      int        `json:"sort,omitempty"` // a column from 1, negative — descending; 0 — by the date, else the first measure
+	Sort      int        `json:"sort,omitempty"` // a column from 1, negative — descending; 0 — by the date or the stage, else the first measure
 	Limit     int        `json:"limit,omitempty"`
 
 	raw    bool // the rows themselves, field by field, not grouped (an export)
@@ -376,7 +376,16 @@ func (q Query) build(ds *Dataset, scope func(*Dataset) (string, error), args []a
 	if len(dims) > 0 && !q.raw {
 		sql += " GROUP BY " + strings.Join(group, ", ")
 	}
+	// a dimension in its own order (the stages, as their pipeline goes) by default and when sorted by it: by its first
+	// place among the rows grouped
+	ordered := len(dims) > 0 && dims[0].f.Order != "" && !q.raw
 	switch {
+	case ordered && (q.Sort == 0 || q.Sort == 1 || q.Sort == -1):
+		sql += " ORDER BY min(" + dims[0].f.Order + ")"
+		if q.Sort < 0 {
+			sql += " DESC"
+		}
+		sql += ", 1"
 	case q.Sort != 0:
 		n := q.Sort
 		if n < 0 {

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/anon"
+	"go24/internal/portal"
 )
 
 // User is what user.get returns (the fields go24 uses).
@@ -179,6 +180,9 @@ func ImportUsers(ctx context.Context, c *Client, db *pgxpool.Pool, o Options) (U
 		}
 		return tx.QueryRow(ctx, `SELECT count(*) FROM departments WHERE legacy_id IS NOT NULL`).Scan(&st.Departments)
 	})
+	if err == nil { // the names by the portal's «Формат имени»
+		_, err = portal.RenameAll(ctx, db)
+	}
 	return st, err
 }
 

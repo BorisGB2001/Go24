@@ -1,0 +1,17 @@
+{{/* «Обучение»: the people a course is assigned to, with the progress (the list and the course's page). */}}
+{{define "learners"}}{{$d := .}}
+{{if .List}}<div class="card flush"><table class="tlist learners"><thead><tr><th>{{t "learn.f.person"}}</th>{{if .Course}}<th>{{t "learn.f.course"}}</th>{{end}}
+  <th>{{t "learn.f.progress"}}</th><th>{{t "learn.f.best"}}</th><th>{{t "learn.f.due"}}</th><th>{{t "learn.f.assigned"}}</th>{{if .Remove}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range .List}}<tr>
+    <td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a></td>
+    {{if $d.Course}}<td><a href="/company/learning/{{.CourseID}}">{{.CourseTitle}}</a></td>{{end}}
+    <td class="nowrap"><span class="row small"><span class="progress{{if .Overdue $d.Today}} over{{end}}"><span style="width:{{.Percent}}%"></span></span> {{.Done}}/{{.Total}}</span>
+      {{if .Finished}}<span class="pill l-ok">{{t "learn.finished"}}</span>{{else if .Overdue $d.Today}}<span class="pill l-over">{{t "learn.overdue"}}</span>{{end}}</td>
+    <td class="nowrap">{{with .Best}}{{.}}%{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="nowrap">{{with .Due}}{{day (deref .)}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="muted small">{{day .Assigned}}{{with .ByName}} · {{.}}{{end}}</td>
+    {{if $d.Remove}}<td><form method="post" action="/company/learning/{{.CourseID}}/unassign" data-confirm="{{t "learn.unassign_confirm" .Name}}">
+      <input type="hidden" name="user" value="{{.ID}}"><button class="link muted small" title="{{t "learn.unassign"}}">{{icon "x"}}</button></form></td>{{end}}
+  </tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty">{{t "learn.no_learners"}}</div>{{end}}
+{{end}}

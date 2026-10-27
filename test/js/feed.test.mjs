@@ -279,3 +279,102 @@ console.log('feed.js: no duplicate post passed');
   assert.equal(dom2.window.document.querySelectorAll('.fc[hidden]').length, 0, 'the linked comment is seen');
   console.log('feed.js: comments — collapse, quote, Enter passed');
 }
+
+// «Ещё» of a post (GO24DEV-766): «Ссылка на сообщение» copies the link of the post alone, a mark of the
+// menu changes its label, the menu closes on a choice and on a click elsewhere
+{
+  const dom = new JSDOM(`<!doctype html><body><main class="content"><div data-feed data-failed="x"><div data-items>
+    <article data-post-id="p1"><header class="fhead"><details class="fmore" open><summary>…</summary><div class="pop">
+      <button type="button" data-plink data-label="Ссылка на сообщение" data-copied="Ссылка скопирована"><span>Ссылка на сообщение</span></button>
+      <button type="button" class="fmark" data-mark="pin" data-hint-on="Открепить" data-hint-off="Закрепить"><span>Закрепить</span></button>
+    </div></details></header></article></div></div></main><p id="out">вне</p></body>`, { runScripts: 'outside-only', url: 'http://go24.test/feed?tag=x' });
+  const w = dom.window;
+  w.EventSource = class { addEventListener() {} };
+  const sent = [];
+  w.fetch = async url => { sent.push(url); return { ok: true, json: async () => ({ on: true }) }; };
+  let copied = '';
+  Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async s => { copied = s; } } });
+  w.eval(script);
+  const d = w.document, menu = d.querySelector('.fmore');
+  d.querySelector('[data-plink]').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(copied, 'http://go24.test/feed?post=p1');
+  assert.equal(d.querySelector('[data-plink] span').textContent, 'Ссылка скопирована');
+  assert.ok(menu.open, 'stays open to show «Ссылка скопирована»');
+  d.querySelector('[data-mark="pin"]').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(sent, ['/feed/p1/pin']);
+  assert.equal(menu.open, false, 'closed on a choice');
+  assert.equal(d.querySelector('[data-mark="pin"] span').textContent, 'Открепить');
+  assert.ok(d.querySelector('[data-mark="pin"]').classList.contains('on'));
+  menu.open = true;
+  d.getElementById('out').click();
+  assert.equal(menu.open, false, 'closed on a click elsewhere');
+  console.log('feed.js: «Ещё» of a post passed');
+}
+
+// the card of the first outer link of a post and of a comment; links inside go24 have none
+{
+  const dom = new JSDOM(`<!doctype html><body><main class="content"><div data-feed data-failed="x"><div data-items>
+    <article data-post-id="p1"><div data-view><div class="fbody">см. <a href="https://example.com/a">https://example.com/a</a></div></div>
+      <div data-comments><div class="fc" id="comment-c1" data-comment-id="c1"><div data-cview><a href="http://go24.test/tasks/1">задача</a></div></div>
+      <div class="fc" id="comment-c2" data-comment-id="c2"><div data-cview><blockquote><a href="https://q.example">q</a></blockquote> <a href="https://example.com/a">ещё</a></div></div></div>
+    </article></div></div></main></body>`, { runScripts: 'outside-only', url: 'http://go24.test/feed' });
+  const w = dom.window;
+  w.EventSource = class { addEventListener() {} };
+  const asked = [];
+  w.fetch = async url => { asked.push(url); return { status: 200, ok: true, json: async () => ({ url: 'https://example.com/a', site: 'example.com', title: 'Пример <b>', text: 'Описание', image: '/im/link/image?url=x' }) }; };
+  w.eval(script);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(asked, ['/im/link?url=' + encodeURIComponent('https://example.com/a')], 'one fetch per link, none for go24 and quotes');
+  const card = w.document.querySelector('.fbody').nextElementSibling;
+  assert.ok(card.matches('a.im-link.flink[target=_blank]'));
+  assert.equal(card.querySelector('.title').textContent, 'Пример <b>', 'the title is text');
+  assert.equal(card.querySelector('img').getAttribute('src'), '/im/link/image?url=x');
+  assert.equal(w.document.querySelector('#comment-c1 .im-link'), null, 'a go24 link has no card');
+  assert.ok(w.document.querySelector('#comment-c2 [data-cview]').nextElementSibling.matches('.im-link'), 'the comment has its card');
+  console.log('feed.js: link cards passed');
+}
+
+// the editor's buttons of a post: BB codes around the selection, lists, a link; Ctrl+B in a comment;
+// a long post is folded with «Развернуть»
+{
+  const dom = new JSDOM(`<!doctype html><body><main class="content"><div data-feed data-failed="x" data-expand="Развернуть" data-collapse="Свернуть">
+    <form method="post" action="/feed" data-post><div data-fmtbar data-url-ask="Адрес"><button type="button" data-fmt="b"></button><button type="button" data-fmt="list"></button><button type="button" data-fmt="url"></button><button type="button" data-fmt="quote"></button></div>
+      <textarea name="body"></textarea></form>
+    <div data-items><article data-post-id="p1"><div class="fbody">длинный</div><div class="fbody">короткий</div>
+      <form data-comment><textarea name="body" data-cinput>слово</textarea></form></article></div></div></main></body>`, { runScripts: 'outside-only', url: 'http://go24.test/feed' });
+  const w = dom.window;
+  w.EventSource = class { addEventListener() {} };
+  w.fetch = async () => ({ ok: true, json: async () => ({}) });
+  const [long] = w.document.querySelectorAll('.fbody');
+  Object.defineProperty(long, 'scrollHeight', { value: 900 });
+  w.prompt = () => 'https://go24.ru';
+  w.eval(script);
+  const body = w.document.querySelector('form[data-post] [name=body]');
+  const click = k => w.document.querySelector(`[data-fmt="${k}"]`).dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  body.value = 'план на неделю'; body.setSelectionRange(0, 4);
+  click('b');
+  assert.equal(body.value, '[b]план[/b] на неделю');
+  body.setSelectionRange(body.value.length, body.value.length);
+  click('quote');
+  assert.equal(body.value, '[b]план[/b] на неделю[quote][/quote]', 'nothing selected: an empty pair');
+  assert.equal(body.selectionStart, body.value.length - '[/quote]'.length, 'the caret inside');
+  body.value = 'один\nдва'; body.setSelectionRange(2, 7);
+  click('list');
+  assert.equal(body.value, '• один\n• два', 'the selected lines as a list');
+  body.value = 'сайт'; body.setSelectionRange(0, 4);
+  click('url');
+  assert.equal(body.value, '[url=https://go24.ru]сайт[/url]');
+  const c = w.document.querySelector('[data-cinput]');
+  c.setSelectionRange(0, 5);
+  c.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'i', ctrlKey: true, bubbles: true, cancelable: true }));
+  assert.equal(c.value, '[i]слово[/i]', 'Ctrl+I in a comment');
+  const more = long.nextElementSibling;
+  assert.ok(long.classList.contains('ffold') && more.matches('.ffold-btn'), 'a long post is folded');
+  assert.equal(w.document.querySelectorAll('.ffold-btn').length, 1, 'a short one is not');
+  more.click();
+  assert.ok(!long.classList.contains('ffold'));
+  assert.equal(more.textContent, 'Свернуть');
+  console.log('feed.js: editor buttons and folding passed');
+}

@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +67,31 @@ func TestPaginate(t *testing.T) {
 			t.Errorf("page %d of %d: %d tasks from %d, page %d of %d", c.n, c.size, len(got), got[0].Number, page, pages)
 		}
 	}
-	if got, page, pages := Paginate(nil, 2, 10); len(got) != 0 || page != 1 || pages != 1 {
+	if got, page, pages := Paginate([]Task(nil), 2, 10); len(got) != 0 || page != 1 || pages != 1 {
 		t.Errorf("an empty list: %d %d %d", len(got), page, pages)
+	}
+}
+
+func TestTree(t *testing.T) {
+	mk := func(n, parent int) Task {
+		t := Task{ProjectKey: "T", Number: n}
+		if parent > 0 {
+			t.ParentKey = fmt.Sprintf("T-%d", parent)
+		}
+		return t
+	}
+	// 1 ← 3 ← 4; 2; 5 has its parent 9 outside the list; 6 ↔ 7 point at each other
+	groups := Tree([]Task{mk(4, 3), mk(1, 0), mk(2, 0), mk(3, 1), mk(5, 9), mk(6, 7), mk(7, 6)})
+	var got []string
+	for _, g := range groups {
+		var s []string
+		for _, r := range g {
+			s = append(s, fmt.Sprintf("%d:%d:%s:%d", r.Number, r.Depth, strings.Join(r.Path, ","), r.Kids))
+		}
+		got = append(got, strings.Join(s, " "))
+	}
+	want := []string{"1:0::1 3:1:T-1:1 4:2:T-1,T-3:0", "2:0::0", "5:0::0", "6:0::1 7:1:T-6:0"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Tree = %q, want %q", got, want)
 	}
 }

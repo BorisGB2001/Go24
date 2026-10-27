@@ -2,7 +2,10 @@
 {{$d := .Data}}
 <div class="callpage" data-call data-lk="{{$d.URL}}" data-token="{{$d.Token}}" data-failed="{{t "call.failed"}}" data-you="{{t "call.you"}}"
   data-video="{{$d.Video}}" data-ring="{{$d.Ring}}" data-ringing="{{t "call.calling"}}" data-accepted="{{t "call.accepted" "%s"}}" data-declined="{{t "call.declined" "%s"}}" data-no-answer="{{t "call.no_answer"}}"
-  data-chat="{{$d.Chat}}" data-record="{{$d.Query}}" data-saving="{{t "call.record_saving"}}" data-screen="{{t "call.screen"}}" data-ringing-more="{{t "call.ringing_more"}}"
+  data-chat="{{$d.Chat}}" data-record="{{$d.Query}}" data-saving="{{t "call.record_saving"}}" data-screen="{{t "call.screen"}}" data-ringing-more="{{t "call.ringing_more"}}" data-hand-up="{{t "call.hand_raised" "%s"}}"
+  data-host-mark="{{t "call.host"}}" data-muted-microphone="{{t "call.muted_microphone"}}" data-muted-camera="{{t "call.muted_camera"}}" data-muted-screen-share="{{t "call.muted_screen_share"}}" data-removed="{{t "call.removed"}}"
+  {{if $d.Host}}data-host="{{$d.Query}}" data-mute-mic="{{t "call.host_mute_mic"}}" data-mute-cam="{{t "call.host_mute_cam"}}" data-stop-screen="{{t "call.host_stop_screen"}}"
+  data-remove="{{t "call.host_remove"}}" data-remove-confirm="{{t "call.host_remove_confirm" "%s"}}" data-muted-all="{{t "call.host_muted_all"}}"{{end}}
   {{if $d.Guests}}data-guests="{{$d.Query}}" data-lobby-text="{{t "call.lobby_waits" "%s"}}" data-until="{{t "call.guest_until" "%s"}}" data-copied="{{t "call.guest_copied"}}"{{end}}>
   <div class="row"><h1 style="flex:1">{{icon "message-circle"}} {{t "call.title"}} · {{$d.Name}}
     <span class="callrec small" data-call-rec hidden>{{t "call.recording"}}</span></h1>
@@ -24,18 +27,34 @@
     <button type="button" data-call-cam><span data-text-on="{{t "call.cam_off"}}" data-text-off="{{t "call.cam_on"}}">{{t "call.cam_off"}}</span></button>
     <button type="button" data-call-screen><span data-text-on="{{t "call.screen_off"}}" data-text-off="{{t "call.screen_on"}}">{{t "call.screen_on"}}</span></button>
     <button type="button" data-call-layout><span data-text-on="{{t "call.layout_speaker"}}" data-text-off="{{t "call.layout_grid"}}">{{t "call.layout_speaker"}}</span></button>
+    <button type="button" data-call-hand data-up="{{t "call.hand_up"}}" data-down="{{t "call.hand_down"}}">{{t "call.hand_up"}}</button>
+    <details class="callpop" data-call-react><summary class="button ghost" title="{{t "call.react"}}">🙂</summary>
+      <div class="pop callemojis"><button type="button" class="ghost" data-call-emoji="👍">👍</button><button type="button" class="ghost" data-call-emoji="👏">👏</button><button type="button" class="ghost" data-call-emoji="😂">😂</button><button type="button" class="ghost" data-call-emoji="❤️">❤️</button><button type="button" class="ghost" data-call-emoji="🎉">🎉</button><button type="button" class="ghost" data-call-emoji="😮">😮</button></div></details>
+    <details class="callpop callchat" data-call-chat><summary class="button ghost" title="{{t "call.chat"}}">{{icon "message-circle"}} <span class="cnt" data-call-unread hidden>0</span></summary>
+      <div class="pop"><b class="small">{{t "call.chat"}}</b><span class="small muted">{{t "call.chat_hint"}}</span><ul class="callmsgs" data-call-msgs></ul>
+        <form data-native class="row"><textarea name="text" rows="2" maxlength="2000" placeholder="{{t "call.chat_ph"}}"></textarea><button class="primary">{{t "call.chat_send"}}</button></form></div></details>
     <button type="button" data-call-record data-start="{{t "call.record_start"}}" data-stop="{{t "call.record_stop"}}" hidden>{{t "call.record_start"}}</button>
     <button type="button" class="ghost" data-call-full title="{{t "call.fullscreen"}}">⛶</button>
     <details class="callpop" data-call-people-pop><summary class="button ghost">{{icon "users"}} <span data-call-count>1</span></summary>
       <div class="pop"><b class="small">{{t "call.people"}}</b><ul class="callpeople" data-call-people></ul>
+        {{if $d.Host}}<button type="button" class="ghost" data-call-mute-all>🔇 {{t "call.host_mute_all"}}</button>{{end}}
         {{if $d.RingMore}}<button type="button" class="ghost" data-call-ring-more>{{icon "phone"}} {{t "call.ring_more"}}</button>{{end}}</div></details>
     <details class="callpop" data-call-devices><summary class="button ghost" title="{{t "call.devices"}}">⚙</summary>
       <div class="pop"><label class="small">{{t "call.dev_mic"}} <select data-kind="audioinput"></select></label>
         <label class="small">{{t "call.dev_cam"}} <select data-kind="videoinput"></select></label>
-        <label class="small">{{t "call.dev_out"}} <select data-kind="audiooutput"></select></label></div></details>
+        <label class="small">{{t "call.dev_out"}} <select data-kind="audiooutput"></select></label>
+        <label class="small"><input type="checkbox" data-call-noise checked> {{t "call.noise"}}</label>
+        <div data-call-bg-pane><b class="small">{{t "call.bg"}}</b>
+          <div class="callbgs" data-call-bgs data-base="/static/js/vendor/mediapipe/" data-preset="{{t "call.bg_preset" "%s"}}" data-own="{{t "call.bg_own"}}"
+            data-remove="{{t "call.bg_remove"}}" data-loading="{{t "call.bg_loading"}}" data-failed="{{t "call.bg_failed"}}">
+            <button type="button" class="callbg" data-bg="none" title="{{t "call.bg_none"}}">∅</button>
+            <button type="button" class="callbg blur" data-bg="blur" title="{{t "call.bg_blur"}}">{{t "call.bg_blur_short"}}</button>
+            <button type="button" class="callbg blur2" data-bg="blur2" title="{{t "call.bg_blur_strong"}}">{{t "call.bg_blur_short"}}+</button>
+            <label class="callbg button ghost" title="{{t "call.bg_upload"}}">+<input type="file" accept="image/*" data-call-bg-file hidden></label></div></div></div></details>
     <button type="button" class="danger" data-call-leave>{{icon "x"}} {{t "call.leave"}}</button>
   </div>
 </div>
 <script src="{{asset "js/vendor/livekit-client-2.5.7.umd.js"}}"></script>
+<script src="{{asset "js/callbg.js"}}"></script>
 <script src="{{asset "js/call.js"}}"></script>
 {{end}}

@@ -153,6 +153,9 @@ func (s *Service) AddChatToCollab(ctx context.Context, userID, projectID, room s
 			people = append(people, w.ID)
 		}
 	}
+	if err := s.closeOpen(ctx, userID, tok, room); err != nil { // the collab's people only: an open chat closes
+		return err
+	}
 	if err := s.intoCollab(ctx, p, people); err != nil {
 		return err
 	}

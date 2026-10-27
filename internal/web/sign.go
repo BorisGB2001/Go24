@@ -51,6 +51,12 @@ func (s *Server) signPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	data := map[string]any{"Docs": docs, "Filter": f, "Filters": sign.Filters, "Waiting": waiting, "Me": sess.UserID,
 		"HR": s.signHRAllowed(r, sess)}
+	self, err := s.signSelfTemplates(r, sess)
+	if err != nil {
+		s.fail(w, "sign", err)
+		return
+	}
+	data["Self"] = len(self) > 0
 	if f == "hr" {
 		if data["Batches"], err = s.Sign.Batches(r.Context(), sess.UserID, sess.AdminActive()); err != nil {
 			s.fail(w, "sign", err)

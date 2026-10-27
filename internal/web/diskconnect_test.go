@@ -125,6 +125,24 @@ func TestDiskConnectHTTP(t *testing.T) {
 	if strings.Count(do(ivan, "GET", "/disk/my", nil, 200), "data-connected") != 1 {
 		t.Error("the disconnected project's drive is still in «Мой диск»")
 	}
+	// «Отказаться от доступа»: gone from «Общие со мной» and from «Мой диск», the owner is told
+	if !strings.Contains(do(ivan, "GET", "/disk/shared", nil, 200), `action="/disk/shared/leave"`) {
+		t.Error("no «Отказаться» in «Общие со мной»")
+	}
+	do(eve, "POST", "/disk/shared/leave", url.Values{"id": {folder}}, 404)
+	do(ivan, "POST", "/disk/shared/leave", url.Values{"id": {folder}}, 200)
+	if strings.Contains(do(ivan, "GET", "/disk/shared", nil, 200), folder) {
+		t.Error("the folder given up is still in «Общие со мной»")
+	}
+	if strings.Contains(do(ivan, "GET", "/disk/my", nil, 200), "data-connected") {
+		t.Error("the folder given up is still connected")
+	}
+	do(ivan, "GET", "/disk/sh/"+folder, nil, 404)
+	var told int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND actor_id = $2 AND kind = 'disk_share_left'`, eve, ivan).Scan(&told))
+	if told != 1 {
+		t.Errorf("the owner is told %d times", told)
+	}
 	// «Копировать внутреннюю ссылку»
 	if !strings.Contains(do(eve, "GET", "/disk/my", nil, 200), `data-copy="/files/`+file+`/about"`) {
 		t.Error("no internal link of the file")

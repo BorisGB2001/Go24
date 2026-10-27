@@ -32,11 +32,13 @@ var settingsSections = []struct {
 		{"/settings/tools", "sections.title", "adjustments", true},
 		{"/settings/ip", "ipaccess.title", "lock", true},
 		{"/settings/backup", "backup.title", "database", true},
+		{"/settings/system", "sys.title", "server-2", true},
 		{"/settings/notifications", "notify.settings", "bell", false},
 		{"/settings/notify-bots", "notifyout.bots", "send", true},
 	}},
 	{"settings.sec.company", []settingsLink{
 		{"/company/invite", "invite.title", "users", true},
+		{"/settings/employees", "staffset.title", "user-plus", true},
 		{"/settings/user-fields", "nav.user_fields", "list-check", true},
 		{"/settings/worktime", "title.worktime", "clock", true},
 		{"/settings/rooms", "rooms.title", "calendar-event", true},
@@ -130,7 +132,8 @@ func (s *Server) portalPage(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	s.render(w, r, "portal", page{TitleKey: "portal.title", Nav: "portal", Flash: flash, Data: map[string]any{
 		"S": set, "DateFormats": portal.DateFormatNames, "Samples": portalSamples(), "Zones": portalZones,
-		"MaxLogo": portal.MaxLogo >> 10}})
+		"MaxLogo":     portal.MaxLogo >> 10,
+		"NameFormats": portal.NameFormatNames, "NameSamples": s.nameSamples(r)}})
 }
 
 // portalSamples show each date format on today's date.
@@ -138,6 +141,15 @@ func portalSamples() map[string]string {
 	m := map[string]string{}
 	for k, f := range portal.DateFormats {
 		m[k] = time.Now().Format(f)
+	}
+	return m
+}
+
+// nameSamples show each name format on a sample name of the language.
+func (s *Server) nameSamples(r *http.Request) map[string]string {
+	m := map[string]string{}
+	for k := range portal.NameFormats {
+		m[k] = portal.FormatName(k, s.tr(r, "portal.sample_first"), s.tr(r, "portal.sample_last"), s.tr(r, "portal.sample_second"))
 	}
 	return m
 }
@@ -161,7 +173,7 @@ func (s *Server) portalSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	set := portal.Settings{Name: r.FormValue("name"), Lang: r.FormValue("lang"), TZ: r.FormValue("tz"),
-		DateFormat: r.FormValue("date_format"), TimeFormat: r.FormValue("time_format")}
+		DateFormat: r.FormValue("date_format"), TimeFormat: r.FormValue("time_format"), NameFormat: r.FormValue("name_format")}
 	err := portal.Check(set, s.I18n.Supported)
 	if err == nil {
 		err = s.Portal.Save(r.Context(), set, sess.UserID)

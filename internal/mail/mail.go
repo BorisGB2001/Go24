@@ -42,6 +42,8 @@ type Store struct {
 	Tr func(key string, args ...any) string
 	// Lead makes a CRM lead of a letter from an address the CRM does not know (the mailbox's owner); nil — none
 	Lead func(ctx context.Context, owner string, l NewLead) (string, error)
+	// OAuth are go24's applications at the mail services by name ("google", "microsoft", "yandex"); see OAuthEnabled
+	OAuth map[string]OAuthApp
 }
 
 // NewStore: secret is go24's own secret (the session secret); the mail key is derived from it.
@@ -90,6 +92,7 @@ type Mailbox struct {
 	SyncedAt                                     *time.Time
 	Error                                        string
 	Unseen                                       int
+	OAuth                                        string // the service signed in to ("" — a password)
 }
 
 // Settings are what the form gives to connect a mailbox.
@@ -171,7 +174,7 @@ func (s *Store) Add(ctx context.Context, userID string, st Settings) (string, er
 
 const mailboxSQL = `SELECT m.id, m.user_id::text, m.email, m.imap_host, m.smtp_host, m.login, m.imap_port, m.smtp_port, m.tls,
 		m.synced_at, m.error, (SELECT count(*) FROM mail_messages x JOIN mail_folders f ON f.id = x.folder_id
-			WHERE f.mailbox_id = m.id AND f.role = 'inbox' AND NOT x.seen)::int
+			WHERE f.mailbox_id = m.id AND f.role = 'inbox' AND NOT x.seen)::int, m.oauth
 	FROM mailboxes m`
 
 func scanMailboxes(rows pgx.Rows, err error) ([]Mailbox, error) {

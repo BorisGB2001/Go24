@@ -266,6 +266,67 @@ func (s *Store) learnPeer(ctx context.Context, userID string, c *x509.Certificat
 	}
 }
 
+// maxRedecrypt bounds the letters opened again at once (each is brought from its server).
+const maxRedecrypt = 200
+
+// Redecrypt opens the user's letters that came encrypted to a certificate go24 had not (EncNoKey): once the
+// certificate is added, as Outlook reads them when the key is in the store. Each is brought from its server again,
+// its text, files and signature replace what was kept; a letter still not for the user's keys stays as it is.
+// Returns how many it opened.
+func (s *Store) Redecrypt(ctx context.Context, userID string) (int, error) {
+	rows, err := s.db.Query(ctx, `SELECT x.id::text, x.from_addr, m.email FROM mail_messages x JOIN mailboxes m ON m.id = x.mailbox_id
+		WHERE m.user_id::text = $1 AND x.smime_enc = $2 ORDER BY x.sent_at DESC LIMIT $3`, userID, EncNoKey, maxRedecrypt)
+	if err != nil {
+		return 0, err
+	}
+	type locked struct{ id, from, own string }
+	var list []locked
+	for rows.Next() {
+		var l locked
+		if err := rows.Scan(&l.id, &l.from, &l.own); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, l := range list {
+		raw, err := s.Source(ctx, userID, l.id)
+		if err != nil {
+			continue // gone from the server, or go24's own copy
+		}
+		raw, sec := s.unsecure(ctx, userID, raw)
+		if sec.enc != EncYes {
+			continue
+		}
+		if sec.of(l.from); sec.cert != nil && sec.sign != SignOther && !strings.EqualFold(l.from, l.own) {
+			s.learnPeer(ctx, userID, sec.cert)
+		}
+		p := parseFull(bytes.NewReader(raw))
+		if _, err := s.db.Exec(ctx, `UPDATE mail_messages SET body = $2, body_html = $3, ics = $4, voting = $5, vote = $6,
+			smime_sign = $7, smime_signer = $8, smime_enc = $9 WHERE id = $1`,
+			l.id, p.body, p.html, p.ics, p.voting, p.vote, sec.sign, sec.signer, sec.enc); err != nil {
+			return n, err
+		}
+		if s.Keep != nil { // smime.p7m kept as the letter's file gives way to the files inside
+			if _, err := s.db.Exec(ctx, `DELETE FROM files WHERE mail_id = $1`, l.id); err != nil {
+				return n, err
+			}
+			for _, f := range p.files {
+				if err := s.Keep(ctx, userID, l.id, f); err != nil {
+					return n, err
+				}
+			}
+		}
+		n++
+	}
+	return n, nil
+}
+
 // ---------- incoming ----------
 
 // secured is what S/MIME a letter came with.

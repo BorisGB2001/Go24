@@ -165,6 +165,39 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	if code, _ := do(eve, "POST", "/crm/documents/"+tpls[0].ID+"/numerator", url.Values{"numerator": {"X"}}); code != http.StatusForbidden {
 		t.Fatalf("a non-administrator changed the numerator: %d", code)
 	}
+	// «Нумераторы»: a numerator of its own, chosen for the template (its numbers are the same «Д-1», «Д-2»…)
+	if code, _ := do(anna, "POST", "/crm/documents/numerators", url.Values{"name": {"Общий"}, "format": {"Д-{NUMBER}"},
+		"start": {"1"}, "step": {"0"}, "pad": {"0"}, "reset": {"never"}}); code != http.StatusSeeOther {
+		t.Fatalf("numerator with a zero step: %d", code)
+	}
+	if code, _ := do(eve, "POST", "/crm/documents/numerators", url.Values{"name": {"Её"}, "format": {"{NUMBER}"},
+		"start": {"1"}, "step": {"1"}, "pad": {"0"}, "reset": {"never"}}); code != http.StatusForbidden {
+		t.Fatalf("a non-administrator added a numerator: %d", code)
+	}
+	if code, _ := do(anna, "POST", "/crm/documents/numerators", url.Values{"name": {"Общий"}, "format": {"Д-{NUMBER}"},
+		"start": {"1"}, "step": {"1"}, "pad": {"0"}, "reset": {"year"}}); code != http.StatusSeeOther {
+		t.Fatalf("numerator: %d", code)
+	}
+	var numID, oldNum string
+	must(pool.QueryRow(ctx, `SELECT id FROM doc_numerators WHERE name = 'Общий'`).Scan(&numID))
+	must(pool.QueryRow(ctx, `SELECT numerator_id FROM crm_doc_templates WHERE id = $1`, tpls[0].ID).Scan(&oldNum))
+	if code, _ := do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/numerator", url.Values{"numerator_id": {numID}}); code != http.StatusSeeOther {
+		t.Fatalf("choose numerator: %d", code)
+	}
+	if _, page := do(anna, "GET", "/crm/documents", nil); !strings.Contains(page, `value="`+numID+`" selected`) || !strings.Contains(page, `id="numerators"`) {
+		t.Fatal("the template's numerator is not chosen on the page")
+	}
+	if code, _ := do(anna, "POST", "/crm/documents/numerators/delete", url.Values{"id": {numID}}); code != http.StatusSeeOther {
+		t.Fatalf("delete numerator in use: %d", code)
+	}
+	if code, _ := do(anna, "POST", "/crm/documents/numerators/delete", url.Values{"id": {oldNum}}); code != http.StatusSeeOther {
+		t.Fatalf("delete numerator: %d", code)
+	}
+	var nums int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM doc_numerators WHERE id IN ($1, $2)`, numID, oldNum).Scan(&nums))
+	if nums != 1 {
+		t.Fatalf("numerators left: %d", nums)
+	}
 	// «Кому доступен»: only the department «Продажи» (and those under it) — Ева, in no department, does not see the template
 	var company, sales, store string
 	if pool.QueryRow(ctx, `SELECT id FROM departments WHERE parent_id IS NULL`).Scan(&company) != nil {
@@ -610,5 +643,24 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	}
 	if _, err := srv.BPDocument(ctx, eve, "none", deal, tpls[0].ID, nil); err == nil {
 		t.Fatal("a document of no card")
+	}
+
+	// the robot «Создать документ»: the deal entering the stage gets a document of its responsible
+	srv.CRM.MakeDocument = func(ctx context.Context, userID, entity, entityID, tplID string) (string, error) {
+		return srv.BPDocument(ctx, userID, entity, entityID, tplID, nil)
+	}
+	st := pipes[0].Stages
+	must(srv.CRM.AddRobot(ctx, anna, st[2].ID, "document", crm.RobotParams{Doc: tpls[0].ID}))
+	had, _ := srv.CRM.Documents(ctx, "deal", deal)
+	_, err = srv.CRM.MoveDeal(ctx, anna, deal, st[2].ID)
+	must(err)
+	now, _ := srv.CRM.Documents(ctx, "deal", deal)
+	var said string
+	must(pool.QueryRow(ctx, `SELECT body FROM crm_timeline WHERE entity_id = $1 AND kind = 'robot' ORDER BY id DESC LIMIT 1`, deal).Scan(&said))
+	if len(now) != len(had)+1 || now[0].AuthorID != anna || said != "document:Договор № "+now[0].Number {
+		t.Fatalf("the document robot: %d → %d, %q", len(had), len(now), said)
+	}
+	if _, page := do(anna, "GET", "/crm/robots", nil); !strings.Contains(page, `<option value="`+tpls[0].ID+`">Договор</option>`) || !strings.Contains(page, "📄 Договор") {
+		t.Fatal("the robots' page: the document robot")
 	}
 }

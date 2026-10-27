@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/booking"
+	"go24/internal/openlines"
 	"go24/internal/payqr"
 )
 
@@ -122,15 +123,29 @@ func (s *Server) bookingLinkQR(w http.ResponseWriter, r *http.Request, sess auth
 // the block «Онлайн-запись» of Сайты): no go24 menu, and the links, forms and redirects of the page keep it embedded.
 func bookingEmbedded(r *http.Request) bool { return r.FormValue("embed") == "1" }
 
-// bookingURL is the address u of the public pages as the request is shown: embedded or not.
+// bookingKeep is the address part the public pages keep: «&embed=1» on a website's frame and the key of a link sent
+// in a dialogue of an open line («&ol=»).
+func bookingKeep(r *http.Request) string {
+	q := ""
+	if bookingEmbedded(r) {
+		q = "&embed=1"
+	}
+	if ol := r.FormValue("ol"); ol != "" {
+		q += "&ol=" + url.QueryEscape(ol)
+	}
+	return q
+}
+
+// bookingURL is the address u of the public pages as the request is shown: embedded or not, of a dialogue or not.
 func bookingURL(r *http.Request, u string) string {
-	if !bookingEmbedded(r) {
+	q := bookingKeep(r)
+	if q == "" {
 		return u
 	}
 	if strings.Contains(u, "?") {
-		return u + "&embed=1"
+		return u + q
 	}
-	return u + "?embed=1"
+	return u + "?" + q[1:]
 }
 
 // bookingDay is a day of the public page: the resource works on it or not.
@@ -167,6 +182,14 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{"Link": l, "Resources": res, "Token": l.Token, "Msg": q.Get("msg"),
 		"Name": q.Get("name"), "Phone": q.Get("phone"), "Email": q.Get("email"), "Note": q.Get("note"), "Keep": template.URL(keep.Encode())}
+	if c, ok := s.olBookingClient(r, l); ok { // sent in a dialogue: the client of it, the key goes on
+		for k, v := range map[string]string{"Name": c.Name, "Phone": c.Phone, "Email": c.Email} {
+			if data[k] == "" {
+				data[k] = v
+			}
+		}
+		data["OL"] = q.Get("ol")
+	}
 	var cur *booking.Resource
 	for i := range res {
 		if res[i].ID == q.Get("r") || len(res) == 1 {
@@ -246,12 +269,17 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 	b := booking.Booking{ResourceID: r.FormValue("r"), Start: start, ClientName: r.FormValue("name"),
 		ClientPhone: r.FormValue("phone"), ClientEmail: r.FormValue("email"), Note: r.FormValue("note"), ClientIP: clientIP(r),
 		Services: []booking.Service{{ProductID: r.FormValue("s")}}}
+	var c openlines.BookingClient
+	var ok bool
 	switch {
 	case r.FormValue("website") != "": // the field people do not see: a robot filled it
 		err = booking.ErrSlot
 	case err != nil:
 		err = booking.ErrSlot
 	default:
+		if c, ok = s.olBookingClient(r, l); ok { // by a link sent in a dialogue: the dialogue's cards
+			b.ContactID, b.CompanyID = c.ContactID, c.CompanyID
+		}
 		b, err = s.Booking.BookByLink(r.Context(), l, b, time.Local)
 	}
 	if err != nil {
@@ -273,7 +301,16 @@ func (s *Server) bookingPublicBook(w http.ResponseWriter, r *http.Request) {
 		if to == "" {
 			to = l.CreatedBy
 		}
-		s.bookingClientCard(r.Context(), to, b)
+		if b.ContactID != "" { // the dialogue's contact: «Запись клиента» in its timeline
+			s.bookingEvents(r.Context(), to, booking.Booking{ID: b.ID}, b)
+		}
+		b = s.bookingClientCard(r.Context(), to, b)
+		if ok {
+			if err := s.OpenLines.Booked(r.Context(), r.FormValue("ol"), b.ID, s.olBookingWhat(b, res), b.ClientName, b.ClientPhone,
+				b.ClientEmail, b.ContactID); err != nil {
+				s.Log.Warn("booking dialogue", "err", err)
+			}
+		}
 		if to != "" {
 			body := b.ClientName + " · " + b.Start.Local().Format("02.01.2006 15:04") + " · " + res.Name
 			if _, err := s.DB.Exec(r.Context(), `INSERT INTO notifications (user_id, kind, body, url)
@@ -321,5 +358,6 @@ func (s *Server) renderBookingPub(w http.ResponseWriter, r *http.Request, p page
 		p.Bare = true
 		p.Data.(map[string]any)["Embed"] = template.URL("&embed=1")
 	}
+	p.Data.(map[string]any)["Q"] = template.URL(bookingKeep(r))
 	s.render(w, r, "bookingpub", p)
 }

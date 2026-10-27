@@ -197,5 +197,45 @@ assert.equal(root.querySelector('.m.o[data-id="9"] .bb').disabled, false);
   assert.equal(ops.filter(o => o === 'say').length, 2);
   assert.match(r2.innerHTML, /\[hidden\]\{display:none!important\}/, 'hidden blocks stay hidden whatever their display');
 }
-console.log('widget.js: chat, rating, conversation by e-mail, contact form, files, typing, read, CRM form, chat bot and consent passed');
+
+// «Правила показа»: the corner, the pages (only / except, «*»), the delay, «Автоприглашение», no button off hours
+{
+  const page = (url, extra, token) => {
+    const d = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only', url, pretendToBeVisual: true });
+    if (token) d.window.localStorage.setItem('go24.widget.w1', token);
+    d.window.fetch = async () => ({ ok: true, json: async () => ({ messages: [] }) });
+    d.window.eval(src.replace('/*CONFIG*/{}', JSON.stringify({ ...cfg, t: { ...cfg.t, close: 'Закрыть' }, ...extra })));
+    const h = d.window.document.body.lastElementChild;
+    return h && h.shadowRoot ? h : null;
+  };
+  const only = { pages_mode: 'only', pages: ['https://shop.example/catalog/*', 'https://shop.example/about'] };
+  assert.ok(page('https://shop.example/catalog/shoes?x=1', only), 'a page by the mask');
+  assert.ok(page('https://shop.example/About/#team', only), 'as is, ignoring the case, the «/» and the anchor');
+  assert.equal(page('https://shop.example/', only), null, 'not on the other pages');
+  assert.equal(page('https://shop.example/cart', { pages_mode: 'except', pages: ['*/cart*'] }), null, 'not on the excluded');
+  assert.ok(page('https://shop.example/', { pages_mode: 'except', pages: ['*/cart*'] }));
+  assert.equal(page('https://shop.example/', only), null);
+  assert.ok(page('https://shop.example/', { ...only, offline: true }, 'tok'), 'a started dialogue shows anywhere');
+  assert.equal(page('https://shop.example/', { offline: true }), null, 'no button out of working hours');
+  const tl = page('https://shop.example/', { position: 'top-left' });
+  assert.match(tl.style.cssText, /left: 20px/);
+  assert.match(tl.style.cssText, /top: 20px/);
+  assert.ok(tl.shadowRoot.querySelector('.box').classList.contains('top'), 'the chat opens below the top button');
+  const late = page('https://shop.example/', { show_delay: 0.05, hello: 'Подсказать?', hello_delay: 0.05, hello_photo: 'https://go24.test/w/w1/photo/u1' });
+  assert.equal(late.style.display, 'none', 'the button waits');
+  const hello = late.shadowRoot.querySelector('.hello');
+  assert.equal(hello.hidden, true);
+  await new Promise(r => setTimeout(r, 70));
+  assert.equal(late.style.display, '', 'and shows');
+  assert.equal(hello.hidden, true, 'the invitation waits for its own delay');
+  await new Promise(r => setTimeout(r, 60));
+  assert.equal(hello.hidden, false, 'the operator invites');
+  assert.match(hello.textContent, /МагазинПодсказать\?/);
+  assert.equal(hello.querySelector('img').src, 'https://go24.test/w/w1/photo/u1');
+  hello.click();
+  assert.equal(hello.hidden, true);
+  assert.equal(late.shadowRoot.querySelector('.box').hidden, false, 'a click opens the chat');
+  assert.equal(late.ownerDocument.defaultView.sessionStorage.getItem('go24.widget.w1.hello'), '1', 'once a visit');
+}
+console.log('widget.js: display rules, chat, rating, conversation by e-mail, contact form, files, typing, read, CRM form, chat bot and consent passed');
 process.exit(0);

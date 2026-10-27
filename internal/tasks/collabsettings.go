@@ -31,7 +31,11 @@ type CollabSettings struct {
 	// «Уведомления в коллабе»: what of the log the go24 bot tells in the chat — people added, removed, leaving, their
 	// roles and the owner; guests joining; invitations; the collab's settings, name and archive
 	EventsMembers, EventsGuests, EventsInvites, EventsCollab bool
+	StartTool                                                string // «Стартовый инструмент»: one of StartTools
 }
+
+// StartTools are the choices of «Стартовый инструмент»: what the collab opens with.
+var StartTools = []string{"chat", "tasks", "drive", "calendar", "feed"}
 
 // MsgTTLs are the lifetimes of «Автоудаление сообщений»: an hour, a day, a week, a month (as the messenger's).
 var MsgTTLs = []int{3600, 86400, 7 * 86400, 30 * 86400}
@@ -50,9 +54,9 @@ func (s *Store) CollabSettings(ctx context.Context, p Project) (CollabSettings, 
 func collabSettings(ctx context.Context, q querier, projectID string) (CollabSettings, error) {
 	var c CollabSettings
 	err := q.QueryRow(ctx, `SELECT invite_perm, guest_invite_perm, chat_history, guests_tasks, guests_files, edit_perm, chat_perm,
-		msg_ttl, events_members, events_guests, events_invites, events_collab FROM projects WHERE id = $1`, projectID).Scan(
+		msg_ttl, events_members, events_guests, events_invites, events_collab, start_tool FROM projects WHERE id = $1`, projectID).Scan(
 		&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks, &c.GuestFiles, &c.EditPerm, &c.ChatPerm, &c.MsgTTL,
-		&c.EventsMembers, &c.EventsGuests, &c.EventsInvites, &c.EventsCollab)
+		&c.EventsMembers, &c.EventsGuests, &c.EventsInvites, &c.EventsCollab, &c.StartTool)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -69,7 +73,7 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 		return ErrForbidden
 	}
 	if !invitePerms[in.InvitePerm] || !invitePerms[in.GuestInvitePerm] || (in.ChatPerm != "" && !chatPerms[in.ChatPerm]) || (in.EditPerm != "" && !editPerms[in.EditPerm]) ||
-		(in.MsgTTL != 0 && !slices.Contains(MsgTTLs, in.MsgTTL)) {
+		(in.MsgTTL != 0 && !slices.Contains(MsgTTLs, in.MsgTTL)) || (in.StartTool != "" && !slices.Contains(StartTools, in.StartTool)) {
 		return invalid("err.bad_form")
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
@@ -83,15 +87,18 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 		if in.ChatPerm == "" { // a form of before, without the choice
 			in.ChatPerm = old.ChatPerm
 		}
+		if in.StartTool == "" {
+			in.StartTool = old.StartTool
+		}
 		if old == in {
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `UPDATE projects SET invite_perm = $2, guest_invite_perm = $3, chat_history = $4, guests_tasks = $5,
 			guests_files = $6, edit_perm = $7, chat_perm = $8, msg_ttl = $9,
 			msg_ttl_by = CASE WHEN msg_ttl = $9 THEN msg_ttl_by ELSE $10::uuid END, events_members = $11, events_guests = $12,
-			events_invites = $13, events_collab = $14, updated_at = now() WHERE id = $1`,
+			events_invites = $13, events_collab = $14, start_tool = $15, updated_at = now() WHERE id = $1`,
 			p.ID, in.InvitePerm, in.GuestInvitePerm, in.ChatHistory, in.GuestTasks, in.GuestFiles, in.EditPerm, in.ChatPerm,
-			in.MsgTTL, actorID, in.EventsMembers, in.EventsGuests, in.EventsInvites, in.EventsCollab); err != nil {
+			in.MsgTTL, actorID, in.EventsMembers, in.EventsGuests, in.EventsInvites, in.EventsCollab, in.StartTool); err != nil {
 			return err
 		}
 		var diff []string // «invite_perm=members», «chat_history=off»: the log shows them in words
@@ -109,6 +116,7 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 			{"msg_ttl", strconv.Itoa(old.MsgTTL), strconv.Itoa(in.MsgTTL)},
 			{"events_members", onOff(old.EventsMembers), onOff(in.EventsMembers)}, {"events_guests", onOff(old.EventsGuests), onOff(in.EventsGuests)},
 			{"events_invites", onOff(old.EventsInvites), onOff(in.EventsInvites)}, {"events_collab", onOff(old.EventsCollab), onOff(in.EventsCollab)},
+			{"start_tool", old.StartTool, in.StartTool},
 		} {
 			if d.o != d.n {
 				diff = append(diff, d.k+"="+d.n)

@@ -59,6 +59,31 @@ func TestIMBots(t *testing.T) {
 		t.Errorf("the lines of buttons:\n%s", kb)
 	}
 
+	// its card and its items of the menu; a card alone has no text
+	b.Reset()
+	card, err := matrixsync.ParseAttach([]byte(`{"COLOR":"#29619b","BLOCKS":[{"MESSAGE":"[b]Заказ[/b]"},{"LINK":{"NAME":"Заказ 42","LINK":"https://shop.example/42","PREVIEW":"https://shop.example/42.png"}},
+		{"GRID":[{"NAME":"Сумма","VALUE":"1 000 ₽","DISPLAY":"ROW"}]},{"DELIMITER":{"SIZE":200}},{"USER":{"NAME":"Анна"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	card.Only = true
+	if err := im.ExecuteTemplate(&b, "immsg", matrixsync.Message{ID: "$3", SenderID: "b1", SenderName: "Помощник", SenderBot: true,
+		Body: "Заказ", At: time.Now(), Attach: card, Menu: []matrixsync.Button{{Text: "Прогноз", Command: "weather", CommandParams: "неделя"},
+			{Text: "Сайт", Link: "https://example.com/menu"}}}); err != nil {
+		t.Fatal(err)
+	}
+	at := b.String()
+	for _, want := range []string{`class="im-attach" style="border-left-color:#29619b;"`, `<b>Заказ</b>`, `href="https://shop.example/42"`,
+		`src="/im/link/image?url=https%3A%2F%2Fshop.example%2F42.png"`, `class="im-at-cell d-ROW"`, `style="width:200px;"`, `aria-label="Анна"`,
+		`class="im-botmenu" data-kbd="command" data-command="weather" data-params="неделя"`, `href="https://example.com/menu" target="_blank" rel="noopener noreferrer" class="im-botmenu"`} {
+		if !strings.Contains(at, want) {
+			t.Errorf("no %s in a bot's message with a card:\n%s", want, at)
+		}
+	}
+	if strings.Contains(at, `class="text"`) {
+		t.Errorf("a card alone shows its text:\n%s", at)
+	}
+
 	b.Reset()
 	g := &matrixsync.Group{Owner: true, CanAdd: true, Members: []matrixsync.Member{{ID: "u1", Name: "Анна", Owner: true, Me: true},
 		{ID: "b1", Name: "Помощник", Bot: true, Removable: true}}}

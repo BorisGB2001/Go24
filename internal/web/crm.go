@@ -609,6 +609,10 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if err == nil { // the administrator's own fields of this kind of card
 		data["Fields"], err = s.Tasks.FieldValuesOf(r.Context(), tasks.CRMFieldSets[entity], id)
 	}
+	if err == nil { // «Настроить карточку»: the fields by sections
+		d, _ := data["Item"].(crm.Deal)
+		err = s.crmCardLayout(r, sess, data, d.TypeID)
+	}
 	if err == nil { // «Дела»: the open ones, and the form planning one in an hour by default
 		data["Activities"], err = s.CRM.Activities(r.Context(), entity, id)
 		data["ActKinds"], data["ActDeadline"] = crm.ActivityKinds, time.Now().Add(time.Hour).Truncate(time.Hour).Format("2006-01-02T15:04")

@@ -34,7 +34,7 @@ var portalSections = []struct {
 	{"store", "stock.title", []string{"/store"}},
 	{"mail", "mail.title", []string{"/mail"}},
 	{"openlines", "ol.title", []string{"/openlines"}},
-	{"bp", "bp.title", []string{"/bp"}},
+	{"bp", "bp.title", []string{"/bp", "/lists"}}, // «Списки» are of «Автоматизация»: REST /api/v1/lists
 	{"kb", "kb.title", []string{"/kb"}},
 	{"sites", "site.title", []string{"/sites"}},
 	{"booking", "booking.title", []string{"/booking"}},

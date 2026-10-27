@@ -12,8 +12,8 @@ import (
 // «Сотрудник кадров» (an HR officer) and vacations: the plan of the year, the reminder, the report by departments.
 
 // HRRights are what an administrator lets an HR officer do: enter and change anyone's absences, invite employees,
-// keep «Доска почёта».
-var HRRights = []string{"absences", "invite", "honor"}
+// keep «Доска почёта», keep the courses of «Обучение».
+var HRRights = []string{"absences", "invite", "honor", "learning"}
 
 // HR is a person's HR role.
 type HR struct {
@@ -50,13 +50,23 @@ func (s *Store) SetHR(ctx context.Context, userID string, on bool, rights []stri
 	return err
 }
 
-// CanInvite: administrators and HR officers an administrator let invite employees.
+// CanInvite: administrators, HR officers an administrator let invite employees, and every employee when «Сотрудники»
+// lets them.
 func (s *Store) CanInvite(ctx context.Context, userID string, admin bool) (bool, error) {
 	if admin {
 		return true, nil
 	}
 	h, err := s.HROf(ctx, userID)
-	return h.Can("invite"), err
+	if err != nil || h.Can("invite") {
+		return h.Can("invite"), err
+	}
+	set, err := s.StaffSettings(ctx)
+	if err != nil || !set.InviteAll { // «Сотрудники»: every employee invites
+		return false, err
+	}
+	var employee bool
+	err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id::text = $1 AND active AND NOT guest)`, userID).Scan(&employee)
+	return employee, err
 }
 
 // notifyHR tells of an HR officer's action with an absence (added, changed, deleted) the officer, the employee and

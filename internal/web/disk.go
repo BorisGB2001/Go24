@@ -53,8 +53,8 @@ func (s *Server) diskPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	qs := r.URL.Query()
 	folder := qs.Get("folder")
-	q, ftype := strings.TrimSpace(qs.Get("q")), qs.Get("type")
-	searching := q != "" || ftype != ""
+	filter := diskFilterOf(qs)
+	q, searching := filter.Q, filter.On()
 	var folders []drive.Folder
 	var found []drive.File // the folders a search found
 	var files []drive.File
@@ -71,9 +71,9 @@ func (s *Server) diskPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		trash, err = s.Drive.Trash(r.Context(), d)
 	case searching: // the whole drive search and filter
 		folder = ""
-		if found, files, err = s.Drive.Search(r.Context(), d, q); ftype != "" {
+		if found, files, err = s.Drive.Search(r.Context(), d, q); filter.Files() {
 			found = nil
-			files = slices.DeleteFunc(files, func(f drive.File) bool { return fileType(f.Name, f.ContentType) != ftype })
+			files = filter.Apply(files, time.Now())
 		}
 		if len(files) > searchMax {
 			files = files[:searchMax]
@@ -186,12 +186,21 @@ func (s *Server) diskPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/disk/my")
 		return
 	}
+	// the filter's «Автор»: the person chosen, by name
+	var author []tasks.User
+	if filter.Author != "" {
+		if all, err := s.Tasks.ListUsers(r.Context()); err == nil {
+			if i := slices.IndexFunc(all, func(u tasks.User) bool { return u.ID == filter.Author }); i >= 0 {
+				author = all[i : i+1]
+			}
+		}
+	}
 	nav := "disk"
 	if d.Collab {
 		nav = "collabs"
 	}
 	s.render(w, r, "disk", page{TitleKey: "disk.title", Nav: nav, Data: map[string]any{
-		"Shares": shares, "Rights": rights, "MayRight": mayRight, "RightUsers": rightUsers, "Users": users, "Departments": depts, "Accesses": drive.Accesses, "FileAccesses": drive.FileAccesses, "Office": s.Office != nil, "Usage": usage, "DavURL": s.davURL(r), "Q": q, "Type": ftype, "Types": fileTypes, "Searching": searching, "Sort": sortBy, "Desc": desc, "SortURL": diskSortURLs(qs, sortBy, desc),
+		"Shares": shares, "Rights": rights, "MayRight": mayRight, "RightUsers": rightUsers, "Users": users, "Departments": depts, "Accesses": drive.Accesses, "FileAccesses": drive.FileAccesses, "Office": s.Office != nil, "Usage": usage, "DavURL": s.davURL(r), "Q": q, "Filter": filter, "Chips": filter.Chips(qs), "Author": author, "Periods": diskPeriods, "Types": fileTypes, "Searching": searching, "Sort": sortBy, "Desc": desc, "SortURL": diskSortURLs(qs, sortBy, desc),
 		"Drive": d, "Folder": folder, "Folders": folders, "Found": found, "Files": files, "Snippets": snippets, "Trail": trail, "Trash": trash, "Links": links, "Comments": comments, "Base": s.BaseURL, "InTrash": qs.Has("trash"), "InSpace": qs.Has("space"), "Aside": qs.Has("trash") || qs.Has("space"), "Space": space, "KeepVersions": lim.Versions, "LinksOff": lim.NoLinks, "LocksOff": lim.NoLocks, "Connected": connected, "Conn": conn, "Storages": stores, "Projects": projects, "Me": sess.UserID, "Local": !tasks.IsGuestCtx(r.Context())}})
 }
 
@@ -249,7 +258,7 @@ func diskSortURLs(qs url.Values, by string, desc bool) map[string]string {
 	out := map[string]string{}
 	for _, col := range []string{"name", "size", "date"} {
 		v := url.Values{}
-		for _, k := range []string{"folder", "q", "type"} {
+		for _, k := range []string{"folder", "q", "type", "period", "from", "to", "author"} {
 			if qs.Get(k) != "" {
 				v.Set(k, qs.Get(k))
 			}
@@ -530,6 +539,16 @@ func (s *Server) diskConnect(w http.ResponseWriter, r *http.Request, sess auth.S
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
+// diskLeave is «Отказаться от доступа» in «Общие со мной»: the folder (or, with file=1, the file) id= someone shared
+// with the user is theirs no longer.
+func (s *Server) diskLeave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if err := s.Drive.LeaveShare(r.Context(), sess.UserID, r.FormValue("id"), r.FormValue("file") == "1"); err != nil {
+		s.taskErr(w, r, err, "/disk/shared")
+		return
+	}
+	http.Redirect(w, r, "/disk/shared", http.StatusSeeOther)
+}
+
 // diskClean is «Очистка» of the drive: what=trash empties its trash, what=versions deletes the former versions of
 // its files (of the file=ID only, when given).
 func (s *Server) diskClean(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -797,6 +816,39 @@ func (s *Server) diskVersionRestore(w http.ResponseWriter, r *http.Request, sess
 	back := diskBack(d, r.FormValue("folder"))
 	if err := s.Drive.RestoreVersion(r.Context(), sess.UserID, d, r.FormValue("file"), r.FormValue("version")); err != nil {
 		s.diskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// diskVersionUpload is «Загрузить новую версию»: the file picked on the computer (data), whatever its name, becomes
+// the new version of the file; its name, links and access stay, what it was goes to the history.
+func (s *Server) diskVersionUpload(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	d, err := s.openDrive(r, sess)
+	if err != nil {
+		s.diskErr(w, r, err, "/disk/my")
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		s.diskErr(w, r, i18n.E("err.file_required"), d.Path())
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	back := docsBack(r, diskBack(d, r.FormValue("folder")))
+	f, hdr, err := r.FormFile("data")
+	if err != nil {
+		s.diskErr(w, r, i18n.E("err.file_required"), back)
+		return
+	}
+	defer f.Close()
+	id := r.FormValue("file")
+	if err := s.diskVersion(r.Context(), sess.UserID, d, id, f, hdr.Size); err != nil {
+		s.diskErr(w, r, err, back)
+		return
+	}
+	if wantsJSON(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"id": id})
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)

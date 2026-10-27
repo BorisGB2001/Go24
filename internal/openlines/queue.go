@@ -19,18 +19,25 @@ func (s *Store) queue(ctx context.Context, q dbtx, widgetID string) ([]string, e
 	return ids, err
 }
 
-// assign hands the dialogue to an operator of the line: keep (when given), else by the line's mode among the queue
-// without skip. "" — nobody is left.
+// assign hands the dialogue to an operator of the line: keep (when given and not at the line's limit), else by the
+// line's mode among the queue without skip and those at the limit. "" — nobody is left.
 func (s *Store) assign(ctx context.Context, q dbtx, w Widget, sessionID, keep string, skip []string) (string, error) {
 	ops, err := s.queue(ctx, q, w.ID)
 	if err != nil {
 		return "", err
 	}
+	full, err := s.atLimit(ctx, q, w, sessionID, ops)
+	if err != nil {
+		return "", err
+	}
 	next := keep
+	if contains(full, keep) {
+		next = ""
+	}
 	if next == "" {
 		var free []string
 		for _, o := range ops {
-			if !contains(skip, o) {
+			if !contains(skip, o) && !contains(full, o) {
 				free = append(free, o)
 			}
 		}
@@ -73,7 +80,21 @@ func (s *Store) assign(ctx context.Context, q dbtx, w Widget, sessionID, keep st
 	return next, err
 }
 
-// notifyOperators: the dialogue's operator, while nobody has it — the line's queue (or its creator) but those on a pause;
+// atLimit are the operators among ops having the line's «Максимальное количество диалогов» of other open dialogues
+// (till the answer — those the client waits in; till closing — all of them).
+func (s *Store) atLimit(ctx context.Context, q dbtx, w Widget, sessionID string, ops []string) ([]string, error) {
+	if w.MaxChats == 0 || len(ops) == 0 {
+		return nil, nil
+	}
+	var full []string
+	err := q.QueryRow(ctx, `SELECT coalesce(array_agg(o.id), '{}') FROM unnest($1::text[]) o(id)
+		WHERE (SELECT count(*) FROM ol_sessions s WHERE s.status = 'open' AND s.operator_id = o.id::uuid AND s.id::text <> $2
+			AND ($4 = 'close' OR s.waiting_since IS NOT NULL)) >= $3`, ops, sessionID, w.MaxChats, w.MaxChatsType).Scan(&full)
+	return full, err
+}
+
+// notifyOperators: the dialogue's operator, while nobody has it — the line's queue (or its creator) but those on a pause
+// and at the line's limit;
 // one unread notification per dialogue and person.
 func notifyOperators(ctx context.Context, q dbtx, sessionID, body string) error {
 	_, err := q.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url)
@@ -81,6 +102,8 @@ func notifyOperators(ctx context.Context, q dbtx, sessionID, body string) error 
 		WHERE s.id::text = $1 AND u.active AND CASE WHEN s.operator_id IS NOT NULL THEN u.id = s.operator_id
 			WHEN EXISTS (SELECT 1 FROM ol_paused p WHERE p.user_id = u.id) THEN false
 			WHEN cardinality(w.operators) > 0 THEN u.id = ANY(w.operators) ELSE u.id = w.created_by END
+		AND (s.operator_id IS NOT NULL OR w.queue_mode = 'all' OR w.max_chats = 0 OR (SELECT count(*) FROM ol_sessions x WHERE x.status = 'open'
+			AND x.operator_id = u.id AND x.id <> s.id AND (w.max_chats_type = 'close' OR x.waiting_since IS NOT NULL)) < w.max_chats)
 		AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = u.id AND n.kind = 'openline' AND n.url = '/openlines?s=' || $1 AND n.read_at IS NULL)`,
 		sessionID, body)
 	return err
@@ -222,6 +245,30 @@ func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 		n++
 	}
 
+	// waiting in the queue — to the operator free now, the longest waiting first
+	queued, err := list(`SELECT s.id::text, w.id::text, '' FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
+		WHERE s.status = 'open' AND w.active AND w.queue_mode <> 'all' AND s.operator_id IS NULL AND s.waiting_since IS NOT NULL
+		AND s.bot_node IS NULL AND NOT s.spam AND $1::timestamptz IS NOT NULL ORDER BY s.waiting_since`)
+	if err != nil {
+		return n, err
+	}
+	for _, d := range queued {
+		w, err := line(d.Widget)
+		if err != nil {
+			return n, err
+		}
+		if !w.InHours(now) {
+			continue
+		}
+		ok, err := s.dequeue(ctx, w, d.ID)
+		if err != nil {
+			return n, err
+		}
+		if ok {
+			n++
+		}
+	}
+
 	// answered, and the visitor is silent — closed
 	left, err := list(`SELECT s.id::text, s.widget_id::text, '' FROM ol_sessions s JOIN ol_widgets w ON w.id = s.widget_id
 		WHERE s.status = 'open' AND w.autoclose > 0 AND s.waiting_since IS NULL AND s.answered_at IS NOT NULL
@@ -276,12 +323,88 @@ func (s *Store) passOn(ctx context.Context, w Widget, id, from string) error {
 		AND user_id::text = $2`, id, from); err != nil {
 		return err
 	}
-	var last string
-	if err := tx.QueryRow(ctx, `SELECT coalesce((SELECT body FROM ol_messages WHERE session_id::text = $1 AND author_id IS NULL AND kind = ''
-		ORDER BY id DESC LIMIT 1), '')`, id).Scan(&last); err != nil {
+	if err := notifyOperators(ctx, tx, id, lastWords(ctx, tx, id)); err != nil {
 		return err
 	}
-	if err := notifyOperators(ctx, tx, id, last); err != nil {
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return s.follow(ctx, id)
+}
+
+// lastWords is the client's last message of the dialogue (for a notification).
+func lastWords(ctx context.Context, q dbtx, id string) string {
+	var last string
+	_ = q.QueryRow(ctx, `SELECT coalesce((SELECT body FROM ol_messages WHERE session_id::text = $1 AND author_id IS NULL AND kind = ''
+		ORDER BY id DESC LIMIT 1), '')`, id).Scan(&last)
+	return last
+}
+
+// dequeue gives a dialogue waiting in the queue (nobody was free: at the limit, on a pause) to an operator free now.
+func (s *Store) dequeue(ctx context.Context, w Widget, id string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var free bool
+	if err := tx.QueryRow(ctx, `SELECT operator_id IS NULL FROM ol_sessions WHERE id::text = $1 FOR UPDATE`, id).Scan(&free); err != nil || !free {
+		return false, err
+	}
+	next, err := s.assign(ctx, tx, w, id, "", nil)
+	if err != nil || next == "" {
+		return false, err
+	}
+	if err := notifyOperators(ctx, tx, id, lastWords(ctx, tx, id)); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, s.follow(ctx, id)
+}
+
+// forward gives a dialogue nobody has answered yet to the responsible of the client's CRM card, when the line says
+// so («Направлять обращение ответственному сотруднику») and they are its free operator — once the client is known.
+func (s *Store) forward(ctx context.Context, id string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var line string
+	var operator, owner *string
+	err = tx.QueryRow(ctx, `SELECT w.id::text, s.operator_id::text, coalesce((SELECT responsible_id FROM crm_contacts WHERE id = s.contact_id),
+		(SELECT responsible_id FROM crm_leads WHERE id = s.lead_id))::text FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id)
+		WHERE s.id::text = $1 AND s.status = 'open' AND s.answered_at IS NULL AND NOT s.pinned AND s.bot_node IS NULL AND w.crm_forward FOR UPDATE OF s`,
+		id).Scan(&line, &operator, &owner)
+	if err == pgx.ErrNoRows || (err == nil && (owner == nil || (operator != nil && *operator == *owner))) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	w, err := s.Widget(ctx, line)
+	if err != nil {
+		return err
+	}
+	ops, err := s.queue(ctx, tx, w.ID)
+	if err != nil || !contains(ops, *owner) {
+		return err
+	}
+	if next, err := s.assign(ctx, tx, w, id, *owner, ops); err != nil || next != *owner {
+		return err // at the limit: the dialogue stays where it is
+	}
+	if err := s.note(ctx, tx, id, "ol.note_forwarded", userName(ctx, tx, *owner)); err != nil {
+		return err
+	}
+	if operator != nil {
+		if _, err := tx.Exec(ctx, `UPDATE notifications SET read_at = now() WHERE kind = 'openline' AND url = '/openlines?s=' || $1 AND read_at IS NULL
+			AND user_id::text = $2`, id, *operator); err != nil {
+			return err
+		}
+	}
+	if err := notifyOperators(ctx, tx, id, lastWords(ctx, tx, id)); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

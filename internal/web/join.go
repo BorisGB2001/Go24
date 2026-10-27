@@ -52,7 +52,7 @@ func (s *Server) joinSignedIn(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	if err == nil {
 		if _, perr := s.Tasks.CollabByKey(r.Context(), sess.UserID, inv.ProjectKey); perr == nil {
-			http.Redirect(w, r, "/p/"+inv.ProjectKey, http.StatusFound)
+			http.Redirect(w, r, "/c/"+inv.ProjectKey, http.StatusFound)
 			return
 		}
 	}
@@ -100,7 +100,7 @@ func (s *Server) joinAfterLogin(w http.ResponseWriter, r *http.Request, token, u
 	}
 	s.Log.Info("joined collab", "user_id", userID, "collab", key)
 	s.Matrix.Wake() // into the collab's chat
-	http.Redirect(w, r, "/p/"+key, http.StatusFound)
+	http.Redirect(w, r, "/c/"+key, http.StatusFound)
 }
 
 // joinAccept: «Присоединиться» of one signed in.
@@ -113,7 +113,7 @@ func (s *Server) joinAccept(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	s.Log.Info("joined collab", "user_id", sess.UserID, "collab", key)
 	s.Matrix.Wake()
-	http.Redirect(w, r, "/p/"+key, http.StatusSeeOther)
+	http.Redirect(w, r, "/c/"+key, http.StatusSeeOther)
 }
 
 // maxGuestInvites: guests invited by one form at once.

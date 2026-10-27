@@ -185,7 +185,8 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	data := map[string]any{"AfterMove": h.AfterMove, "Layout": lay, "QuickSteps": quick, "Boxes": list, "FolderID": fid, "Searches": searches, "Favs": favs, "FavSet": favSet, "Filters": mail.Filters, "Sorts": mail.Sorts, "New": q.Get("new") == "1", "Pane": mailPane(r),
 		"Panes": mailPanes, "Cols": mailColsOf(r), "Unseen": unseen, "Categories": cats, "CatByID": catMap(cats), "Colors": mail.Colors, "Conv": conv, "ConvOn": mailConv(r),
-		"SnoozePresets": snoozePresets, "FlagPresets": flagPresets, "RemindPresets": remindPresets, "Back": r.URL.RequestURI(), "Mode": q.Get("mode")}
+		"SnoozePresets": snoozePresets, "FlagPresets": flagPresets, "RemindPresets": remindPresets, "Back": r.URL.RequestURI(), "Mode": q.Get("mode"),
+		"OAuth": s.Mail.OAuthEnabled()}
 	var box *mail.Mailbox // the mailbox a new letter goes from
 	if len(boxes) > 0 {
 		box = &boxes[0]

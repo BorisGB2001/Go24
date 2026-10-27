@@ -540,3 +540,34 @@ func (s *Server) apiMailSweepDelete(w http.ResponseWriter, r *http.Request, p ap
 	writeJSON(w, http.StatusOK, map[string]any{"result": true})
 	return nil
 }
+
+// apiMailStorage is «Хранилище» of a mailbox: used and limit (bytes, limit 0 — the server tells none), its folders on
+// the server, the biggest first.
+func (s *Server) apiMailStorage(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	st, err := s.Mail.Storage(r.Context(), p.UserID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	folders := make([]map[string]any, len(st.Folders))
+	for i, f := range st.Folders {
+		folders[i] = map[string]any{"id": f.ID, "name": f.Name, "title": f.Title(), "role": f.Role, "letters": f.Letters, "size": f.Size}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"used": st.Used, "limit": st.Limit, "total": st.Total, "folders": folders})
+	return nil
+}
+
+// apiMailClean is «Очистить» of a folder: {"months": 0|3|6|12} — all the letters or those older.
+func (s *Server) apiMailClean(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Months int `json:"months"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	n, err := s.Mail.Clean(r.Context(), p.UserID, r.PathValue("id"), in.Months)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"letters": n})
+	return nil
+}

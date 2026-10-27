@@ -325,9 +325,9 @@ func (s *Store) DeleteTrunk(ctx context.Context, id string) error {
 
 // RenderTrunks is the PJSIP configuration of the external lines (registration, password, the provider's address and
 // how its calls are known) and go24's part of the dialplan (go24/extensions.conf): where each line's calls ring and
-// which line each employee calls out by. numbers are the employees' inner numbers by their ids, menus — the voice
+// which line each employee calls out by (OutLines). numbers are the employees' inner numbers by their ids, menus — the voice
 // menus' and the queue groups' contexts by their ids.
-func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, record bool, tz string) (pjsip, dialplan string) {
+func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, prefs map[string]Prefs, record bool, tz string) (pjsip, dialplan string) {
 	var p, d strings.Builder
 	zone := ""
 	if tz != "" && tz != "Local" {
@@ -338,7 +338,6 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, reco
 	if record {
 		vars = "set_var = GO24_RECORD=1\n"
 	}
-	out := map[string]Trunk{} // the employee's number → their line out
 	for _, t := range trunks {
 		k, host := t.Key(), t.Host
 		server, _, _ := strings.Cut(host, ":")
@@ -421,16 +420,8 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, reco
 			fmt.Fprintf(&d, " same => n(rate),Gosub(go24-rate,s,1(%s))\n", rate)
 		}
 		d.WriteString(" same => n(done),Hangup()\nexten => black,1,Busy(5)\n same => n,Hangup()\n")
-		// outgoing: the first line each employee may call by
-		for u, n := range numbers {
-			if _, ok := out[n]; ok || limits[u] == "none" {
-				continue
-			}
-			if t.OutAll || slices.Contains(t.Out, u) {
-				out[n] = t
-			}
-		}
 	}
+	out := OutLines(trunks, numbers, limits, prefs)
 	d.WriteString("\n[go24-out]\n")
 	nums := make([]string, 0, len(out))
 	for n := range out {
@@ -451,5 +442,28 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, reco
 		}
 	}
 	d.WriteString("exten => _X.,1,Gosub(go24-no-line,s,1)\nexten => _+X.,1,Gosub(go24-no-line,s,1)\n")
+	d.WriteString(RenderForwards(prefs, numbers, out))
 	return p.String(), d.String()
+}
+
+// OutLines are the lines the employees call out by, by their inner numbers: the one they chose (Prefs.OutTrunk), if
+// they still may call by it, else the first they may; none — for those who may not call out (limits "none").
+func OutLines(trunks []Trunk, numbers, limits map[string]string, prefs map[string]Prefs) map[string]Trunk {
+	out := map[string]Trunk{}
+	for u, n := range numbers {
+		if limits[u] == "none" {
+			continue
+		}
+		mine := OutTrunks(trunks, u)
+		if len(mine) == 0 {
+			continue
+		}
+		out[n] = mine[0]
+		for _, t := range mine {
+			if want := prefs[u].OutTrunk; want != "" && t.ID == want {
+				out[n] = t
+			}
+		}
+	}
+	return out
 }

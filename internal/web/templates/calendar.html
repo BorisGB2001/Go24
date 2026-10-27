@@ -100,7 +100,7 @@
 </div>
 {{else if ne $d.View "month"}}
 <div class="card flush calgrid" style="--cols:{{len $d.Cols}};--hour:{{$d.HourPx}}px;--work0:{{$d.WorkTop}}px;--work1:{{$d.WorkBottom}}px" data-calmove data-me="{{$d.Me}}" data-hour0="{{$d.Hour0}}" data-hour-px="{{$d.HourPx}}"{{if $frozen}} data-frozen{{end}}{{with $pk}} data-project="{{.}}"{{end}}{{with $d.Person}} data-user="{{.ID}}"{{if eq $d.Level "edit"}} data-as="{{.ID}}"{{end}}{{end}}>
-  <div class="cg-row cg-head"><div></div>{{range $d.Cols}}<a class="cg-day{{if .Today}} today{{end}}{{if .Off}} off{{end}}" href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}{{$d.Q}}">{{t (print "wd." (printf "%d" (wdnum .Date)))}} <b>{{.Date.Day}}</b></a>{{end}}</div>
+  <div class="cg-row cg-head"><div></div>{{range $d.Cols}}<a class="cg-day{{if .Today}} today{{end}}{{if .Off}} off{{end}}" href="/calendar?view=day&date={{.Date.Format "2006-01-02"}}{{$d.Q}}">{{t (print "wd." (printf "%d" (wdnum .Date)))}} <b>{{.Date.Day}}</b>{{if .Holiday}} <span class="calhol">{{t "calendar.holiday"}}</span>{{end}}</a>{{end}}</div>
   <div class="cg-row cg-allday"><div class="muted small">{{t "calendar.all_day"}}</div>{{range $d.Cols}}<div>{{range .AllDay}}{{template "calitem" .}}{{end}}</div>{{end}}</div>
   <div class="cg-row cg-body"><div class="cg-hours">{{range $d.Hours}}<div>{{printf "%02d:00" .}}</div>{{end}}</div>
     {{range $d.Cols}}<div class="cg-col{{if .Today}} today{{end}}{{if .Off}} off{{end}}" style="height:{{$d.GridPx}}px" data-date="{{.Date.Format "2006-01-02"}}">
@@ -116,6 +116,7 @@
     {{range .}}
     <div class="calday{{if not .InMonth}} out{{end}}{{if .Today}} today{{end}}{{if .Off}} off{{end}}" data-date="{{.Date.Format "2006-01-02"}}">
       {{if $frozen}}<span class="calnum">{{.Date.Day}}</span>{{else}}<a class="calnum" href="/calendar/new?date={{.Date.Format "2006-01-02"}}{{$d.Q}}" title="{{t "calendar.add"}}">{{.Date.Day}}</a>{{end}}
+      {{if .Holiday}}<span class="calhol">{{t "calendar.holiday"}}</span>{{end}}
       {{range .Items}}{{template "calitem" .}}{{end}}
     </div>
     {{end}}

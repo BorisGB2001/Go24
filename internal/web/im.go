@@ -55,6 +55,9 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 			s.Log.Warn("im calls unseen", "err", err)
 		}
 	}
+	if !tasks.IsGuestCtx(r.Context()) && data["NoAccount"] == false { // open chats one is not in: the «Каналы» tab and the search show them
+		s.imOpenChats(r, sess, data)
+	}
 	if id := r.URL.Query().Get("room"); id != "" {
 		for _, rm := range rooms {
 			if rm.ID == id {
@@ -107,6 +110,27 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		}
 	}
 	s.render(w, r, "im", page{TitleKey: "nav.messenger", Nav: "im", Data: data})
+}
+
+// imOpenChats puts into the page the open chats the employee is not in, and the one asked for (?room=) as a preview
+// with «Вступить».
+func (s *Server) imOpenChats(r *http.Request, sess auth.Session, data map[string]any) {
+	cs, err := s.Matrix.OpenChats(r.Context(), sess.UserID, "")
+	if err != nil {
+		s.Log.Warn("im open chats", "err", err)
+		return
+	}
+	var out []matrixsync.OpenChat
+	for _, c := range cs {
+		if c.Joined {
+			continue
+		}
+		out = append(out, c)
+		if c.ID == r.URL.Query().Get("room") {
+			data["OpenChat"], data["ReadOnly"] = c, true
+		}
+	}
+	data["OpenChats"] = out
 }
 
 // imCollabHead puts into the header of a collab's chat (its main one or a group chat of it) the collab — its tasks,
@@ -188,10 +212,17 @@ func (s *Server) imMessages(w http.ResponseWriter, r *http.Request, sess auth.Se
 		}
 	} else {
 		var msgs []matrixsync.Message
-		if msgs, more, err = s.Matrix.Messages(r.Context(), sess.UserID, room, r.URL.Query().Get("from")); err == nil {
+		msgs, more, err = s.Matrix.Messages(r.Context(), sess.UserID, room, r.URL.Query().Get("from"))
+		open := false
+		if err != nil { // an open chat one is not in yet: its latest messages before joining
+			if om, omore, oerr := s.Matrix.OpenMessages(r.Context(), sess.UserID, room, r.URL.Query().Get("from")); oerr == nil {
+				msgs, more, err, open = om, omore, nil, true
+			}
+		}
+		if err == nil {
 			s.transcripts(r.Context(), msgs)
 			html, err = s.imFragment(r, "imlist", msgs)
-			if r.URL.Query().Get("from") == "" { // the chat is open: its main timeline is read, the threads when opened
+			if r.URL.Query().Get("from") == "" && !open { // the chat is open: its main timeline is read, the threads when opened
 				if err := s.Matrix.MarkRoomRead(r.Context(), sess.UserID, room); err != nil {
 					s.Log.Warn("im mark read", "err", err)
 				}

@@ -183,6 +183,23 @@ func TestAPI(t *testing.T) {
 	if len(task["comments"].([]any)) != 1 {
 		t.Fatal("comment not added")
 	}
+	// an answer quotes the message, the author changes and deletes it (GO24DEV-771)
+	first := task["comments"].([]any)[0].(map[string]any)["id"].(string)
+	task = call("POST", "/api/v1/tasks/API-1/comments", full, map[string]any{"body": "Ответ", "reply_to": first}, http.StatusOK)
+	reply := task["comments"].([]any)[1].(map[string]any)
+	if reply["reply_to"] != first || reply["edited_at"] != nil {
+		t.Fatalf("reply via API: %v", reply)
+	}
+	task = call("PATCH", "/api/v1/tasks/API-1/comments/"+reply["id"].(string), full, map[string]any{"body": "Ответ исправлен"}, http.StatusOK)
+	if c := task["comments"].([]any)[1].(map[string]any); c["body"] != "Ответ исправлен" || c["edited_at"] == nil {
+		t.Fatalf("edited via API: %v", c)
+	}
+	call("PATCH", "/api/v1/tasks/API-1/comments/"+reply["id"].(string), readOnly, map[string]any{"body": "x"}, http.StatusForbidden)
+	task = call("DELETE", "/api/v1/tasks/API-1/comments/"+reply["id"].(string), full, nil, http.StatusOK)
+	if len(task["comments"].([]any)) != 1 {
+		t.Fatalf("deleted via API: %v", task["comments"])
+	}
+	call("DELETE", "/api/v1/tasks/API-1/comments/"+reply["id"].(string), full, nil, http.StatusNotFound)
 
 	call("POST", "/api/v1/tasks/API-1/actions/start", readOnly, nil, http.StatusForbidden)
 	call("GET", "/api/v1/tasks/API-1", readOnly, nil, http.StatusOK)
@@ -661,6 +678,23 @@ func TestAPI(t *testing.T) {
 	if apiDeal["stage_code"] != "new" || apiDeal["amount"].(float64) != 1000 {
 		t.Fatalf("api deal = %v", apiDeal)
 	}
+	// PATCH changes only the fields given; DELETE puts a card into the recycle bin (GO24DEV-759)
+	tmp := call("POST", "/api/v1/crm/deals", full, map[string]any{"title": "Черновик", "amount": 500, "comment": "к правке"}, http.StatusCreated)
+	tmpURL := "/api/v1/crm/deals/" + tmp["id"].(string)
+	if upd := call("PATCH", tmpURL, full, map[string]any{"title": "Правка из n8n"}, http.StatusOK); upd["title"] != "Правка из n8n" ||
+		upd["amount"].(float64) != 500 || upd["comment"] != "к правке" {
+		t.Fatalf("patched deal = %v", upd)
+	}
+	call("PATCH", tmpURL, readOnly, map[string]any{"title": "x"}, http.StatusForbidden)
+	call("PATCH", tmpURL, full, map[string]any{"no_such_field": 1}, http.StatusUnprocessableEntity)
+	pc := call("POST", "/api/v1/crm/contacts", full, map[string]any{"name": "Ольга", "phone": "+7 900", "email": "o@x.ru"}, http.StatusCreated)
+	if upd := call("PATCH", "/api/v1/crm/contacts/"+pc["id"].(string), full, map[string]any{"email": "olga@x.ru"}, http.StatusOK); upd["email"] != "olga@x.ru" ||
+		upd["phone"] != "+7 900" || upd["name"] != "Ольга" {
+		t.Fatalf("patched contact = %v", upd)
+	}
+	call("DELETE", tmpURL, readOnly, nil, http.StatusForbidden)
+	call("DELETE", tmpURL, full, nil, http.StatusNoContent)
+	call("GET", tmpURL, full, nil, http.StatusNotFound)
 	// BI: the deals by stage (the amounts add up), the columns named; without the scope — forbidden; an unknown field — the error's key
 	bq := call("POST", "/api/v1/bi/query", full, map[string]any{"dataset": "crm_deal", "dims": []string{"stage"},
 		"measures": []map[string]string{{"agg": "sum", "field": "amount"}}}, http.StatusOK)

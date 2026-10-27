@@ -85,6 +85,8 @@ type Message struct {
 	Poll        *Poll            // a poll: its question, answers and votes
 	ToMe        bool             // someone else's message that mentions the employee (m.mentions)
 	Keyboard    [][]Button       // a bot's message: the lines of its buttons
+	Menu        []Button         // a bot's message: its items of the message's menu
+	Attach      *Attach          // a bot's message: the card under its text
 	plain       bool             // a text of its author (not a file, not a notice): may be edited
 }
 
@@ -248,7 +250,7 @@ func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imP
 	if p, ok := who[ev.Sender]; ok {
 		m.SenderID, m.SenderName, m.SenderPhoto, m.SenderGuest, m.SenderBot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
 		if p.Bot && ev.Type == "m.room.message" {
-			m.Keyboard = keyboardRows(keyboardOf(lastContent(ev)))
+			m.botParts(lastContent(ev))
 		}
 	} else {
 		m.SenderName = strings.TrimPrefix(strings.SplitN(ev.Sender, ":", 2)[0], "@")
@@ -304,6 +306,11 @@ func (s *Service) chatEvent(ev matrix.Event, m *Message, who map[string]imPerson
 				return false
 			}
 			m.Event = "added"
+		case "join":
+			if !restrictedJoin(ev) {
+				return false
+			}
+			m.Event = "joined"
 		case "leave", "ban":
 			m.Event = "removed"
 			if target == ev.Sender {
@@ -375,7 +382,7 @@ func levelChange(ev matrix.Event) (string, string) {
 	return target, event
 }
 
-// applyEdits replaces bodies of messages edited within the same batch.
+// applyEdits replaces bodies of messages edited within the same batch (and a bot's buttons, menu and card).
 func applyEdits(evs []matrix.Event, msgs []Message) {
 	idx := map[string]int{}
 	for i, m := range msgs {
@@ -390,6 +397,9 @@ func applyEdits(evs []matrix.Event, msgs []Message) {
 			if nc, ok := ev.Content["m.new_content"].(map[string]any); ok {
 				if b, _ := nc["body"].(string); b != "" {
 					msgs[i].Body, msgs[i].Edited = b, true
+					if msgs[i].SenderBot {
+						msgs[i].botParts(nc)
+					}
 				}
 			}
 		}
@@ -867,13 +877,13 @@ func (s *Service) Edit(ctx context.Context, userID, roomID, eventID, body string
 	return s.edit(ctx, userID, roomID, eventID, body, nil)
 }
 
-// BotEdit changes a message of the bot (imbot.message.update): body "" keeps the text, kb nil keeps the buttons
-// (an empty one takes them away).
-func (s *Service) BotEdit(ctx context.Context, botID, roomID, eventID, body string, kb []Button) (Message, error) {
-	return s.edit(ctx, botID, roomID, eventID, body, kb)
+// BotEdit changes a message of the bot (imbot.message.update): body "" keeps the text, a part not given keeps what
+// the message has (an empty one takes it away).
+func (s *Service) BotEdit(ctx context.Context, botID, roomID, eventID, body string, p BotParts) (Message, error) {
+	return s.edit(ctx, botID, roomID, eventID, body, &p)
 }
 
-func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string, kb []Button) (Message, error) {
+func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string, p *BotParts) (Message, error) {
 	me, tok, err := s.token(ctx, userID)
 	if err != nil {
 		return Message{}, err
@@ -886,18 +896,29 @@ func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string
 	if !ok || ev.Sender != me || !orig.plain {
 		return Message{}, i18n.E("err.forbidden")
 	}
-	if body = strings.TrimSpace(body); body == "" && kb != nil {
-		body = orig.Body
+	old, parts := lastContent(ev), BotParts{}
+	if p != nil {
+		parts = *p
+	}
+	card := parts.Attach
+	if card == nil {
+		card = attachOf(old)
+	}
+	if body = strings.TrimSpace(body); body == "" && p != nil && (card == nil || !attachOf(old).only()) {
+		body = orig.Body // the text is kept
+	}
+	only := body == "" && p != nil && card != nil && len(card.Blocks) > 0
+	if only {
+		body = attachText(card)
 	}
 	if body == "" {
 		return Message{}, i18n.E("err.comment_empty")
 	}
-	if kb == nil {
-		kb = keyboardOf(lastContent(ev))
-	}
 	nc := textContent(body)
-	if len(kb) > 0 {
-		nc["go24.keyboard"] = kb
+	parts.put(nc, old)
+	if a := attachOf(nc); a != nil {
+		a.Only = only
+		nc["go24.attach"] = a
 	}
 	edit := map[string]any{"msgtype": "m.text", "body": "* " + body, "m.new_content": nc,
 		"m.relates_to": map[string]any{"rel_type": "m.replace", "event_id": eventID}}
@@ -912,7 +933,7 @@ func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string
 	if p, ok := who[me]; ok {
 		orig.SenderID, orig.SenderName, orig.SenderPhoto, orig.SenderGuest, orig.SenderBot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
 		if p.Bot {
-			orig.Keyboard = keyboardRows(kb)
+			orig.botParts(nc)
 		}
 	}
 	return orig, nil

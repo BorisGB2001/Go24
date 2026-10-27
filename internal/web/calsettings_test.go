@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +19,13 @@ import (
 	"go24/internal/calendar"
 	"go24/internal/db"
 	"go24/internal/tasks"
+	"go24/internal/worktime"
 )
 
 // TestCalendarSettingsHTTP: «Настройки календаря» — the week from Sunday in the month and the week, the hour grid of
 // the working hours widened to an early meeting, days off shaded, declined meetings and task deadlines hidden, the
-// reminder of a new meeting; wrong hours are refused.
+// reminder of a new meeting; wrong hours are refused. The company's holidays are days off of every calendar, and one who
+// has not changed the settings has those of the company work schedule.
 func TestCalendarSettingsHTTP(t *testing.T) {
 	dbURL := os.Getenv("GO24_TEST_DATABASE_URL")
 	if dbURL == "" {
@@ -106,7 +109,9 @@ func TestCalendarSettingsHTTP(t *testing.T) {
 
 	// the defaults: the week from Monday, 9–18 with the grid widened to the meeting at 5, everything shown
 	week, _ := do("GET", "/calendar?view=week&date=2026-11-04", nil, http.StatusOK)
-	has(week, `data-date="2026-11-02"`, `data-hour0="5"`, "Не пойду", "Сдать отчёт", `class="cg-col off" style="height`)
+	has(week, `data-date="2026-11-02"`, `data-hour0="5"`, "Не пойду", "Сдать отчёт", `class="cg-col off" style="height`,
+		`<b>4</b> <span class="calhol">`) // 4 November, a holiday of the default schedule
+	hasnt(week, `<b>5</b> <span class="calhol">`)
 	hasnt(week, `data-date="2026-11-01"`)
 	form, _ := do("GET", "/calendar/settings", nil, http.StatusOK)
 	has(form, `<option value="1" selected>`, `name="show_declined" checked`, `value="15" selected`)
@@ -125,7 +130,7 @@ func TestCalendarSettingsHTTP(t *testing.T) {
 	has(week, `data-date="2026-11-01"`, `data-date="2026-11-07"`, `data-hour0="5"`, "Ранний созвон", "--work0:144px;--work1:576px")
 	hasnt(week, `data-date="2026-11-08"`, "Не пойду", "Сдать отчёт")
 	month, _ := do("GET", "/calendar?month=2026-11", nil, http.StatusOK)
-	has(month, `<div class="calday off" data-date="2026-11-06"`) // Friday off
+	has(month, `<div class="calday off" data-date="2026-11-06"`, `<div class="calday off" data-date="2026-11-04"`) // Friday off, a holiday
 	if i, j := strings.Index(month, `data-date="2026-11-01"`), strings.Index(month, `data-date="2026-11-02"`); i < 0 || i > j {
 		t.Fatal("the month does not begin on Sunday 1 November")
 	}
@@ -146,5 +151,32 @@ func TestCalendarSettingsHTTP(t *testing.T) {
 	if i, j := strings.Index(newForm, "data-reminds>"), strings.Index(newForm, "<template data-remind-row>"); i < 0 || j < i ||
 		strings.Contains(newForm[i:j], `name="remind"`) {
 		t.Fatal("a new meeting is reminded though the settings say not to")
+	}
+
+	// the company work schedule: 8:30–17:15, Friday and Saturday off, a holiday on 12 November
+	must(srv.Tasks.SetSchedule(ctx, boss, worktime.Schedule{Start: "08:30", End: "17:15", Weekend: []int{5, 6}, Holidays: []string{"2026-11-12"}}))
+	cs, err = srv.Calendar.Settings(ctx, boss)
+	must(err)
+	if cs.WorkFrom != 8 || cs.WorkTo != 18 || !slices.Equal(cs.DaysOff, []int{5, 6}) || !slices.Equal(cs.Holidays, []string{"2026-11-12"}) {
+		t.Fatalf("the settings of the company = %+v", cs)
+	}
+	if cs, _ = srv.Calendar.Settings(ctx, anna); cs.WorkFrom != 9 || !cs.Off(time.Date(2026, 11, 12, 0, 0, 0, 0, time.Local)) || cs.Off(wed) {
+		t.Fatalf("one's own settings with the company's holidays = %+v", cs)
+	}
+	month, _ = do("GET", "/calendar?month=2026-11", nil, http.StatusOK)
+	has(month, `<div class="calday off" data-date="2026-11-12"`)
+	hasnt(month, `<div class="calday off" data-date="2026-11-04"`)
+
+	// «Поделиться слотами» offers no time on a holiday
+	links, err := srv.Calendar.SlotLinks(ctx, anna) // the personal link, every day of Anna's settings
+	must(err)
+	link, err := srv.Calendar.SlotLink(ctx, anna, links[0].ID)
+	must(err)
+	now := time.Date(2026, 11, 9, 8, 0, 0, 0, time.Local)
+	if link.Offers(time.Date(2026, 11, 12, 0, 0, 0, 0, time.Local)) || !link.Offers(time.Date(2026, 11, 11, 0, 0, 0, 0, time.Local)) {
+		t.Fatal("the link offers a holiday or not a working day")
+	}
+	if free, err := srv.Calendar.SlotFree(ctx, link, time.Date(2026, 11, 12, 0, 0, 0, 0, time.Local), now); err != nil || len(free) != 0 {
+		t.Fatalf("free on a holiday: %v %v", free, err)
 	}
 }

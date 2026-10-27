@@ -176,7 +176,7 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "comment_like": // the reaction's emoji, then the comment
 		t += " " + i.Reaction()
 		i.Body = i.Excerpt()
-	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like":
+	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_share_left", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like", "learn_assign":
 		t += " «" + i.Body + "»"
 	case "subtasks_done":
 		t = "✅ " + tr("notify.kind.subtasks_done")
@@ -190,6 +190,8 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		t += " «" + i.Body + "»"
 	case "crm_activity_remind":
 		return "⏰ " + tr("notify.kind.crm_activity_remind") + ": " + i.Body
+	case "learn_due", "learn_overdue":
+		return "⏰ " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "sign_request", "sign_review":
 		t += " «" + i.Body + "»"
 	case "sign_done", "sign_refused", "sign_cancelled":
@@ -205,6 +207,9 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "workday_decided": // "approved|25.10.2026"
 		status, day, _ := strings.Cut(i.Body, "|")
 		return i.ActorName + " " + tr("notify.kind.workday_decided."+status) + " " + day
+	case "meeting": // "title|02.01.2006 15:04"
+		title, at, _ := strings.Cut(i.Body, "|")
+		return "📋 " + i.ActorName + " " + tr("notify.kind.meeting") + " «" + title + "» · " + at
 	case "honor": // the reason
 		t = "🏆 " + i.ActorName + " " + tr("notify.kind.honor")
 		if i.Body != "" {
@@ -222,6 +227,8 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		}
 	case "openline":
 		return "💬 " + i.Body
+	case "join_request": // "Иван Петров <ivan@firm.ru>"
+		return "👤 " + tr("notify.kind.join_request") + ": " + i.Body
 	case "site_form":
 		return "🌐 " + tr("notify.kind.site_form") + ": " + i.Body
 	case "crm_form":
@@ -295,11 +302,11 @@ var Kinds = []struct {
 	{"telephony", []string{"phone"}},
 	{"mail", []string{"mail", "mail_assign", "mail_remind", "mail_recall"}},
 	{"messenger", []string{"im_remind"}},
-	{"disk", []string{"disk_share", "disk_file_share", "disk_comment"}},
+	{"disk", []string{"disk_share", "disk_file_share", "disk_share_left", "disk_comment"}},
 	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
 	{"sign", []string{"sign_request", "sign_review", "sign_done", "sign_refused", "sign_cancelled"}},
 	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated"}},
-	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "backup_failed", "backup_restored", "backup_restore_failed"}},
+	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "learn_assign", "learn_due", "learn_overdue", "meeting", "backup_failed", "backup_restored", "backup_restore_failed", "join_request"}},
 }
 
 // Settings of a person: kinds turned off, copies in the messenger.

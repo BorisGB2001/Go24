@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -203,6 +204,74 @@ func TestBIHTTP(t *testing.T) {
 	if got := strings.Count(order(), ","); got != 2 {
 		t.Fatalf("widgets after copy and delete: %s", order())
 	}
+
+	// «Экспорт в файл» and «Импорт»: the file makes a new draft of the one who loads it, with the same widgets
+	has(send(anna, "GET", dash, nil, 200), `href="`+dash+`/export"`)
+	exp := send(anna, "GET", dash+"/export", nil, 200)
+	has(exp, `"format": "go24.bi.dashboard"`, `"title": "Продажи"`)
+	upload := func(who, content string) {
+		t.Helper()
+		var buf strings.Builder
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("file", "d.bi.json")
+		_, _ = io.WriteString(fw, content)
+		must(mw.Close())
+		req, _ := http.NewRequest("POST", hs.URL+"/bi/import", strings.NewReader(buf.String()))
+		req.AddCookie(as[who])
+		req.Header.Set("Accept-Language", "ru")
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		res, err := client.Do(req)
+		must(err)
+		res.Body.Close()
+		if res.StatusCode != 303 {
+			t.Fatalf("import: %d", res.StatusCode)
+		}
+		where = res.Header.Get("Location")
+	}
+	upload(ivan, "{}")
+	if !strings.HasPrefix(where, "/bi?msg=") {
+		t.Fatalf("a wrong file: %s", where)
+	}
+	upload(ivan, exp)
+	imp := regexp.MustCompile(`^/bi/([0-9a-f-]{36})\?msg=`).FindStringSubmatch(where)
+	if imp == nil || imp[1] == id[1] {
+		t.Fatalf("imported: %s", where)
+	}
+	if list, _ := srv.BI.Widgets(ctx, imp[1]); len(list) != 3 {
+		t.Fatalf("imported widgets: %d", len(list))
+	}
+	has(send(ivan, "GET", "/bi/"+imp[1], nil, 200), "Продажи")
+	send(ivan, "POST", "/bi/"+imp[1]+"/delete", nil, 303)
+
+	// the other kinds: stacked, areas, a funnel by the stages, a pivot, a number against the month before, a text
+	send(anna, "POST", "/bi", url.Values{"title": {"Виды"}, "period": {"month"}}, 303)
+	kinds := strings.TrimSuffix(where, "?edit=1")
+	for _, f := range []url.Values{
+		{"kind": {"stack"}, "dim": {"created_at"}, "grain": {"day"}, "dim2": {"stage"}},
+		{"kind": {"area"}, "dim": {"created_at"}, "grain": {"day"}},
+		{"kind": {"funnel"}, "dim": {"stage"}, "dim2": {"responsible"}, "agg1": {"sum"}},
+		{"kind": {"pivot"}, "dim": {"stage"}, "dim2": {"responsible"}},
+		{"kind": {"kpi"}, "compare": {"1"}},
+		{"kind": {"text"}, "title": {"Пояснение"}, "body": {"# План\r\n\r\nПродажи <за> месяц"}, "dim": {"stage"}},
+	} {
+		f.Set("dataset", "crm_deal")
+		f.Set("width", "6")
+		f.Set("agg0", "count")
+		send(anna, "POST", kinds+"/widget", f, 303)
+	}
+	wl, err := srv.BI.Widgets(ctx, strings.TrimPrefix(kinds, "/bi/"))
+	must(err)
+	if len(wl) != 6 || len(wl[2].Query.Dims) != 1 || len(wl[2].Query.Measures) != 1 || !wl[4].Compare ||
+		wl[5].Body != "# План\n\nПродажи <за> месяц" || wl[5].Query.Dataset != "" || wl[3].Query.Dims[1] != "responsible" {
+		t.Fatalf("kinds %+v", wl)
+	}
+	page = send(anna, "GET", kinds, nil, 200)
+	has(page, `class="bi-area"`, `class="bi-funnel"`, "bi-pivot", "bi-delta", "<h4>План</h4>", "Продажи &lt;за&gt; месяц", "Пояснение")
+	if strings.Contains(page, "/bi/w/"+wl[5].ID+"/csv") {
+		t.Fatal("a text has no CSV")
+	}
+	has(send(anna, "GET", kinds+"/widget?w="+wl[5].ID, nil, 200), `name="body"`, "# План")
+	has(send(anna, "GET", kinds+"/widget?w="+wl[4].ID, nil, 200), `name="compare" value="1" checked`)
 
 	// a draft is its author's (and the administrators'); published, everyone sees it
 	send(ivan, "GET", dash, nil, 404)

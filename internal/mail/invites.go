@@ -15,8 +15,10 @@ import (
 // Invitations in the mail, as Outlook handles them: a letter's meeting is answered «Принять», «Под вопросом» or
 // «Отклонить» — with or without a letter to the organizer (iTIP REPLY), with the user's words; the accepted meeting
 // is kept in the user's go24 calendar. An update (a later SEQUENCE) moves it there by itself and asks again; a
-// cancel marks it cancelled until the user removes it. Answers to go24's own meetings sent by mail (event_externals)
-// are taken in as they come.
+// cancel marks it cancelled until the user removes it. «Предложить новое время» answers «Под вопросом» or «Отклонить»
+// and proposes the organizer another time (iTIP COUNTER); the organizer accepts the proposal (the meeting moves, the
+// invited get it again) or declines it (DECLINECOUNTER). Answers to go24's own meetings sent by mail
+// (event_externals) are taken in as they come.
 
 // Answers to an invitation; Cancelled — the user removed a cancelled meeting from the calendar.
 var Answers = []string{"accepted", "tentative", "declined"}
@@ -26,6 +28,8 @@ type InviteState struct {
 	Status   string // "" — not answered
 	Sequence int
 	EventID  string
+	// the new time the user proposed (nil — none, or the organizer declined it or sent the meeting again)
+	ProposedStart, ProposedEnd *time.Time
 }
 
 // calendarPart is the text of a letter with its meeting beside it (multipart/alternative: text, HTML, calendar).
@@ -101,8 +105,9 @@ func (s *Store) Invite(ctx context.Context, userID, letterID string) (Invite, bo
 // InviteAnswer is the user's answer to the meeting with the UID.
 func (s *Store) InviteAnswer(ctx context.Context, userID, uid string) (InviteState, error) {
 	var st InviteState
-	err := s.db.QueryRow(ctx, `SELECT i.status, i.sequence, coalesce(e.id::text, '') FROM mail_invites i LEFT JOIN events e ON e.id = i.event_id
-		WHERE i.user_id::text = $1 AND i.uid = $2`, userID, uid).Scan(&st.Status, &st.Sequence, &st.EventID)
+	err := s.db.QueryRow(ctx, `SELECT i.status, i.sequence, coalesce(e.id::text, ''), i.proposed_start, i.proposed_end
+		FROM mail_invites i LEFT JOIN events e ON e.id = i.event_id
+		WHERE i.user_id::text = $1 AND i.uid = $2`, userID, uid).Scan(&st.Status, &st.Sequence, &st.EventID, &st.ProposedStart, &st.ProposedEnd)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return InviteState{}, nil
 	}
@@ -209,7 +214,7 @@ func (s *Store) Answer(ctx context.Context, userID, letterID, status, reply, com
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO mail_invites (user_id, uid, sequence, status, event_id) VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (user_id, uid) DO UPDATE SET sequence = EXCLUDED.sequence, status = EXCLUDED.status, event_id = EXCLUDED.event_id,
-			updated_at = now()`, userID, in.UID, in.Sequence, status, ev)
+			proposed_start = NULL, proposed_end = NULL, updated_at = now()`, userID, in.UID, in.Sequence, status, ev)
 		return err
 	})
 	if err != nil {
@@ -237,6 +242,118 @@ func (s *Store) Answer(ctx context.Context, userID, letterID, status, reply, com
 	return eventID, err
 }
 
+// Propose answers the letter's meeting «Под вопросом» or «Отклонить» (status tentative | declined) and proposes the
+// organizer a new time, start to end, with the words (comment): an iTIP COUNTER from the user's mailbox.
+func (s *Store) Propose(ctx context.Context, userID, letterID, status, comment string, start, end time.Time) error {
+	if status != "tentative" && status != "declined" {
+		return i18n.E("err.bad_form")
+	}
+	if !end.After(start) {
+		return i18n.E("err.event_time")
+	}
+	m, err := s.message(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	in, ok, err := s.Invite(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	if !ok || in.Method != "REQUEST" || in.Cancelled || in.Organizer.Email == "" || strings.EqualFold(in.Organizer.Email, m.MailboxEmail) {
+		return i18n.E("err.bad_form")
+	}
+	if _, err := s.Answer(ctx, userID, letterID, status, "none", ""); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE mail_invites SET proposed_start = $3, proposed_end = $4, updated_at = now()
+		WHERE user_id::text = $1 AND uid = $2`, userID, in.UID, start, end); err != nil {
+		return err
+	}
+	var name string
+	_ = s.db.QueryRow(ctx, `SELECT name FROM users WHERE id::text = $1`, userID).Scan(&name)
+	me := Person{Email: m.MailboxEmail, Name: name}
+	if a := in.Attendee(m.MailboxEmail); a != nil && a.Name != "" {
+		me.Name = a.Name
+	}
+	comment = clip(strings.TrimSpace(comment), 2000)
+	title := inviteTitle(in, m.Subject)
+	text := s.tr("mail.counter.text", me.Display(), title, s.span(start, end))
+	if comment != "" {
+		text += "\n\n" + comment
+	}
+	refs, err := s.refsOf(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	return s.SendCalendar(ctx, userID, m.MailboxID, []string{in.Organizer.Email}, s.tr("mail.counter.subject", title), text,
+		Counter(in, me, status, comment, start, end), "COUNTER", refs)
+}
+
+// span is a meeting's time in a letter's text: «02.01.2006 15:04 — 16:00».
+func (s *Store) span(start, end time.Time) string {
+	start, end = start.In(time.Local), end.In(time.Local)
+	f := s.tr("format.datetime")
+	if start.Format("20060102") == end.Format("20060102") {
+		return start.Format(f) + " — " + end.Format("15:04")
+	}
+	return start.Format(f) + " — " + end.Format(f)
+}
+
+// CounterDecision is what the user (the organizer) did with the proposal of a new time a letter carries: accepted,
+// declined ("" — nothing yet).
+func (s *Store) CounterDecision(ctx context.Context, userID, letterID string) (string, error) {
+	var st string
+	err := s.db.QueryRow(ctx, `SELECT c.status FROM mail_counters c JOIN mail_messages x ON x.id = c.message_id
+		JOIN mailboxes m ON m.id = x.mailbox_id WHERE c.message_id::text = $1 AND m.user_id::text = $2`, letterID, userID).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return st, err
+}
+
+// DecideCounter keeps the organizer's decision on the letter's proposal of a new time (accepted — the meeting is
+// moved by the caller; declined — the attendee is told so: DECLINECOUNTER, with the words).
+func (s *Store) DecideCounter(ctx context.Context, userID, letterID, status, comment string) error {
+	if status != "accepted" && status != "declined" {
+		return i18n.E("err.bad_form")
+	}
+	m, err := s.message(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	in, ok, err := s.Invite(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	if !ok || in.Method != "COUNTER" || len(in.Attendees) == 0 {
+		return i18n.E("err.bad_form")
+	}
+	if _, err := s.db.Exec(ctx, `INSERT INTO mail_counters (message_id, status) VALUES ($1, $2)
+		ON CONFLICT (message_id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()`, m.ID, status); err != nil {
+		return err
+	}
+	if status == "accepted" {
+		return nil
+	}
+	who := in.Attendees[0]
+	var name string
+	_ = s.db.QueryRow(ctx, `SELECT name FROM users WHERE id::text = $1`, userID).Scan(&name)
+	d := Invite{UID: in.UID, Sequence: in.Sequence, Summary: in.Summary, Start: in.Start, End: in.End,
+		Organizer: Person{Email: m.MailboxEmail, Name: name}, Attendees: []Person{{Email: who.Email, Name: who.Name}},
+		Comment: clip(strings.TrimSpace(comment), 2000)}
+	title := inviteTitle(in, m.Subject)
+	text := s.tr("mail.counter.declined_text", title)
+	if d.Comment != "" {
+		text += "\n\n" + d.Comment
+	}
+	refs, err := s.refsOf(ctx, userID, letterID)
+	if err != nil {
+		return err
+	}
+	return s.SendCalendar(ctx, userID, m.MailboxID, []string{who.Email}, s.tr("mail.counter.declined_subject", title), text, d,
+		"DECLINECOUNTER", refs)
+}
+
 // invitesArrived takes in a meeting that came to the user's mailbox: an answer to the user's own meeting (its people
 // from outside), an update of a meeting the user accepted (moved in the calendar), a cancel (marked in it).
 func (s *Store) invitesArrived(ctx context.Context, a account, ics string) {
@@ -246,7 +363,7 @@ func (s *Store) invitesArrived(ctx context.Context, a account, ics string) {
 	}
 	var err error
 	switch {
-	case in.Method == "REPLY":
+	case in.Method == "REPLY" || in.Method == "COUNTER": // a proposal of a new time answers too
 		for _, p := range in.Attendees {
 			st := p.Status
 			if st != "accepted" && st != "tentative" && st != "declined" {
@@ -262,9 +379,21 @@ func (s *Store) invitesArrived(ctx context.Context, a account, ics string) {
 		_, err = s.db.Exec(ctx, `UPDATE events e SET title = left($3 || e.title, 300), updated_at = now() FROM mail_invites i
 			WHERE i.event_id = e.id AND i.user_id::text = $1 AND i.uid = $2 AND e.owner_id = i.user_id AND i.status <> 'cancelled'
 			  AND left(e.title, length($3)) <> $3`, a.UserID, in.UID, s.tr("mail.inv.cancelled_prefix"))
+	case in.Method == "DECLINECOUNTER": // the organizer keeps the meeting's time
+		_, err = s.db.Exec(ctx, `UPDATE mail_invites SET proposed_start = NULL, proposed_end = NULL WHERE user_id::text = $1 AND uid = $2`,
+			a.UserID, in.UID)
 	case in.Method == "REQUEST":
 		var st InviteState
-		if st, err = s.InviteAnswer(ctx, a.UserID, in.UID); err != nil || st.EventID == "" || in.Sequence <= st.Sequence {
+		if st, err = s.InviteAnswer(ctx, a.UserID, in.UID); err != nil || in.Sequence <= st.Sequence {
+			break
+		}
+		if st.ProposedStart != nil { // sent again: the proposal is answered
+			if _, err = s.db.Exec(ctx, `UPDATE mail_invites SET proposed_start = NULL, proposed_end = NULL WHERE user_id::text = $1 AND uid = $2`,
+				a.UserID, in.UID); err != nil {
+				break
+			}
+		}
+		if st.EventID == "" {
 			break
 		}
 		err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error { // the new time is in the calendar; the answer is asked again

@@ -219,4 +219,45 @@ func TestTaskListMenu(t *testing.T) {
 	if _, other, _ := do(anna, "GET", "/my", nil); !strings.Contains(other, `<option selected>50</option>`) || strings.Contains(other, `class="pager"`) {
 		t.Fatal("another user's list has the page size too")
 	}
+
+	// subtasks under their parent task lists: the parent has the arrow with their number, they go
+	// right under it (hidden until opened) and the page counts only the top tasks
+	sub, err := ts.CreateTask(ctx, boss, p, tasks.NewTask{Title: "Подзадача Беты", ResponsibleID: anna, ParentKey: beta})
+	must(err)
+	_, err = ts.CreateTask(ctx, boss, p, tasks.NewTask{Title: "Ещё глубже", ResponsibleID: anna, ParentKey: sub})
+	must(err)
+	do(boss, "POST", "/prefs/pagesize", url.Values{"size": {"50"}, "back": {"/tasks"}})
+	_, list, _ = do(boss, "GET", "/tasks", nil)
+	b, s1, s2 := strings.Index(list, ">Бета<"), strings.Index(list, ">Подзадача Беты<"), strings.Index(list, ">Ещё глубже<")
+	if b < 0 || s1 < b || s2 < s1 || strings.Index(list[b:], ">Задача") < s1-b {
+		t.Fatal("the subtasks are not right under their parent")
+	}
+	for _, want := range []string{`data-tree="` + beta + `"`, `data-tree="` + sub + `"`, `data-path="` + beta + `" class="tsub" hidden`,
+		`data-path="` + beta + ` ` + sub + `" class="tsub" hidden`, `data-bulk-picked>0</b> / 14`, `action="/prefs/tree"`} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("the tree has no %s", want)
+		}
+	}
+	// «Мои задачи» of the responsible: all three are hers, the subtasks still go under the parent
+	if _, my, _ := do(anna, "GET", "/my", nil); !strings.Contains(my, `data-path="`+beta+` `+sub+`"`) {
+		t.Fatal("«Мои задачи» have no tree")
+	}
+	// a subtask whose parent is not in the list is a row of its own with the parent named
+	if _, my, _ := do(boss, "GET", "/tasks?q="+url.QueryEscape("глубже"), nil); strings.Contains(my, "data-path=") || !strings.Contains(my, sub+" Подзадача Беты") {
+		t.Fatal("a subtask without its parent in the list")
+	}
+	// the gear turns the tree off for this user: a flat list again
+	if _, _, loc := do(boss, "POST", "/prefs/tree", url.Values{"on": {"0"}, "back": {"/tasks"}}); loc != "/tasks" {
+		t.Fatalf("«Подзадачи под основной задачей» returns to %q", loc)
+	}
+	if _, list, _ = do(boss, "GET", "/tasks", nil); strings.Contains(list, "data-path=") || !strings.Contains(list, ">Ещё глубже<") {
+		t.Fatal("the flat list")
+	}
+	if on, _ := ts.Tree(ctx, anna); !on {
+		t.Fatal("another user's tree is off too")
+	}
+	do(boss, "POST", "/prefs/tree", url.Values{"on": {"1"}, "back": {"/tasks"}})
+	if on, _ := ts.Tree(ctx, boss); !on {
+		t.Fatal("the tree is not back on")
+	}
 }

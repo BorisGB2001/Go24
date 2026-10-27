@@ -32,14 +32,17 @@ const TemplateInvoice = "invoice"
 // DocTemplate is a template and where its file is.
 type DocTemplate struct {
 	ID, Name, Entity, FileID, FileName string
-	Numerator                          string // the number's format: {NUMBER}, {YEAR}, {MONTH}, {DAY} and text
+	NumeratorID, NumeratorName         string
+	Numerator                          string // its numerator's format: {NUMBER}, {YEAR}, {MONTH}, {DAY} and text
 	CreatedAt                          time.Time
 }
 
+const tplCols = `t.id, t.name, t.entity, t.file_id::text, f.name, t.numerator_id::text, n.name, n.format, t.created_at
+	FROM crm_doc_templates t JOIN files f ON f.id = t.file_id JOIN doc_numerators n ON n.id = t.numerator_id`
+
 // DocTemplates of an entity ("" — all).
 func (s *Store) DocTemplates(ctx context.Context, entity string) ([]DocTemplate, error) {
-	rows, err := s.db.Query(ctx, `SELECT t.id, t.name, t.entity, t.file_id::text, f.name, t.numerator, t.created_at FROM crm_doc_templates t
-		JOIN files f ON f.id = t.file_id WHERE $1 = '' OR t.entity = $1 ORDER BY t.entity, lower(t.name)`, entity)
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE $1 = '' OR t.entity = $1 ORDER BY t.entity, lower(t.name)`, entity)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +59,7 @@ const templateFor = `(NOT EXISTS (SELECT 1 FROM crm_doc_template_access a WHERE 
 
 // DocTemplatesFor are the templates of an entity the user may make documents by («Кому доступен»).
 func (s *Store) DocTemplatesFor(ctx context.Context, entity, userID string) ([]DocTemplate, error) {
-	rows, err := s.db.Query(ctx, `SELECT t.id, t.name, t.entity, t.file_id::text, f.name, t.numerator, t.created_at FROM crm_doc_templates t
-		JOIN files f ON f.id = t.file_id WHERE t.entity = $1 AND `+templateFor+` ORDER BY lower(t.name)`, entity, userID)
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE t.entity = $1 AND `+templateFor+` ORDER BY lower(t.name)`, entity, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +132,7 @@ func (s *Store) SetDocTemplateAccess(ctx context.Context, id string, to []string
 
 func (s *Store) DocTemplate(ctx context.Context, id string) (DocTemplate, error) {
 	var t DocTemplate
-	err := s.db.QueryRow(ctx, `SELECT t.id, t.name, t.entity, t.file_id::text, f.name, t.numerator, t.created_at FROM crm_doc_templates t
-		JOIN files f ON f.id = t.file_id WHERE t.id::text = $1`, id).Scan(&t.ID, &t.Name, &t.Entity, &t.FileID, &t.FileName, &t.Numerator, &t.CreatedAt)
+	err := s.db.QueryRow(ctx, `SELECT `+tplCols+` WHERE t.id::text = $1`, id).Scan(&t.ID, &t.Name, &t.Entity, &t.FileID, &t.FileName, &t.NumeratorID, &t.NumeratorName, &t.Numerator, &t.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return t, ErrNotFound
 	}
@@ -151,13 +152,28 @@ func (s *Store) NewDocTemplate(ctx context.Context, userID, name, entity, fileID
 		return "", i18n.E("err.doc_template")
 	}
 	var id string
-	err := s.db.QueryRow(ctx, `INSERT INTO crm_doc_templates (name, entity, file_id, created_by) VALUES ($1, $2, $3, $4)
+	err := s.db.QueryRow(ctx, `WITH n AS (INSERT INTO doc_numerators (name) VALUES ($1) RETURNING id)
+		INSERT INTO crm_doc_templates (name, entity, file_id, created_by, numerator_id) SELECT $1, $2, $3, $4, n.id FROM n
 		RETURNING id::text`, name, entity, fileID, userID).Scan(&id)
 	return id, err
 }
 
+// DeleteDocTemplate deletes the template and its numerator, unless another template numbers by it too.
 func (s *Store) DeleteDocTemplate(ctx context.Context, id string) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM files WHERE id = (SELECT file_id FROM crm_doc_templates WHERE id::text = $1)`, id)
+	var file, num string
+	err := s.db.QueryRow(ctx, `DELETE FROM crm_doc_templates WHERE id::text = $1 RETURNING file_id::text, numerator_id::text`,
+		id).Scan(&file, &num)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = s.db.Exec(ctx, `DELETE FROM files WHERE id::text = $1`, file); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `DELETE FROM doc_numerators n WHERE n.id::text = $1
+		AND NOT EXISTS (SELECT 1 FROM crm_doc_templates t WHERE t.numerator_id = n.id)`, num)
 	return err
 }
 
@@ -176,35 +192,169 @@ func (s *Store) SetDocTemplateFile(ctx context.Context, id, fileID string) error
 	return err
 }
 
-// SetDocNumerator changes the format of the numbers of a template's documents; the counter goes on.
-func (s *Store) SetDocNumerator(ctx context.Context, id, format string) error {
-	format = strings.TrimSpace(format)
-	if format == "" || len([]rune(format)) > 100 {
-		return i18n.E("err.doc_numerator")
+// NumeratorResets are how often a numerator starts again from its first number.
+var NumeratorResets = []string{"never", "day", "month", "year"}
+
+// Numerator numbers the documents of the templates that chose it («Нумераторы»: one numerator
+// may number several templates — their documents then share the numbering.
+type Numerator struct {
+	ID, Name  string
+	Format    string // {NUMBER}, {YEAR}, {MONTH}, {DAY} and text
+	Start     int64  // the first number (and again after a reset)
+	Step, Pad int    // the step between numbers; the digits of {NUMBER}, with leading zeros (0 — as is)
+	Reset     string // never, day, month, year
+	Last      *int64 // the last number given; nil — none yet
+	Period    string // the period of the last number
+	CreatedAt time.Time
+	Templates []string // the names of the templates numbered by it
+}
+
+const numCols = `n.id::text, n.name, n.format, n.start, n.step, n.pad, n.reset, n.last, n.period, n.created_at,
+	coalesce((SELECT array_agg(t.name ORDER BY lower(t.name)) FROM crm_doc_templates t WHERE t.numerator_id = n.id), '{}')
+	FROM doc_numerators n`
+
+// Numerators are all the numerators, by name.
+func (s *Store) Numerators(ctx context.Context) ([]Numerator, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+numCols+` ORDER BY lower(n.name), n.created_at`)
+	if err != nil {
+		return nil, err
 	}
-	tag, err := s.db.Exec(ctx, `UPDATE crm_doc_templates SET numerator = $2 WHERE id::text = $1`, id, format)
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Numerator])
+}
+
+func (s *Store) Numerator(ctx context.Context, id string) (Numerator, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+numCols+` WHERE n.id::text = $1`, id)
+	if err != nil {
+		return Numerator{}, err
+	}
+	n, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByPos[Numerator])
+	if errors.Is(err, pgx.ErrNoRows) {
+		return n, ErrNotFound
+	}
+	return n, err
+}
+
+// SaveNumerator adds the numerator (no ID) or changes its settings; the numbering goes on from the last number
+// (a greater start number moves it forward).
+func (s *Store) SaveNumerator(ctx context.Context, n Numerator) (string, error) {
+	n.Name, n.Format = strings.TrimSpace(n.Name), strings.TrimSpace(n.Format)
+	if n.Name == "" || len([]rune(n.Name)) > 200 {
+		return "", i18n.E("err.doc_numerator_name")
+	}
+	if n.Format == "" || len([]rune(n.Format)) > 100 {
+		return "", i18n.E("err.doc_numerator")
+	}
+	if n.Start < 0 || n.Step < 1 || n.Step > 1000 || n.Pad < 0 || n.Pad > 12 || !slices.Contains(NumeratorResets, n.Reset) {
+		return "", i18n.E("err.doc_numerator_settings")
+	}
+	if n.ID == "" {
+		err := s.db.QueryRow(ctx, `INSERT INTO doc_numerators (name, format, start, step, pad, reset) VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id::text`, n.Name, n.Format, n.Start, n.Step, n.Pad, n.Reset).Scan(&n.ID)
+		return n.ID, err
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE doc_numerators SET name = $2, format = $3, start = $4, step = $5, pad = $6, reset = $7
+		WHERE id::text = $1`, n.ID, n.Name, n.Format, n.Start, n.Step, n.Pad, n.Reset)
+	if err == nil && tag.RowsAffected() == 0 {
+		return "", ErrNotFound
+	}
+	return n.ID, err
+}
+
+// DeleteNumerator deletes a numerator no template numbers by.
+func (s *Store) DeleteNumerator(ctx context.Context, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM doc_numerators n WHERE n.id::text = $1
+		AND NOT EXISTS (SELECT 1 FROM crm_doc_templates t WHERE t.numerator_id = n.id)`, id)
+	if err != nil || tag.RowsAffected() > 0 {
+		return err
+	}
+	if _, err := s.Numerator(ctx, id); err != nil {
+		return err
+	}
+	return i18n.E("err.doc_numerator_used")
+}
+
+// SetDocTemplateNumerator chooses the numerator of a template's documents.
+func (s *Store) SetDocTemplateNumerator(ctx context.Context, id, numeratorID string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE crm_doc_templates SET numerator_id = n.id FROM doc_numerators n
+		WHERE crm_doc_templates.id::text = $1 AND n.id::text = $2`, id, numeratorID)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	return err
 }
 
-// FormatDocNumber is the number n of a document made at t, as the numerator says: «Д-{YEAR}/{NUMBER}» → «Д-2026/7».
-func FormatDocNumber(format string, n int64, t time.Time) string {
-	return strings.NewReplacer("{NUMBER}", fmt.Sprint(n), "{YEAR}", t.Format("2006"), "{MONTH}", t.Format("01"),
+// SetDocNumerator changes the format of the numbers of a template's numerator (of every template sharing it);
+// the numbering goes on.
+func (s *Store) SetDocNumerator(ctx context.Context, id, format string) error {
+	format = strings.TrimSpace(format)
+	if format == "" || len([]rune(format)) > 100 {
+		return i18n.E("err.doc_numerator")
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE doc_numerators SET format = $2
+		WHERE id = (SELECT numerator_id FROM crm_doc_templates WHERE id::text = $1)`, id, format)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// numeratorPeriod is the period of t the numerator counts in: «2026-10» when it starts again every month.
+func numeratorPeriod(reset string, t time.Time) string {
+	switch reset {
+	case "day":
+		return t.Format("2006-01-02")
+	case "month":
+		return t.Format("2006-01")
+	case "year":
+		return t.Format("2006")
+	}
+	return ""
+}
+
+// next is the number the numerator gives at t: the start number first and in every new period, then by steps.
+func (n Numerator) next(t time.Time) int64 {
+	if n.Last == nil || n.Period != numeratorPeriod(n.Reset, t) {
+		return n.Start
+	}
+	return max(*n.Last+int64(n.Step), n.Start)
+}
+
+// Preview is the number the numerator would give a document made at t.
+func (n Numerator) Preview(t time.Time) string {
+	return FormatDocNumber(n.Format, n.next(t), n.Pad, t)
+}
+
+// FormatDocNumber is the number n of a document made at t, as the numerator says: «Д-{YEAR}/{NUMBER}» → «Д-2026/7»;
+// pad — the digits of {NUMBER} with leading zeros (3: «007»).
+func FormatDocNumber(format string, n int64, pad int, t time.Time) string {
+	return strings.NewReplacer("{NUMBER}", fmt.Sprintf("%0*d", pad, n), "{YEAR}", t.Format("2006"), "{MONTH}", t.Format("01"),
 		"{DAY}", t.Format("02")).Replace(format)
 }
 
-// NextDocNumber takes the next number of the template's counter (it goes through all cards.
+// NextDocNumber takes the next number of the template's numerator (it goes through all cards and all the templates
+// sharing it.
 func (s *Store) NextDocNumber(ctx context.Context, templateID string, at time.Time) (string, error) {
-	var format string
-	var n int64
-	err := s.db.QueryRow(ctx, `UPDATE crm_doc_templates SET counter = counter + 1 WHERE id::text = $1 RETURNING numerator, counter`,
-		templateID).Scan(&format, &n)
-	if err == pgx.ErrNoRows {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var n Numerator
+	err = tx.QueryRow(ctx, `SELECT n.id::text, n.format, n.start, n.step, n.pad, n.reset, n.last, n.period FROM doc_numerators n
+		JOIN crm_doc_templates t ON t.numerator_id = n.id WHERE t.id::text = $1 FOR UPDATE OF n`, templateID).
+		Scan(&n.ID, &n.Format, &n.Start, &n.Step, &n.Pad, &n.Reset, &n.Last, &n.Period)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
-	return FormatDocNumber(format, n, at), err
+	if err != nil {
+		return "", err
+	}
+	num := n.next(at)
+	if _, err := tx.Exec(ctx, `UPDATE doc_numerators SET last = $2, period = $3 WHERE id::text = $1`,
+		n.ID, num, numeratorPeriod(n.Reset, at)); err != nil {
+		return "", err
+	}
+	return FormatDocNumber(n.Format, num, n.Pad, at), tx.Commit(ctx)
 }
 
 // Document is a document made from a template for a card; Values are what was put in it.

@@ -23,7 +23,7 @@ import (
 
 // Kinds of events, in the order the filter lists them.
 var Kinds = []string{"login", "login_denied", "logout", "session_ended", "sessions_ended", "admin_on", "admin_off", "admin_granted", "admin_revoked",
-	"ip_denied", "ip_rules_saved", "backup_saved", "backup_started", "backup_restore", "api_bad_key", "key_created", "key_revoked", "hook_saved", "hook_deleted", "app_saved", "app_installed", "app_uninstalled", "app_deleted", "portal_saved", "sections_saved", "user_fired", "user_returned", "audit_days"}
+	"ip_denied", "ip_rules_saved", "backup_saved", "backup_started", "backup_restore", "api_bad_key", "key_created", "key_revoked", "hook_saved", "hook_deleted", "app_saved", "app_installed", "app_uninstalled", "app_deleted", "portal_saved", "staff_saved", "join_link_renewed", "sections_saved", "user_fired", "user_returned", "audit_days"}
 
 // DaysChoice are the periods of keeping the log offered in the form.
 var DaysChoice = []int{30, 90, 180, 365, 730}

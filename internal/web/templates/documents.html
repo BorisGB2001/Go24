@@ -6,10 +6,22 @@
 <div class="card flush">{{if $d.Templates}}<table class="tlist">
   <thead><tr><th>{{t "form.name"}}</th><th>{{t "docs.for"}}</th><th>{{t "docs.file"}}</th><th title="{{t "docs.numerator_hint"}}">{{t "docs.numerator"}}</th><th title="{{t "docs.access_hint"}}">{{t "docs.access"}}</th><th></th></tr></thead>
   <tbody>{{range $d.Templates}}<tr><td>{{.Name}}</td><td>{{t (print "docs.entity." .Entity)}}</td><td><a href="/files/{{.FileID}}">{{icon "download"}} {{.FileName}}</a>{{if $d.Office}} <a class="button ghost" href="/crm/documents/{{.ID}}/edit" title="{{t "docs.edit_hint"}}">{{icon "edit"}} {{t "office.edit"}}</a>{{end}}</td>
-    <td><form method="post" action="/crm/documents/{{.ID}}/numerator" class="row"><input type="text" name="numerator" value="{{.Numerator}}" maxlength="100" required size="16" title="{{t "docs.numerator_hint"}}"><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
+    <td>{{$tpl := .}}<form method="post" action="/crm/documents/{{.ID}}/numerator" class="row"><select name="numerator_id" aria-label="{{t "docs.numerator"}}" title="{{.Numerator}}">{{range $d.Numerators}}<option value="{{.ID}}"{{if eq .ID $tpl.NumeratorID}} selected{{end}}>{{.Name}} · {{.Format}}</option>{{end}}</select><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/access" class="row" style="min-width:240px"><div style="flex:1">{{template "upick" (upick "to" (index $d.Access .ID) nil "multi" "depts" "ph" (t "docs.access_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/delete" data-confirm="{{t "docs.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">{{t "docs.none"}}</div>{{end}}</div>
+<div class="card" style="max-width:720px" id="numerators">
+  <h2>{{icon "list"}} {{t "docs.numerators"}}</h2>
+  <p class="small muted">{{t "docs.numerators_hint"}}</p>
+  {{range $d.Numerators}}<details class="numerator"><summary><b>{{.Name}}</b> · <code>{{.Format}}</code> · {{t "docs.num.next"}}: <b>{{.Preview $d.Now}}</b>
+    <span class="small muted">· {{if .Templates}}{{t "docs.num.templates"}}: {{join .Templates ", "}}{{else}}{{t "docs.num.unused"}}{{end}}</span></summary>
+    {{template "numform" (dict "N" . "Resets" $d.Resets)}}
+    {{if .Last}}<p class="small muted">{{t "docs.num.last"}}: {{.Last}}</p>{{end}}
+    {{if not .Templates}}<form method="post" action="/crm/documents/numerators/delete" data-confirm="{{t "docs.num.delete_confirm"}}"><input type="hidden" name="id" value="{{.ID}}"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+  </details>{{end}}
+  <details><summary>{{icon "plus"}} {{t "docs.numerator_new"}}</summary>{{template "numform" (dict "Resets" $d.Resets)}}</details>
+  <p class="small muted">{{t "docs.numerator_hint"}} {{t "docs.num.save_hint"}}</p>
+</div>
 <div class="card" style="max-width:720px">
   <h2>{{icon "files"}} {{t "docs.builtin"}}</h2>
   <form method="post" action="/crm/documents/builtin" class="row">
@@ -73,3 +85,15 @@
   <p class="small muted">{{t "docs.fields_custom"}}</p>
 </div>
 {{end}}
+
+{{define "numform"}}{{$n := .N}}<form method="post" action="/crm/documents/numerators">{{if $n}}<input type="hidden" name="id" value="{{$n.ID}}">{{end}}
+  <div class="grid">
+    <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" value="{{if $n}}{{$n.Name}}{{end}}"></div>
+    <div><label>{{t "docs.num.format"}}</label><input type="text" name="format" required maxlength="100" value="{{if $n}}{{$n.Format}}{{else}}{NUMBER}{{end}}" title="{{t "docs.numerator_hint"}}"></div>
+    <div><label>{{t "docs.num.start"}}</label><input type="number" name="start" min="0" required value="{{if $n}}{{$n.Start}}{{else}}1{{end}}"></div>
+    <div><label>{{t "docs.num.step"}}</label><input type="number" name="step" min="1" max="1000" required value="{{if $n}}{{$n.Step}}{{else}}1{{end}}"></div>
+    <div><label title="{{t "docs.num.pad_hint"}}">{{t "docs.num.pad"}}</label><input type="number" name="pad" min="0" max="12" required value="{{if $n}}{{$n.Pad}}{{else}}0{{end}}" title="{{t "docs.num.pad_hint"}}"></div>
+    <div><label>{{t "docs.num.reset"}}</label><select name="reset">{{range .Resets}}<option value="{{.}}"{{if and $n (eq . $n.Reset)}} selected{{end}}>{{t (print "docs.num.reset." .)}}</option>{{end}}</select></div>
+  </div>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

@@ -87,6 +87,7 @@ type CDR struct {
 	Voicemail          bool   // nobody answered, the client was asked to leave a message (Record — the message, if left)
 	XFrom, XTo         string // transferred: by whom (an employee's inner number) and to which number
 	Rating             int    // the client rated the conversation 1–5 (0 — not)
+	Mobile             string // the call went to the employee's mobile (Prefs.Forward)
 	Start, Answer, End time.Time
 }
 
@@ -148,16 +149,17 @@ func (s *Store) SaveCall(ctx context.Context, c CDR) (string, error) {
 	if st != StatusAnswered || c.Rating < 1 || c.Rating > 5 {
 		c.Rating = 0
 	}
+	c.Mobile = Dialable(c.Mobile)
 	var id string
 	err := s.db.QueryRow(ctx, `WITH who AS (SELECT DISTINCT ON (inner_phone) inner_phone, id FROM users
 			WHERE active AND NOT guest AND inner_phone IN ($2, $3, $9) ORDER BY inner_phone, created_at, id)
 		INSERT INTO telephony_calls (uniqueid, from_number, to_number, from_user, to_user, started_at, answered_at, seconds, status, record, line,
-			transfer_from, transfer_to, rating)
+			transfer_from, transfer_to, rating, mobile)
 		VALUES ($1, $2, $3, (SELECT id FROM who WHERE inner_phone = $2),
 			coalesce((SELECT id FROM who WHERE inner_phone = $3), CASE WHEN NOT EXISTS (SELECT 1 FROM who WHERE inner_phone = $2)
-				THEN (SELECT id FROM who WHERE inner_phone = $9) END), $4, $5, $6, $7, $8, $10, $11, $12, $13)
+				THEN (SELECT id FROM who WHERE inner_phone = $9) END), $4, $5, $6, $7, $8, $10, $11, $12, $13, $14)
 		ON CONFLICT (uniqueid) DO NOTHING RETURNING id::text`,
-		c.UniqueID, c.From, c.To, c.Start, answered, secs, st, c.Record, c.By, c.Line, c.XFrom, c.XTo, c.Rating).Scan(&id)
+		c.UniqueID, c.From, c.To, c.Start, answered, secs, st, c.Record, c.By, c.Line, c.XFrom, c.XTo, c.Rating, c.Mobile).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -178,6 +180,7 @@ type Call struct {
 	Comment            string // the employee's comment on the call («Карточка звонка»)
 	XFrom, XTo         string // transferred by (an inner number) and to ("" — not transferred)
 	XFromName, XToName string // the employees of those numbers ("" — none)
+	Mobile             string // forwarded to the employee's mobile ("" — not)
 	// the client's CRM card the call went to (CRMEntity "" — none)
 	CRMEntity, CRMID, CRMName string
 }
@@ -256,7 +259,7 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 	rows, err := s.db.Query(ctx, `SELECT c.id::text, c.from_number, c.to_number,
 			coalesce(c.from_user::text, ''), coalesce(CASE WHEN fu.name <> '' THEN fu.name ELSE fu.email END, ''), coalesce(fu.photo_key, ''),
 			coalesce(c.to_user::text, ''), coalesce(CASE WHEN tu.name <> '' THEN tu.name ELSE tu.email END, ''), coalesce(tu.photo_key, ''),
-			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.rating, c.comment, c.transfer_from, c.transfer_to,
+			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.rating, c.comment, c.transfer_from, c.transfer_to, c.mobile,
 			`+callWho("c.transfer_from")+`, `+callWho("c.transfer_to")+`, `+callCRM+`
 		FROM telephony_calls c LEFT JOIN users fu ON fu.id = c.from_user LEFT JOIN users tu ON tu.id = c.to_user`+callCRMJoin+`
 		WHERE ($1 = '' OR c.from_user::text = $1 OR c.to_user::text = $1)
@@ -278,7 +281,7 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 		var c Call
 		err := r.Scan(&c.ID, &c.From, &c.To, &c.FromUser.UserID, &c.FromUser.Name, &c.FromUser.PhotoKey,
 			&c.ToUser.UserID, &c.ToUser.Name, &c.ToUser.PhotoKey, &c.Started, &c.Answered, &c.Seconds, &c.Status, &c.Record, &c.Line,
-			&c.Transcript, &c.Rating, &c.Comment, &c.XFrom, &c.XTo, &c.XFromName, &c.XToName, &c.CRMEntity, &c.CRMID, &c.CRMName)
+			&c.Transcript, &c.Rating, &c.Comment, &c.XFrom, &c.XTo, &c.Mobile, &c.XFromName, &c.XToName, &c.CRMEntity, &c.CRMID, &c.CRMName)
 		return c, err
 	})
 }

@@ -38,7 +38,7 @@ func checkCardStep(entity string, st Step) error {
 	if st.Kind != "update" && st.Kind != "create" && st.Kind != "start" && st.Kind != "document" && len(st.Sets) > 0 || st.Kind != "create" && st.Entity != "" ||
 		st.Kind != "chat" && st.Kind != "mail" && st.Kind != "post" && st.Kind != "comment" && st.Kind != "document" && st.From != "" || st.Kind != "mail" && st.Email != "" ||
 		st.Kind != "mail" && st.Kind != "post" && st.Subject != "" || st.Kind == "post" && len([]rune(st.Subject)) > 300 ||
-		st.Kind != "activity" && (st.Deed != "" || st.Note != "") || len([]rune(st.Note)) > 1000 ||
+		st.Kind != "activity" && st.Deed != "" || st.Kind != "activity" && st.Kind != "event" && st.Kind != "task" && st.Note != "" || len([]rune(st.Note)) > 1000 ||
 		(st.Kind == "document") != (st.Doc != "") {
 		return i18n.E("err.bp_step")
 	}
@@ -49,7 +49,7 @@ func checkCardStep(entity string, st Step) error {
 	}
 	switch st.Kind {
 	case "update":
-		if !crm.Entities[entity] || len(st.Sets) == 0 {
+		if !crm.Entities[entity] && entity != EntityList || len(st.Sets) == 0 {
 			return i18n.E("err.bp_step")
 		}
 	case "comment", "document":

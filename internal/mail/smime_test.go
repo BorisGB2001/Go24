@@ -227,6 +227,21 @@ func TestSMIME(t *testing.T) {
 	if body, _, _, enc := got(annaBox, "Ещё секрет"); enc != EncNoKey || body != "" {
 		t.Fatalf("no key: %q %s", body, enc)
 	}
+	// her certificate given again: the letter opens, its text and files replace smime.p7m
+	if n, err := s.Redecrypt(ctx, anna); err != nil || n != 0 {
+		t.Fatalf("redecrypt without a key: %d %v", n, err)
+	}
+	_, err = s.AddCert(ctx, anna, pems[annaAddr], "")
+	must(err)
+	if n, err := s.Redecrypt(ctx, anna); err != nil || n != 1 {
+		t.Fatalf("redecrypt: %d %v", n, err)
+	}
+	if body, _, _, enc := got(annaBox, "Ещё секрет"); enc != EncYes || body != "x" {
+		t.Fatalf("redecrypted: %q %s", body, enc)
+	}
+	if n, err := s.Redecrypt(ctx, bob); err != nil || n != 0 {
+		t.Fatalf("bob redecrypts anna's: %d %v", n, err)
+	}
 
 	// defaults
 	must(s.SaveSecurity(ctx, anna, Security{Sign: true}))

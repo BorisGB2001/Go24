@@ -1,0 +1,29 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}{{$l := $d.L}}{{$a := $d.A}}
+<p class="muted small"><a href="/company/learning">{{icon "school"}} {{t "learn.title"}}</a> › <a href="/company/learning/{{$c.ID}}">{{$c.Title}}</a> › <a href="/company/learning/{{$c.ID}}/l/{{$l.ID}}">{{$l.Title}}</a></p>
+<div class="card lbody" style="max-width:860px">
+{{if $a.Finished}}
+  <h1>{{$l.Title}}</h1>
+  <div class="lresult {{if $a.Passed}}ok{{else}}fail{{end}}">
+    <b>{{if $a.Passed}}{{t "learn.test_passed"}}{{else}}{{t "learn.test_failed"}}{{end}}</b>
+    <span>{{t "learn.score" $a.Score $a.Max $a.Pct}} · {{t "learn.pass_from" $l.PassPct}}</span></div>
+  <ol class="lquestions">{{range $d.Questions}}{{$ok := index $a.Results .ID}}
+    <li class="{{if $ok}}right{{else}}wrong{{end}}"><p><b>{{.Text}}</b> {{if $ok}}<span class="pill l-ok">{{t "learn.right"}}</span>{{else}}<span class="pill l-over">{{t "learn.wrong"}}</span>{{end}}</p>
+      {{if eq .Kind "text"}}<p class="muted">{{with $a.Typed .ID}}{{.}}{{else}}{{t "learn.no_answer"}}{{end}}</p>
+      {{else}}{{$q := .}}<ul class="lopts">{{range $n, $o := .Options}}<li{{if $a.Chosen $q.ID $n}} class="chosen"{{end}}>{{if $a.Chosen $q.ID $n}}●{{else}}○{{end}} {{$o.Text}}</li>{{end}}</ul>{{end}}
+    </li>{{end}}</ol>
+  <p class="row"><a class="button primary" href="/company/learning/{{$c.ID}}/l/{{$l.ID}}">{{t "learn.back_to_test"}}</a></p>
+{{else}}
+  <div class="row"><h1 style="flex:1">{{$l.Title}}</h1>{{with $d.Seconds}}<span class="pill ltimer" data-learn-timer="{{.}}">{{icon "clock"}} <span></span></span>{{end}}</div>
+  <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/a/{{$a.ID}}" id="ltest" data-confirm="{{t "learn.send_confirm"}}">
+    <ol class="lquestions">{{range $d.Questions}}{{$q := .}}
+      <li><p><b>{{.Text}}</b>{{if eq .Kind "many"}} <span class="muted small">{{t "learn.many_hint"}}</span>{{end}}</p>
+      {{if eq .Kind "text"}}<input type="hidden" name="t_{{.ID}}" value="1"><input type="text" name="q_{{.ID}}" maxlength="500" autocomplete="off">
+      {{else}}{{range $n, $o := .Options}}<label class="check"><input type="{{if eq $q.Kind "many"}}checkbox{{else}}radio{{end}}" name="q_{{$q.ID}}" value="{{$n}}"> {{$o.Text}}</label>{{end}}{{end}}
+      </li>{{end}}</ol>
+    <p class="row"><button class="primary">{{icon "check"}} {{t "learn.send"}}</button></p>
+  </form>
+{{end}}
+</div>
+<script src="{{asset "js/learn.js"}}"></script>
+{{end}}

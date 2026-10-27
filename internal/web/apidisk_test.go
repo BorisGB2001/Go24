@@ -185,6 +185,18 @@ func TestDiskAPI(t *testing.T) {
 	if l := list(folder.ID); len(l.Path) != 1 || l.Path[0].Name != "Отчёты" || len(l.Files) != 1 || l.Files[0].URL != "/api/v1/disk/files/"+file {
 		t.Fatalf("the folder %+v", l)
 	}
+	// the filter, as disk.folder.getchildren's: the whole drive by the name, the type, the date, the author
+	var found listing
+	call("GET", "/api/v1/disk/drives/my?q=%D0%B8%D1%82%D0%BE%D0%B3%D0%B8&period=today&author="+anna, readOnly, nil, 200, &found)
+	if len(found.Files) != 1 || found.Files[0].ID != file || len(found.Folders) != 0 {
+		t.Fatalf("filtered %+v", found)
+	}
+	for _, q := range []string{"author=" + boris, "type=pdf", "period=range&to=2000-01-01", "q=%D0%9E%D1%82%D1%87%D1%91%D1%82"} {
+		call("GET", "/api/v1/disk/drives/my?"+q, readOnly, nil, 200, &found)
+		if len(found.Files) != 0 || (len(found.Folders) == 1) != strings.HasPrefix(q, "q=") {
+			t.Fatalf("%s: %+v", q, found)
+		}
+	}
 	req, _ := http.NewRequest("GET", hs.URL+"/api/v1/disk/files/"+file, nil)
 	if got := send(req, readOnly, 200); string(got) != "22" {
 		t.Fatalf("downloaded %q", got)
@@ -264,6 +276,20 @@ func TestDiskAPI(t *testing.T) {
 		return shares[0].ID
 	}(), annaKey, nil, 204, nil)
 	call("GET", comments, borisKey, nil, 403, nil)
+
+	// «Отказаться от доступа»
+	call("POST", fileShares, annaKey, map[string]string{"whom": "user:" + boris, "access": "read"}, 200, nil)
+	call("POST", "/api/v1/disk/drives/sf:"+file+"/leave", annaKey, nil, 404, nil) // her own file
+	call("POST", "/api/v1/disk/drives/my/leave", borisKey, nil, 404, nil)
+	call("POST", "/api/v1/disk/drives/sf:"+file+"/leave", borisKey, nil, 204, nil)
+	call("GET", "/api/v1/disk/drives", borisKey, nil, 200, &drives)
+	if last := drives[len(drives)-1]; last.ID == "sf:"+file {
+		t.Fatalf("boris's drives after leaving %+v", drives)
+	}
+	call("GET", fileShares, annaKey, nil, 200, &shares)
+	if len(shares) != 0 {
+		t.Fatalf("shares after leaving %+v", shares)
+	}
 
 	// a version brought back, as disk.file.restoreFromVersion
 	call("POST", "/api/v1/disk/drives/my/files/"+file+"/versions/"+versions[1].ID+"/restore", readOnly, nil, 403, nil)

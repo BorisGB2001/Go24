@@ -141,9 +141,15 @@ func (s *Store) RestoreVersion(ctx context.Context, userID string, d Drive, id, 
 	return tx.Commit(ctx)
 }
 
+// CanChange is why the user may not change the file of the drive: ErrForbidden, ErrLocked (by another) or
+// ErrNotFound; nil — may.
+func (s *Store) CanChange(ctx context.Context, userID string, d Drive, id string) error {
+	return s.changeFile(ctx, s.db, userID, d, id)
+}
+
 // MayChange: the user may change the file of the drive (upload a version of it, edit it online).
 func (s *Store) MayChange(ctx context.Context, userID string, d Drive, id string) (bool, error) {
-	err := s.changeFile(ctx, s.db, userID, d, id)
+	err := s.CanChange(ctx, userID, d, id)
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrLocked) {
 		return false, nil
 	}

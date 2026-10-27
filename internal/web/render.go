@@ -225,6 +225,7 @@ var baseFuncs = template.FuncMap{
 	"fnum":      func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
 	"ptr":       func(t time.Time) *time.Time { return &t },
 	"deref":     func(t *time.Time) time.Time { return *t },
+	"lchapters": learnChapters,
 	"hasPrefix": strings.HasPrefix,
 	"join":      strings.Join,
 	"mailGroup": func(t time.Time, pinned bool) string { return mailGroup(t, pinned, time.Now()) },
@@ -260,7 +261,7 @@ var baseFuncs = template.FuncMap{
 		}
 		l := taskList{Tasks: list, Cols: cols, All: tasks.ListColumns, Gear: gear}
 		if gear && len(p) > 0 {
-			l.Sort, l.Back = p[0].Sort, p[0].Path
+			l.Sort, l.Back, l.Tree = p[0].Sort, p[0].Path, p[0].Tree
 			if u, err := url.Parse(l.Back); err == nil { // the message of the last action is not shown again
 				q := u.Query()
 				q.Del("msg")
@@ -272,6 +273,11 @@ var baseFuncs = template.FuncMap{
 				tasks.SortTasks(l.Tasks, l.Sort)
 			}
 			l.paginate(p[0])
+			return l
+		}
+		l.Rows = make([]tasks.TreeRow, len(l.Tasks))
+		for i, t := range l.Tasks {
+			l.Rows[i] = tasks.TreeRow{Task: t}
 		}
 		return l
 	},
@@ -300,9 +306,10 @@ var baseFuncs = template.FuncMap{
 	"nl2br": func(s string) template.HTML {
 		return template.HTML(strings.ReplaceAll(markMentions(template.HTMLEscapeString(s)), "\n", "<br>"))
 	},
-	// feedtext is nl2br of a feed post, its #tags are links to the feed of the tag.
+	// feedtext shows a feed post formatted (as a chat message: bold, quotes, code, clickable links,
+	// mentions); its #tags are links to the feed of the tag.
 	"feedtext": func(s string) template.HTML {
-		return template.HTML(strings.ReplaceAll(markHashtags(markMentions(template.HTMLEscapeString(s))), "\n", "<br>"))
+		return template.HTML(markHashtags(markMentions(msgfmt.HTML(s))))
 	},
 	// imtext shows a chat message formatted as in the portal messenger: bold, quotes, code, clickable links, mentions.
 	"imtext": func(s string) template.HTML { return template.HTML(markMentions(msgfmt.HTML(s))) },
@@ -491,7 +498,8 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			kind, subject, _ := strings.Cut(v, ":")
 			return tr("crm.act."+kind) + ": " + subject
 		},
-		// crmRobot shows what a robot did in a CRM timeline ("mail:addr" → «отправил письмо addr», "fail:kind:err.key" → a warning)
+		// crmRobot shows what a robot did in a CRM timeline ("mail:addr" → «отправил письмо addr», "close:2" → «завершил
+		// дела: 2», "fail:kind:err.key" → a warning)
 		"crmRobot": func(v string) string {
 			what, rest, _ := strings.Cut(v, ":")
 			switch what {
@@ -501,10 +509,14 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			case "activity":
 				kind, subject, _ := strings.Cut(rest, ":")
 				return tr("robots.made_activity") + " " + tr("crm.act."+kind) + ": " + subject
-			case "mail", "responsible", "webhook":
+			case "mail", "responsible", "webhook", "infocall":
 				return tr("robots.did."+what) + " " + rest
 			case "trigger":
 				return tr("robots.did.trigger") + " " + tr("triggers.kind."+rest)
+			case "document", "bp":
+				return tr("robots.did."+what) + " «" + rest + "»"
+			case "close":
+				return tr("robots.did.close", rest)
 			}
 			return v
 		},
@@ -513,6 +525,7 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 		"fileKind": fileKind,
 		// officeKind: the document server opens the file (word, cell, slide, pdf); officeEditable — and edits it
 		"officeKind":     office.Kind,
+		"hasThumb":       hasThumb, // «Диск»: a thumbnail in the tiles
 		"docKind":        docKind,
 		"officeEditable": office.Editable,
 		"isBoard":        drive.IsBoard, // «Доски»
@@ -657,6 +670,10 @@ type taskList struct {
 	Gear  bool
 	Sort  string // the user's sort (tasks.SortColumns, "" — the usual order)
 	Back  string // the page the list is on: the sort and the row menus return to it
+	// Rows are the rows shown: the tasks of the page, with Tree — subtasks under their parent tasks of the list
+	// (pages count the top tasks) lists
+	Rows []tasks.TreeRow
+	Tree bool
 	// the footer grids: all the tasks, the page shown (?page=, from 1) of Pages, «На странице»
 	Total, Page, Pages, Size int
 	Sizes                    []int
@@ -683,7 +700,22 @@ func (l *taskList) paginate(p page) {
 	}
 	q := u.Query()
 	n, _ := strconv.Atoi(q.Get("page"))
-	l.Tasks, l.Page, l.Pages = tasks.Paginate(l.Tasks, n, l.Size)
+	groups := make([][]tasks.TreeRow, 0, len(l.Tasks))
+	if l.Tree {
+		groups = tasks.Tree(l.Tasks)
+	} else {
+		for _, t := range l.Tasks {
+			groups = append(groups, []tasks.TreeRow{{Task: t}})
+		}
+	}
+	groups, l.Page, l.Pages = tasks.Paginate(groups, n, l.Size)
+	l.Tasks, l.Rows = nil, nil
+	for _, g := range groups {
+		l.Rows = append(l.Rows, g...)
+		for _, r := range g {
+			l.Tasks = append(l.Tasks, r.Task)
+		}
+	}
 	at := func(n int) string {
 		q.Set("page", strconv.Itoa(n))
 		if n == 1 {
@@ -840,6 +872,7 @@ type page struct {
 	Cols     map[string]bool // the user's task list columns (the gear in list headers)
 	Sort     string          // the user's sort of task lists (a click on a column header)
 	PageSize int             // the user's «На странице» of task lists
+	Tree     bool            // the user's task lists show subtasks under their parent tasks
 	// CardInfo counts the checklists and files of the tasks a list shows
 	CardInfo func(ids []string) map[string]tasks.CardInfo
 	// left menu: the user's projects under «Проекты», and the project of the current page
@@ -858,7 +891,8 @@ type page struct {
 	DayPlan        []tasks.DayPlanItem // «План на день» in the working day window
 	DayPlanChoices []tasks.Task        // the user's open tasks to add to it
 	HR             company.HR       // the user's role «Сотрудник кадров»
-	CanInvite      bool             // «Пригласить сотрудника»: an administrator or an HR officer let invite
+	CanInvite      bool             // «Пригласить сотрудника»: an administrator, an HR officer let invite, or all by «Сотрудники»
+	CanPulse       bool             // «Пульс компании»: an administrator, a head or a deputy of a department
 	VacationRemind bool             // no vacation in this year's plan («Укажите план отпуска»)
 	Path           string           // this page (forms in the top bar come back to it)
 	Presence       string           // the user's own status: "" (online), away, dnd — no pop-ups and sounds
@@ -916,6 +950,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 			}
 			p.Sort, _ = s.Tasks.Sort(r.Context(), sess.UserID)
 			p.PageSize, _ = s.Tasks.PageSize(r.Context(), sess.UserID)
+			p.Tree, _ = s.Tasks.Tree(r.Context(), sess.UserID)
 			p.CardInfo = func(ids []string) map[string]tasks.CardInfo {
 				m, _ := s.Tasks.CardInfo(r.Context(), ids)
 				return m
@@ -953,7 +988,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 				p.DayPlan, _ = s.Tasks.DayPlan(r.Context(), sess.UserID, time.Now())
 				p.DayPlanChoices, _ = s.Tasks.DayPlanChoices(r.Context(), sess.UserID)
 				p.HR, _ = s.Company.HROf(r.Context(), sess.UserID)
-				p.CanInvite = sess.Admin || p.HR.Can("invite")
+				p.CanInvite, _ = s.Company.CanInvite(r.Context(), sess.UserID, sess.Admin)
+				if scope, all, err := s.Company.PulseScope(r.Context(), sess.UserID, sess.Admin); err == nil {
+					p.CanPulse = all || len(scope) > 0
+				}
 				p.VacationRemind, _ = s.Company.VacationRemind(r.Context(), sess.UserID, time.Now())
 			}
 			if s.Matrix != nil {

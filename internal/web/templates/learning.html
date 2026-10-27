@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1 style="flex:1">{{icon "school"}} {{t "learn.title"}}</h1>
+  {{if $d.Keep}}<a class="button primary" href="/company/learning/new">{{icon "plus"}} {{t "learn.new"}}</a>{{end}}</div>
+<div class="tabs">
+  <a href="/company/learning?tab=my"{{if eq $d.Tab "my"}} class="on"{{end}}>{{icon "user"}} {{t "learn.tab.my"}}</a>
+  <a href="/company/learning?tab=all"{{if eq $d.Tab "all"}} class="on"{{end}}>{{icon "books"}} {{t "learn.tab.all"}}</a>
+  {{if $d.Assign}}<a href="/company/learning?tab=people"{{if eq $d.Tab "people"}} class="on"{{end}}>{{icon "users"}} {{t "learn.tab.people"}}</a>{{end}}
+</div>
+{{if eq $d.Tab "people"}}{{$f := $d.Filter}}
+<form class="row filters" method="get" action="/company/learning"><input type="hidden" name="tab" value="people">
+  <select name="course" style="width:auto" onchange="this.form.submit()"><option value="">{{t "learn.all_courses"}}</option>
+    {{range $d.Courses}}<option value="{{.ID}}" {{if eq .ID $f.CourseID}}selected{{end}}>{{.Title}}</option>{{end}}</select>
+  <select name="dept" style="width:auto" onchange="this.form.submit()"><option value="">{{t "company.all_departments"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <select name="status" style="width:auto" onchange="this.form.submit()">{{range list "" "active" "finished" "overdue"}}
+    <option value="{{.}}" {{if eq . $f.Status}}selected{{end}}>{{t (print "learn.status." (or . "any"))}}</option>{{end}}</select>
+  <span style="flex:1"></span><span class="muted small">{{t "company.count" (len $d.Learners)}}</span>
+  <a class="button ghost small" href="/company/learning?tab=people&course={{$f.CourseID}}&dept={{$f.DepartmentID}}&status={{$f.Status}}&format=csv">{{icon "download"}} {{t "learn.csv"}}</a>
+</form>
+{{template "learners" (dict "List" $d.Learners "Today" $d.Today "Course" true)}}
+{{else}}
+<form class="row filters" method="get" action="/company/learning"><input type="hidden" name="tab" value="{{$d.Tab}}">
+  <input type="search" name="q" value="{{$d.Query}}" placeholder="{{t "learn.search"}}" style="flex:1;min-width:200px"></form>
+{{if $d.Courses}}<div class="lcourses">{{range $d.Courses}}
+  <a class="card lcourse" href="/company/learning/{{.ID}}">
+    <div class="lcover c-{{.Color}}">{{icon "school"}}{{if not .Published}}<span class="pill">{{t "learn.draft"}}</span>{{end}}</div>
+    <b>{{.Title}}</b>
+    {{with .Description}}<span class="muted small lcdesc">{{.}}</span>{{end}}
+    <span class="muted small">{{t "learn.lessons_n" .Lessons}}</span>
+    {{if or .Assigned .Done}}<span class="row small"><span class="progress{{if .Overdue $d.Today}} over{{end}}"><span style="width:{{.Percent}}%"></span></span> {{.Percent}}%</span>{{end}}
+    {{if .Finished}}<span class="pill l-ok">{{t "learn.finished"}}</span>{{else if .Due}}<span class="small{{if .Overdue $d.Today}} l-late{{else}} muted{{end}}">{{t "learn.due"}} {{day (deref .Due)}}</span>{{end}}
+  </a>{{end}}</div>
+{{else}}<div class="empty">{{if eq $d.Tab "my"}}{{t "learn.my_empty"}}{{else}}{{t "learn.none"}}{{end}}</div>{{end}}
+{{end}}
+{{end}}

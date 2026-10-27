@@ -148,8 +148,11 @@ func TestCollabSecurityHTTP(t *testing.T) {
 	base := url.Values{"invite_perm": {"managers"}, "guest_invite_perm": {"managers"}, "chat_history": {"on"}, "guests_tasks": {"on"}, "guests_files": {"on"}}
 
 	_, _, loc := do(owner, "POST", "/collabs", url.Values{"name": {"Альфа"}, "members": {dev, client}})
-	if loc != "/p/CL1" {
+	if loc != "/c/CL1" { // opened with its start tool: the chat, the page without the messenger
 		t.Fatalf("create: %s", loc)
+	}
+	if _, _, loc := do(owner, "GET", "/c/CL1", nil); loc != "/p/CL1" {
+		t.Fatalf("the collab opened without the messenger: %s", loc)
 	}
 	c, err := ts.CollabByKey(ctx, owner, "CL1")
 	must(err)
@@ -196,7 +199,7 @@ func TestCollabSecurityHTTP(t *testing.T) {
 		t.Fatalf("a moderator's settings: %d %s", st, loc)
 	}
 	set, _ := ts.CollabSettings(ctx, c)
-	if set != (tasks.CollabSettings{InvitePerm: "members", GuestInvitePerm: "owner", EditPerm: "managers", ChatPerm: "members"}) {
+	if set != (tasks.CollabSettings{InvitePerm: "members", GuestInvitePerm: "owner", EditPerm: "managers", ChatPerm: "members", StartTool: "chat"}) {
 		t.Fatalf("saved: %+v", set)
 	}
 	// a guest where guests make no tasks and upload nothing is not offered them (GO24DEV-211); a member still is
@@ -341,6 +344,40 @@ func TestCollabSecurityHTTP(t *testing.T) {
 	}
 	if _, body, _ := do(owner, "GET", "/p/CL1", nil); !strings.Contains(body, `name="msg_ttl"`) || !strings.Contains(body, `value="3600" selected`) {
 		t.Error("the settings card has no auto-delete")
+	}
+	// «Стартовый инструмент»: what the collab opens with; the feed is not a guest's, a tool not offered is refused
+	if st, raw := api(ot, "PATCH", "/api/v1/collabs/CL1/settings", map[string]any{"start_tool": "drive"}); st != http.StatusOK ||
+		!strings.Contains(string(raw), `"start_tool": "drive"`) || !strings.Contains(string(raw), `"msg_ttl": 3600`) {
+		t.Errorf("the start tool over the API: %d %s", st, raw)
+	}
+	if st, _ := api(ot, "PATCH", "/api/v1/collabs/CL1/settings", map[string]any{"start_tool": "wiki"}); st != http.StatusUnprocessableEntity {
+		t.Errorf("a start tool not offered: %d", st)
+	}
+	must(ts.SetMember(tasks.WithViewer(ctx, owner, false), c, client, "member")) // the guest back in it
+	stranger := newUser("Чужой", false) // not in the collab: it does not open
+	rec := httptest.NewRecorder()
+	must(srv.Sessions.Set(rec, auth.Session{UserID: stranger}))
+	cookie[stranger] = rec.Result().Cookies()[0]
+	if st, _, loc := do(stranger, "GET", "/c/CL1", nil); st != http.StatusNotFound {
+		t.Errorf("a stranger opens the collab: %d %s", st, loc)
+	}
+	if _, _, loc := do(client, "GET", "/c/CL1", nil); loc != "/disk/p/CL1" {
+		t.Errorf("a guest opens the collab: %s", loc)
+	}
+	if _, body, _ := do(owner, "GET", "/p/CL1", nil); !strings.Contains(body, `name="start_tool"`) || !strings.Contains(body, `value="drive" selected`) {
+		t.Error("the settings card has no start tool")
+	}
+	if st, _ := settings(owner, url.Values{"invite_perm": {"members"}, "guest_invite_perm": {"managers"}, "start_tool": {"feed"}}); st != http.StatusSeeOther {
+		t.Errorf("the start tool in the form: %d", st)
+	}
+	if _, _, loc := do(owner, "GET", "/c/CL1", nil); loc != "/feed?project="+c.ID {
+		t.Errorf("an employee opens the collab with the feed: %s", loc)
+	}
+	if _, _, loc := do(client, "GET", "/c/CL1", nil); loc != "/p/CL1" {
+		t.Errorf("a guest has no feed: %s", loc)
+	}
+	if _, body, _ := do(owner, "GET", "/p/CL1", nil); !strings.Contains(body, "стартовый инструмент — лента") {
+		t.Error("the log has no start tool")
 	}
 	st, raw = api(ot, "GET", "/api/v1/collabs/CL1/log", nil)
 	if st != http.StatusOK || !strings.Contains(string(raw), `"action": "member_removed"`) || !strings.Contains(string(raw), `"action": "archived"`) {

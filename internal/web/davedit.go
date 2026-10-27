@@ -298,6 +298,9 @@ func (f *davOneWrite) Close() error {
 // diskVersion makes the bytes the file's new version by the user: in the file's storage, or in the built-in one
 // when that is not the user's to write into; the drive's limit counts it.
 func (s *Server) diskVersion(ctx context.Context, userID string, d drive.Drive, id string, data io.ReadSeeker, size int64) error {
+	if err := s.Drive.CanChange(ctx, userID, d, id); err != nil { // before the bytes are stored
+		return err
+	}
 	m, err := s.Storages.FileMeta(ctx, id)
 	if err != nil {
 		return err

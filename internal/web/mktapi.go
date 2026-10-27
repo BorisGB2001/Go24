@@ -37,6 +37,8 @@ type apiCampaign struct {
 	Clicked      int        `json:"clicked"`
 	Unsubscribed int        `json:"unsubscribed"`
 	AB           *apiAB     `json:"ab,omitempty"`
+	ResendOf     string     `json:"resend_of,omitempty"` // a resend: the campaign, to whom (unopened, unclicked)
+	ResendTo     string     `json:"resend_to,omitempty"`
 }
 
 // apiAB is the A/B test of a campaign: variant B, the test's share of the addressees (%), hours, what wins (opened,
@@ -53,7 +55,8 @@ type apiAB struct {
 func campaignJSON(c marketing.Campaign, body bool) apiCampaign {
 	out := apiCampaign{ID: c.ID, Title: c.Title, Status: c.Status, MailboxID: c.MailboxID, Subject: c.Subject, SendAt: c.SendAt,
 		StartedAt: c.StartedAt, FinishedAt: c.FinishedAt, Author: c.CreatedBy, Segments: c.Segments, Excluded: c.Excluded,
-		Total: c.Total, Sent: c.Sent, Errors: c.Errors, Skipped: c.Skipped, Opened: c.Opened, Clicked: c.Clicked, Unsubscribed: c.Unsubscribed}
+		Total: c.Total, Sent: c.Sent, Errors: c.Errors, Skipped: c.Skipped, Opened: c.Opened, Clicked: c.Clicked, Unsubscribed: c.Unsubscribed,
+		ResendOf: c.ResendOf, ResendTo: c.ResendTo}
 	if c.Planned() {
 		out.Status = "planned"
 	}
@@ -173,7 +176,8 @@ func (s *Server) apiMktAddCampaign(w http.ResponseWriter, r *http.Request, p api
 }
 
 // POST /api/v1/marketing/campaigns/{id}/{action} — start, pause, resume, stop, winner-a, winner-b (the A/B test ended
-// with it): the author's or, an administrator's key, any.
+// with it): the author's or, an administrator's key, any; resend-unopened, resend-unclicked make a draft resending a
+// sent campaign (201, the draft).
 func (s *Server) apiMktCampaignAction(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	ctx, id := r.Context(), r.PathValue("id")
 	if err := s.mktAllowedUser(ctx, p.UserID); err != nil {
@@ -192,6 +196,20 @@ func (s *Server) apiMktCampaignAction(w http.ResponseWriter, r *http.Request, p 
 		err = s.Marketing.SetState(ctx, p.UserID, admin, id, "stopped")
 	case "winner-a", "winner-b":
 		err = s.Marketing.ChooseWinner(ctx, p.UserID, admin, id, strings.TrimPrefix(r.PathValue("action"), "winner-"))
+	case "resend-unopened", "resend-unclicked":
+		var c marketing.Campaign
+		if c, err = s.Marketing.Campaign(ctx, id); err != nil {
+			return err
+		}
+		nid, err := s.Marketing.ResendCampaign(ctx, p.UserID, id, strings.TrimPrefix(r.PathValue("action"), "resend-"), s.tr(r, "mkt.resend_of", c.Title))
+		if err != nil {
+			return err
+		}
+		if c, err = s.Marketing.Campaign(ctx, nid); err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusCreated, campaignJSON(c, true))
+		return nil
 	default:
 		err = i18n.E("err.not_found")
 	}

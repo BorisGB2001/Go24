@@ -1,6 +1,6 @@
 // «Цитировать» and «Сохранить на Диск» of a message's menu in jsdom (static/js/im.js): the quote with its author and
 // time goes into the field after what is typed there (the message's own quotes left out); the file goes to the drive
-// and a toast leads to the folder. node test/js/imquote.test.mjs
+// and a toast leads to the folder; a click on the author's name mentions them. node test/js/imquote.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -12,7 +12,8 @@ const msg = (id, sender, inner, act) => `<div class="msg" data-id="${id}" data-s
   <details class="im-menu" open><div class="pop"><button type="button" data-act="${act}">x</button></div></details>${inner}</div></div>`;
 const list = `${msg('$1', 'Анна', '<div class="text" data-body="[quote]старое[/quote]\n> ещё старое\nСверить *счета*\nдо пятницы">…</div>', 'quote')}
   ${msg('$2', 'Борис', '<div class="im-file"><a class="im-filecard" href="#"><span>акт.pdf</span></a></div>', 'quote')}
-  ${msg('$3', 'Борис', '<div class="im-file"><a class="im-filecard" href="#"><span>акт.pdf</span></a></div>', 'drive')}`;
+  ${msg('$3', 'Борис', '<div class="im-file"><a class="im-filecard" href="#"><span>акт.pdf</span></a></div>', 'drive')}
+  ${msg('$4', 'Анна Петрова', '<b class="who" data-mention-name>Анна Петрова</b><div class="text">Привет</div>', 'copy')}`;
 const dom = new JSDOM(`<!doctype html><html lang="ru-RU"><body><div class="im" data-im data-room="!r" data-failed="x">
   <nav data-list></nav><section class="im-chat"><div class="im-msgs" data-msgs>${list}</div>
   <form class="chatform" data-send><textarea name="body"></textarea><button>s</button></form></section>
@@ -55,4 +56,13 @@ assert.deepEqual(posts.filter(p => p.u === '/im/file/drive'), [{ u: '/im/file/dr
 const toast = d.querySelector('.toasts .im-toast');
 assert.equal(toast?.textContent, 'Сохранено');
 assert.equal(toast.getAttribute('href'), '/disk/my?folder=f1', 'the toast leads to the folder');
+
+// the author's name: «@Name » at the caret, with a space before it when glued to a word
+text.value = 'Привет,спасибо';
+text.setSelectionRange(7, 7);
+d.querySelector('[data-id="$4"] .who').click();
+await tick();
+assert.equal(text.value, 'Привет, @Анна Петрова спасибо', 'the mention goes where the caret is');
+assert.equal(text.selectionStart, 'Привет, @Анна Петрова '.length, 'the caret after the mention');
+assert.equal(d.activeElement, text);
 console.log('imquote: ok');

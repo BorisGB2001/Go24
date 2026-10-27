@@ -1121,7 +1121,7 @@ func (s *Server) commentAdd(w http.ResponseWriter, r *http.Request, sess auth.Se
 		}
 		var buf bytes.Buffer
 		if err == nil {
-			err = s.pages[s.lang(r)]["task"].ExecuteTemplate(&buf, "chatmsg", chatItem{Comment: &m, Mine: true, At: m.CreatedAt})
+			err = s.pages[s.lang(r)]["task"].ExecuteTemplate(&buf, "chatmsg", s.chatItemOf(r, sess, &m, r.PathValue("key")))
 		}
 		if err != nil {
 			s.jsonErr(w, r, err)
@@ -1353,18 +1353,13 @@ func (s *Server) saveWorktime(w http.ResponseWriter, r *http.Request, sess auth.
 // in go24; without it, go24 keeps it itself.
 func (s *Server) postComment(r *http.Request, sess auth.Session, taskID, body string) (tasks.Comment, error) {
 	if s.Matrix == nil {
-		return s.Tasks.PostComment(r.Context(), sess.UserID, taskID, body)
+		return s.Tasks.PostReply(r.Context(), sess.UserID, taskID, r.FormValue("reply_to"), body)
 	}
 	if strings.TrimSpace(body) == "" {
 		return tasks.Comment{}, i18n.E("err.comment_empty")
 	}
-	c, err := s.Matrix.PostTaskComment(r.Context(), sess.UserID, taskID, strings.TrimSpace(body))
-	var ie *i18n.Error
-	if err != nil && !errors.As(err, &ie) {
-		s.Log.Error("task comment to matrix", "err", err)
-		return c, i18n.E("err.messenger")
-	}
-	return c, err
+	c, err := s.Matrix.PostTaskReply(r.Context(), sess.UserID, taskID, r.FormValue("reply_to"), strings.TrimSpace(body))
+	return c, s.messengerErr(err)
 }
 
 // newTaskPage is «Создать задачу» from the task lists: the project is picked in the form.
@@ -1405,6 +1400,9 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		Repeat: tasks.Repeat{Period: "weekly", Every: 1, WeekDays: []int{int(time.Now().Weekday()+6)%7 + 1}, MonthDay: time.Now().Day(),
 			YearMonth: int(time.Now().Month()), At: "09:00", StartsOn: time.Now()}}
 	f.Title = q.Get("title") // «Сделать задачей» of a checklist item
+	if id := q.Get("comment"); id != "" && parent != "" { // «Создать подзадачу» of a message of the task's chat
+		s.taskFromComment(r, sess, parent, id, &f)
+	}
 	if id := q.Get("template"); id != "" { // «Создать задачу» of a template: its fields, the deadline counted from now
 		if t, err := s.Tasks.Template(r.Context(), sess.UserID, id); err == nil {
 			tf := templateForm(t, users, mine)
@@ -1584,6 +1582,19 @@ func (s *Server) setListSort(w http.ResponseWriter, r *http.Request, sess auth.S
 		back = b
 	}
 	if err := s.Tasks.SetSort(r.Context(), sess.UserID, r.FormValue("sort")); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// setListTree turns «Подзадачи под основной задачей» of task lists on (on=1) or off and returns to the list.
+func (s *Server) setListTree(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/tasks"
+	if b := r.FormValue("back"); localPath(b) {
+		back = b
+	}
+	if err := s.Tasks.SetTree(r.Context(), sess.UserID, r.FormValue("on") == "1"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}

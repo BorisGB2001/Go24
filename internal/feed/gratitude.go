@@ -11,6 +11,7 @@ import (
 
 	"go24/internal/company"
 	"go24/internal/i18n"
+	"go24/internal/msgfmt"
 	"go24/internal/tasks"
 )
 
@@ -112,6 +113,7 @@ func (s *Store) Gratitudes(ctx context.Context, viewer, userID string) ([]Thanks
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Thanks, error) {
 		var t Thanks
 		err := r.Scan(&t.PostID, &t.Badge, &t.From, &t.Text, &t.At)
+		t.Text = msgfmt.Plain(t.Text)
 		return t, err
 	})
 }
@@ -197,6 +199,7 @@ func (s *Store) Board(ctx context.Context, viewer string, f BoardFilter) ([]Boar
 		var e BoardEntry
 		var ids, names []string
 		err := r.Scan(&e.PostID, &e.Badge, &e.Text, &e.At, &e.Author.ID, &e.Author.Name, &ids, &names)
+		e.Text = msgfmt.Plain(e.Text)
 		for i := range ids {
 			e.People = append(e.People, Person{ID: ids[i], Name: names[i]})
 		}

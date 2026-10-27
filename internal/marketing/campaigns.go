@@ -32,6 +32,7 @@ type Campaign struct {
 	ABSubject, ABBody                           string   // variant B
 	ABShare, ABHours                            int      // the test's share of the addressees, %, (0 — no test) and hours
 	ABMetric, ABWinner                          string   // opened or clicked; a or b when chosen
+	ResendOf, ResendTo, ResendTitle             string   // a resend: the campaign, to whom (unopened, unclicked), its title
 }
 
 // AB: the campaign tests variant B.
@@ -79,13 +80,17 @@ func (c Campaign) Planned() bool {
 // Editable: a draft, not started yet.
 func (c Campaign) Editable() bool { return c.Status == "draft" }
 
+// Resendable: sent to someone, so it may be resent to those who did not open it or follow its links.
+func (c Campaign) Resendable() bool { return !c.Editable() && c.Sent > 0 }
+
 const campaignCols = `c.id::text, c.title, coalesce(c.mailbox_id::text, ''), c.subject, c.body, c.status, c.send_at, c.started_at,
 	c.finished_at, coalesce(c.created_by::text, ''), coalesce(u.name, ''), c.updated_at,
 	count(r.id)::int, count(*) FILTER (WHERE r.status = 'sent')::int, count(*) FILTER (WHERE r.status = 'error')::int,
 	count(*) FILTER (WHERE r.status = 'skipped')::int, count(r.opened_at)::int, count(r.clicked_at)::int, count(r.unsubscribed_at)::int,
 	coalesce((SELECT array_agg(segment_id::text) FROM mkt_campaign_segments WHERE campaign_id = c.id AND NOT exclude), '{}'),
 	coalesce((SELECT array_agg(segment_id::text) FROM mkt_campaign_segments WHERE campaign_id = c.id AND exclude), '{}'),
-	c.ab_subject, c.ab_body, c.ab_share, c.ab_hours, c.ab_metric, c.ab_winner
+	c.ab_subject, c.ab_body, c.ab_share, c.ab_hours, c.ab_metric, c.ab_winner,
+	coalesce(c.resend_of::text, ''), c.resend_to, coalesce((SELECT p.title FROM mkt_campaigns p WHERE p.id = c.resend_of), '')
 	FROM mkt_campaigns c LEFT JOIN users u ON u.id = c.created_by LEFT JOIN mkt_recipients r ON r.campaign_id = c.id`
 
 // Campaigns are the company's campaigns, the latest first.
@@ -136,9 +141,12 @@ func (s *Store) SaveCampaign(ctx context.Context, userID string, admin bool, c C
 	if c.ABShare != 0 && (c.ABShare < 10 || c.ABShare > 100) || c.ABHours < 1 || c.ABHours > 72 || c.ABMetric != "opened" && c.ABMetric != "clicked" {
 		return "", i18n.E("err.mkt_ab")
 	}
-	var box any
+	var box, of any
 	if c.MailboxID != "" {
 		box = c.MailboxID
+	}
+	if c.ResendOf != "" {
+		of = c.ResendOf
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -147,9 +155,10 @@ func (s *Store) SaveCampaign(ctx context.Context, userID string, admin bool, c C
 	defer tx.Rollback(ctx)
 	if c.ID == "" {
 		if err := tx.QueryRow(ctx, `INSERT INTO mkt_campaigns (title, mailbox_id, subject, body, send_at, created_by,
-			ab_subject, ab_body, ab_share, ab_hours, ab_metric) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ab_subject, ab_body, ab_share, ab_hours, ab_metric, resend_of, resend_to)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			RETURNING id::text`, c.Title, box, c.Subject, c.Body, c.SendAt, userID,
-			c.ABSubject, c.ABBody, c.ABShare, c.ABHours, c.ABMetric).Scan(&c.ID); err != nil {
+			c.ABSubject, c.ABBody, c.ABShare, c.ABHours, c.ABMetric, of, c.ResendTo).Scan(&c.ID); err != nil {
 			return "", err
 		}
 	} else {
@@ -205,8 +214,38 @@ func (s *Store) CopyCampaign(ctx context.Context, userID, id, title string) (str
 	return s.SaveCampaign(ctx, userID, false, c)
 }
 
-// Addressees are the campaign's addressees now, as the viewer sees the segments: those of its segments but those of
-// the excluded ones and of the stop list, each address once.
+// ResendCampaign makes a draft of a sent campaign's letter to its addressees who did not open it (to "unopened") or
+// follow its links ("unclicked"), the user's.
+func (s *Store) ResendCampaign(ctx context.Context, userID, id, to, title string) (string, error) {
+	c, err := s.Campaign(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if to != "unopened" && to != "unclicked" || !c.Resendable() {
+		return "", i18n.E("err.mkt_resend")
+	}
+	c.ID, c.Title, c.SendAt, c.Segments, c.Excluded = "", title, nil, nil, nil
+	c.ABShare, c.ResendOf, c.ResendTo = 0, id, to
+	return s.SaveCampaign(ctx, userID, false, c)
+}
+
+// resendees are the addressees of a resend: those its campaign was sent to who did not open it or follow its links,
+// nor unsubscribed.
+func (s *Store) resendees(ctx context.Context, c Campaign) ([]Recipient, error) {
+	cond := map[string]string{"unopened": "opened_at IS NULL", "unclicked": "clicked_at IS NULL"}[c.ResendTo]
+	if c.ResendOf == "" || cond == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT email, name, entity, coalesce(entity_id::text, '') FROM mkt_recipients
+		WHERE campaign_id::text = $1 AND status = 'sent' AND unsubscribed_at IS NULL AND `+cond+` ORDER BY id`, c.ResendOf)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Recipient])
+}
+
+// Addressees are the campaign's addressees now, as the viewer sees the segments: those of its segments (of a resend —
+// its campaign's, resendees) but those of the excluded ones and of the stop list, each address once.
 func (s *Store) Addressees(ctx context.Context, viewer string, c Campaign) ([]Recipient, error) {
 	stop, err := s.stopSet(ctx)
 	if err != nil {
@@ -229,6 +268,18 @@ func (s *Store) Addressees(ctx context.Context, viewer string, c Campaign) ([]Re
 		}
 	}
 	var out []Recipient
+	if c.ResendTo != "" {
+		list, err := s.resendees(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range list {
+			if k := strings.ToLower(r.Email); !stop[k] {
+				stop[k] = true
+				out = append(out, r)
+			}
+		}
+	}
 	for _, id := range c.Segments {
 		g, err := s.Segment(ctx, id)
 		if err == ErrNotFound {

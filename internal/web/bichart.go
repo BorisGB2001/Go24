@@ -25,9 +25,12 @@ const (
 	biSeries   = 10 // series of a split chart
 	biTableMax = 200
 	biBarMax   = 56 // the widest column
+	biPivotMax = 30 // columns of a pivot table; the others are «Другие»
+	biSteps    = 20 // steps of a funnel
 )
 
-// biChart is a widget ready to draw: a number, an SVG of columns, a line or a pie, or a table.
+// biChart is a widget ready to draw: a number, an SVG of columns, a line, areas or a pie, a funnel, a table, a pivot
+// table or a text.
 type biChart struct {
 	Kind  string
 	Err   string // the query failed: what to show instead
@@ -48,15 +51,47 @@ type biChart struct {
 	Slices []biSlice
 	Total  string
 	// table
-	Cols  []biCol
-	Rows  [][]biCell
-	Sum   []biCell // «Итого», for the counts and the sums
-	Cut   bool     // more rows than shown
-	Value string   // the measure's name (pie, single-series charts)
-	F     string   // the dashboard's parameter of the first dimension a click filters by
+	Cols []biCol
+	Rows [][]biCell
+	Sum  []biCell // «Итого», for the counts and the sums
+	Cut  bool     // more rows than shown
+	// funnel
+	Steps []biStep
+	// pivot: the values of the second dimension across, of the first down
+	PCols []biCell
+	PRows []biPRow
+	PSum  []biCell // the totals of the columns, the last — of all
+	// text
+	Paras []biPara
+	Value string // the measure's name (pie, single-series charts)
+	F     string // the dashboard's parameter of the first dimension a click filters by
 }
 
-type biKPI struct{ Name, Value string }
+// biKPI is a number; Delta — its change against the period before (Prev): «+12,5%», Trend — up, down or "".
+type biKPI struct {
+	Name, Value, Prev, Delta, Trend string
+	v                               float64
+}
+
+// biStep is a step of a funnel: Pct — of the first step, Conv — of the step before; W — its bar's width, %.
+type biStep struct {
+	Name, Value, Pct, Conv, Class, Key string
+	W                                  float64
+	Click                              bool
+}
+
+// biPRow is a row of a pivot table: its value of the first dimension, the cells by the columns, the row's total.
+type biPRow struct {
+	Head  biCell
+	Cells []biCell
+	Total biCell
+}
+
+// biPara is a paragraph of a text widget, or its heading.
+type biPara struct {
+	Text string
+	Head bool
+}
 
 type biTick struct {
 	X, Y float64
@@ -67,6 +102,7 @@ type biSeriesView struct {
 	Name, Class string
 	Bars        []biBar
 	Points      string // the line's polyline
+	Area        string // the area's polygon under it
 	Dots        []biBar
 }
 
@@ -213,6 +249,10 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 			dims = append(dims, i)
 		}
 	}
+	if w.Kind == "text" {
+		ch.Paras = biParas(w.Body)
+		return ch
+	}
 	if len(res.Rows) == 0 && w.Kind != "kpi" {
 		ch.Empty = true
 		return ch
@@ -230,7 +270,7 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 			for _, r := range res.Rows { // a KPI with dimensions sums its rows
 				total += biFloat(r[m])
 			}
-			ch.KPI = append(ch.KPI, biKPI{res.Columns[m].Name, biNum(total, dec)})
+			ch.KPI = append(ch.KPI, biKPI{Name: res.Columns[m].Name, Value: biNum(total, dec), v: total})
 		}
 	case "table":
 		for _, c := range res.Columns {
@@ -267,6 +307,10 @@ func biDraw(w bi.Widget, res biResult, tr func(string) string) biChart {
 		}
 	case "pie":
 		biPie(&ch, res, dims, meas, tr)
+	case "funnel":
+		biFunnel(&ch, res, dims, meas, tr)
+	case "pivot":
+		biPivot(&ch, res, dims, meas, tr)
 	default:
 		biAxes(&ch, w.Kind, res, dims, meas, tr)
 	}
@@ -407,11 +451,22 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 			}
 		}
 	}
+	// stacked columns and areas lay the series one on another: the axis spans their sums
+	stacked := kind == "stack" || kind == "area"
 	lo, hi := 0.0, 0.0
-	for _, s := range ss {
-		for _, v := range s.vals {
-			lo, hi = min(lo, v), max(hi, v)
+	for i := range cats {
+		pos, neg := 0.0, 0.0
+		for _, s := range ss {
+			v := s.vals[i]
+			if !stacked {
+				lo, hi = min(lo, v), max(hi, v)
+			} else if v >= 0 || kind == "area" {
+				pos += v
+			} else {
+				neg += v
+			}
 		}
+		lo, hi = min(lo, neg, pos), max(hi, pos)
 	}
 	ticks := biNice(lo, hi)
 	lo, hi = ticks[0], ticks[len(ticks)-1]
@@ -433,14 +488,46 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 		}
 	}
 	k := float64(len(ss))
+	xy := func(x, y float64) string {
+		return strconv.FormatFloat(x, 'f', 1, 64) + "," + strconv.FormatFloat(y, 'f', 1, 64)
+	}
+	posAt, negAt := make([]float64, len(cats)), make([]float64, len(cats)) // the stacks so far
 	for j, s := range ss {
 		sv := biSeriesView{Name: s.name, Class: "bi-c" + strconv.Itoa(j%biColors)}
-		var pts []string
+		var pts, under []string
 		for i, c := range cats {
 			v, ok := s.vals[i]
 			tip := c + " · " + s.name + ": " + biNum(v, dec)
 			if len(ss) == 1 {
 				tip = c + ": " + biNum(v, dec)
+			}
+			switch kind {
+			case "area":
+				x := biPadL + group*(float64(i)+0.5)
+				base := posAt[i]
+				posAt[i] += v
+				pts = append(pts, xy(x, y(posAt[i])))
+				under = append(under, xy(x, y(base)))
+				if ok {
+					sv.Dots = append(sv.Dots, biBar{X: x, Y: y(posAt[i]), Tip: tip, Key: keys[i], Click: click})
+				}
+				continue
+			case "stack":
+				if !ok {
+					continue
+				}
+				bw := min(group*0.6, biBarMax)
+				var top, bot float64
+				if v >= 0 {
+					top, bot = y(posAt[i]+v), y(posAt[i])
+					posAt[i] += v
+				} else {
+					top, bot = y(negAt[i]), y(negAt[i]+v)
+					negAt[i] += v
+				}
+				sv.Bars = append(sv.Bars, biBar{X: biPadL + group*float64(i) + (group-bw)/2, Y: top, W: bw,
+					H: max(bot-top, 0.5), Tip: tip, Key: keys[i], Click: click})
+				continue
 			}
 			if kind == "line" {
 				x := biPadL + group*(float64(i)+0.5)
@@ -460,6 +547,235 @@ func biAxes(ch *biChart, kind string, res biResult, dims, meas []int, tr func(st
 				H: max(bot-top, 0.5), Tip: tip, Key: keys[i], Click: click})
 		}
 		sv.Points = strings.Join(pts, " ")
+		if kind == "area" && len(pts) > 0 {
+			slices.Reverse(under)
+			sv.Area = sv.Points + " " + strings.Join(under, " ")
+		}
 		ch.Series = append(ch.Series, sv)
+	}
+}
+
+// biCompare gives the numbers of a KPI their change against the result of the period before.
+func biCompare(ch *biChart, prev biResult, tr func(string) string) {
+	dec := tr("bi.decimal")
+	var meas []int
+	for i, c := range prev.Columns {
+		if c.Agg != "" {
+			meas = append(meas, i)
+		}
+	}
+	for i := range ch.KPI {
+		if i >= len(meas) {
+			break
+		}
+		k, was := &ch.KPI[i], 0.0
+		for _, r := range prev.Rows {
+			was += biFloat(r[meas[i]])
+		}
+		k.Prev = biNum(was, dec)
+		switch {
+		case k.v > was:
+			k.Trend = "up"
+		case k.v < was:
+			k.Trend = "down"
+		}
+		if was == 0 {
+			continue // no share of nothing
+		}
+		pct := math.Round((k.v-was)/math.Abs(was)*1000) / 10
+		k.Delta = biNum(pct, dec) + "%"
+		if pct > 0 {
+			k.Delta = "+" + k.Delta
+		}
+	}
+}
+
+// biParas are the paragraphs of a text: the blocks between empty lines, «# » starts a heading.
+func biParas(body string) []biPara {
+	var out []biPara
+	for _, b := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n\n") {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+		if h, ok := strings.CutPrefix(b, "#"); ok {
+			head, rest, _ := strings.Cut(strings.TrimLeft(h, "# "), "\n")
+			out = append(out, biPara{Text: strings.TrimSpace(head), Head: true})
+			if rest = strings.TrimSpace(rest); rest != "" {
+				out = append(out, biPara{Text: rest})
+			}
+			continue
+		}
+		out = append(out, biPara{Text: b})
+	}
+	return out
+}
+
+// biFunnel: the steps of the first dimension in the order of the rows (the stages as their pipeline goes) by the first
+// measure, each bar as wide as its share of the biggest, with its share of the first step and of the step before.
+func biFunnel(ch *biChart, res biResult, dims, meas []int, tr func(string) string) {
+	if len(meas) == 0 || len(dims) == 0 {
+		ch.Empty = true
+		return
+	}
+	dec := tr("bi.decimal")
+	m, top := meas[0], 0.0
+	for _, r := range res.Rows {
+		top = max(top, biFloat(r[m]))
+	}
+	if top <= 0 {
+		ch.Empty = true
+		return
+	}
+	pct := func(a, b float64) string {
+		if b <= 0 {
+			return "—"
+		}
+		return biNum(math.Round(a/b*1000)/10, dec) + "%"
+	}
+	first, before := 0.0, 0.0
+	for n, r := range res.Rows {
+		if n == biSteps {
+			ch.Cut = true
+			break
+		}
+		v := biFloat(r[m])
+		if n == 0 {
+			first, before = v, v
+		}
+		st := biStep{Name: biLabel(res.Columns[dims[0]].Column, r[dims[0]], tr), Value: biNum(v, dec), Pct: pct(v, first),
+			Class: "bi-c" + strconv.Itoa(n%biColors), W: math.Round(max(v, 0)/top*1000) / 10}
+		if n > 0 {
+			st.Conv = pct(v, before)
+		}
+		if ch.F != "" {
+			st.Key, st.Click = res.Keys[n][0], true
+		}
+		ch.Steps = append(ch.Steps, st)
+		before = v
+	}
+}
+
+// biPivot: the first dimension down, the second across (the biggest columns first, the rest «Другие»), the cells — the
+// first measure; the totals of the rows and the columns for the counts and the sums.
+func biPivot(ch *biChart, res biResult, dims, meas []int, tr func(string) string) {
+	if len(meas) == 0 || len(dims) == 0 {
+		ch.Empty = true
+		return
+	}
+	dec := tr("bi.decimal")
+	m := meas[0]
+	agg := res.Columns[m].Agg
+	summed := agg == "count" || agg == "sum"
+	cell := func(v float64, ok bool) biCell {
+		if !ok {
+			return biCell{Num: true}
+		}
+		return biCell{Text: biNum(v, dec), Num: true}
+	}
+	// the columns: the values of the second dimension, the biggest first (dates — in their order)
+	type col struct {
+		name, key string
+		total     float64
+	}
+	var cols []*col
+	colOf := map[string]*col{}
+	name2 := func(r []any) string {
+		if len(dims) < 2 {
+			return res.Columns[m].Name
+		}
+		return biLabel(res.Columns[dims[1]].Column, r[dims[1]], tr)
+	}
+	for n, r := range res.Rows {
+		c := colOf[name2(r)]
+		if c == nil {
+			c = &col{name: name2(r)}
+			if len(dims) > 1 && ch.F != "" {
+				c.key = res.Keys[n][1]
+			}
+			colOf[c.name] = c
+			cols = append(cols, c)
+		}
+		c.total += math.Abs(biFloat(r[m]))
+	}
+	if len(dims) > 1 && res.Columns[dims[1]].Type != bi.Date {
+		slices.SortStableFunc(cols, func(a, b *col) int { return cmp.Compare(b.total, a.total) })
+	}
+	// too many columns: the rest are summed in «Другие», or — an average, an extreme — left out
+	other := len(cols) > biPivotMax && summed
+	at := map[string]int{}
+	for i, c := range cols {
+		at[c.name] = i
+		if other {
+			at[c.name] = min(i, biPivotMax-1)
+		}
+	}
+	if other {
+		cols = append(cols[:biPivotMax-1], &col{name: tr("bi.others")})
+	} else if len(cols) > biPivotMax {
+		cols, ch.Cut = cols[:biPivotMax], true
+	}
+	f2 := ""
+	if len(dims) > 1 && ch.F != "" {
+		f2 = biParam + res.Columns[dims[1]].Field
+	}
+	ch.Cols = []biCol{{Name: res.Columns[dims[0]].Name}}
+	for i, c := range cols {
+		h := biCell{Text: c.name}
+		if f2 != "" && !(other && i == len(cols)-1) {
+			h.F, h.Key = f2, c.key
+		}
+		ch.PCols = append(ch.PCols, h)
+	}
+	// the rows in the order of the query
+	type row struct {
+		head  biCell
+		vals  []float64
+		has   []bool
+		total float64
+	}
+	var rows []*row
+	rowOf := map[string]*row{}
+	sums, sumHas := make([]float64, len(cols)), make([]bool, len(cols))
+	all := 0.0
+	for n, r := range res.Rows {
+		name := biLabel(res.Columns[dims[0]].Column, r[dims[0]], tr)
+		x := rowOf[name]
+		if x == nil {
+			x = &row{head: biCell{Text: name}, vals: make([]float64, len(cols)), has: make([]bool, len(cols))}
+			if ch.F != "" {
+				x.head.F, x.head.Key = ch.F, res.Keys[n][0]
+			}
+			rowOf[name] = x
+			rows = append(rows, x)
+		}
+		i, v := at[name2(r)], biFloat(r[m])
+		if i >= len(cols) {
+			continue
+		}
+		x.vals[i] += v
+		x.has[i] = true
+		x.total += v
+		sums[i] += v
+		sumHas[i] = true
+		all += v
+	}
+	for n, x := range rows {
+		if n == biTableMax {
+			ch.Cut = true
+			break
+		}
+		pr := biPRow{Head: x.head}
+		for i := range cols {
+			pr.Cells = append(pr.Cells, cell(x.vals[i], x.has[i]))
+		}
+		pr.Total = cell(x.total, summed)
+		ch.PRows = append(ch.PRows, pr)
+	}
+	if summed {
+		for i := range cols {
+			ch.PSum = append(ch.PSum, cell(sums[i], sumHas[i]))
+		}
+		ch.PSum = append(ch.PSum, cell(all, true))
 	}
 }

@@ -185,6 +185,23 @@ func TestBuildICS(t *testing.T) {
 	}
 }
 
+// TestCounterICS: «Предложить новое время» goes as COUNTER with the new time and the series; the organizer's
+// DECLINECOUNTER carries neither the text nor the series.
+func TestCounterICS(t *testing.T) {
+	in, _ := ParseInvite(outlookInvite)
+	start := time.Date(2026, 11, 5, 14, 0, 0, 0, time.UTC)
+	c := Counter(in, Person{Email: "anna@go24.test"}, "tentative", "Лучше после обеда", start, start.Add(90*time.Minute))
+	back, ok := ParseInvite(BuildICS(c, "COUNTER", time.Now()))
+	if !ok || back.Method != "COUNTER" || !back.Start.Equal(start) || back.End.Sub(back.Start) != 90*time.Minute || back.AllDay ||
+		back.Repeat != in.Repeat || back.Comment != "Лучше после обеда" || len(back.Attendees) != 1 || back.Attendees[0].Status != "tentative" {
+		t.Fatalf("counter = %+v", back)
+	}
+	d := BuildICS(Invite{UID: in.UID, Start: start, End: start, Description: "текст", Repeat: "weekly"}, "DECLINECOUNTER", time.Now())
+	if !strings.Contains(d, "METHOD:DECLINECOUNTER") || strings.Contains(d, "DESCRIPTION") || strings.Contains(d, "RRULE") || strings.Contains(d, "STATUS:") {
+		t.Fatalf("declinecounter = %s", d)
+	}
+}
+
 // TestComposeCalendar: a letter with a meeting carries it beside its text, as Outlook's do.
 func TestComposeCalendar(t *testing.T) {
 	ics := BuildICS(Invite{UID: "u", Summary: "S", Start: time.Now(), End: time.Now()}, "REQUEST", time.Now())

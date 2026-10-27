@@ -133,7 +133,7 @@
   });
   window.addEventListener('beforeunload', e => {
     for (const s of forms.values()) {
-      if (!s.sent && s.snap() !== s.was) {
+      if (!s.sent && s.snap() !== s.was && !s.ta.form.kbDraftSent?.()) { // a text kept as a draft (kbdraft.js) is not lost
         e.preventDefault();
         e.returnValue = s.ta.dataset.kbLeave;
         return s.ta.dataset.kbLeave;

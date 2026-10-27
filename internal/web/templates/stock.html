@@ -10,11 +10,17 @@
   {{range $d.Kinds}}{{if $d.Rights.Can . "read"}}<a class="chip{{if eq . $f.Kind}} on{{end}}" href="/store/docs?kind={{.}}{{with $f.Status}}&status={{.}}{{end}}">{{t (print "stock.kinds." .)}}</a>{{end}}{{end}}
   <span class="spacer"></span>
   {{range $d.Statuses}}<a class="chip{{if eq . $f.Status}} on{{end}}" href="/store/docs?status={{if ne . $f.Status}}{{.}}{{end}}{{with $f.Kind}}&kind={{.}}{{end}}">{{t (print "stock.status." .)}}</a>{{end}}</div>
-<div class="card flush">{{if $d.Items}}<table class="tlist">
-  <thead><tr><th>{{t "stock.doc"}}</th><th>{{t "stock.doc_status"}}</th><th>{{t "stock.doc_date"}}</th><th>{{t "crm.f.amount"}}</th><th>{{t "stock.supplier"}}</th><th>{{t "crm.f.responsible"}}</th></tr></thead>
-  <tbody>{{range $d.Items}}<tr><td><a href="/store/docs/{{.ID}}" class="ttitle">{{t (print "stock.kind." .Kind)}} № {{.Number}}</a>{{with .Title}}<div class="small muted">{{.}}</div>{{end}}{{if .Deal.ID}}<div class="small"><span class="muted">{{t "stock.deal"}}:</span> <a href="/crm/deals/{{.Deal.ID}}">{{.Deal.Name}}</a></div>{{end}}</td>
+{{$bulk := or ($d.Rights.CanAny "conduct") ($d.Rights.CanAny "cancel") ($d.Rights.CanAny "delete")}}
+<form method="post" action="/store/docs/bulk" class="card flush" data-crmbulk><input type="hidden" name="back" value="/store/docs?{{with $f.Kind}}kind={{.}}&amp;{{end}}{{with $f.Status}}status={{.}}&amp;{{end}}{{with $f.Q}}q={{urlquery .}}{{end}}">
+  {{if $d.Items}}{{if $bulk}}<div class="row crmbulk"><span class="muted small">{{t "crm.bulk_checked"}} <b data-bulkcount>0</b></span>
+    <select name="op" data-bulkop>{{if $d.Rights.CanAny "conduct"}}<option value="conduct">{{t "stock.conduct"}}</option>{{end}}{{if $d.Rights.CanAny "cancel"}}<option value="cancel">{{t "stock.cancel"}}</option>{{end}}{{if $d.Rights.CanAny "delete"}}<option value="delete">{{t "crm.bulk_delete"}}</option>{{end}}</select>
+    <button class="ghost" data-confirmdel="{{t "stock.bulk_confirm"}}">{{t "crm.bulk_apply"}}</button></div>{{end}}
+  <table class="tlist">
+  <thead><tr>{{if $bulk}}<th><input type="checkbox" data-checkall title="{{t "crm.bulk_all"}}"></th>{{end}}<th>{{t "stock.doc"}}</th><th>{{t "stock.doc_status"}}</th><th>{{t "stock.doc_date"}}</th><th>{{t "crm.f.amount"}}</th><th>{{t "stock.supplier"}}</th><th>{{t "crm.f.responsible"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}<tr>{{if $bulk}}<td><input type="checkbox" name="id" value="{{.ID}}"></td>{{end}}<td><a href="/store/docs/{{.ID}}" class="ttitle">{{t (print "stock.kind." .Kind)}} № {{.Number}}</a>{{with .Title}}<div class="small muted">{{.}}</div>{{end}}{{if .Deal.ID}}<div class="small"><span class="muted">{{t "stock.deal"}}:</span> <a href="/crm/deals/{{.Deal.ID}}">{{.Deal.Name}}</a></div>{{end}}</td>
     <td>{{template "stockstatus" .Status}}</td><td class="small nowrap">{{day .Date}}</td><td class="nowrap">{{if ne .Kind "moving"}}<b>{{money .Amount}} {{.Currency}}</b>{{else}}<span class="muted">—</span>{{end}}</td>
     <td class="small">{{if .Supplier.ID}}<a href="/crm/{{if eq .SupplierKind "contact"}}contacts{{else}}companies{{end}}/{{.Supplier.ID}}">{{.Supplier.Name}}</a>{{end}}{{with .IncomingNumber}}<div class="muted">{{t "stock.incoming"}} {{.}}</div>{{end}}</td>
     <td class="small">{{.Responsible.Name}}</td></tr>{{end}}</tbody>
-</table>{{else}}<div class="empty">{{t "stock.no_docs"}}</div>{{end}}</div>
+</table>{{else}}<div class="empty">{{t "stock.no_docs"}}</div>{{end}}</form>
+<script src="{{asset "js/crmrows.js"}}"></script>
 {{end}}

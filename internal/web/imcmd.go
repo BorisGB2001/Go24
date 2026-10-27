@@ -16,10 +16,10 @@ func (s *Server) imCommands(w http.ResponseWriter, r *http.Request, sess auth.Se
 	writeJSON(w, http.StatusOK, list)
 }
 
-// imButton: a button of a bot's message that runs its command was pressed.
+// imButton: a button of a bot's message (an item of its menu with menu=1) that runs its command was pressed.
 func (s *Server) imButton(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if err := s.Matrix.PressButton(r.Context(), sess.UserID, r.FormValue("room"), r.FormValue("event"), r.FormValue("command"),
-		r.FormValue("params")); err != nil {
+		r.FormValue("params"), r.FormValue("menu") == "1"); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}

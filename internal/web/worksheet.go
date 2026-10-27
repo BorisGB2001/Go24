@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/csv"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -110,12 +112,58 @@ func (s *Server) worksheet(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	for _, t := range dates {
 		off[t.Format(time.DateOnly)] = !sched.WorkingDay(t)
 	}
+	rows := company.BuildSheet(people, days, absences, pending, norms, sched, month, now)
+	if r.URL.Query().Get("export") == "csv" {
+		s.worksheetCSV(w, r, rows, month)
+		return
+	}
 	s.render(w, r, "worksheet", page{TitleKey: "worksheet.title", Nav: "timeman", Data: map[string]any{
-		"Rows": company.BuildSheet(people, days, absences, pending, norms, sched, month, now), "Dates": dates, "Off": off,
+		"Rows": rows, "Dates": dates, "Off": off,
 		"Today": now.Format(time.DateOnly), "Month": month, "Dept": dept, "Depts": depts,
 		"Prev": month.AddDate(0, -1, 0).Format("2006-01"), "Next": month.AddDate(0, 1, 0).Format("2006-01"),
 		"Sched": sched,
 	}})
+}
+
+// worksheetCSV: the month of the table for Excel — a person per row, the hours of each day (absences by their
+// letter, days off by «В»), the totals and the hours by the schedule.
+func (s *Server) worksheetCSV(w http.ResponseWriter, r *http.Request, rows []company.SheetRow, month time.Time) {
+	hm := func(secs int) string { return fmt.Sprintf("%d:%02d", secs/3600, secs/60%60) }
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=worktime-"+month.Format("2006-01")+".csv")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
+	cw := csv.NewWriter(w)
+	cw.Comma = ';'
+	head := []string{s.tr(r, "workday.col.who"), s.tr(r, "company.col.position")}
+	for t := month; t.Month() == month.Month(); t = t.AddDate(0, 0, 1) {
+		head = append(head, t.Format("02.01"))
+	}
+	head = append(head, s.tr(r, "worksheet.days"), s.tr(r, "worksheet.hours"), s.tr(r, "worksheet.plan"),
+		s.tr(r, "worksheet.violations"))
+	_ = cw.Write(head)
+	for _, row := range rows {
+		rec := []string{row.Name, row.Position}
+		for _, c := range row.Cells {
+			v := ""
+			switch c.Kind {
+			case "work":
+				v = hm(c.Worked)
+				if len(c.Flags) > 0 {
+					v += " !"
+				}
+			case "absence":
+				v = s.tr(r, "worksheet.abs."+c.Absence)
+			case "off":
+				v = s.tr(r, "worksheet.csv_off")
+			case "none":
+				v = s.tr(r, "worksheet.csv_none")
+			}
+			rec = append(rec, v)
+		}
+		rec = append(rec, strconv.Itoa(row.Days), hm(row.Worked), hm(row.Plan), strconv.Itoa(row.Violations))
+		_ = cw.Write(rec)
+	}
+	cw.Flush()
 }
 
 // dayParams: the person and the day of /worktime/d/{user}/{day}; the user may see it — their own, or as a manager.

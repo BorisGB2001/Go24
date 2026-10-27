@@ -37,6 +37,45 @@ func (s *Server) collabsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		"List": list, "Rooms": rooms, "CanCreate": may && !archived, "Archived": archived, "Q": q, "Messenger": s.Matrix != nil}})
 }
 
+// collabOpen opens the collab with its «Стартовый инструмент»: its chat, tasks, drive, calendar or feed. A tool the
+// person has not (the messenger off, a section switched off, the feed for a guest) gives way to the collab's page.
+func (s *Server) collabOpen(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	if err != nil {
+		s.taskErr(w, r, err, "/collabs")
+		return
+	}
+	http.Redirect(w, r, s.collabStart(r, p), http.StatusFound)
+}
+
+// collabStart is the address the collab opens with (see collabOpen).
+func (s *Server) collabStart(r *http.Request, p tasks.Project) string {
+	page := "/p/" + p.Key
+	set, err := s.Tasks.CollabSettings(r.Context(), p)
+	if err != nil {
+		return page
+	}
+	to := page
+	switch set.StartTool {
+	case "chat":
+		if room, err := s.Matrix.ProjectRoom(r.Context(), p.ID); err == nil && room != "" {
+			to = "/im?room=" + url.QueryEscape(room)
+		}
+	case "drive":
+		to = "/disk/p/" + p.Key
+	case "calendar":
+		to = "/calendar?project=" + p.Key
+	case "feed":
+		if !tasks.IsGuestCtx(r.Context()) {
+			to = "/feed?project=" + p.ID
+		}
+	}
+	if _, off := s.offSection(r.Context(), strings.SplitN(to, "?", 2)[0]); off {
+		return page
+	}
+	return to
+}
+
 // collabCreate makes a collab (name, description, avatar, members) and opens it.
 func (s *Server) collabCreate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxPhotoSize+1<<20)
@@ -59,7 +98,7 @@ func (s *Server) collabCreate(w http.ResponseWriter, r *http.Request, sess auth.
 		}
 	}
 	s.Matrix.Wake() // the collab's chat
-	http.Redirect(w, r, "/p/"+key, http.StatusSeeOther)
+	http.Redirect(w, r, "/c/"+key, http.StatusSeeOther)
 }
 
 // projectLeave: a member leaves a collab (or a project).
@@ -92,6 +131,7 @@ func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess aut
 			GuestFiles: r.FormValue("guests_files") == "on", EditPerm: r.FormValue("edit_perm"), ChatPerm: r.FormValue("chat_perm"),
 			MsgTTL: msgTTL, EventsMembers: r.FormValue("events_members") == "on", EventsGuests: r.FormValue("events_guests") == "on",
 			EventsInvites: r.FormValue("events_invites") == "on", EventsCollab: r.FormValue("events_collab") == "on",
+			StartTool: r.FormValue("start_tool"),
 		})
 	}
 	if err != nil {
@@ -156,7 +196,7 @@ func (s *Server) collabData(r *http.Request, p tasks.Project, data map[string]an
 	data["CanAddMembers"] = s.Tasks.CanAddMembers(r.Context(), p)
 	data["CanDelete"] = p.MyRole == "owner" || p.MyRole == "admin"
 	if set, err := s.Tasks.CollabSettings(r.Context(), p); err == nil {
-		data["Settings"], data["MsgTTLs"] = set, tasks.MsgTTLs
+		data["Settings"], data["MsgTTLs"], data["StartTools"] = set, tasks.MsgTTLs, tasks.StartTools
 	}
 	if p.CanManage() {
 		if log, err := s.Tasks.CollabLog(r.Context(), p, 100); err == nil {

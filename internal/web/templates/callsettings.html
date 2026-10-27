@@ -6,6 +6,8 @@
   <label><input type="checkbox" name="record" value="1" {{if $d.Record}}checked{{end}}> {{t "call.record_allow"}}</label>
   <p class="muted small">{{t "call.record_allow_hint"}}</p>
   {{if not $d.Ready}}<p class="flash">{{t "call.record_not_ready"}}</p>{{end}}
+  <label><input type="checkbox" name="transcribe" value="1" {{if $d.Transcribe}}checked{{end}} {{if not $d.Speech}}disabled{{end}}> {{t "call.transcript_allow"}}</label>
+  <p class="muted small">{{if $d.Speech}}{{t "call.transcript_allow_hint"}}{{else}}{{t "call.transcript_no_speech"}}{{end}}</p>
   <div><button class="primary">{{t "common.save"}}</button></div>
 </form>{{end}}
 {{if $d.Services}}<h2>{{t "call.ext_title"}}</h2>

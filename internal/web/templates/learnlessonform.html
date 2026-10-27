@@ -1,0 +1,65 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}{{$l := $d.L}}
+<p class="muted small"><a href="/company/learning?tab=all">{{icon "school"}} {{t "learn.title"}}</a> › <a href="/company/learning/{{$c.ID}}/edit">{{$c.Title}}</a></p>
+<h1>{{if $l.Test}}{{if $l.ID}}{{t "learn.edit_test"}}{{else}}{{t "learn.add_test"}}{{end}}{{else}}{{if $l.ID}}{{t "learn.edit_lesson"}}{{else}}{{t "learn.add_lesson"}}{{end}}{{end}}</h1>
+<div class="card" style="max-width:960px">
+  <form method="post" action="/company/learning/{{$c.ID}}/l{{with $l.ID}}/{{.}}{{end}}">
+    <input type="hidden" name="kind" value="{{$l.Kind}}">
+    <label>{{t "learn.f.chapter"}}</label>
+    <input type="text" name="chapter" value="{{$l.Chapter}}" maxlength="{{$d.TitleMax}}" list="lchapters" placeholder="{{t "learn.chapter_hint"}}">
+    <datalist id="lchapters">{{range $d.Chapters}}<option value="{{.}}">{{end}}</datalist>
+    <label>{{if $l.Test}}{{t "learn.f.test_title"}}{{else}}{{t "learn.f.lesson_title"}}{{end}} <span class="req">*</span></label>
+    <input type="text" name="title" value="{{$l.Title}}" maxlength="{{$d.TitleMax}}" required{{if not $l.ID}} autofocus{{end}}>
+    {{if $l.Test}}
+    <div class="row ltestset">
+      <span><label>{{t "learn.f.pass_pct"}}</label><input type="number" name="pass_pct" min="1" max="100" value="{{$l.PassPct}}"></span>
+      <span><label>{{t "learn.f.attempts"}}</label><input type="number" name="attempts" min="0" max="100" value="{{$l.Attempts}}" title="{{t "learn.zero_any"}}"></span>
+      <span><label>{{t "learn.f.minutes"}}</label><input type="number" name="minutes" min="0" max="600" value="{{$l.Minutes}}" title="{{t "learn.zero_none"}}"></span>
+    </div>
+    <p class="muted small">{{t "learn.test_set_hint"}}</p>
+    <label class="check"><input type="checkbox" name="shuffle" value="1"{{if $l.Shuffle}} checked{{end}}> {{t "learn.f.shuffle"}}</label>
+    <label>{{t "learn.f.intro"}}</label>
+    <textarea name="body" rows="5" class="mono">{{$l.Body}}</textarea>
+    {{else}}
+    <label>{{t "learn.f.body"}}</label>
+    <textarea name="body" rows="20" class="mono">{{$l.Body}}</textarea>
+    <p class="muted small">{{t "learn.body_hint"}}</p>
+    {{end}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button>
+      {{if and (not $l.ID) (not $l.Test)}}<button class="ghost" name="more" value="1">{{t "learn.save_more"}}</button>{{end}}
+      {{if $l.ID}}<a class="button ghost" href="/company/learning/{{$c.ID}}/l/{{$l.ID}}">{{t "learn.view"}}</a>{{end}}
+      <a class="button ghost" href="/company/learning/{{$c.ID}}/edit">{{t "common.cancel"}}</a></p>
+  </form>
+</div>
+{{if and $l.Test $l.ID}}{{$q := $d.Q}}
+<h2 id="questions" style="max-width:960px">{{t "learn.questions"}} <span class="muted small">{{len $d.Questions}}</span></h2>
+{{if $d.Questions}}<div class="card flush" style="max-width:960px"><table class="tlist llessons"><tbody>
+{{range $i, $x := $d.Questions}}<tr id="q-{{$x.ID}}"{{if eq $x.ID $q.ID}} class="on"{{end}}><td class="muted">{{add $i 1}}</td>
+  <td><a href="/company/learning/{{$c.ID}}/l/{{$l.ID}}/edit?q={{$x.ID}}#qform"><b>{{$x.Text}}</b></a>
+    <br><span class="muted small">{{t (print "learn.qkind." $x.Kind)}} · {{t "learn.points_n" $x.Points}}{{if eq $x.Kind "text"}} · {{join $x.Answers ", "}}{{else}}{{range $x.Options}} · {{if .Right}}<b>✓ {{.Text}}</b>{{else}}{{.Text}}{{end}}{{end}}{{end}}</span></td>
+  <td class="nowrap"><form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/q/{{$x.ID}}/move" class="inline"><input type="hidden" name="up" value="1"><button class="link" title="{{t "learn.up"}}"{{if eq $i 0}} disabled{{end}}>{{icon "arrow-up"}}</button></form>
+    <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/q/{{$x.ID}}/move" class="inline"><button class="link" title="{{t "learn.down"}}">{{icon "arrow-down"}}</button></form>
+    <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/q/{{$x.ID}}/delete" class="inline" data-confirm="{{t "learn.delete_question_confirm"}}"><button class="link muted" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+</tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty" style="max-width:960px">{{t "learn.no_questions"}}</div>{{end}}
+<div class="card" id="qform" style="max-width:960px">
+  <h3>{{if $q.ID}}{{t "learn.edit_question"}}{{else}}{{t "learn.add_question"}}{{end}}</h3>
+  <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/q{{with $q.ID}}/{{.}}{{end}}" data-ajax data-failed="{{t "common.save_failed"}}" class="lqform">
+    <div class="form-error" data-error hidden></div>
+    <div class="row"><span style="flex:1"><label>{{t "learn.f.qkind"}}</label>
+      <select name="kind">{{range $d.QKinds}}<option value="{{.}}"{{if eq . $q.Kind}} selected{{end}}>{{t (print "learn.qkind." .)}}</option>{{end}}</select></span>
+      <span><label>{{t "learn.f.points"}}</label><input type="number" name="points" min="1" max="100" value="{{$q.Points}}" style="width:90px"></span></div>
+    <label>{{t "learn.f.question"}} <span class="req">*</span></label>
+    <textarea name="text" rows="3" required maxlength="5000">{{$q.Text}}</textarea>
+    <div class="lq-opts"><label>{{t "learn.f.options"}}</label>
+      <textarea name="options" rows="5" class="mono" placeholder="{{t "learn.options_ph"}}">{{$q.OptionLines}}</textarea>
+      <p class="muted small">{{t "learn.options_hint"}}</p></div>
+    <div class="lq-text"><label>{{t "learn.f.answers"}}</label>
+      <textarea name="answers" rows="3" class="mono">{{join $q.Answers "\n"}}</textarea>
+      <p class="muted small">{{t "learn.answers_hint"}}</p></div>
+    <p class="row"><button class="primary">{{if $q.ID}}{{t "common.save"}}{{else}}{{t "learn.add_question"}}{{end}}</button>
+      {{if $q.ID}}<a class="button ghost" href="/company/learning/{{$c.ID}}/l/{{$l.ID}}/edit#questions">{{t "common.cancel"}}</a>{{end}}</p>
+  </form>
+</div>
+{{end}}
+{{end}}

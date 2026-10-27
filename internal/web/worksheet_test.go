@@ -118,6 +118,15 @@ func TestWorksheetHTTP(t *testing.T) {
 	if !strings.Contains(page, "Анна Сотрудникова") || !strings.Contains(page, "ws-pend") {
 		t.Fatal("the manager's table has no Анна with the change waiting")
 	}
+	// «Выгрузить в Excel»: the month for Excel with the hours and the norm, only the people of the table
+	csvMonth := "/worktime/table?export=csv&month=" + yday.Format("2006-01")
+	if out := do(boss, "GET", csvMonth, nil, 200); !strings.HasPrefix(out, "\uFEFFСотрудник;Должность;01.") ||
+		!strings.Contains(out, "По графику") || !strings.Contains(out, "Анна Сотрудникова;") {
+		t.Fatalf("csv: %.300s", out)
+	}
+	if out := do(anna, "GET", csvMonth, nil, 200); strings.Contains(out, "Борис Начальников") {
+		t.Fatal("an employee's csv has the manager")
+	}
 	pending, err := srv.Company.PendingChanges(ctx, []string{anna}, false)
 	must(err)
 	if len(pending) != 1 {

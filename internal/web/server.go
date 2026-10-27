@@ -54,6 +54,7 @@ import (
 	"go24/internal/speech"
 	"go24/internal/sign"
 	"go24/internal/storages"
+	"go24/internal/sysinfo"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 )
@@ -90,6 +91,9 @@ type Server struct {
 	// the outside places of the copies (nil — none)
 	BackupHostDir string
 	BackupRC      backup.Remote
+	// «Состояние системы»: the services checked and the folders whose free space is shown
+	SysProbes []sysinfo.Probe
+	SysDisks  []SysDisk
 	OpenLines   *openlines.Store
 	Sites       *sites.Store
 	BP          *bp.Store
@@ -173,6 +177,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /call/lobby/{id}/{action}", s.requireUser(s.callLobby))
 	mux.HandleFunc("GET /call/record", s.requireUser(s.callRecord))
 	mux.HandleFunc("POST /call/record", s.requireUser(s.callRecord))
+	mux.HandleFunc("POST /call/moderate", s.requireUser(s.callModerate))
 	mux.HandleFunc("GET /call/g/{token}", s.guestPage) // guest links of calls: no sign-in
 	mux.HandleFunc("POST /call/g/{token}", s.guestArrive)
 	mux.HandleFunc("GET /call/g/{token}/state", s.guestState)
@@ -183,6 +188,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/documents/my-company", s.requireUser(s.docMyCompany))
 	mux.HandleFunc("POST /crm/documents/image", s.requireUser(s.docImage))
 	mux.HandleFunc("POST /crm/documents/builtin", s.requireUser(s.docTemplateBuiltin))
+	mux.HandleFunc("POST /crm/documents/numerators", s.requireUser(s.docNumeratorSave))
+	mux.HandleFunc("POST /crm/documents/numerators/delete", s.requireUser(s.docNumeratorDelete))
 	mux.HandleFunc("POST /crm/documents/{id}/delete", s.requireUser(s.docTemplateDelete))
 	mux.HandleFunc("POST /crm/documents/{id}/numerator", s.requireUser(s.docTemplateNumerator))
 	mux.HandleFunc("POST /crm/documents/{id}/access", s.requireUser(s.docTemplateAccess))
@@ -199,6 +206,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /sign/new", s.requireUser(s.signNew))
 	mux.HandleFunc("GET /sign/hr", s.requireUser(s.signHRNew))
 	mux.HandleFunc("POST /sign/hr", s.requireUser(s.signHRCreate))
+	mux.HandleFunc("POST /sign/hr/self/{id}", s.requireUser(s.signSelfSet))
+	mux.HandleFunc("GET /sign/my", s.requireUser(s.signSelfNew))
+	mux.HandleFunc("POST /sign/my", s.requireUser(s.signSelfCreate))
 	mux.HandleFunc("GET /sign/batch/{id}", s.requireUser(s.signBatchPage))
 	mux.HandleFunc("POST /sign/batch/{id}/sign", s.requireUser(s.signBatchSign))
 	mux.HandleFunc("POST /sign/batch/{id}/remind", s.requireUser(s.signBatchRemind))
@@ -244,6 +254,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/presets/{id}", s.requireUser(s.crmPresetAction))
 	mux.HandleFunc("GET /crm/dicts", s.requireUser(s.crmDicts))
 	mux.HandleFunc("POST /crm/dicts", s.requireUser(s.crmDictSave))
+	mux.HandleFunc("GET /crm/duplicates", s.requireUser(s.crmDuplicates))
+	mux.HandleFunc("POST /crm/duplicates", s.requireUser(s.crmDuplicatesAction))
 	mux.HandleFunc("GET /crm/recycle", s.requireUser(s.crmRecycle))
 	mux.HandleFunc("POST /crm/recycle", s.requireUser(s.crmRecycleAction))
 	mux.HandleFunc("POST /crm/recycle/{id}", s.requireUser(s.crmRecycleAction))
@@ -257,6 +269,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /crm/export/{kind}", s.requireUser(s.crmExport))
 	mux.HandleFunc("POST /crm/import/{kind}", s.requireUser(s.crmImport))
 	mux.HandleFunc("POST /crm/{kind}/{id}/merge", s.requireUser(s.crmMerge))
+	mux.HandleFunc("POST /crm/{kind}/{id}/layout", s.requireUser(s.crmSaveLayout))
 	mux.HandleFunc("POST /crm/{kind}/{id}/requisites", s.requireUser(s.crmRequisite))
 	mux.HandleFunc("GET /crm/activities", s.requireUser(s.crmActivities))
 	mux.HandleFunc("GET /crm/analytics", s.requireUser(s.crmAnalytics))
@@ -277,6 +290,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /store", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/store/docs", http.StatusSeeOther) })
 	mux.HandleFunc("GET /store/docs", s.requireUser(s.stockDocs))
 	mux.HandleFunc("GET /store/docs/{id}", s.requireUser(s.stockDocPage))
+	mux.HandleFunc("POST /store/docs/bulk", s.requireUser(s.stockDocsBulk))
 	mux.HandleFunc("POST /store/docs/{id}", s.requireUser(s.stockDocAction))
 	mux.HandleFunc("GET /store/warehouses", s.requireUser(s.stockWarehouses))
 	mux.HandleFunc("POST /store/warehouses/{id}", s.requireUser(s.stockWarehouseSave))
@@ -305,6 +319,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /crm/robots", s.requireUser(s.crmRobots))
 	mux.HandleFunc("POST /crm/robots", s.requireUser(s.crmRobotAdd))
 	mux.HandleFunc("POST /crm/robots/{id}/delete", s.requireUser(s.crmRobotDelete))
+	mux.HandleFunc("GET /telephony/sounds/{sum}", s.requireUser(s.crmRobotSound))
 	mux.HandleFunc("POST /crm/triggers", s.requireUser(s.crmTriggerAdd))
 	mux.HandleFunc("POST /crm/triggers/{id}/delete", s.requireUser(s.crmTriggerDelete))
 	mux.HandleFunc("GET /crm/{kind}", s.requireUser(s.crmList))
@@ -364,6 +379,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /mail/files", s.requireUser(s.mailFiles))
 	mux.HandleFunc("POST /mail/folders/{id}/read", s.requireUser(s.mailReadAll))
 	mux.HandleFunc("POST /mail/folders/{id}/empty", s.requireUser(s.mailEmpty))
+	mux.HandleFunc("POST /mail/folders/{id}/clean", s.requireUser(s.mailClean))
 	mux.HandleFunc("POST /mail/folders/{id}/import", s.requireUser(s.mailImport))
 	mux.HandleFunc("POST /mail/categories", s.requireUser(s.mailCategorySave))
 	mux.HandleFunc("POST /mail/categories/{id}/save", s.requireUser(s.mailCategorySave))
@@ -427,8 +443,11 @@ func (s *Server) Routes() http.Handler {
 	s.mailExportRoutes(mux)
 	s.mailImportRoutes(mux)
 	s.mailSMIMERoutes(mux) // «Безопасность»: S/MIME certificates
+	s.mailOAuthRoutes(mux) // mailboxes signed in to Google, Microsoft, Яндекс
 	// the mail with the calendar, tasks and the CRM; shared mailboxes (mailinvite.go, maillinks.go, mailshared.go)
 	mux.HandleFunc("POST /mail/letters/{letter}/invite", s.requireUser(s.mailInviteAnswer))
+	mux.HandleFunc("POST /mail/letters/{letter}/propose", s.requireUser(s.mailInvitePropose))
+	mux.HandleFunc("POST /mail/letters/{letter}/counter", s.requireUser(s.mailCounterDecide))
 	mux.HandleFunc("POST /mail/letters/{letter}/crm", s.requireUser(s.mailCRM))
 	mux.HandleFunc("GET /mail/crm/search", s.requireUser(s.mailCRMSearch))
 	mux.HandleFunc("POST /mail/letters/{letter}/share", s.requireUser(s.mailShare))
@@ -447,6 +466,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /bp/i/{id}/delete", s.requireUser(s.bpDeleteInstance))
 	mux.HandleFunc("POST /bp/approvals/{id}", s.requireUser(s.bpDecide))
 	mux.HandleFunc("POST /bp/approvals/{id}/delegate", s.requireUser(s.bpDelegate))
+	mux.HandleFunc("GET /bp/lists", s.requireUser(s.bpListsHome))
+	mux.HandleFunc("GET /bp/lists/{id}", s.requireUser(s.bpListPage))
+	mux.HandleFunc("GET /bp/lists/{id}/export", s.requireUser(s.bpListExport))
+	mux.HandleFunc("GET /bp/lists/{id}/settings", s.requireUser(s.bpListSettings))
+	mux.HandleFunc("POST /bp/lists/{id}/settings", s.requireUser(s.bpListSave))
+	mux.HandleFunc("POST /bp/lists/{id}/delete", s.requireUser(s.bpListDelete))
+	mux.HandleFunc("GET /bp/lists/{list}/add", s.requireUser(s.bpElementPage))
+	mux.HandleFunc("POST /bp/lists/{list}/add", s.requireUser(s.bpElementSave))
+	mux.HandleFunc("GET /bp/el/{id}", s.requireUser(s.bpElementPage))
+	mux.HandleFunc("POST /bp/el/{id}", s.requireUser(s.bpElementSave))
+	mux.HandleFunc("POST /bp/el/{id}/delete", s.requireUser(s.bpElementDelete))
 	mux.HandleFunc("GET /bp/templates", s.requireUser(s.bpTemplates))
 	mux.HandleFunc("GET /bp/templates/{id}", s.requireUser(s.bpTemplatePage))
 	mux.HandleFunc("POST /bp/templates/{id}", s.requireUser(s.bpTemplateSave))
@@ -512,12 +542,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /bi/files", s.requireUser(s.biFiles))
 	mux.HandleFunc("POST /bi/files", s.requireUser(s.biFileCreate))
 	mux.HandleFunc("POST /bi/files/{fid}/{act}", s.requireUser(s.biFileAct))
+	mux.HandleFunc("POST /bi/import", s.requireUser(s.biImport))
 	mux.HandleFunc("GET /bi/groups", s.requireUser(s.biGroups))
 	mux.HandleFunc("POST /bi/groups", s.requireUser(s.biGroupCreate))
 	mux.HandleFunc("POST /bi/groups/{gid}/{act}", s.requireUser(s.biGroupAct))
 	mux.HandleFunc("GET /bi/{id}", s.requireUser(s.biDashboard))
 	mux.HandleFunc("POST /bi/{id}", s.requireUser(s.biSave))
 	mux.HandleFunc("POST /bi/{id}/copy", s.requireUser(s.biCopy))
+	mux.HandleFunc("GET /bi/{id}/export", s.requireUser(s.biExport))
 	mux.HandleFunc("POST /bi/{id}/delete", s.requireUser(s.biDelete))
 	mux.HandleFunc("POST /bi/{id}/publish", s.requireUser(s.biPublish))
 	mux.HandleFunc("POST /bi/{id}/rights", s.requireUser(s.biRights))
@@ -578,6 +610,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /kb/{space}/{page}/{act}", s.requireUser(s.kbMovePage))
 	mux.HandleFunc("POST /kb/{space}/{page}/comment", s.requireUser(s.kbDiscuss))
 	mux.HandleFunc("POST /kb/{space}/{page}/like", s.requireUser(s.kbDiscuss))
+	mux.HandleFunc("POST /kb/{space}/{page}/draft", s.requireUser(s.kbDraft))
 	mux.HandleFunc("POST /kb/{space}/{page}/comments/{id}", s.requireUser(s.kbComment))
 	mux.HandleFunc("GET /kb/{space}/{page}", s.requireUser(s.kbPage))
 	mux.HandleFunc("POST /kb/{space}/{page}", s.requireUser(s.kbSavePage))
@@ -651,6 +684,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /feed/{id}/poll/resume", s.requireUser(s.feedPollClose))
 	mux.HandleFunc("POST /feed/{id}/read", s.requireUser(s.feedRead))
 	mux.HandleFunc("POST /feed/seen", s.requireUser(s.feedSeen))
+	mux.HandleFunc("POST /feed/filters", s.requireUser(s.feedFilterSave))
+	mux.HandleFunc("POST /feed/filters/delete", s.requireUser(s.feedFilterDelete))
 	mux.HandleFunc("GET /feed/settings", s.requireUser(s.feedSettings))
 	mux.HandleFunc("POST /feed/settings", s.requireUser(s.feedSettingsSave))
 	mux.HandleFunc("POST /feed/{id}/delete", s.requireUser(s.feedDelete))
@@ -764,6 +799,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /prefs/widths", s.requireUser(s.setWidths))
 	mux.HandleFunc("POST /prefs/sort", s.requireUser(s.setListSort))
 	mux.HandleFunc("POST /prefs/pagesize", s.requireUser(s.setPageSize))
+	mux.HandleFunc("POST /prefs/tree", s.requireUser(s.setListTree))
 	mux.HandleFunc("GET /join/{token}", s.joinPage) // an invitation into a collab: also for people not signed in
 	mux.HandleFunc("GET /join/{token}/signup", s.joinSignup)
 	mux.HandleFunc("POST /join/{token}", s.requireUser(s.joinAccept))
@@ -774,6 +810,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /p/{key}/guests/{id}/revoke", s.requireUser(s.guestInviteRevoke))
 	mux.HandleFunc("POST /p/{key}/guests/{id}/resend", s.requireUser(s.guestInviteResend))
 	mux.HandleFunc("GET /collabs", s.requireUser(s.collabsPage))
+	mux.HandleFunc("GET /c/{key}", s.requireUser(s.collabOpen)) // a collab opened with its «Стартовый инструмент»
 	mux.HandleFunc("POST /collabs", s.requireUser(s.collabCreate))
 	mux.HandleFunc("POST /p/{key}/leave", s.requireUser(s.projectLeave))
 	mux.HandleFunc("GET /projects", s.requireUser(s.projects))
@@ -823,6 +860,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/admins", s.requireUser(s.adminsAdd))
 	mux.HandleFunc("POST /settings/admins/{id}/remove", s.requireUser(s.adminsRemove))
 	mux.HandleFunc("GET /settings/ip", s.requireUser(s.ipAccessPage))
+	mux.HandleFunc("GET /settings/system", s.requireUser(s.systemPage))
 	mux.HandleFunc("GET /settings/backup", s.requireUser(s.backupPage))
 	mux.HandleFunc("POST /settings/backup", s.requireUser(s.backupSave))
 	mux.HandleFunc("POST /settings/backup/run", s.requireUser(s.backupRun))
@@ -840,6 +878,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /apps/tab/{id}", s.requireUser(s.appTab))
 	mux.HandleFunc("POST /apps/frame", s.requireUser(s.appFrameAuth))
 	mux.HandleFunc("GET /go24.js", s.appSDK)
+	mux.HandleFunc("GET /apps/static/{id}/{path...}", s.appStatic)
+	mux.HandleFunc("POST /apps/static/{id}/{path...}", s.appStatic)
 	mux.HandleFunc("GET /oauth/authorize", s.requireUser(s.oauthAuthorize))
 	mux.HandleFunc("GET /oauth/token", s.oauthToken)
 	mux.HandleFunc("POST /oauth/token", s.oauthToken)
@@ -905,6 +945,21 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /worktime", s.requireUser(s.timeman))
 	mux.HandleFunc("POST /worktime/day", s.requireUser(s.workdayAction))
 	mux.HandleFunc("GET /worktime/table", s.requireUser(s.worksheet))
+	mux.HandleFunc("GET /worktime/meetings", s.requireUser(s.meetingsPage))
+	mux.HandleFunc("GET /worktime/meetings/new", s.requireUser(s.meetingFormPage))
+	mux.HandleFunc("POST /worktime/meetings", s.requireUser(s.meetingSave))
+	mux.HandleFunc("GET /worktime/meetings/{id}", s.requireUser(s.meetingPage))
+	mux.HandleFunc("GET /worktime/meetings/{id}/edit", s.requireUser(s.meetingFormPage))
+	mux.HandleFunc("POST /worktime/meetings/{id}", s.requireUser(s.meetingSave))
+	mux.HandleFunc("POST /worktime/meetings/{id}/delete", s.requireUser(s.meetingDelete))
+	mux.HandleFunc("POST /worktime/meetings/{id}/status", s.requireUser(s.meetingStatus))
+	mux.HandleFunc("POST /worktime/meetings/{id}/protocol", s.requireUser(s.meetingProtocol))
+	mux.HandleFunc("POST /worktime/meetings/{id}/next", s.requireUser(s.meetingNext))
+	mux.HandleFunc("POST /worktime/meetings/{id}/items", s.requireUser(s.meetingItemAdd))
+	mux.HandleFunc("POST /worktime/meetings/{id}/items/{item}", s.requireUser(s.meetingItemUpdate))
+	mux.HandleFunc("POST /worktime/meetings/{id}/items/{item}/delete", s.requireUser(s.meetingItemDelete))
+	mux.HandleFunc("POST /worktime/meetings/{id}/items/{item}/move", s.requireUser(s.meetingItemMove))
+	mux.HandleFunc("POST /worktime/meetings/{id}/items/{item}/task", s.requireUser(s.meetingItemTask))
 	mux.HandleFunc("GET /worktime/d/{user}/{day}", s.requireUser(s.workdayPage))
 	mux.HandleFunc("POST /worktime/d/{user}/{day}", s.requireUser(s.changeWorkday))
 	mux.HandleFunc("POST /worktime/changes/{id}", s.requireUser(s.decideWorkday))
@@ -933,8 +988,33 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /company/changes", s.requireUser(s.staffChanges))
 	mux.HandleFunc("GET /company/thanks", s.requireUser(s.thanksPage))
 	mux.HandleFunc("GET /company/honor", s.requireUser(s.honorPage))
+	mux.HandleFunc("GET /company/pulse", s.requireUser(s.pulsePage))
 	mux.HandleFunc("POST /company/honor", s.requireUser(s.honorAdd))
 	mux.HandleFunc("POST /company/honor/{id}/delete", s.requireUser(s.honorDelete))
+	// «Обучение»: courses, lessons, assignments
+	mux.HandleFunc("GET /company/learning", s.requireUser(s.learningPage))
+	mux.HandleFunc("GET /company/learning/new", s.requireUser(s.learnCourseForm))
+	mux.HandleFunc("POST /company/learning", s.requireUser(s.learnCourseSave))
+	mux.HandleFunc("GET /company/learning/{id}", s.requireUser(s.learnCoursePage))
+	mux.HandleFunc("GET /company/learning/{id}/edit", s.requireUser(s.learnCourseForm))
+	mux.HandleFunc("POST /company/learning/{id}", s.requireUser(s.learnCourseSave))
+	mux.HandleFunc("POST /company/learning/{id}/delete", s.requireUser(s.learnCourseDelete))
+	mux.HandleFunc("POST /company/learning/{id}/assign", s.requireUser(s.learnAssign))
+	mux.HandleFunc("POST /company/learning/{id}/unassign", s.requireUser(s.learnUnassign))
+	mux.HandleFunc("GET /company/learning/{id}/l/new", s.requireUser(s.learnLessonForm))
+	mux.HandleFunc("POST /company/learning/{id}/l", s.requireUser(s.learnLessonSave))
+	mux.HandleFunc("GET /company/learning/{id}/l/{lesson}", s.requireUser(s.learnLessonPage))
+	mux.HandleFunc("GET /company/learning/{id}/l/{lesson}/edit", s.requireUser(s.learnLessonForm))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}", s.requireUser(s.learnLessonSave))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/done", s.requireUser(s.learnLessonDone))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/{op}", s.requireUser(s.learnLessonOp))
+	mux.HandleFunc("GET /company/learning/{id}/certificate", s.requireUser(s.learnCertificate))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/q", s.requireUser(s.learnQuestionSave))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/q/{q}", s.requireUser(s.learnQuestionSave))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/q/{q}/{op}", s.requireUser(s.learnQuestionOp))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/start", s.requireUser(s.learnTestStart))
+	mux.HandleFunc("GET /company/learning/{id}/l/{lesson}/a/{n}", s.requireUser(s.learnAttemptPage))
+	mux.HandleFunc("POST /company/learning/{id}/l/{lesson}/a/{n}", s.requireUser(s.learnAttemptSend))
 	mux.HandleFunc("GET /company/absences", s.requireUser(s.absencesPage))
 	mux.HandleFunc("POST /company/absences", s.requireUser(s.absenceAdd))
 	mux.HandleFunc("POST /company/absences/{id}", s.requireUser(s.absenceUpdate))
@@ -946,10 +1026,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /company/invite", s.requireUser(s.inviteSend))
 	mux.HandleFunc("POST /company/invite/{id}/resend", s.requireUser(s.inviteResend))
 	mux.HandleFunc("POST /company/invite/{id}/cancel", s.requireUser(s.employeeInviteCancel))
+	mux.HandleFunc("POST /company/invite/requests/{id}/accept", s.requireUser(s.joinRequestAccept))
+	mux.HandleFunc("POST /company/invite/requests/{id}/reject", s.requireUser(s.joinRequestReject))
+	mux.HandleFunc("GET /settings/employees", s.requireUser(s.staffSettingsPage))
+	mux.HandleFunc("POST /settings/employees", s.requireUser(s.staffSettingsSave))
+	mux.HandleFunc("POST /settings/employees/link", s.requireUser(s.staffLinkRenew))
+	mux.HandleFunc("GET /register/{token}", s.registerPage) // «Быстрая регистрация»: for people not signed in
+	mux.HandleFunc("POST /register/{token}", s.registerSend)
 	mux.HandleFunc("POST /company/departments", s.requireUser(s.departments))
 	mux.HandleFunc("GET /u/{id}", s.requireUser(s.profile))
 	mux.HandleFunc("POST /u/{id}", s.requireUser(s.saveProfile))
 	mux.HandleFunc("POST /u/{id}/telephony/password", s.requireUser(s.telephonyPassword))
+	mux.HandleFunc("POST /u/{id}/telephony/prefs", s.requireUser(s.telephonyPrefs))
 	mux.HandleFunc("POST /u/{id}/departments", s.requireUser(s.userDepartments))
 	mux.HandleFunc("POST /u/{id}/active", s.requireUser(s.userActive))
 	mux.HandleFunc("POST /u/{id}/hr", s.requireUser(s.userHR))
@@ -974,6 +1062,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /t/{key}/messenger", s.requireUser(s.taskMessenger))
 	mux.HandleFunc("GET /t/{key}/live", s.requireUser(s.taskLive))
 	mux.HandleFunc("POST /t/{key}/comments/{id}/react", s.requireUser(s.commentReact))
+	mux.HandleFunc("POST /t/{key}/comments/{id}/edit", s.requireUser(s.commentEdit))
+	mux.HandleFunc("POST /t/{key}/comments/{id}/delete", s.requireUser(s.commentDelete))
 	mux.HandleFunc("POST /t/{key}/timer", s.requireUser(s.timerStart))
 	mux.HandleFunc("POST /t/{key}/dayplan", s.requireUser(s.taskDayPlan))
 	mux.HandleFunc("POST /dayplan", s.requireUser(s.dayPlanAdd))
@@ -1002,6 +1092,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /disk/recent", s.requireUser(s.diskRecent))
 	mux.HandleFunc("GET /disk/shared", s.requireUser(s.diskShared))
 	mux.HandleFunc("POST /disk/connect", s.requireUser(s.diskConnect))
+	mux.HandleFunc("POST /disk/shared/leave", s.requireUser(s.diskLeave))
 	mux.HandleFunc("GET /docs", s.requireUser(s.docsPage))
 	mux.HandleFunc("GET /boards", s.requireUser(s.boardsPage))
 	for _, base := range []string{"/disk/{which}", "/disk/p/{key}", "/disk/sh/{id}", "/disk/u/{uid}"} {
@@ -1018,6 +1109,7 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST "+base+"/purge", s.requireUser(s.diskPurge))
 		mux.HandleFunc("POST "+base+"/clean", s.requireUser(s.diskClean))
 		mux.HandleFunc("POST "+base+"/version-restore", s.requireUser(s.diskVersionRestore))
+		mux.HandleFunc("POST "+base+"/version-upload", s.requireUser(s.diskVersionUpload)) // «Загрузить новую версию»
 		mux.HandleFunc("POST "+base+"/share", s.requireUser(s.diskShare))
 		mux.HandleFunc("POST "+base+"/rights", s.requireUser(s.diskRights))
 		mux.HandleFunc("GET "+base+"/edit/{file}", s.requireUser(s.officeEdit))
@@ -1071,9 +1163,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /s/{token}/zip", s.shareZip)
 	mux.HandleFunc("GET /s/{token}/doc/{id}", s.shareDoc) // a document in ONLYOFFICE: viewed or, if the link lets, edited
 	mux.HandleFunc("GET /files/{id}/raw", s.requireUser(s.fileRaw))
+	mux.HandleFunc("GET /files/{id}/thumb", s.requireUser(s.fileThumb)) // the tiles of «Диск»: a picture, the first page of a PDF or a document
 	mux.HandleFunc("GET /files/{id}/versions", s.requireUser(s.fileVersions))
 	mux.HandleFunc("GET /files/{id}/versions/{v}", s.requireUser(s.fileVersion))
 	mux.HandleFunc("GET /files/{id}/about", s.requireUser(s.fileCard)) // «Подробнее»: the card with «Обсуждение»
+	mux.HandleFunc("POST /files/{id}/send", s.requireUser(s.diskSend)) // «Отправить в чат»
+	mux.HandleFunc("GET /disk/chats", s.requireUser(s.diskChats))
 	mux.HandleFunc("POST /files/{id}/comments", s.requireUser(s.fileComment))
 	mux.HandleFunc("POST /files/{id}/drive", s.requireUser(s.saveToDrive)) // «Сохранить на Диск» of an attachment
 	mux.HandleFunc("GET /settings/storages", s.requireUser(s.storagesPage))
@@ -1301,6 +1396,9 @@ func (s *Server) requireUser(next func(http.ResponseWriter, *http.Request, auth.
 		if s.frozen(r) { // a collab in the archive is read-only
 			s.frozenBack(w, r)
 			return
+		}
+		if s.DB != nil {
+			s.markPulse(r, sess, guest)
 		}
 		next(w, r, sess)
 	}

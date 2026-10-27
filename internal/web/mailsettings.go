@@ -25,7 +25,7 @@ import (
 // «Безопасность»: the user's S/MIME certificates, signing and encrypting by default (mailsmime.go).
 // /mail/settings?tab=signatures|templates|compose|handling|layout|lists|focused|rules|quick|sweep|ooo|forwarding|senders|crm|security.
 
-var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "layout", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm", "security"}
+var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "layout", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm", "security", "storage"}
 
 type mailSettingsData struct {
 	Tab                          string
@@ -73,6 +73,9 @@ type mailSettingsData struct {
 	List                         *mail.ContactList // the contact list being edited
 	Certs                        []mail.Cert       // «Безопасность»
 	Security                     mail.Security
+	Storage                      *mail.Storage // «Хранилище» of StorageBox (mailstorage.go)
+	StorageBox, StorageErr       string
+	CleanMonths                  []int
 }
 
 func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -135,6 +138,9 @@ func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess a
 	}
 	if err == nil && d.Tab == "security" {
 		err = s.mailSMIMEData(r, sess.UserID, d)
+	}
+	if err == nil && d.Tab == "storage" {
+		s.mailStorageData(r, sess.UserID, d)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/mail")

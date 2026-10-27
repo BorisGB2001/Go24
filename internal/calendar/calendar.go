@@ -511,6 +511,25 @@ func (s *Store) Range(ctx context.Context, viewer string, from, to time.Time) ([
 	return list, nil
 }
 
+// Upcoming are the viewer's coming meetings, as «Ближайшие события»: the ones they organize or are invited
+// to (not declined) that have not ended yet, starting within days from now, the nearest first, at most limit.
+func (s *Store) Upcoming(ctx context.Context, viewer string, now time.Time, days, limit int) ([]Event, error) {
+	list, err := s.Range(ctx, viewer, now, now.AddDate(0, 0, days))
+	if err != nil {
+		return nil, err
+	}
+	var out []Event
+	for _, e := range list {
+		if e.Kind != "event" || e.Hidden || !e.End.After(now) || len(out) == limit {
+			continue
+		}
+		if e.OwnerID == viewer && e.MyStatus != "declined" || e.MyStatus == "invited" || e.MyStatus == "accepted" || e.MyStatus == "tentative" {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // skips fills Skip of the repeated meetings of the list.
 func (s *Store) skips(ctx context.Context, list []Event) error {
 	at := map[string][]int{}

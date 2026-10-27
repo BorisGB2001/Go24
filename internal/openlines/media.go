@@ -148,11 +148,12 @@ func (s *Store) VisitorSeenState(ctx context.Context, widgetID, token string) (S
 	return x, err
 }
 
-// OperatorPhoto is the storage key and type of the photo of an operator who has answered in the line (the widget shows
-// it); "" — none.
+// OperatorPhoto is the storage key and type of the photo of an operator who has answered in the line, or of the first
+// operator of the queue, who invites the visitors (the widget shows it); "" — none.
 func (s *Store) OperatorPhoto(ctx context.Context, widgetID, userID string) (key, typ string, err error) {
-	err = s.db.QueryRow(ctx, `SELECT u.photo_key, u.photo_type FROM users u WHERE u.id::text = $2 AND EXISTS (SELECT 1 FROM ol_messages m
-		JOIN ol_sessions s ON s.id = m.session_id WHERE s.widget_id::text = $1 AND m.author_id = u.id AND m.kind = '')`, widgetID, userID).Scan(&key, &typ)
+	err = s.db.QueryRow(ctx, `SELECT u.photo_key, u.photo_type FROM users u WHERE u.id::text = $2 AND (EXISTS (SELECT 1 FROM ol_messages m
+		JOIN ol_sessions s ON s.id = m.session_id WHERE s.widget_id::text = $1 AND m.author_id = u.id AND m.kind = '')
+		OR EXISTS (SELECT 1 FROM ol_widgets w WHERE w.id::text = $1 AND w.hello_on AND w.operators[1] = u.id))`, widgetID, userID).Scan(&key, &typ)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
 	}

@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$d := .Data}}{{$l := $d.L}}{{$id := or $l.ID "new"}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a> {{icon "chevron-right"}} <a href="/bp/lists">{{t "lists.title"}}</a>{{if $l.ID}} {{icon "chevron-right"}} <a href="/bp/lists/{{$l.ID}}">{{$l.Name}}</a>{{end}}</div>
+<h1>{{icon "adjustments"}} {{if $l.Name}}{{$l.Name}}{{else}}{{t "lists.new"}}{{end}}</h1>
+<div class="layout2"><div>
+<div class="card">
+  <form method="post" action="/bp/lists/{{$id}}/settings"><input type="hidden" name="op" value="meta">
+    <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$l.Name}}" required maxlength="200">
+    <label>{{t "form.description"}}</label><textarea name="description" rows="2" maxlength="5000">{{$l.Description}}</textarea>
+    <label>{{t "lists.fields"}}</label>{{template "bpfields" (dict "P" "f" "Rows" $d.FieldRows "Kinds" $d.FieldKinds)}}
+    <p class="small muted">{{t "lists.fields_hint"}}</p>
+    {{with $l.Fields}}<label>{{t "lists.columns"}}</label><div class="row" style="flex-wrap:wrap">{{range .}}<label class="check"><input type="checkbox" name="col" value="{{.Key}}" {{if has $l.Columns .Key}}checked{{end}}> {{.Label}}</label>{{end}}</div>{{end}}
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+{{if $l.ID}}<div class="card">
+  <h3>{{t "lists.read"}}</h3>
+  <form method="post" action="/bp/lists/{{$id}}/settings" class="row"><input type="hidden" name="op" value="read">
+    <div style="flex:1">{{template "upick" (upick "to" $d.Readers nil "multi" "depts" "ph" (t "lists.read_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+  <h3>{{t "lists.write"}}</h3>
+  <form method="post" action="/bp/lists/{{$id}}/settings" class="row"><input type="hidden" name="op" value="write">
+    <div style="flex:1">{{template "upick" (upick "to" $d.Writers nil "multi" "depts" "ph" (t "lists.write_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+  <p class="small muted">{{t "lists.rights_hint"}}</p>
+</div>
+<div class="card"><form method="post" action="/bp/lists/{{$id}}/delete" data-confirm="{{t "lists.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "lists.delete"}}</button></form></div>{{end}}
+</div><div>
+{{if $l.ID}}<div class="card">
+  <h2>⚙ {{t "lists.bp"}}</h2>
+  {{range $d.Templates}}<div class="row"><a href="/bp/templates/{{.ID}}" style="flex:1">{{.Name}}</a>{{if not .Active}}<span class="muted small">{{t "bp.inactive"}}</span>{{end}}
+    {{if .AutoCreate}}<span class="pill">{{t "bp.auto_create"}}</span>{{end}}{{if .AutoChange}}<span class="pill">{{t "bp.auto_change"}}</span>{{end}}</div>{{else}}<p class="muted">{{t "lists.bp_none"}}</p>{{end}}
+  <p><a class="button ghost" href="/bp/templates/new?list={{$l.ID}}">{{icon "plus"}} {{t "bp.new_template"}}</a></p>
+  <p class="small muted">{{t "lists.bp_hint"}}</p>
+</div>{{end}}
+</div></div>
+<script src="{{asset "js/bpfields.js"}}"></script>
+{{end}}

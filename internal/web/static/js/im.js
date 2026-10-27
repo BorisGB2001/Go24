@@ -50,6 +50,17 @@
   let tab = im.dataset.tab || 'all';
   const filter = im.querySelector('[data-filter]');
   const callsBox = im.querySelector('[data-calls]');
+  // open chats one is not in: the channels on «Каналы», any of them when searched for
+  const openBox = im.querySelector('[data-open-list]');
+  const applyOpen = (q) => {
+    if (!openBox) return;
+    let n = 0;
+    openBox.querySelectorAll('[data-open-row]').forEach(a => {
+      a.hidden = q !== '' ? !a.dataset.name.toLowerCase().includes(q) : !(a.classList.contains('on') || (tab === 'channel' && a.dataset.kind === 'channel'));
+      if (!a.hidden) n++;
+    });
+    openBox.hidden = !n || tab === 'calls';
+  };
   const applyFilter = () => {
     const q = (filter?.value || '').toLowerCase();
     im.querySelectorAll('[data-list] .im-room').forEach(a => {
@@ -57,6 +68,7 @@
       row.hidden = (tab !== 'all' && a.dataset.kind !== tab && a.dataset.in !== tab) || (q !== '' && !a.dataset.name.toLowerCase().includes(q)) || (q === '' && row.dataset.hidden === '1');
     });
     callsBox?.querySelectorAll('[data-call]').forEach(row => { row.hidden = q !== '' && !row.dataset.name.toLowerCase().includes(q); });
+    applyOpen(q);
     im.querySelectorAll('[data-im-tab]').forEach(b => b.classList.toggle('on', b.dataset.imTab === tab));
     im.querySelectorAll('[data-tab-empty]').forEach(p => { p.hidden = p.dataset.tabEmpty !== tab || im.querySelector(`.im-room[data-kind="${tab}"], .im-room[data-in="${tab}"]`) !== null; });
     if (callsBox) callsBox.hidden = tab !== 'calls';
@@ -408,6 +420,16 @@
     f.dispatchEvent(new Event('input', { bubbles: true }));
     f.focus();
     f.setSelectionRange(f.value.length, f.value.length);
+  };
+  // a click on the author's name: «@Name » at the caret (go24 writes mentions so, see mention.js)
+  const mention = (form, name) => {
+    const f = form?.querySelector('textarea');
+    if (!f || !name) return;
+    const a = f.selectionStart ?? f.value.length, z = f.selectionEnd ?? a;
+    const pre = a && !/\s/.test(f.value[a - 1]) ? ' ' : '';
+    f.focus();
+    f.setRangeText(`${pre}@${name} `, a, z, 'end');
+    f.dispatchEvent(new Event('input', { bubbles: true }));
   };
   // «Поделиться картинкой»: the message drawn as a card (photo, name, time, text, the picture or the file) — a PNG for
   // Telegram, Max, VK…, not a link; the phone's own «Поделиться», on a computer «Скачать» / «Копировать»
@@ -790,6 +812,8 @@
     }
     const un = e.target.closest('[data-unpin]');
     if (un) { pin(un.dataset.unpin, false); return; }
+    const who = e.target.closest('.who[data-mention-name]');
+    if (who) { mention(im.querySelector(tmsgs.contains(who) ? '[data-send-thread]' : '[data-send]'), who.textContent); return; }
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const msg = b.closest('.msg');
@@ -1107,18 +1131,19 @@
     });
   }
 
-  // the buttons of a bot's message (KEYBOARD): a command goes to the bot, an action works here; a
-  // blocking button takes them all off after one press
+  // the buttons of a bot's message (KEYBOARD) and its items of the message's menu (MENU): a command
+  // goes to the bot, an action works here; a blocking button takes them all off after one press
   im.addEventListener('click', async e => {
     const b = e.target.closest('[data-kbd]');
     if (!b || b.disabled) return;
-    const kbd = b.closest('.im-kbd'), msg = b.closest('.msg'), v = b.dataset.value || '';
+    const kbd = b.closest('.im-kbd'), menu = b.closest('details.im-menu'), msg = b.closest('.msg'), v = b.dataset.value || '';
     const field = (b.closest('[data-thread-pane]') || im).querySelector('form.chatform textarea');
-    const lock = on => kbd.querySelectorAll('button').forEach(x => { x.disabled = on; });
+    const lock = on => kbd?.querySelectorAll('button').forEach(x => { x.disabled = on; });
+    if (menu) menu.open = false;
     if (b.dataset.block) lock(true);
     switch (b.dataset.kbd) {
       case 'command': {
-        const { ok, data } = await post('/im/button', { room, event: msg.dataset.id, command: b.dataset.command, params: b.dataset.params || '' });
+        const { ok, data } = await post('/im/button', { room, event: msg.dataset.id, command: b.dataset.command, params: b.dataset.params || '', ...(menu ? { menu: '1' } : {}) });
         if (!ok) { lock(false); alert(data.error || failed); }
         break;
       }

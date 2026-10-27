@@ -7,6 +7,9 @@
   {{if eq $c.Status "paused"}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/resume"><button class="primary">{{icon "player-play"}} {{t "mkt.resume"}}</button></form>{{end}}
   {{if or (eq $c.Status "sending") (eq $c.Status "paused")}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/stop" data-confirm="{{t "mkt.stop_confirm"}}"><button class="ghost">{{icon "ban"}} {{t "mkt.stop"}}</button></form>{{end}}
   <form method="post" action="/marketing/campaigns/{{$c.ID}}/copy"><button class="ghost">{{icon "copy"}} {{t "mkt.copy"}}</button></form>
+  {{if $c.Resendable}}<details class="tmenu"><summary class="button ghost" title="{{t "mkt.resend_hint"}}">{{icon "refresh"}} {{t "mkt.resend"}}</summary>
+    <div class="pop"><form method="post" action="/marketing/campaigns/{{$c.ID}}/resend-unopened"><button class="ghost">{{t "mkt.resend_unopened"}}</button></form>
+      <form method="post" action="/marketing/campaigns/{{$c.ID}}/resend-unclicked"><button class="ghost">{{t "mkt.resend_unclicked"}}</button></form></div></details>{{end}}
   {{if not (or (eq $c.Status "sending") (eq $c.Status "paused"))}}<form method="post" action="/marketing/campaigns/{{$c.ID}}/delete" data-confirm="{{t "mkt.delete_confirm" $c.Title}}"><button class="ghost">{{icon "trash"}}</button></form>{{end}}
   {{end}}</div>
 
@@ -28,13 +31,16 @@
 <div>
 <div class="card">
   <h3>{{icon "users"}} {{t "mkt.to"}}</h3>
+  {{if $c.ResendTo}}<p class="mkt-resend">{{icon "refresh"}} {{t (print "mkt.resend_to_" $c.ResendTo)}}
+    {{if $c.ResendOf}}<a href="/marketing/campaigns/{{$c.ResendOf}}">{{$c.ResendTitle}}</a>{{else}}<span class="form-error">{{t "mkt.resend_gone"}}</span>{{end}}</p>
+  <p class="small muted">{{t "mkt.resend_more"}}</p>{{end}}
   {{if $d.Segments}}<table class="tlist mkt-segs"><thead><tr><th>{{t "mkt.segment"}}</th><th title="{{t "mkt.include_hint"}}">{{t "mkt.include"}}</th><th title="{{t "mkt.exclude_hint"}}">{{t "mkt.exclude"}}</th></tr></thead><tbody>
   {{range $d.Segments}}<tr><td>{{.Name}}<div class="small muted">{{t (print "mkt.ent." .Entity)}}</div></td>
     <td><input type="checkbox" name="seg" value="{{.ID}}" {{if index $d.In .ID}}checked{{end}}></td>
     <td><input type="checkbox" name="exclude" value="{{.ID}}" {{if index $d.Out .ID}}checked{{end}}></td></tr>{{end}}</tbody></table>
   {{else}}<p class="muted">{{t "mkt.no_segments"}}</p>{{end}}
   <p class="small"><a href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a></p>
-  {{with $d.CountErr}}<div class="form-error">{{.}}</div>{{else}}{{if $c.Segments}}<p><b>{{t "mkt.will_get" $d.Count}}</b></p>{{end}}{{end}}
+  {{with $d.CountErr}}<div class="form-error">{{.}}</div>{{else}}{{if or $c.Segments $c.ResendTo}}<p><b>{{t "mkt.will_get" $d.Count}}</b></p>{{end}}{{end}}
   <p class="small muted">{{t "mkt.stop_note"}} <a href="/marketing/stoplist">{{t "mkt.stoplist"}}</a></p>
 </div>
 <div class="card">

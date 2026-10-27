@@ -1,0 +1,27 @@
+{{define "content"}}{{$d := .Data}}
+<div class="login">
+  <div class="card join">
+    <div class="logo">{{template "portal-logo" .}}</div>
+    {{if not $d.Open}}
+    <h2>{{icon "user-plus"}} {{t "register.closed"}}</h2>
+    <p class="muted">{{t "register.closed_hint"}}</p>
+    {{else if $d.Done}}
+    <h2>{{icon "mail"}} {{t "register.title"}}</h2>
+    <p>{{$d.Done}}</p>
+    {{else}}
+    <h2>{{icon "user-plus"}} {{t "register.title"}}</h2>
+    <p class="muted small">{{if $d.Approve}}{{t "register.what_approve"}}{{else}}{{t "register.what"}}{{end}}</p>
+    {{with $d.Err}}<div class="flash">{{icon "alert-triangle"}} {{.}}</div>{{end}}
+    <form method="post" action="/register/{{$d.Token}}" class="stack">
+      <label>{{t "invite.name"}} <input type="text" name="name" value="{{$d.Name}}" required maxlength="200" autocomplete="name"></label>
+      <label>E-mail <input type="email" name="email" value="{{$d.Email}}" required maxlength="254" autocomplete="email"></label>
+      {{with $d.Domains}}<p class="muted small">{{t "register.domains" (join . ", ")}}</p>{{end}}
+      <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
+      <button class="primary">{{icon "send"}} {{t "register.send"}}</button>
+    </form>
+    <p class="small muted"><a href="/login">{{t "join.login"}}</a></p>
+    {{end}}
+    {{template "langs" .}}
+  </div>
+</div>
+{{end}}

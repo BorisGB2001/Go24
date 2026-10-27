@@ -9,6 +9,7 @@
   <a href="/worktime/table">{{icon "table"}} {{t "worksheet.title"}}</a>
   {{if $d.Team}}<a href="/worktime/reports?tab=team" {{if eq $d.Tab "team"}}class="on"{{end}}>{{icon "users"}} {{t "wreport.tab.team"}}</a>{{end}}
   <a href="/worktime/reports?tab=mine" {{if eq $d.Tab "mine"}}class="on"{{end}}>{{icon "file-text"}} {{t "wreport.tab.mine"}}</a>
+  <a href="/worktime/meetings">{{icon "presentation"}} {{t "meeting.title"}}</a>
 </div>
 <form class="row filters" method="get" action="/worktime/reports"><input type="hidden" name="tab" value="{{$d.Tab}}">
   {{if not $d.Unchecked}}<a href="/worktime/reports?tab={{$d.Tab}}&month={{$d.PrevMonth}}{{with $d.User}}&user={{.}}{{end}}" class="button ghost">{{icon "chevron-left"}}</a>

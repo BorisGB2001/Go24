@@ -43,7 +43,8 @@
   <button {{if $d.CanConduct}}{{else}}class="primary" {{end}}name="op" value="save">{{t "common.save"}}</button>{{if $d.CanConduct}}<button class="primary" name="op" value="save_conduct">{{icon "check"}} {{t "stock.save_conduct"}}</button>{{end}}</p>{{end}}
 </div>
 </form>
-{{if and $v.ID (or $d.CanCancel $d.CanDelete (and $d.CanConduct (not $w)))}}<div class="row">
+{{if and $v.ID (or $d.CanCopy $d.CanCancel $d.CanDelete (and $d.CanConduct (not $w)))}}<div class="row">
+  {{if $d.CanCopy}}<a class="button ghost" href="/store/docs/new?kind={{$k}}&amp;copy={{$v.ID}}">{{icon "copy"}} {{t "stock.copy"}}</a>{{end}}
   {{if $d.CanCancel}}<form method="post" action="/store/docs/{{$v.ID}}" data-confirm="{{t "stock.cancel_confirm"}}"><input type="hidden" name="op" value="cancel"><button>{{icon "arrow-back-up"}} {{t "stock.cancel"}}</button></form>{{end}}
   {{if and $d.CanConduct (not $w)}}<form method="post" action="/store/docs/{{$v.ID}}"><input type="hidden" name="op" value="conduct"><button class="primary">{{icon "check"}} {{t "stock.conduct"}}</button></form>{{end}}
   {{if $d.CanDelete}}<form method="post" action="/store/docs/{{$v.ID}}" data-confirm="{{t "stock.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form>{{end}}

@@ -1,7 +1,8 @@
 // «Диск» in jsdom: checkboxes show the selection bar with its count; «Скачать» of the selection is one ZIP address;
 // «Переместить» fills the dialog's form with the selection and the folder picked (a moved folder is not offered as the
 // place); files dropped on a folder row upload into it one by one; a row dropped on a folder of the path moves there,
-// on «Корзина» — goes to the trash; a dropped folder and «Загрузить папку» upload each file with its path.
+// on «Корзина» — goes to the trash; a dropped folder and «Загрузить папку» upload each file with its path; a thumbnail
+// the server has none of gives way to the file's icon.
 // node test/js/disk.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
@@ -149,7 +150,7 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
 // are remembered
 {
   const store = new Map();
-  const d2 = new JSDOM(`<!doctype html><body><div class="seg" data-disk-view><button data-view-mode="list"></button><button data-view-mode="tiles"></button></div>
+  const d2 = new JSDOM(`<!doctype html><body><div class="seg" data-disk-view><button data-view-mode="list"></button><button data-view-mode="tiles"></button><button data-view-mode="big"></button></div>
     <div data-disk="/disk/company" data-folder="" data-write="false" data-l-none="Не открывается" data-base="https://go24.example"><table><tbody>
     <tr data-item="folder" data-id="f1"><td><input type="checkbox" data-sel></td></tr>
     <tr data-item="file" data-id="p"><td><input type="checkbox" data-sel></td><td class="thumb"><a href="/files/p" data-view="p" data-kind="image" data-name="p.png"></a></td><td><a href="/files/p" data-view="p" data-kind="image" data-name="p.png">p.png</a></td></tr>
@@ -204,11 +205,14 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   d.querySelector('[data-view-mode=tiles]').click();
   assert.ok(d.querySelector('[data-disk]').classList.contains('tiles'));
   assert.equal(store.get('go24.disk.view'), 'tiles');
+  d.querySelector('[data-view-mode=big]').click(); // «Крупная плитка»
+  assert.ok(d.querySelector('[data-disk]').classList.contains('tiles') && d.querySelector('[data-disk]').classList.contains('big'));
+  assert.equal(store.get('go24.disk.view'), 'big');
 }
 
 // «История версий»: the list comes from the server; a former version downloads, «Восстановить» sends the form
 {
-  const dom3 = new JSDOM(`<!doctype html><body><form method="get" data-disk-filter><input name="q" value="план"><select name="type"><option value="">все</option><option value="pdf">PDF</option></select></form><div data-disk="/disk/my" data-folder="" data-write="true" data-l-download="Скачать">
+  const dom3 = new JSDOM(`<!doctype html><body><form method="get" data-disk-filter><input name="q" value="план"><select name="period" data-disk-period><option value="">любая</option><option value="today">сегодня</option><option value="range">период</option></select><div data-disk-range><input type="date" name="from"></div></form><div data-disk="/disk/my" data-folder="" data-write="true" data-l-download="Скачать">
     <table><tbody><tr data-item="file" data-id="x1"><td><button data-disk-versions="x1" data-mine>v</button></td></tr></tbody></table></div>
     <dialog data-disk-ver data-l-current="текущая" data-l-restore="Восстановить"><span data-disk-ver-name></span><table><tbody data-disk-ver-list></tbody></table>
     <form method="post" action="/disk/my/version-restore" data-disk-ver-form><input type="hidden" name="file"><input type="hidden" name="version"></form></dialog>
@@ -230,11 +234,15 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   assert.equal(trs[1].querySelector('a').getAttribute('href'), '/files/x1/versions/v1');
   trs[1].querySelector('button').click();
   assert.deepEqual(submitted, ['file=x1', 'version=v1']);
-  // the filter by type applies when picked
-  const sel = d3.querySelector('[data-disk-filter] select');
-  sel.value = 'pdf';
+  // the filter: the dates «с — по» only for «Период»
+  const sel = d3.querySelector('[data-disk-period]'), range = d3.querySelector('[data-disk-range]');
+  assert.ok(range.hidden);
+  sel.value = 'range';
   sel.dispatchEvent(new w3.Event('change', { bubbles: true }));
-  assert.deepEqual(submitted, ['q=план', 'type=pdf']);
+  assert.ok(!range.hidden);
+  sel.value = 'today';
+  sel.dispatchEvent(new w3.Event('change', { bubbles: true }));
+  assert.ok(range.hidden);
 }
 // a file the folder already has: the server names the clashes; each is asked about — a new version, another name or
 // skip (the version is not offered for a file the user may not change), «Для всех таких файлов» answers the rest
@@ -287,4 +295,15 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   assert.deepEqual(up, []);
   assert.match(d4.querySelector('[data-disk-progress]').textContent, /Пропущен/);
 }
+// a thumbnail the server has none of (404): the icon next to it is shown instead
+{
+  const d5 = new JSDOM(`<!doctype html><body><table class="disk-list"><tr><td class="thumb"><a>
+    <img src="/files/x1/thumb" data-thumb><span class="ticon" hidden>DOCX</span></a></td></tr></table></body>`, { runScripts: 'outside-only' });
+  d5.window.eval(js);
+  const img = d5.window.document.querySelector('img[data-thumb]');
+  img.dispatchEvent(new d5.window.Event('error'));
+  assert.equal(d5.window.document.querySelector('img[data-thumb]'), null, 'the broken thumbnail stays');
+  assert.equal(d5.window.document.querySelector('.ticon').hidden, false, 'the icon is not shown');
+}
+
 console.log('disk.test.mjs ok');

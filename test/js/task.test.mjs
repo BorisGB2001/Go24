@@ -158,4 +158,73 @@ const tick = () => new Promise(r => setTimeout(r, 10));
   assert.ok(!first.classList.contains('dragging'));
 }
 
-console.log('task.js: 6 scenarios passed');
+// 7. the message's menu: reply sends reply_to, edit sends the new text to …/edit, delete removes the message (GO24DEV-771)
+{
+  const dom = new JSDOM(`<!doctype html><body><main class="content">
+    <div class="tcard" data-task="GO-1">
+      <aside class="tchat"><div class="msgs" data-msgs>
+        <div class="msg" data-id="m1" data-author="Анна"><div class="bubble"><button data-msg-menu>…</button><div class="text">Вопрос</div></div></div>
+        <div class="msg mine" data-id="m2" data-author="Я"><div class="bubble"><button data-msg-menu>…</button><div class="text">Мой ответ</div></div></div></div>
+        <div class="pop msgpop" data-msgpop hidden>
+          <button data-do="reply">r</button><button data-do="copy">c</button>
+          <a data-do="subtask" href="/tasks/new?parent=GO-1&comment=">s</a>
+          <button data-do="edit" data-own>e</button><button data-do="delete" data-own data-confirm="?">d</button></div>
+        <form method="post" action="/t/GO-1/comments" data-chat data-failed="Не удалось">
+          <div data-chatctx hidden><b data-ctx-title data-reply="Ответ" data-edit="Изменение"></b><span data-ctx-body></span><button type="button" data-ctx-cancel>x</button></div>
+          <input type="hidden" name="reply_to" value=""><textarea name="body"></textarea><button>send</button></form></aside>
+    </div></main></body>`, { runScripts: 'outside-only', url: 'http://go24.test/t/GO-1', pretendToBeVisual: true });
+  const w = dom.window, d = w.document;
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  w.confirm = () => true;
+  const sent = [];
+  w.fetch = async (url, opts) => {
+    sent.push({ url, body: String(opts.body) });
+    if (url.endsWith('/delete')) return { ok: true, json: async () => ({ id: 'm2', deleted: true }) };
+    const id = url.endsWith('/edit') ? 'm2' : 'm3';
+    return { ok: true, json: async () => ({ id, html: `<div class="msg mine" data-id="${id}" data-author="Я"><div class="bubble"><button data-msg-menu>…</button><div class="text">new ${id}</div></div></div>` }) };
+  };
+  w.eval(script);
+  const pop = d.querySelector('[data-msgpop]');
+  const menu = id => d.querySelector(`.msg[data-id="${id}"] [data-msg-menu]`).click();
+  // someone else's message: no «Изменить»/«Удалить»; the subtask link carries the message
+  menu('m1');
+  assert.equal(pop.hidden, false);
+  assert.equal(pop.querySelector('[data-do=edit]').hidden, true);
+  assert.equal(pop.querySelector('[data-do=delete]').hidden, true);
+  assert.equal(pop.querySelector('[data-do=subtask]').getAttribute('href'), '/tasks/new?parent=GO-1&comment=m1');
+  pop.querySelector('[data-do=reply]').click();
+  assert.equal(pop.hidden, true);
+  assert.equal(d.querySelector('[data-chatctx]').hidden, false);
+  assert.equal(d.querySelector('[data-ctx-title]').textContent, 'Ответ: Анна');
+  const text = d.querySelector('textarea');
+  text.value = 'Отвечаю';
+  d.querySelector('form[data-chat]').requestSubmit();
+  await tick();
+  assert.equal(sent[0].url, 'http://go24.test/t/GO-1/comments');
+  assert.match(sent[0].body, /reply_to=m1/);
+  assert.equal(d.querySelector('[data-chatctx]').hidden, true);
+  assert.equal(d.querySelector('input[name=reply_to]').value, '');
+  // one's own: ↑ in the empty field edits the last own message
+  text.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  assert.equal(text.value, 'new m3');
+  text.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(text.value, '');
+  menu('m2');
+  assert.equal(pop.querySelector('[data-do=edit]').hidden, false);
+  pop.querySelector('[data-do=edit]').click();
+  assert.equal(text.value, 'Мой ответ');
+  text.value = 'Исправлено';
+  d.querySelector('form[data-chat]').requestSubmit();
+  await tick();
+  assert.equal(sent[1].url, '/t/GO-1/comments/m2/edit');
+  assert.match(sent[1].body, /body=%D0%98/);
+  assert.equal(d.querySelector('.msg[data-id="m2"] .text').textContent, 'new m2');
+  assert.equal(d.querySelectorAll('.msg').length, 3, 'edited in place, nothing added');
+  menu('m2');
+  pop.querySelector('[data-do=delete]').click();
+  await tick();
+  assert.equal(sent[2].url, '/t/GO-1/comments/m2/delete');
+  assert.equal(d.querySelector('.msg[data-id="m2"]'), null);
+}
+
+console.log('task.js: 7 scenarios passed');

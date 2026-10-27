@@ -116,5 +116,12 @@ func (s *Server) bookingClientStatus(w http.ResponseWriter, r *http.Request) {
 		old.Status = ""
 		s.bookingTriggers(r.Context(), old, b)
 	}
+	if changed && b.Status == "cancelled" && s.OpenLines != nil { // booked in a dialogue of an open line: a line of it
+		if res, err := s.Booking.Resource(r.Context(), b.ResourceID); err == nil {
+			if err := s.OpenLines.BookingCancelled(r.Context(), b.ID, s.olBookingWhat(b, res)); err != nil {
+				s.Log.Warn("booking dialogue", "err", err)
+			}
+		}
+	}
 	http.Redirect(w, r, bookingURL(r, "/bk/b/"+tok), http.StatusSeeOther)
 }

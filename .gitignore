@@ -20,3 +20,5 @@ deploy/go24-dev-ca.crt
 __pycache__/
 # boris.gb 2026-10-25 23:55 - резервные копии go24 (GO24DEV-569) не попадают в git
 deploy/backups/
+# boris.gb 2026-10-27 18:07 - MediaPipe для фона в звонке скачивается при сборке образа (Dockerfile, GO24DEV-778)
+internal/web/static/js/vendor/mediapipe/

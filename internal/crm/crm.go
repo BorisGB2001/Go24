@@ -32,6 +32,14 @@ type Store struct {
 	SendMail func(ctx context.Context, userID, to, subject, text string) error
 	// BookingURL is the address of a booking link that is on («Онлайн-запись»; booking robots; nil: they fail)
 	BookingURL func(ctx context.Context, linkID string) (string, error)
+	// InfoCall calls the number through the external line and plays it the message sum (infocall robots; nil: they fail)
+	InfoCall func(ctx context.Context, line, number, sum string) error
+	// MakeDocument makes a document of the card by a template of the document generator, of the user, and says its id
+	// (document robots; nil: they fail)
+	MakeDocument func(ctx context.Context, userID, entity, entityID, templateID string) (string, error)
+	// StartBP starts a business process of the template on the card as an autostart does, and says its id (process
+	// robots; nil: they fail)
+	StartBP func(ctx context.Context, userID, templateID, entityID string) (string, error)
 }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }

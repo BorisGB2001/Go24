@@ -33,7 +33,8 @@ func (s *Server) phoneCDR(w http.ResponseWriter, r *http.Request) {
 	c := telephony.CDR{UniqueID: r.FormValue("id"), From: r.FormValue("from"), To: r.FormValue("to"), Dial: r.FormValue("dial"),
 		By: r.FormValue("by"), Line: r.FormValue("line"),
 		Record: r.FormValue("rec"), Start: epoch(r.FormValue("start")), Answer: epoch(r.FormValue("answer")), End: epoch(r.FormValue("end")),
-		Voicemail: r.FormValue("vm") == "1", XFrom: r.FormValue("xfrom"), XTo: r.FormValue("xto")}
+		Voicemail: r.FormValue("vm") == "1", XFrom: r.FormValue("xfrom"), XTo: r.FormValue("xto"),
+		Mobile: r.FormValue("mob")}
 	c.Rating, _ = strconv.Atoi(r.FormValue("rate"))
 	if c.Voicemail && c.Record != "" && !s.phoneMessage(c.Record) { // the client hung up before the beep
 		c.Record = ""

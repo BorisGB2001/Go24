@@ -30,7 +30,11 @@
       <select name="time_format"><option value="">{{t "portal.by_lang"}}</option>
         <option value="24" {{if eq $s.TimeFormat "24"}}selected{{end}}>{{t "portal.time_24"}}</option>
         <option value="12" {{if eq $s.TimeFormat "12"}}selected{{end}}>{{t "portal.time_12"}}</option></select></label>
+    <label>{{t "portal.name_format"}}
+      <select name="name_format">
+        {{range $d.NameFormats}}<option value="{{.}}" {{if or (eq . $s.NameFormat) (and (eq . "first_last") (not $s.NameFormat))}}selected{{end}}>{{index $d.NameSamples .}}</option>{{end}}</select></label>
   </div>
+  <p class="muted small">{{t "portal.name_format_hint"}}</p>
   <div><button class="primary">{{t "common.save"}}</button></div>
 </form>
 {{end}}

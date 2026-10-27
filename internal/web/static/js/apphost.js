@@ -117,6 +117,7 @@
     } catch (err) {
       reply = { error: String(err && err.message || err) };
     }
-    e.source.postMessage({ go24: 'reply', id: m.id, ...reply }, e.origin);
+    // a static application's sandbox has no origin to name («null»): the reply goes to that frame's window only
+    e.source.postMessage({ go24: 'reply', id: m.id, ...reply }, e.origin === 'null' ? '*' : e.origin);
   });
 })();

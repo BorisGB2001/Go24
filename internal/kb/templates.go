@@ -97,7 +97,7 @@ func (s *Store) Templates(ctx context.Context, userID string, tr func(string) st
 	}
 	rows, err := s.db.Query(ctx, `SELECT t.id, t.name, t.description, t.pages, coalesce(u.name, ''), t.created_at,
 			$2 OR t.created_by IS NOT DISTINCT FROM $1::uuid
-		FROM kb_templates t LEFT JOIN users u ON u.id = t.created_by ORDER BY t.created_at DESC`, userID, tasks.IsAdmin(ctx))
+		FROM kb_templates t LEFT JOIN users u ON u.id = t.created_by WHERE t.kind = 'space' ORDER BY t.created_at DESC`, userID, tasks.IsAdmin(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (s *Store) SaveTemplate(ctx context.Context, userID, spaceID, name, descrip
 	return id, tx.Commit(ctx)
 }
 
-// DeleteTemplate deletes a template of the company with its files: who saved it, or an administrator.
+// DeleteTemplate deletes a template of the company (of a base or a page) with its files: who saved it, or an administrator.
 func (s *Store) DeleteTemplate(ctx context.Context, userID, id string) error {
 	tag, err := s.db.Exec(ctx, `DELETE FROM kb_templates WHERE id::text = $1 AND ($3 OR created_by = $2)`, id, userID, tasks.IsAdmin(ctx))
 	if err != nil {
@@ -277,7 +277,7 @@ func (s *Store) CreateFromTemplate(ctx context.Context, userID, templateID, name
 	var tree []TemplatePage
 	own := !strings.HasPrefix(templateID, "b:")
 	if own {
-		err := s.db.QueryRow(ctx, `SELECT pages FROM kb_templates WHERE id::text = $1`, templateID).Scan(&tree)
+		err := s.db.QueryRow(ctx, `SELECT pages FROM kb_templates WHERE id::text = $1 AND kind = 'space'`, templateID).Scan(&tree)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}

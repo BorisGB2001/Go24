@@ -8,7 +8,7 @@ import (
 )
 
 // systemVersion is the version of the ready dashboards: a greater one replaces their widgets in the database.
-const systemVersion = 3
+const systemVersion = 4
 
 // SystemDashboard is a ready dashboard: its code (the title is the locale's bi.sys.CODE), period and widgets.
 type SystemDashboard struct {
@@ -20,7 +20,7 @@ type SystemDashboard struct {
 }
 
 func kpi(ds, title string, m Measure, f ...Filter) Widget {
-	return Widget{Kind: "kpi", Width: 3, Title: title, Query: Query{Dataset: ds, Measures: []Measure{m}, Filters: f}}
+	return Widget{Kind: "kpi", Width: 3, Title: title, Query: Query{Dataset: ds, Measures: []Measure{m}, Filters: f}, Compare: true}
 }
 
 func chart(kind string, width int, ds, title string, dims []string, m []Measure, f ...Filter) Widget {
@@ -56,8 +56,8 @@ var SystemDashboards = []SystemDashboard{
 		kpi("crm_deal", "bi.sw.deals_won", count, yes("won")),
 		kpi("crm_deal", "bi.sw.won_amount", sum("amount"), yes("won")),
 		kpi("crm_deal", "bi.sw.avg_won", avg("amount"), yes("won")),
-		chart("bar", 8, "crm_deal", "bi.sw.amount_by_month", []string{"created_at:month", "semantic"}, []Measure{sum("amount")}),
-		chart("pie", 4, "crm_deal", "bi.sw.deals_by_stage", []string{"stage"}, []Measure{count}),
+		chart("stack", 8, "crm_deal", "bi.sw.amount_by_month", []string{"created_at:month", "semantic"}, []Measure{sum("amount")}),
+		chart("funnel", 4, "crm_deal", "bi.sw.deals_by_stage", []string{"stage"}, []Measure{count}),
 		chart("bar", 6, "crm_deal", "bi.sw.won_by_manager", []string{"responsible"}, []Measure{sum("amount")}, yes("won")),
 		chart("table", 6, "crm_deal", "bi.sw.managers", []string{"responsible"}, []Measure{count, sum("amount"), avg("amount")}),
 	}},
@@ -68,7 +68,7 @@ var SystemDashboards = []SystemDashboard{
 		kpi("crm_company", "bi.sw.companies_new", count),
 		chart("line", 8, "crm_lead", "bi.sw.leads_by_day", []string{"created_at:day"}, []Measure{count}),
 		chart("pie", 4, "crm_lead", "bi.sw.leads_by_source", []string{"source"}, []Measure{count}),
-		chart("bar", 6, "crm_lead", "bi.sw.leads_by_stage", []string{"stage"}, []Measure{count}),
+		chart("funnel", 6, "crm_lead", "bi.sw.leads_by_stage", []string{"stage"}, []Measure{count}),
 		chart("table", 6, "crm_lead", "bi.sw.sources", []string{"source", "converted"}, []Measure{count, sum("amount")}),
 	}},
 	{Code: "tasks", Period: "month", Sections: []string{"tasks"}, Filters: []string{"responsible", "project"}, Widgets: []Widget{
@@ -76,7 +76,7 @@ var SystemDashboards = []SystemDashboard{
 		kpi("task", "bi.sw.tasks_done", count, yes("completed")),
 		kpi("task", "bi.sw.tasks_overdue", count, yes("overdue")),
 		kpi("task", "bi.sw.tasks_spent", sum("spent_hours")),
-		chart("bar", 8, "task", "bi.sw.tasks_by_week", []string{"created_at:week", "completed"}, []Measure{count}),
+		chart("stack", 8, "task", "bi.sw.tasks_by_week", []string{"created_at:week", "completed"}, []Measure{count}),
 		chart("pie", 4, "task", "bi.sw.tasks_by_status", []string{"status"}, []Measure{count}),
 		chart("table", 12, "task", "bi.sw.efficiency", []string{"responsible"}, []Measure{count, sum("estimate_hours"), sum("spent_hours")}),
 	}},
@@ -123,8 +123,8 @@ func (s *Store) EnsureSystem(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				if _, err := tx.Exec(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query) VALUES ($1, $2, $3, $4, $5, $6)`,
-					id, i, w.Kind, w.Title, w.Width, q); err != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, compare)
+					VALUES ($1, $2, $3, $4, $5, $6, $7)`, id, i, w.Kind, w.Title, w.Width, q, w.Compare); err != nil {
 					return err
 				}
 			}

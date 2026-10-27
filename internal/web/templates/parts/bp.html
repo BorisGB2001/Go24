@@ -51,6 +51,7 @@
 {{- if eq $s.Kind "request"}}{{range $i, $f := $s.Fields}}{{if $i}},{{else}}:{{end}} <code>{{$f.Key}}</code>{{end}}{{end}}
 {{- if and $s.Delegate (or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request"))}} <span class="small muted">({{t (print "bp.delegation." $s.Delegate)}})</span>{{end}}
 {{- if eq $s.Kind "set"}}: <code>{{$s.Field}}</code> = «{{$s.Value}}»{{end}}
+{{- if eq $s.Kind "event"}} (<code>{{$s.Start}}</code>{{with $s.End}} — <code>{{.}}</code>{{end}}) · {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
 {{- if eq $s.Kind "pick"}}: <code>{{$s.Field}}</code> ← {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
 {{- if eq $s.Kind "create"}} ({{t (print "crm." $s.Entity)}}){{end}}{{if eq $s.Kind "absence"}} ({{t (print "absence.kind." $s.Absence)}}: <code>{{$s.Start}}</code> — <code>{{$s.End}}</code>){{end}}{{if eq $s.Kind "mail"}}: {{$s.Subject}}{{end}}
 {{- range $i, $a := $s.Sets}}{{if $i}},{{else}}:{{end}} <code>{{$a.Field}}</code> = «{{$a.Value}}»{{end}}
@@ -58,7 +59,11 @@
 {{- if eq $s.Kind "activity"}} ({{t (print "crm.act." $s.Deed)}}){{end}}
 {{- if or (eq $s.Kind "chat") (eq $s.Kind "mail") (eq $s.Kind "post") (eq $s.Kind "comment") (eq $s.Kind "document")}} · {{t "bp.from"}} {{template "bpwho" (dict "To" (or $s.From "starter") "Users" $users "Fields" $fields)}} →{{end}}
 {{- if and (eq $s.Kind "mail") $s.To}} {{template "bpwho" (dict "To" $s.To "Users" $users "Fields" $fields)}}{{end}}{{with $s.Email}} {{.}}{{end}}
-{{- if or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request") (eq $s.Kind "notify") (eq $s.Kind "task") (eq $s.Kind "chat") (eq $s.Kind "create") (eq $s.Kind "activity") (eq $s.Kind "userinfo")}}{{range $i, $to := $s.People}}{{if $i}},{{else}} ·{{end}} {{if or (eq $to "starter") (eq $to "manager") (eq $to "responsible")}}{{t (print "bp.to." $to)}}{{else if hasPrefix $to "field:"}}{{$k := slice $to 6}}{{range $fields}}{{if eq .Key $k}}{{$k = .Label}}{{end}}{{end}}{{t "bp.to.field" $k}}{{else}}{{range $users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}{{end}}
+{{- if or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request") (eq $s.Kind "notify") (eq $s.Kind "chat") (eq $s.Kind "create") (eq $s.Kind "activity") (eq $s.Kind "userinfo")}}{{range $i, $to := $s.People}}{{if $i}},{{else}} ·{{end}} {{if or (eq $to "starter") (eq $to "manager") (eq $to "responsible")}}{{t (print "bp.to." $to)}}{{else if hasPrefix $to "field:"}}{{$k := slice $to 6}}{{range $fields}}{{if eq .Key $k}}{{$k = .Label}}{{end}}{{end}}{{t "bp.to.field" $k}}{{else}}{{range $users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}{{end}}
+{{- if eq $s.Kind "task"}} · {{template "bpwho" (dict "To" (or $s.To "starter") "Users" $users "Fields" $fields)}}
+{{- if $s.Users}} · {{t "bp.task_accomplices"}} {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
+{{- if $s.Watchers}} · {{t "bp.task_watchers"}} {{range $i, $to := $s.Watchers}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
+{{- if $s.High}} · {{t "bp.task_high"}}{{end}}{{if $s.Control}} · {{t "bp.task_control"}}{{end}}{{with $s.Items}} · {{t "bp.task_items" (len .)}}{{end}}{{if $s.Wait}} · {{t "bp.task_wait"}}{{end}}{{end}}
 {{- if and (eq $s.Kind "approve") $s.Users}} · {{t (print "bp.mode." (or $s.Mode "any"))}}{{end}}
 {{- if eq $s.Kind "pick"}} · {{t (print "bp.pick." (or $s.Mode "random"))}}{{if $s.Skip}} · {{t "bp.pick.skip"}}{{with $s.To}} · {{t "bp.pick.reserve"}} {{template "bpwho" (dict "To" . "Users" $users "Fields" $fields)}}{{end}}{{end}}{{end}}
 {{- with $s.Project}} · {{.}}{{end}}{{with $s.URL}} · <code>{{.}}</code>{{end}}{{if $s.Days}} · {{t "bp.days" $s.Days}}{{end}}{{if and (eq $s.Kind "wait") $s.Field}} · {{t "bp.until"}} <code>{{$s.Field}}</code>{{end}}

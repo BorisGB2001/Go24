@@ -60,6 +60,9 @@ type Config struct {
 	// «Хранилища» in the cloud services: go24's application at Google, Dropbox, Microsoft (client ID and secret);
 	// empty — the service is not offered
 	GDriveID, GDriveSecret, DropboxID, DropboxSecret, OneDriveID, OneDriveSecret string
+	// «Почта» connected by signing in: go24's application at Google, Microsoft, Яндекс; empty — Google's and
+	// Microsoft's of «Хранилища», else the service is not offered
+	MailGoogleID, MailGoogleSecret, MailMicrosoftID, MailMicrosoftSecret, MailYandexID, MailYandexSecret string
 	// Backups («Настройки → Резервное копирование»): the folder go24-worker writes copies into, the snapshot of the
 	// configuration (deploy/ as at the start, made by backup-init) and the backups' folder as the server names it
 	// (shown on the page), the data folder of Synapse (its media); BackupDir empty — no backups
@@ -118,6 +121,13 @@ func Load() (Config, error) {
 		DropboxSecret:    env("GO24_DROPBOX_CLIENT_SECRET", ""),
 		OneDriveID:       env("GO24_ONEDRIVE_CLIENT_ID", ""),
 		OneDriveSecret:   env("GO24_ONEDRIVE_CLIENT_SECRET", ""),
+		// «Почта» signed in to Google, Microsoft, Яндекс
+		MailGoogleID:        env("GO24_MAIL_GOOGLE_CLIENT_ID", ""),
+		MailGoogleSecret:    env("GO24_MAIL_GOOGLE_CLIENT_SECRET", ""),
+		MailMicrosoftID:     env("GO24_MAIL_MICROSOFT_CLIENT_ID", ""),
+		MailMicrosoftSecret: env("GO24_MAIL_MICROSOFT_CLIENT_SECRET", ""),
+		MailYandexID:        env("GO24_MAIL_YANDEX_CLIENT_ID", ""),
+		MailYandexSecret:    env("GO24_MAIL_YANDEX_CLIENT_SECRET", ""),
 	}
 
 	var missing []string

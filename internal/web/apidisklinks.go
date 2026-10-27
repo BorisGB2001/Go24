@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go24/internal/apikeys"
+	"go24/internal/drive"
 	"go24/internal/i18n"
 )
 
@@ -22,6 +23,7 @@ func (s *Server) apiDiskLinkRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST "+base+"/shares", s.api("disk:write", s.apiDiskShares))
 	}
 	mux.HandleFunc("DELETE /api/v1/disk/drives/{drive}/shares/{share}", s.api("disk:write", s.apiDiskUnshare))
+	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/files/{id}/versions", s.api("disk:write", s.apiDiskVersionUpload))
 	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/files/{id}/versions/{version}/restore", s.api("disk:write", s.apiDiskVersionRestore))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}/comments", s.api("disk:read", s.apiDiskComments))
 	mux.HandleFunc("POST /api/v1/disk/files/{id}/comments", s.api("disk:write", s.apiDiskComments))
@@ -160,6 +162,44 @@ func (s *Server) apiDiskVersionRestore(w http.ResponseWriter, r *http.Request, p
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+// apiDiskVersionUpload is disk.file.uploadversion: the uploaded bytes (multipart field file) become the
+// file's new version, its name and links stay; the answer is the file.
+func (s *Server) apiDiskVersionUpload(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	d, err := s.apiOpenDrive(r, p)
+	if err != nil {
+		return err
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return i18n.E("err.file_required")
+	}
+	defer r.MultipartForm.RemoveAll()
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		return i18n.E("err.file_required")
+	}
+	defer f.Close()
+	id := r.PathValue("id")
+	if err := s.diskVersion(r.Context(), p.UserID, d, id, f, hdr.Size); err != nil {
+		return err
+	}
+	on, err := s.Drive.FileOn(r.Context(), d, id)
+	if err != nil {
+		return err
+	}
+	_, files, _, err := s.Drive.List(r.Context(), d, on.FolderID)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.ID == id {
+			writeJSON(w, http.StatusOK, apiDiskFileOf(f))
+			return nil
+		}
+	}
+	return drive.ErrNotFound
 }
 
 type apiDiskComment struct {

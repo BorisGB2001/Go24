@@ -62,7 +62,7 @@ func (s *Server) apiOLPause(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 }
 
 // olOps are a dialogue's actions: POST /api/v1/openlines/dialogs/{id}/<op>.
-var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept", "form"}
+var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept", "form", "booking"}
 
 type apiOLLine struct {
 	ID         string    `json:"id"`
@@ -71,13 +71,17 @@ type apiOLLine struct {
 	Operators  []apiUser `json:"operators"`  // the queue
 	QueueMode  string    `json:"queue_mode"` // all | evenly | strict
 	AnswerWait int       `json:"answer_wait_minutes"`
-	HoursOn    bool      `json:"hours_on"`
-	HoursDays  []int32   `json:"hours_days,omitempty"` // 0 Sunday … 6 Saturday
-	HoursFrom  string    `json:"hours_from,omitempty"`
-	HoursTo    string    `json:"hours_to,omitempty"`
-	Autoclose  int       `json:"autoclose_hours"`
-	VoteOn     bool      `json:"vote_on"`
-	CRMAuto    bool      `json:"crm_auto"`
+	// «Максимальное количество диалогов у оператора» (0 — no limit), counted till answer | close
+	MaxChats     int     `json:"max_chats"`
+	MaxChatsType string  `json:"max_chats_type"`
+	CRMForward   bool    `json:"crm_forward"` // a client CRM knows goes to their card's responsible
+	HoursOn      bool    `json:"hours_on"`
+	HoursDays    []int32 `json:"hours_days,omitempty"` // 0 Sunday … 6 Saturday
+	HoursFrom    string  `json:"hours_from,omitempty"`
+	HoursTo      string  `json:"hours_to,omitempty"`
+	Autoclose    int     `json:"autoclose_hours"`
+	VoteOn       bool    `json:"vote_on"`
+	CRMAuto      bool    `json:"crm_auto"`
 	// KPI of the answer time, minutes (0 — off), and who is told of a late dialogue
 	KPIFirst    int  `json:"kpi_first_minutes"`
 	KPIFurther  int  `json:"kpi_further_minutes"`
@@ -126,10 +130,11 @@ type apiOLMessage struct {
 	From     string     `json:"from"` // visitor | operator | hidden (an operator's hidden one) | line (its automatic messages) | note (a service line)
 	Operator *apiUser   `json:"operator,omitempty"`
 	Text     string     `json:"text"`
-	Kind     string     `json:"kind,omitempty"` // of the line's: welcome, offline, noanswer, close, form_done, bot; of an operator's: form
+	Kind     string     `json:"kind,omitempty"` // of the line's: welcome, offline, noanswer, close, form_done, booking_done, bot; of an operator's: form, booking
 	At       time.Time  `json:"at"`
 	File     *apiOLFile `json:"file,omitempty"`
 	Form     *apiOLForm `json:"form,omitempty"`
+	Booking  *apiOLForm `json:"booking,omitempty"` // the booking link (kind booking, booking_done), done_at — when the client booked
 	Buttons  []string   `json:"buttons,omitempty"` // the chat bot's menu (kind bot)
 }
 
@@ -205,12 +210,18 @@ func apiOLMessagesOf(list []openlines.Message) []apiOLMessage {
 			x.From, x.Kind = "line", m.Kind
 		case m.AuthorID != "":
 			x.From, x.Operator = "operator", &apiUser{m.AuthorID, m.Operator}
-			if m.Kind == "form" {
+			if m.Kind == "form" || m.Kind == "booking" {
 				x.Kind = m.Kind
 			}
 		}
 		if m.FormID != "" {
 			x.Form = &apiOLForm{m.FormID, m.FormDone}
+		}
+		if m.BookingLinkID != "" {
+			x.Booking = &apiOLForm{m.BookingLinkID, nil}
+			if m.Kind == "booking" {
+				x.Booking.DoneAt = m.FormDone
+			}
 		}
 		out = append(out, x)
 	}
@@ -238,6 +249,7 @@ func (s *Server) apiOLLines(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	out := []apiOLLine{}
 	for _, x := range list {
 		l := apiOLLine{ID: x.ID, Name: x.Name, Active: x.Active, Operators: []apiUser{}, QueueMode: x.QueueMode, AnswerWait: x.AnswerWait,
+			MaxChats: x.MaxChats, MaxChatsType: x.MaxChatsType, CRMForward: x.CRMForward,
 			HoursOn: x.HoursOn, Autoclose: x.Autoclose, VoteOn: x.VoteOn, CRMAuto: x.CRMAuto, Origins: x.Origins, CreatedAt: x.CreatedAt,
 			KPIFirst: x.KPIFirst, KPIFurther: x.KPIFurther, KPIOperator: x.KPIOperator, KPIHeads: x.KPIHeads, BotOn: x.BotOn}
 		if x.BotOn {
@@ -396,6 +408,7 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		Vote    int    `json:"vote"`
 		Comment string `json:"comment"`
 		Form    string `json:"form_id"`
+		Link    string `json:"booking_link_id"`
 	}
 	if r.ContentLength != 0 {
 		if err := readJSON(r, &in); err != nil {
@@ -414,6 +427,8 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		err = s.OpenLines.Intercept(ctx, p.UserID, id)
 	case "form":
 		err = s.OpenLines.SendForm(ctx, p.UserID, id, in.Form, s.olFormLink)
+	case "booking":
+		err = s.olSendBooking(ctx, p.UserID, s.apiAdmin(ctx, p.UserID), id, in.Link)
 	case "transfer":
 		if in.Line != "" {
 			err = s.OpenLines.TransferLine(ctx, p.UserID, id, in.Line)

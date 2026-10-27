@@ -46,6 +46,21 @@
 {{end}}
 
 {{define "olline"}}{{$w := .W}}
+<details class="olline"><summary>{{t "ol.show"}}</summary>
+  <div class="grid"><div><label>{{t "ol.position"}}</label><select name="position">
+      {{range $p := list "bottom-right" "bottom-left" "top-right" "top-left"}}<option value="{{$p}}" {{if eq $w.Position $p}}selected{{end}}>{{t (printf "ol.pos_%s" $p)}}</option>{{end}}</select></div>
+    <div><label>{{t "ol.show_delay"}}</label><input type="number" name="show_delay" min="0" max="600" value="{{$w.ShowDelay}}"></div></div>
+  <label>{{t "ol.pages_mode"}}</label><select name="pages_mode">
+    {{range $m := list "all" "only" "except"}}<option value="{{$m}}" {{if eq $w.PagesMode $m}}selected{{end}}>{{t (printf "ol.pages_%s" $m)}}</option>{{end}}</select>
+  <label>{{t "ol.pages"}}</label><textarea name="pages" rows="3" maxlength="50000" placeholder="https://example.com/catalog/*">{{range $w.Pages}}{{.}}
+{{end}}</textarea>
+  <p class="small muted">{{t "ol.pages_hint"}}</p>
+  <label class="check"><input type="checkbox" name="hide_offline" {{if $w.HideOffline}}checked{{end}}> {{t "ol.hide_offline"}}</label>
+  <label class="check"><input type="checkbox" name="hello_on" {{if $w.HelloOn}}checked{{end}}> {{t "ol.hello_on"}}</label>
+  <label>{{t "ol.hello_text"}}</label><textarea name="hello_text" rows="2" maxlength="1000" placeholder="{{t "ol.hello_ph"}}">{{$w.HelloText}}</textarea>
+  <label>{{t "ol.hello_delay"}}</label><input type="number" name="hello_delay" min="0" max="600" value="{{$w.HelloDelay}}">
+  <p class="small muted">{{t "ol.hello_hint"}}</p>
+</details>
 <details class="olline"><summary>{{t "ol.queue"}}</summary>
   <label>{{t "ol.queue_mode"}}</label><select name="queue_mode">
     <option value="all" {{if eq $w.QueueMode "all"}}selected{{end}}>{{t "ol.mode_all"}}</option>
@@ -53,6 +68,11 @@
     <option value="strict" {{if eq $w.QueueMode "strict"}}selected{{end}}>{{t "ol.mode_strict"}}</option></select>
   <p class="small muted">{{t "ol.hint"}}</p>
   <label>{{t "ol.answer_wait"}}</label><input type="number" name="answer_wait" min="1" max="1440" value="{{$w.AnswerWait}}">
+  <div class="grid"><div><label>{{t "ol.max_chats"}}</label><input type="number" name="max_chats" min="0" max="1000" value="{{$w.MaxChats}}"></div>
+    <div><label>{{t "ol.max_chats_type"}}</label><select name="max_chats_type">
+      <option value="answer" {{if ne $w.MaxChatsType "close"}}selected{{end}}>{{t "ol.max_answer"}}</option>
+      <option value="close" {{if eq $w.MaxChatsType "close"}}selected{{end}}>{{t "ol.max_close"}}</option></select></div></div>
+  <p class="small muted">{{t "ol.max_hint"}}</p>
 </details>
 <details class="olline"><summary>{{t "ol.hours"}}</summary>
   <label class="check"><input type="checkbox" name="hours_on" {{if $w.HoursOn}}checked{{end}}> {{t "ol.hours_on"}}</label>
@@ -77,6 +97,8 @@
 <details class="olline"><summary>{{t "ol.crm"}}</summary>
   <label class="check"><input type="checkbox" name="crm_auto" {{if $w.CRMAuto}}checked{{end}}> {{t "ol.crm_auto"}}</label>
   <p class="small muted">{{t "ol.crm_hint"}}</p>
+  <label class="check"><input type="checkbox" name="crm_forward" {{if $w.CRMForward}}checked{{end}}> {{t "ol.crm_forward"}}</label>
+  <p class="small muted">{{t "ol.crm_forward_hint"}}</p>
 </details>
 <details class="olline"><summary>{{t "ol.consent"}}</summary>
   <label class="check"><input type="checkbox" name="consent_on" {{if $w.ConsentOn}}checked{{end}}> {{t "ol.consent_on"}}</label>

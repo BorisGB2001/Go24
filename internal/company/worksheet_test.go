@@ -67,6 +67,16 @@ func TestSheet(t *testing.T) {
 	if b.Cells[13].Kind != "absence" || b.Cells[13].Absence != "vacation" || b.Cells[15].Kind != "none" {
 		t.Errorf("absence %+v", b.Cells[13])
 	}
+	// the norm: 22 working days of October by 9 hours, b's three days of vacation are not in it
+	if a.Plan != 22*9*3600 || b.Plan != 19*9*3600 {
+		t.Errorf("plan %d %d", a.Plan/3600, b.Plan/3600)
+	}
+	if m := (DayPlan{Work: true, Start: "22:00", End: "07:00", Break: 60}).Minutes(); m != 8*60 { // a night shift
+		t.Errorf("night shift %d", m)
+	}
+	if (DayPlan{Free: true}).Minutes() != 0 || (DayPlan{Start: "09:00", End: "18:00"}).Minutes() != 0 {
+		t.Error("no plan")
+	}
 }
 
 // TestDayChanges: an employee's change waits for the manager and is applied on approval, a declined one is not; a

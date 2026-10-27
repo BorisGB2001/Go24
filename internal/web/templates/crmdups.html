@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.dups_about"}}</p>
+<div class="row crmtools">
+  <div class="seg">{{range list "contact" "company" "lead"}}<a href="/crm/duplicates?entity={{.}}" class="chip{{if eq . $d.Entity}} on{{end}}">{{t (print "crm." (index (dict "contact" "contacts" "company" "companies" "lead" "leads") .))}}</a>{{end}}</div>
+  <span class="muted">{{t "crm.dups_by"}}</span>
+  <div class="seg">{{range $d.Criteria}}<a href="/crm/duplicates?entity={{$d.Entity}}&by={{.}}" class="chip{{if eq . $d.By}} on{{end}}">{{t (print "crm.dups_c." .)}}</a>{{end}}</div>
+</div>
+{{if $d.Groups}}<p class="muted small">{{t "crm.dups_found" $d.Total}}{{if gt $d.Total $d.Limit}} · {{t "crm.dups_shown" $d.Limit}}{{end}}</p>
+{{range $gi, $g := $d.Groups}}<form method="post" action="/crm/duplicates" class="card flush dupgroup">
+  <input type="hidden" name="entity" value="{{$d.Entity}}"><input type="hidden" name="by" value="{{$d.By}}">
+  <div class="row" style="padding:10px 14px;justify-content:space-between"><b>{{icon "copy"}} {{t (print "crm.dups_c." $d.By)}}: {{$g.Value}}</b>
+    <span class="row">{{if $d.Merge}}<button name="op" value="merge" data-confirm="{{t "crm.dups_merge_confirm"}}">{{t "crm.dups_merge"}}</button>{{end}}
+      <button class="ghost" name="op" value="skip">{{t "crm.dups_skip"}}</button></span></div>
+  <table class="tlist">
+    <thead><tr><th></th>{{if $d.Merge}}<th title="{{t "crm.dups_keep_hint"}}">{{t "crm.dups_keep"}}</th>{{end}}<th>{{t "crm.f.title"}}</th><th>{{t "crm.f.phone"}}</th><th>{{t "crm.f.email"}}</th><th>{{t "crm.f.responsible"}}</th><th>{{t "crm.dups_created"}}</th></tr></thead>
+    <tbody>{{range $i, $c := $g.Cards}}<tr>
+      <td><input type="checkbox" name="ids" value="{{$c.ID}}" checked></td>
+      {{if $d.Merge}}<td><input type="radio" name="keep" value="{{$c.ID}}" {{if eq $i 0}}checked{{end}}></td>{{end}}
+      <td><a href="/crm/{{index (dict "contact" "contacts" "company" "companies" "lead" "leads") $d.Entity}}/{{$c.ID}}" target="_blank"><b>{{$c.Title}}</b></a></td>
+      <td>{{$c.Phone}}</td><td>{{$c.Email}}</td><td>{{$c.Responsible.Name}}</td>
+      <td class="small muted nowrap">{{datetime $c.CreatedAt}}</td>
+    </tr>{{end}}</tbody></table>
+</form>{{end}}
+{{else}}<div class="card empty muted">{{t "crm.dups_none"}}</div>{{end}}
+{{end}}

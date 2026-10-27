@@ -1,0 +1,39 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.P}}
+<div class="pagehead"><h1>{{icon "chart-line"}} {{t "pulse.title"}}</h1></div>
+<form method="get" action="/company/pulse" class="row filters pulsebar">
+  <span class="row presets">{{range $d.Periods}}<a class="chip{{if eq . $d.Period}} on{{end}}" href="/company/pulse?period={{.}}&dept={{$d.Dept}}">{{t (print "pulse.period." .)}}</a>{{end}}</span>
+  <span class="period small"><span>{{t "period.from"}} <input type="date" name="from" value="{{$p.From.Format "2006-01-02"}}" data-autosubmit style="width:auto"></span>
+    <span>{{t "period.to"}} <input type="date" name="to" value="{{$p.To.Format "2006-01-02"}}" data-autosubmit style="width:auto"></span></span>
+  <select name="dept" data-autosubmit style="width:auto" aria-label="{{t "pulse.dept"}}"><option value="">{{t "pulse.all_scope"}}</option>
+    {{range $p.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <noscript><button>{{t "pulse.show"}}</button></noscript>
+</form>
+<div class="crmkpi">
+  {{if $p.HasToday}}<div class="card"><div class="muted small">{{t "pulse.today"}}</div><b>{{$p.Today}} <span class="muted small">{{t "pulse.of" $p.Total}} · {{$p.Pct $p.Today}}%</span></b></div>{{end}}
+  <div class="card"><div class="muted small">{{t "pulse.active"}}</div><b>{{$p.Active}} <span class="muted small">{{t "pulse.of" $p.Total}} · {{$p.Pct $p.Active}}%</span></b></div>
+  <div class="card" title="{{t "pulse.index_hint" $d.Involved}}"><div class="muted small">{{t "pulse.index"}}</div><b>{{$p.Index}}% <span class="muted small">{{t "pulse.involved_n" $p.Involved}}</span></b></div>
+</div>
+{{if gt (len $p.Days) 1}}<div class="card stack"><h3 class="small">{{t "pulse.by_day"}}</h3>
+  <div class="telbars" role="img" aria-label="{{t "pulse.by_day"}}">{{range $p.Days}}
+    <div class="telbar" title="{{day .Day}}: {{.Users}}"><span class="tb-in" style="height:{{pct .Users $p.Total}}%"></span><small>{{.Day.Day}}</small></div>{{end}}</div>
+</div>{{end}}
+<div class="card flush"><h3 class="small pulse-h">{{t "pulse.by_tool"}}</h3><div class="tablewrap"><table class="tlist pulsetools">
+  <thead><tr><th>{{t "pulse.tool"}}</th><th class="right">{{t "pulse.users"}}</th><th style="width:40%"></th></tr></thead>
+  <tbody>{{range $p.Tools}}<tr><td>{{t (print "pulse.tool." .Tool)}}</td><td class="right"><b>{{.Users}}</b> <span class="muted small">{{.Pct}}%</span></td>
+    <td><span class="pulsemeter"><i style="width:{{.Pct}}%"></i></span></td></tr>{{end}}</tbody>
+</table></div></div>
+{{if gt (len $p.Depts) 1}}<div class="card flush"><h3 class="small pulse-h">{{t "pulse.by_dept"}}</h3><div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "pulse.dept"}}</th><th class="right">{{t "pulse.employees"}}</th><th class="right">{{t "pulse.active"}}</th><th class="right">{{t "pulse.index"}}</th></tr></thead>
+  <tbody>{{range $p.Depts}}<tr><td>{{indent .Depth}}<a href="/company/pulse?dept={{.ID}}&from={{$p.From.Format "2006-01-02"}}&to={{$p.To.Format "2006-01-02"}}">{{.Name}}</a></td>
+    <td class="right">{{.Total}}</td><td class="right">{{.Active}} <span class="muted small">{{.Pct}}%</span></td><td class="right">{{.Index}}%</td></tr>{{end}}</tbody>
+</table></div></div>{{end}}
+<div class="card flush"><h3 class="small pulse-h">{{t "pulse.people"}}</h3><div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "pulse.employee"}}</th><th>{{t "pulse.tools"}}</th><th class="right">{{t "pulse.days"}}</th></tr></thead>
+  <tbody>{{range $p.Users}}<tr><td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name (photoURL .ID .PhotoKey) false}}<span>{{.Name}}{{with .Position}}<br><span class="muted small">{{.}}</span>{{end}}</span></a></td>
+    <td>{{if .Involved}}<span class="pill pulse-ok" title="{{t "pulse.index_hint" $d.Involved}}">{{t "pulse.involved"}}</span> {{end}}{{range .Tools}}<span class="pulse-tool">{{t (print "pulse.tool." .)}}</span> {{else}}<span class="muted small">{{t "pulse.inactive"}}</span>{{end}}</td>
+    <td class="right">{{.Days}}</td></tr>
+  {{else}}<tr><td colspan="3" class="empty">{{t "pulse.empty"}}</td></tr>{{end}}</tbody>
+</table></div></div>
+<p class="muted small">{{t "pulse.hint"}}</p>
+{{end}}

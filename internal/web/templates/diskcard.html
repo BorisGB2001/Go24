@@ -7,8 +7,9 @@
     <div class="row">
       <a class="button primary" href="/files/{{$c.ID}}">{{icon "download"}} {{t "disk.download"}}</a>
       {{if or (eq $kind "image") (eq $kind "pdf") (eq $kind "video") (eq $kind "audio")}}<a class="button ghost" href="/files/{{$c.ID}}/raw" target="_blank">{{icon "eye"}} {{t "disk.open"}}</a>{{end}}
+      {{if $c.Drive}}<button type="button" class="ghost" data-disk-send="{{$c.ID}}" data-name="{{$c.Name}}">{{icon "message-circle"}} {{t "disk.send_chat"}}</button>{{end}}
     </div>
-    {{if eq $kind "image"}}<img class="dcard-img" src="/files/{{$c.ID}}/raw" alt="">{{end}}
+    {{if eq $kind "image"}}<img class="dcard-img" src="/files/{{$c.ID}}/raw" alt="">{{else if hasThumb $c.Name $c.ContentType}}<img class="dcard-img" src="/files/{{$c.ID}}/thumb" alt="" data-thumb>{{end}}
     <div class="props">
       <span class="k">{{t "disk.prop_type"}}</span><span>{{t (print "disk.type_" $d.Type)}} · {{ext $c.Name}}</span>
       <span class="k">{{t "col.size"}}</span><span>{{size $c.Size}}</span>
@@ -50,7 +51,7 @@
           {{if and $d.Office (officeEditable $c.Name)}}<label><input type="checkbox" name="edit" value="1"{{if and $l $l.Edit}} checked{{end}}> {{t "disk.link_edit"}}</label>{{end}}
           <div class="row"><button>{{if $l}}{{t "common.save"}}{{else}}{{t "disk.link_make"}}{{end}}</button>{{if $l}}<button class="ghost" name="off" value="1">{{t "disk.link_off"}}</button>{{end}}</div></form></details>{{end}}
     </div>
-    <h3>{{icon "history"}} {{t "disk.versions"}}</h3>
+    <h3 class="row">{{icon "history"}} {{t "disk.versions"}}{{if $d.NewVersion}}<span class="spacer"></span><button type="button" class="ghost small" data-disk-newver="{{$c.ID}}" data-action="{{$dr.Path}}/version-upload" data-folder="{{$c.FolderID}}">{{icon "cloud-upload"}} {{t "disk.new_version"}}</button>{{end}}</h3>
     <table class="list small"><thead><tr><th>{{t "disk.version"}}</th><th>{{t "col.uploaded"}}</th><th>{{t "col.size"}}</th><th></th></tr></thead>
       <tbody>{{range $d.Versions}}<tr><td>{{.No}}{{if not .ID}} · {{t "disk.version_current"}}{{end}}</td><td>{{datetime .CreatedAt}}<div class="muted">{{.Author}}</div></td><td>{{size .Size}}</td>
         <td><a class="button ghost small" href="/files/{{$c.ID}}{{with .ID}}/versions/{{.}}{{end}}">{{icon "download"}}</a></td></tr>{{end}}</tbody></table>
@@ -72,4 +73,5 @@
     </form>
   </div>
 </div>
+{{if $c.Drive}}{{template "diskSend"}}{{end}}{{if $d.NewVersion}}{{template "diskNewVersion"}}{{end}}{{if and (ne $kind "image") (hasThumb $c.Name $c.ContentType)}}<script src="{{asset "js/disk.js"}}"></script>{{end}}
 {{end}}

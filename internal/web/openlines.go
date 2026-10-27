@@ -66,15 +66,17 @@ func (s *Server) widgetScript(w http.ResponseWriter, r *http.Request) {
 	t := map[string]string{}
 	for _, k := range []string{"open", "chat", "contact", "placeholder", "contact_note", "name", "phone", "email", "question", "send", "thanks",
 		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram",
-		"form_fill", "form_filled"} {
+		"form_fill", "form_filled", "booking_open", "booking_booked", "close"} {
 		t[k] = s.I18n.T(lang, "widget."+k)
 	}
 	bot, _ := s.OpenLines.Telegram(r.Context(), wd.ID) // the line's other channel: «Написать в Telegram»
 	cfg, _ := json.Marshal(map[string]any{"id": wd.ID, "base": s.widgetBase(r), "color": wd.Color, "name": wd.Name,
 		"greeting": wd.Greeting, "t": t, "max_file": openlines.MaxFile, "consent": map[bool]string{true: wd.ConsentText}[wd.ConsentOn],
-		"telegram": bot.Name})
+		"telegram": bot.Name, "position": wd.Position, "pages_mode": wd.PagesMode, "pages": wd.Pages, "show_delay": wd.ShowDelay,
+		"hello": map[bool]string{true: wd.HelloText}[wd.HelloOn], "hello_delay": wd.HelloDelay, "hello_photo": s.widgetHelloPhoto(r, wd),
+		"offline": wd.HideOffline && !wd.InHours(time.Now())})
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("Cache-Control", "public, max-age=60") // working hours: the button hides within a minute
 	_, _ = w.Write([]byte(strings.Replace(widgetJS, "/*CONFIG*/{}", string(cfg), 1)))
 }
 
@@ -134,6 +136,12 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 						"done": m.FormDone != nil}
 				case m.Kind == "form_done":
 					x["form_done"] = m.FormID
+				case m.Kind == "booking" && m.BookingToken != "": // a booking link: the page inside the widget
+					x["body"], _, _ = strings.Cut(m.Body, "\n")
+					x["booking"] = map[string]any{"id": m.BookingLinkID, "url": base + "/bk/" + url.PathEscape(m.BookingToken) + "?embed=1&ol=" + m.FormSecret,
+						"done": m.FormDone != nil}
+				case m.Kind == "booking_done":
+					x["booking_done"] = m.BookingLinkID
 				case len(m.Buttons) > 0: // the chat bot's menu: its items as buttons (the lines of the text are for Telegram)
 					x["body"] = strings.TrimSpace(strings.TrimSuffix(m.Body, strings.Join(m.Buttons, "\n")))
 					x["buttons"] = m.Buttons
@@ -298,6 +306,17 @@ func (s *Server) widgetFileGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // widgetPhoto is the photo of an operator who has answered in the line.
+// widgetHelloPhoto is the link to the photo of the operator of «Автоприглашение» — the queue's first; "" — none.
+func (s *Server) widgetHelloPhoto(r *http.Request, wd openlines.Widget) string {
+	if !wd.HelloOn || len(wd.Operators) == 0 {
+		return ""
+	}
+	if key, _, err := s.OpenLines.OperatorPhoto(r.Context(), wd.ID, wd.Operators[0]); err != nil || key == "" {
+		return ""
+	}
+	return s.widgetBase(r) + "/w/" + wd.ID + "/photo/" + wd.Operators[0]
+}
+
 func (s *Server) widgetPhoto(w http.ResponseWriter, r *http.Request) {
 	key, typ, err := s.OpenLines.OperatorPhoto(r.Context(), r.PathValue("id"), r.PathValue("user"))
 	if err != nil || key == "" {
@@ -424,6 +443,10 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 			}
 		}
 		data["Forms"] = forms
+		if data["BookingLinks"], err = s.olBookingLinks(r.Context(), sess.UserID, sess.Admin); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
 		if data["Past"], data["PastOpen"], err = s.OpenLines.ClientDialogues(r.Context(), who, id); err != nil {
 			s.taskErr(w, r, err, "/openlines")
 			return
@@ -529,6 +552,8 @@ func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess au
 		err = s.OpenLines.Intercept(r.Context(), sess.UserID, id)
 	case "form":
 		err = s.OpenLines.SendForm(r.Context(), sess.UserID, id, r.FormValue("form"), s.olFormLink)
+	case "booking":
+		err = s.olSendBooking(r.Context(), sess.UserID, sess.Admin, id, r.FormValue("link"))
 	case "spam":
 		err = s.OpenLines.Spam(r.Context(), sess.UserID, id)
 		back = list
@@ -743,14 +768,17 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	_, err := s.OpenLines.SaveWidget(r.Context(), sess.UserID, openlines.Widget{ID: id, Name: r.FormValue("name"), Greeting: r.FormValue("greeting"),
 		Color: r.FormValue("color"), Origins: strings.Fields(r.FormValue("origins")), Operators: r.Form["operators"], Active: r.FormValue("active") == "on",
-		QueueMode: r.FormValue("queue_mode"), AnswerWait: num("answer_wait"), HoursOn: r.FormValue("hours_on") == "on", HoursDays: days,
+		QueueMode: r.FormValue("queue_mode"), AnswerWait: num("answer_wait"), MaxChats: num("max_chats"), MaxChatsType: r.FormValue("max_chats_type"),
+		CRMForward: r.FormValue("crm_forward") == "on", HoursOn: r.FormValue("hours_on") == "on", HoursDays: days,
 		HoursFrom: r.FormValue("hours_from"), HoursTo: r.FormValue("hours_to"), OfflineText: r.FormValue("offline_text"),
 		WelcomeText: r.FormValue("welcome_text"), NoanswerText: r.FormValue("noanswer_text"), NoanswerAfter: num("noanswer_after"),
 		CloseText: r.FormValue("close_text"), Autoclose: num("autoclose"),
 		VoteOn: r.FormValue("vote_on") == "on", VoteText: r.FormValue("vote_text"), HistoryOn: r.FormValue("history_on") == "on",
 		CRMAuto: r.FormValue("crm_auto") == "on", ConsentOn: r.FormValue("consent_on") == "on", ConsentText: r.FormValue("consent_text"),
 		KPIFirst: num("kpi_first"), KPIFurther: num("kpi_further"), KPIOperator: r.FormValue("kpi_operator") == "on", KPIHeads: r.FormValue("kpi_heads") == "on",
-		BotOn: r.FormValue("bot_on") == "on", BotText: r.FormValue("bot_text"), BotMenu: menu, BotOther: r.FormValue("bot_other")})
+		BotOn: r.FormValue("bot_on") == "on", BotText: r.FormValue("bot_text"), BotMenu: menu, BotOther: r.FormValue("bot_other"),
+		Position: r.FormValue("position"), PagesMode: r.FormValue("pages_mode"), Pages: strings.Split(r.FormValue("pages"), "\n"), ShowDelay: num("show_delay"),
+		HelloOn: r.FormValue("hello_on") == "on", HelloText: r.FormValue("hello_text"), HelloDelay: num("hello_delay"), HideOffline: r.FormValue("hide_offline") == "on"})
 	if err != nil {
 		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
 		return

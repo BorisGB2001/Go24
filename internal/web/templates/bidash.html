@@ -16,6 +16,7 @@
         {{if $d.Can}}<a class="button ghost" href="/bi/{{$db.ID}}?settings=1">{{icon "settings"}} {{t "bi.settings"}}</a>{{end}}
         {{if $d.CanPin}}<a class="button ghost" href="/bi/{{$db.ID}}?pin=1#pin">{{icon "pin"}} {{t "bi.pin"}}</a>{{end}}
         {{if not $db.Code}}<form method="post" action="/bi/{{$db.ID}}/copy"><button class="ghost">{{icon "copy"}} {{t "bi.copy"}}</button></form>{{end}}
+        <a class="button ghost" href="/bi/{{$db.ID}}/export" download title="{{t "bi.export_hint"}}">{{icon "download"}} {{t "bi.export"}}</a>
         {{if $d.Manage}}<form method="post" action="/bi/{{$db.ID}}/delete" onsubmit="return confirm(this.dataset.q)" data-q="{{t "bi.delete_q"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
       </div></details>
   </div>

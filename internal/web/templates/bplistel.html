@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}{{$l := $d.L}}{{$e := $d.E}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a> {{icon "chevron-right"}} <a href="/bp/lists">{{t "lists.title"}}</a> {{icon "chevron-right"}} <a href="/bp/lists/{{$l.ID}}">{{$l.Name}}</a></div>
+<h1>{{if $e.ID}}{{$e.Name}}{{else}}{{t "lists.el_new"}}{{end}}</h1>
+<div class="layout2"><div>
+<div class="card">{{if $d.CanWrite}}
+  <form method="post" action="{{if $e.ID}}/bp/el/{{$e.ID}}{{else}}/bp/lists/{{$l.ID}}/add{{end}}">
+    <label>{{t "lists.el_name"}} <span class="req">*</span></label><input type="text" name="name" value="{{$e.Name}}" required maxlength="500" {{if not $e.ID}}autofocus{{end}}>
+    {{range $d.Fields}}{{template "bpfield" .}}{{end}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button>{{if not $e.ID}}<button class="ghost" name="more" value="1">{{t "lists.save_more"}}</button>{{end}}
+      <a class="button ghost" href="/bp/lists/{{$l.ID}}">{{t "common.cancel"}}</a></p>
+  </form>
+  {{if $e.ID}}<form method="post" action="/bp/el/{{$e.ID}}/delete" data-confirm="{{t "lists.el_delete_confirm"}}"><button class="ghost danger small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
+{{else}}<div class="props">{{range $l.Fields}}<span class="k">{{.Label}}</span><span>{{template "bpvalue" (dict "F" . "V" (index $e.Values .Key) "Users" $d.Users)}}</span>{{end}}</div>{{end}}
+{{if $e.ID}}<p class="small muted">{{t "lists.created_at"}}: {{datetime $e.CreatedAt}}{{with $e.CreatedBy.Name}} · {{.}}{{end}}{{if ne $e.ChangedAt $e.CreatedAt}} · {{t "lists.changed_at"}}: {{datetime $e.ChangedAt}}{{with $e.ChangedBy.Name}} · {{.}}{{end}}{{end}}</p>{{end}}
+</div>
+</div><div>
+{{if $e.ID}}{{if or $d.BPTemplates $d.BPInstances}}<div class="card"><h3 id="bp">⚙ {{t "bp.title"}}</h3>
+  {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>
+    {{if and (eq .Status "running") $d.CanWrite}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="/bp/el/{{$e.ID}}"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}</div>{{end}}
+  {{range $d.BPTemplates}}<div><a class="button ghost small" href="/bp/start/{{.ID}}?entity_id={{$e.ID}}">{{icon "player-play"}} {{.Name}}</a></div>{{end}}</div>{{end}}
+<div class="card"><h3>{{t "lists.history"}}</h3>
+  {{range $d.Log}}{{$ln := .}}<div class="small" style="margin-bottom:8px"><span class="muted">{{datetime .At}} · {{or .Author.Name "—"}}</span>
+    {{if .Created}}<div>{{t "lists.h_created"}}</div>{{end}}
+    {{range $i, $c := .Changes}}{{$f := index $ln.Fields $i}}<div><b>{{$f.Label}}</b>: {{if not $ln.Created}}<s class="muted">{{template "bpvalue" (dict "F" $f "V" $c.Old "Users" $d.Users)}}</s> → {{end}}{{template "bpvalue" (dict "F" $f "V" $c.New "Users" $d.Users)}}</div>{{end}}</div>
+  {{else}}<p class="muted">—</p>{{end}}</div>{{end}}
+</div></div>
+{{end}}

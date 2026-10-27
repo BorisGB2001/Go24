@@ -23,4 +23,13 @@
     <p class="small muted">{{t "sign.hr.fields_hint"}}</p></details>
   <p><button class="primary">{{icon "send"}} {{t "sign.hr.send"}}</button> <a class="button ghost" href="/sign?f=hr">{{t "common.cancel"}}</a></p>
 </form>
+<div class="card form-narrow" id="self">
+  <h2>{{icon "file-plus"}} {{t "sign.self.title"}}</h2>
+  <p class="small muted">{{t "sign.self.hint"}}</p>
+  {{range $d.Templates}}<form method="post" action="/sign/hr/self/{{.ID}}" class="row">
+    <span style="flex:1;min-width:160px">{{icon "file-text"}} {{.Name}}</span>
+    <div style="flex:1;min-width:200px">{{template "upick" (upick "signer" (index $d.Self .ID) $d.Users "ph" (t "sign.self.off"))}}</div>
+    <button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form>
+  {{else}}<p class="small muted">{{t "sign.hr.no_templates"}}</p>{{end}}
+</div>
 {{end}}

@@ -57,3 +57,19 @@ func TestFilter(t *testing.T) {
 		t.Error("the filter is not removed")
 	}
 }
+
+func TestFormatName(t *testing.T) {
+	for f, want := range map[string]string{"": "Иван Иванов", "first_last": "Иван Иванов", "last_first": "Иванов Иван",
+		"last_first_second": "Иванов Иван Петрович", "first_second_last": "Иван Петрович Иванов",
+		"last_initials": "Иванов И. П.", "initials_last": "И. П. Иванов", "zz": "Иван Иванов"} {
+		if got := FormatName(f, " Иван ", "Иванов", "Петрович"); got != want {
+			t.Errorf("%s: %q, want %q", f, got, want)
+		}
+	}
+	if FormatName("last_initials", "Анна", "", "") != "А." || FormatName("last_first", "", "", "Петрович") != "" {
+		t.Error("empty parts")
+	}
+	if err := Check(Settings{NameFormat: "xx"}, func(string) bool { return true }); err == nil {
+		t.Error("an unknown name format passes")
+	}
+}

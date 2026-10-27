@@ -32,3 +32,22 @@ func TestTranscribe(t *testing.T) {
 		t.Fatal("a client without an address")
 	}
 }
+
+// TestSegments: a long recording asks Whisper for JSON; the pieces come back with their time, empty ones dropped.
+func TestSegments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, _, err := r.FormFile("audio_file")
+		if r.URL.Query().Get("output") != "json" || err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		b, _ := io.ReadAll(f)
+		_, _ = io.WriteString(w, `{"language":"ru","text":"x","segments":[{"id":1,"start":0.5,"end":3.2,"text":" Добрый день, `+string(b)+`"},`+
+			`{"start":3.2,"end":4,"text":"  "},{"start":65,"end":70.1,"text":" Договорились."}]}`)
+	}))
+	defer srv.Close()
+	segs, err := New(srv.URL).Segments(context.Background(), "call.ogg", strings.NewReader("коллеги"), "ru")
+	if err != nil || len(segs) != 2 || segs[0].Text != "Добрый день, коллеги" || segs[0].Start != 0.5 || segs[1].Start != 65 || segs[1].Text != "Договорились." {
+		t.Fatalf("%+v %v", segs, err)
+	}
+}

@@ -47,8 +47,9 @@ type apiBPTemplate struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	Entity      string     `json:"entity"`  // deal, lead, contact, company, file (a document of «Общий диск») or none — a standalone process
-	TypeID      string     `json:"type_id"` // of deals: of this smart process's cards
+	Entity      string     `json:"entity"`            // deal, lead, contact, company, file (a document of «Общий диск»), list (a list's elements) or none — a standalone process
+	TypeID      string     `json:"type_id"`           // of deals: of this smart process's cards
+	ListID      string     `json:"list_id,omitempty"` // of list: of this list's elements
 	Active      bool       `json:"active"`
 	AutoCreate  bool       `json:"auto_create"` // «Автозапуск»: when a card is added
 	AutoChange  bool       `json:"auto_change"` // … when it is changed
@@ -59,7 +60,7 @@ type apiBPTemplate struct {
 }
 
 func (s *Server) apiBPTemplateOf(t bp.Template, admin bool) apiBPTemplate {
-	out := apiBPTemplate{ID: t.ID, Name: t.Name, Description: t.Description, Entity: t.Entity, TypeID: t.TypeID, Active: t.Active,
+	out := apiBPTemplate{ID: t.ID, Name: t.Name, Description: t.Description, Entity: t.Entity, TypeID: t.TypeID, ListID: t.ListID, Active: t.Active,
 		AutoCreate: t.AutoCreate, AutoChange: t.AutoChange, Fields: t.Fields, CreatedAt: t.CreatedAt, URL: s.BaseURL + "/bp/start/" + t.ID}
 	if out.Fields == nil {
 		out.Fields = []bp.Field{}
@@ -108,6 +109,7 @@ func (s *Server) apiBPTemplate(w http.ResponseWriter, r *http.Request, p apikeys
 func (s *Server) apiBPSaveTemplate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
 		Name, Description, Entity, TypeID *string
+		ListID                            *string `json:"list_id"`
 		Active, AutoCreate, AutoChange    *bool
 		Fields                            *[]bp.Field
 		Steps                             *[]bp.Step
@@ -130,7 +132,7 @@ func (s *Server) apiBPSaveTemplate(w http.ResponseWriter, r *http.Request, p api
 	for _, v := range []struct {
 		to   *string
 		from *string
-	}{{&t.Name, in.Name}, {&t.Description, in.Description}, {&t.Entity, in.Entity}, {&t.TypeID, in.TypeID}} {
+	}{{&t.Name, in.Name}, {&t.Description, in.Description}, {&t.Entity, in.Entity}, {&t.TypeID, in.TypeID}, {&t.ListID, in.ListID}} {
 		if v.from != nil {
 			*v.to = *v.from
 		}

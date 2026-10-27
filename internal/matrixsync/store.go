@@ -34,6 +34,12 @@ func threadRel(root string) map[string]any {
 
 // PostTaskComment writes a task chat message to Matrix, then indexes it in go24.
 func (s *Service) PostTaskComment(ctx context.Context, userID, taskID, body string) (tasks.Comment, error) {
+	return s.PostTaskReply(ctx, userID, taskID, "", body)
+}
+
+// PostTaskReply is PostTaskComment answering another message (replyTo, "" = none): in the messenger it is a
+// reply to that message within the task's thread.
+func (s *Service) PostTaskReply(ctx context.Context, userID, taskID, replyTo, body string) (tasks.Comment, error) {
 	if err := s.Tasks.CheckVisible(ctx, userID, taskID); err != nil {
 		return tasks.Comment{}, err
 	}
@@ -52,6 +58,15 @@ func (s *Service) PostTaskComment(ctx context.Context, userID, taskID, body stri
 	if root != "" {
 		content["m.relates_to"] = threadRel(root)
 	}
+	if ev := s.commentEvent(ctx, taskID, replyTo); ev != "" {
+		rel, _ := content["m.relates_to"].(map[string]any)
+		if rel == nil {
+			rel = map[string]any{}
+			content["m.relates_to"] = rel
+		}
+		rel["m.in_reply_to"] = map[string]string{"event_id": ev}
+		rel["is_falling_back"] = false
+	}
 	if err := s.mention(ctx, content, body, ""); err != nil {
 		return tasks.Comment{}, err
 	}
@@ -59,7 +74,7 @@ func (s *Service) PostTaskComment(ctx context.Context, userID, taskID, body stri
 	if err != nil {
 		return tasks.Comment{}, err
 	}
-	c, err := s.Tasks.PostComment(ctx, userID, taskID, body)
+	c, err := s.Tasks.PostReply(ctx, userID, taskID, replyTo, body)
 	if err != nil {
 		return c, err
 	}

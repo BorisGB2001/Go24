@@ -1,5 +1,8 @@
 {{define "appform"}}{{$a := .A}}
       <label>{{t "form.name"}}</label><input type="text" name="name" value="{{$a.Name}}" required maxlength="100" placeholder="{{t "apps.name_hint"}}">
+      <label class="check"><input type="checkbox" name="static" {{if $a.Static}}checked{{end}}> {{t "apps.static"}}</label>
+      <div class="small muted">{{t "apps.static_hint" .Max}}</div>
+      <label>{{t "apps.archive"}}</label><input type="file" name="archive" accept=".zip,application/zip">
       <label>{{t "apps.handler"}}</label><input type="url" name="handler_url" value="{{$a.HandlerURL}}" placeholder="https://app.example.com/go24/">
       <div class="small muted">{{t "apps.handler_hint"}}</div>
       <label>{{t "apps.install"}}</label><input type="url" name="install_url" value="{{$a.InstallURL}}" placeholder="https://app.example.com/go24/install">
@@ -21,6 +24,7 @@
     {{else}}<form method="post" action="/settings/apps/{{$a.ID}}"><input type="hidden" name="op" value="install"><button class="primary">{{icon "download"}} {{t "apps.install_btn"}}</button></form>{{end}}
     <form method="post" action="/settings/apps/{{$a.ID}}" data-confirm="{{t "apps.delete_confirm"}}"><input type="hidden" name="op" value="delete"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></div>
   {{with $a.HandlerURL}}<div class="small">{{t "apps.handler"}}: <code>{{.}}</code></div>{{end}}
+  {{if $a.Static}}<div class="small">{{icon "file-zip"}} {{with index $d.Files $a.ID}}{{t "apps.static_files" (index . 0) (index . 1)}}{{else}}<span class="dl over">{{t "apps.static_none"}}</span>{{end}} · <code>{{$d.Base}}/apps/static/{{$a.ID}}/</code></div>{{end}}
   {{with $a.InstallURL}}<div class="small">{{t "apps.install"}}: <code>{{.}}</code></div>{{end}}
   <div class="small muted">{{range $i, $sc := $a.Scopes}}{{if $i}} · {{end}}{{t (print "scope." $sc)}}{{end}}</div>
   <div class="small">{{t "apps.client_id"}}: <code class="olcode">{{$a.ClientID}}</code></div>
@@ -32,15 +36,15 @@
   {{with index $d.Bots $a.ID}}<div class="small" title="{{t "apps.bots_hint"}}"><b>{{t "apps.bots"}}:</b>{{range .}}<div>{{icon "robot"}} {{.FullName}} · <code>{{.Code}}</code>{{with .WorkPosition}} · {{.}}{{end}}</div>{{end}}</div>{{end}}
   {{with index $d.Events $a.ID}}<div class="small"><b>{{t "apps.events"}}:</b>{{range .}}<div><code>{{.Event}}</code> · <code>{{.Handler}}</code>{{with .LastAt}} · {{t "apps.event_last" (datetime (deref .))}}{{end}}{{with .LastStatus}} · HTTP {{.}}{{end}}{{with .LastError}} · <span class="dl over">{{.}}</span>{{end}}{{if .Pending}} · {{t "apps.event_pending" .Pending}}{{end}}</div>{{end}}</div>{{end}}
   <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
-    <form method="post" action="/settings/apps/{{$a.ID}}"><input type="hidden" name="op" value="save">
-      {{template "appform" (dict "A" $a "Scopes" $d.Scopes)}}
+    <form method="post" action="/settings/apps/{{$a.ID}}" enctype="multipart/form-data"><input type="hidden" name="op" value="save">
+      {{template "appform" (dict "A" $a "Scopes" $d.Scopes "Max" $d.MaxArchive)}}
       <p><button class="primary">{{t "common.save"}}</button></p></form>
     <form method="post" action="/settings/apps/{{$a.ID}}" data-confirm="{{t "apps.secret_confirm"}}"><input type="hidden" name="op" value="secret"><button class="ghost">{{icon "key"}} {{t "apps.secret_btn"}}</button></form>
   </details>
 </div>{{end}}
 <details class="card"{{if not $d.Apps}} open{{end}}><summary><b>{{icon "plus"}} {{t "apps.new"}}</b></summary>
-  <form method="post" action="/settings/apps/new"><input type="hidden" name="op" value="save">
-    {{template "appform" (dict "A" $d.Empty "Scopes" $d.Scopes)}}
+  <form method="post" action="/settings/apps/new" enctype="multipart/form-data"><input type="hidden" name="op" value="save">
+    {{template "appform" (dict "A" $d.Empty "Scopes" $d.Scopes "Max" $d.MaxArchive)}}
     <p><button class="primary">{{t "common.create"}}</button></p></form></details>
 <div class="card small">{{t "apps.howto" $d.Base}}<p>{{t "apps.howto_places" $d.Base}}</p><p>{{t "apps.howto_events" $d.Base}}</p><p>{{t "apps.howto_sdk" $d.Base}}</p></div>
 {{end}}

@@ -76,8 +76,11 @@ func (c *Client) SyncAs(ctx context.Context, token, since string, timeout time.D
 
 // Messages pages back through a room's history (from "" = newest): messages and the changes of the chat itself.
 func (c *Client) Messages(ctx context.Context, token, roomID, from string, limit int) ([]Event, string, error) {
-	return c.MessagesOf(ctx, token, roomID, from, limit, `["m.room.message","m.room.encrypted","m.room.member","m.room.name","m.room.avatar","m.room.power_levels","go24.autodelete","org.matrix.msc3381.poll.start","m.poll.start"]`)
+	return c.MessagesOf(ctx, token, roomID, from, limit, messageTypes)
 }
+
+// messageTypes are the events a chat's timeline shows (a JSON list).
+const messageTypes = `["m.room.message","m.room.encrypted","m.room.member","m.room.name","m.room.avatar","m.room.power_levels","go24.autodelete","org.matrix.msc3381.poll.start","m.poll.start"]`
 
 // MessagesOf pages a room's timeline backwards, only events of the given types (a JSON list).
 func (c *Client) MessagesOf(ctx context.Context, token, roomID, from string, limit int, types string) ([]Event, string, error) {
@@ -217,10 +220,65 @@ func (c *Client) CreateGroup(ctx context.Context, token, owner, name string, inv
 	for k, v := range levels {
 		pl[k] = v
 	}
+	if invite == nil { // an open chat may start with no one else; Synapse fails on a null list
+		invite = []string{}
+	}
 	err := c.Do(ctx, http.MethodPost, "/_matrix/client/v3/createRoom", map[string]any{
 		"preset": "private_chat", "name": name, "invite": invite, "visibility": "private", "power_level_content_override": pl,
 	}, &out, token)
 	return out.RoomID, err
+}
+
+// SetJoinRuleAs makes the room open to the members of a space ("restricted": they join without an invitation, as in
+// Element's «Space members can find and join») or invite-only again (space "").
+func (c *Client) SetJoinRuleAs(ctx context.Context, token, roomID, space string) error {
+	content := map[string]any{"join_rule": "invite"}
+	if space != "" {
+		content = map[string]any{"join_rule": "restricted", "allow": []map[string]string{{"type": "m.room_membership", "room_id": space}}}
+	}
+	return c.SetStateAs(ctx, token, roomID, "m.room.join_rules", "", content)
+}
+
+// AdminState reads a room's whole state through the admin API — for those not in it.
+func (c *Client) AdminState(ctx context.Context, roomID string) ([]Event, error) {
+	var out struct {
+		State []Event `json:"state"`
+	}
+	err := c.Do(ctx, http.MethodGet, "/_synapse/admin/v1/rooms/"+esc(roomID)+"/state", nil, &out)
+	return out.State, err
+}
+
+// JoinedRooms are the rooms the token's owner is in.
+func (c *Client) JoinedRooms(ctx context.Context, token string) (map[string]bool, error) {
+	var out struct {
+		Rooms []string `json:"joined_rooms"`
+	}
+	if err := c.Do(ctx, http.MethodGet, "/_matrix/client/v3/joined_rooms", nil, &out, token); err != nil {
+		return nil, err
+	}
+	m := map[string]bool{}
+	for _, r := range out.Rooms {
+		m[r] = true
+	}
+	return m, nil
+}
+
+// AdminMessages pages a room's timeline backwards through the admin API (the bot need not be in the room), only the
+// event types of Messages.
+func (c *Client) AdminMessages(ctx context.Context, roomID, from string, limit int) ([]Event, string, error) {
+	q := url.Values{}
+	q.Set("dir", "b")
+	q.Set("limit", strconv.Itoa(limit))
+	q.Set("filter", `{"types":`+messageTypes+`}`)
+	if from != "" {
+		q.Set("from", from)
+	}
+	var out struct {
+		Chunk []Event `json:"chunk"`
+		End   string  `json:"end"`
+	}
+	err := c.Do(ctx, http.MethodGet, "/_synapse/admin/v1/rooms/"+esc(roomID)+"/messages?"+q.Encode(), nil, &out)
+	return out.Chunk, out.End, err
 }
 
 // InviteAs invites someone into the room as the token's owner.

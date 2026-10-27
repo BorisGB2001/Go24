@@ -39,6 +39,8 @@ type Group struct {
 	Members []Member
 	Owner   bool   // the employee owns the chat
 	Channel bool   // only the owner and the admins write
+	Open    bool   // any employee finds it and joins (open chats)
+	CanOpen bool   // the employee makes it open or closed: its owner, not in a collab
 	Writer  bool   // the employee writes in it (anyone in a group chat; in a channel — its owner and admins)
 	Topic   string // the chat's description (m.room.topic)
 	Rights  Rights
@@ -171,6 +173,12 @@ func (s *Service) peers(ctx context.Context, userID string, ids []string) (map[s
 
 // CreateGroup makes a group chat (or a channel) of the employee and the people named; they join at once.
 func (s *Service) CreateGroup(ctx context.Context, userID, name string, ids []string, channel bool) (string, error) {
+	return s.CreateOpenGroup(ctx, userID, name, ids, channel, false)
+}
+
+// CreateOpenGroup is CreateGroup that may make the chat open: then it may start with no one else
+// but needs its name; others join it themselves.
+func (s *Service) CreateOpenGroup(ctx context.Context, userID, name string, ids []string, channel, open bool) (string, error) {
 	me, tok, err := s.token(ctx, userID)
 	if err != nil {
 		return "", err
@@ -181,7 +189,10 @@ func (s *Service) CreateGroup(ctx context.Context, userID, name string, ids []st
 		return "", err
 	}
 	delete(who, userID)
-	if len(who) == 0 {
+	if open && (name == "" || s.isGuest(ctx, userID)) {
+		return "", i18n.E("err.im_open_name")
+	}
+	if len(who) == 0 && !open {
 		return "", i18n.E("err.im_group_people")
 	}
 	var invite []string
@@ -199,6 +210,11 @@ func (s *Service) CreateGroup(ctx context.Context, userID, name string, ids []st
 		return "", err
 	}
 	s.join(ctx, room, who)
+	if open {
+		if err := s.setOpen(ctx, userID, tok, room, true); err != nil {
+			return room, err
+		}
+	}
 	return room, nil
 }
 
@@ -267,6 +283,13 @@ func (s *Service) GroupInfo(ctx context.Context, userID, room string) (*Group, e
 	if s.M.StateAs(ctx, tok, room, "m.room.topic", "", &topic) == nil { // none set — no description
 		g.Topic = topic.Topic
 	}
+	var jr struct {
+		JoinRule string `json:"join_rule"`
+	}
+	if s.M.StateAs(ctx, tok, room, "m.room.join_rules", "", &jr) == nil {
+		g.Open = jr.JoinRule == "restricted"
+	}
+	g.CanOpen = g.Owner && s.CollabOf(ctx, room) == "" && !s.isGuest(ctx, userID)
 	if g.Members, err = s.chatPeople(ctx, me, tok, room, pl); err != nil {
 		return nil, err
 	}

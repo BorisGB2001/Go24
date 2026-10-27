@@ -346,9 +346,9 @@ func (s *Service) botHasCommand(ctx context.Context, botID, body string) (bool, 
 	return has, err
 }
 
-// PressButton: the employee pressed a button of a bot's message that runs the bot's command (the button must be
-// there and not disabled); the command's handler gets it with COMMAND_CONTEXT KEYBOARD.
-func (s *Service) PressButton(ctx context.Context, userID, roomID, eventID, command, params string) error {
+// PressButton: the employee pressed a button of a bot's message (or an item of its menu) that runs the bot's command
+// (the button must be there and not disabled); the command's handler gets it with COMMAND_CONTEXT KEYBOARD (MENU).
+func (s *Service) PressButton(ctx context.Context, userID, roomID, eventID, command, params string, menu bool) error {
 	me, tok, err := s.token(ctx, userID)
 	if err != nil {
 		return err
@@ -365,7 +365,11 @@ func (s *Service) PressButton(ctx context.Context, userID, roomID, eventID, comm
 	if !bot.Bot || from.ID == "" {
 		return i18n.E("err.forbidden")
 	}
-	if !slices.ContainsFunc(keyboardOf(lastContent(ev)), func(b Button) bool {
+	buttons, where := keyboardOf(lastContent(ev)), "KEYBOARD"
+	if menu {
+		buttons, where = menuOf(lastContent(ev)), "MENU"
+	}
+	if !slices.ContainsFunc(buttons, func(b Button) bool {
 		return !bool(b.Disabled) && strings.EqualFold(b.Command, command) && b.CommandParams == params
 	}) {
 		return i18n.E("err.not_found")
@@ -380,7 +384,7 @@ func (s *Service) PressButton(ctx context.Context, userID, roomID, eventID, comm
 	}
 	for _, c := range list {
 		if c.bot.ID == bot.ID {
-			return s.queueCommand(ctx, c, roomID, mem, from, eventID, strings.TrimSpace("/"+command+" "+params), params, "KEYBOARD", "")
+			return s.queueCommand(ctx, c, roomID, mem, from, eventID, strings.TrimSpace("/"+command+" "+params), params, where, "")
 		}
 	}
 	return i18n.E("err.not_found")
@@ -523,23 +527,33 @@ func keyboardRows(kb []Button) [][]Button {
 	return rows
 }
 
-// BotSend is a message of the bot (imbot.message.add, imbot.command.answer) with its buttons.
-func (s *Service) BotSend(ctx context.Context, botID, roomID, body, root string, kb []Button) (Message, error) {
+// BotSend is a message of the bot (imbot.message.add, imbot.command.answer) with its buttons, menu and card; a
+// message may be the card alone.
+func (s *Service) BotSend(ctx context.Context, botID, roomID, body, root string, p BotParts) (Message, error) {
 	me, tok, err := s.token(ctx, botID)
 	if err != nil {
 		return Message{}, err
 	}
-	if body = strings.TrimSpace(body); body == "" {
+	body = strings.TrimSpace(body)
+	only := body == "" && p.Attach != nil && len(p.Attach.Blocks) > 0
+	if only {
+		p.Attach.Only, body = true, attachText(p.Attach)
+	}
+	if body == "" {
 		return Message{}, i18n.E("err.comment_empty")
 	}
 	content := textContent(body)
 	if err := s.mention(ctx, content, body, ""); err != nil {
 		return Message{}, err
 	}
-	if len(kb) > 0 {
-		content["go24.keyboard"] = kb
-	}
+	p.put(content, nil)
 	m, err := s.post(ctx, me, tok, roomID, root, content)
-	m.Keyboard, m.SenderBot = keyboardRows(kb), true
+	m.SenderBot = true
+	m.botParts(content)
 	return m, err
+}
+
+// botParts puts the buttons, menu and card of a bot's message's content into the message.
+func (m *Message) botParts(content map[string]any) {
+	m.Keyboard, m.Menu, m.Attach = keyboardRows(keyboardOf(content)), menuOf(content), attachOf(content)
 }

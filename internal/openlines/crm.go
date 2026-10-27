@@ -61,7 +61,10 @@ func (s *Store) autoLead(ctx context.Context, w Widget, sessionID string) error 
 		return err
 	}
 	if entity != "" {
-		return s.bind(ctx, sessionID, entity, id, creator, false)
+		if err := s.bind(ctx, sessionID, entity, id, creator, false); err != nil {
+			return err
+		}
+		return s.forward(ctx, sessionID)
 	}
 	l := crm.Lead{Name: name, Phone: phone, Email: email}
 	l.Title = s.tr("ol.lead_title", w.Name, Session{ID: sessionID, Name: name}.Title())

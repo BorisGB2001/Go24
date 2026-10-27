@@ -61,7 +61,7 @@ func TestRenderMenus(t *testing.T) {
 	// a line with the menu: its calls go there with what the menu needs of the line
 	tr := Trunk{ID: "abcdefab-1234-5678-9abc-def012345678", Name: "Линия", Host: "sip.example.ru", Username: "go24", Number: "+74951234567",
 		Ring: []string{"u1"}, Menu: main.ID, NoAnswer: ActVoicemail, WorkOn: true, WorkDays: []int{1}, WorkFrom: "09:00", WorkTo: "18:00", OffHours: ActHangup}
-	_, d := RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{main.ID: MenuKey(main.ID)}, nil, false, "")
+	_, d := RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{main.ID: MenuKey(main.ID)}, nil, nil, false, "")
 	k := tr.Key()
 	for _, want := range []string{
 		" same => n,Gosub(go24-in,s,1(+74951234567,," + k + "))\n same => n,GotoIfTime(",
@@ -77,11 +77,11 @@ func TestRenderMenus(t *testing.T) {
 	}
 	// the client rates the conversation: the menu's rings and the line's own
 	tr.RateOn, tr.RateSum = true, "r1"
-	if _, d = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{main.ID: MenuKey(main.ID)}, nil, false, ""); !strings.Contains(d, " same => n,Set(GO24_RATEP="+AstDir+"/greet-r1)\n") {
+	if _, d = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, map[string]string{main.ID: MenuKey(main.ID)}, nil, nil, false, ""); !strings.Contains(d, " same => n,Set(GO24_RATEP="+AstDir+"/greet-r1)\n") {
 		t.Fatalf("the menu does not ask for the rating:\n%s", d)
 	}
 	tr.Menu, tr.RingMode = "", "queue"
-	_, d = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, nil, nil, false, "")
+	_, d = RenderTrunks([]Trunk{tr}, map[string]string{"u1": "101"}, nil, nil, nil, false, "")
 	for _, want := range []string{
 		" same => n,Dial(Local/101@go24-ring,20,g)\n same => n,GotoIf($[\"${DIALSTATUS}\" = \"ANSWER\"]?rate)\n",
 		" same => n(rate),Gosub(go24-rate,s,1(" + AstDir + "/greet-r1))\n same => n(done),Hangup()\n",

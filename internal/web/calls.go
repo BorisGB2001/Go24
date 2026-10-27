@@ -85,11 +85,6 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/my")
 		return
 	}
-	token, err := s.Calls.Token(sess.UserID, sess.Name, room, time.Now())
-	if err != nil {
-		s.fail(w, "call token", err)
-		return
-	}
 	join := r.URL.Query()
 	join.Del("announce")
 	join.Del("ring")
@@ -124,12 +119,108 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		http.Redirect(w, r, "/call?"+join.Encode(), http.StatusSeeOther) // a reload does not announce again
 		return
 	}
+	host := s.callHost(r, sess, room)
+	token, err := s.Calls.Token(sess.UserID, sess.Name, room, host, time.Now())
+	if err != nil {
+		s.fail(w, "call token", err)
+		return
+	}
 	s.Log.Info("call joined", "user_id", sess.UserID, "room", room)
 	s.render(w, r, "call", page{Title: s.tr(r, "call.title") + " · " + title, Nav: "", Data: map[string]any{
 		"URL": s.Calls.URL, "Token": token, "Name": title, "Back": back, "Link": link, "Base": s.BaseURL,
 		"Video": r.URL.Query().Get("video") != "0", "Ring": r.URL.Query().Get("r"), "Chat": r.URL.Query().Get("room"),
 		"RingMore": s.Rings != nil && s.Matrix != nil && r.URL.Query().Get("room") != "",
-		"Guests":   s.CallGuests != nil && !tasks.IsGuestCtx(r.Context()), "Query": join.Encode()}})
+		"Guests":   s.CallGuests != nil && !tasks.IsGuestCtx(r.Context()), "Query": join.Encode(),
+		"Host":     host && s.Calls.APIURL != ""}})
+}
+
+// callHost: the person leads the call, as «ведущий» — the creator, the responsible and the project's
+// managers of a task, the organizer of a calendar meeting, who started the call of a chat now going on; an
+// administrator in admin mode leads any call. A guest of a collab leads none.
+func (s *Server) callHost(r *http.Request, sess auth.Session, room string) bool {
+	ctx := r.Context()
+	if tasks.IsGuestCtx(ctx) {
+		return false
+	}
+	if sess.AdminActive() {
+		return true
+	}
+	q := r.URL.Query()
+	switch {
+	case q.Get("task") != "":
+		id, err := s.Tasks.TaskIDByKey(ctx, q.Get("task"))
+		if err != nil {
+			return false
+		}
+		card, err := s.Tasks.GetCard(ctx, sess.UserID, id)
+		return err == nil && (card.Roles.Creator || card.Roles.Responsible || card.Roles.Manager)
+	case q.Get("event") != "":
+		e, err := s.Calendar.Get(ctx, sess.UserID, q.Get("event"))
+		return err == nil && e.Mine(sess.UserID)
+	case q.Get("room") != "" && s.CallLines != nil:
+		by, err := s.CallLines.Starter(ctx, room)
+		if err != nil {
+			s.Log.Warn("call host", "room", room, "err", err)
+		}
+		return by == sess.UserID
+	}
+	return false
+}
+
+// callModerate (the host of the call, ?task=|event=|room=): action=mute turns off the microphone,
+// the camera or the shared screen (what=) of the participant who= — or of everyone but the host when who is empty;
+// action=remove puts the participant out of the call (a guest — for good). The person is told by the host's page.
+func (s *Server) callModerate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	ctx := r.Context()
+	if s.Calls == nil || s.Calls.APIURL == "" {
+		s.jsonErr(w, r, i18n.E("err.calls_off"))
+		return
+	}
+	room, _, _, _, err := s.callRoom(r, sess)
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	if !s.callHost(r, sess, room) {
+		s.jsonErr(w, r, tasks.ErrForbidden)
+		return
+	}
+	who := r.FormValue("who")
+	switch r.FormValue("action") {
+	case "mute":
+		what := r.FormValue("what")
+		if what != calls.Microphone && what != calls.Camera && what != calls.Screen {
+			s.jsonErr(w, r, i18n.E("err.bad_form"))
+			return
+		}
+		n, err := s.Calls.Mute(ctx, room, who, what, sess.UserID)
+		if err != nil {
+			s.Log.Error("call mute", "room", room, "err", err)
+			s.jsonErr(w, r, i18n.E("call.host_failed"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"muted": n})
+	case "remove":
+		if who == "" || who == sess.UserID {
+			s.jsonErr(w, r, i18n.E("err.bad_form"))
+			return
+		}
+		if id, ok := strings.CutPrefix(who, calls.GuestIdentity("")); ok && s.CallGuests != nil {
+			if err := s.CallGuests.Expel(ctx, room, id, sess.UserID); err != nil {
+				s.jsonErr(w, r, err)
+				return
+			}
+		}
+		if err := s.Calls.RemoveParticipant(ctx, room, who); err != nil {
+			s.Log.Error("call remove", "room", room, "err", err)
+			s.jsonErr(w, r, i18n.E("call.host_failed"))
+			return
+		}
+		s.Log.Info("call participant removed", "room", room, "who", who, "by", sess.UserID)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	default:
+		s.jsonErr(w, r, i18n.E("err.bad_form"))
+	}
 }
 
 // joinLink is the address to join the call (go24 over https when calls have their own address).

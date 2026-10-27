@@ -134,7 +134,7 @@ func (s *Store) unsubLetter(ctx context.Context, m Message, mailto *url.URL) err
 	e := envelope{From: mail.Address{Address: a.Email}, To: []*mail.Address{to}, Host: a.Email[strings.LastIndex(a.Email, "@")+1:],
 		Now: time.Now(), Auto: "auto-generated"}
 	msg, _ := compose(e, Letter{Subject: subject, Text: text})
-	return sendSMTP(a, []string{to.Address}, msg, false)
+	return s.sendSMTP(ctx, a, []string{to.Address}, msg, false)
 }
 
 // Ways of leaving a newsletter, as UnsubscribeWay tells them.

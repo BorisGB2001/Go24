@@ -7,7 +7,7 @@
   <a class="button create" href="/bp/templates/new">{{icon "plus"}} {{t "bp.new_template"}}</a></div></div>
 <div class="card flush">{{if $d.Templates}}<table class="tlist"><tbody>{{range $d.Templates}}<tr>
   <td><a href="/bp/templates/{{.ID}}" class="ttitle">⚙ {{.Name}}</a>{{if not .Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</td>
-  <td class="small">{{if eq .Entity "none"}}{{t "bp.standalone"}}{{else if eq .Entity "file"}}{{t "bp.entity_file"}}{{else}}{{t (print "crm." .Entity)}}{{end}}</td><td class="small">{{t "bp.n_steps" (len .Steps)}}</td>
+  <td class="small">{{if eq .Entity "none"}}{{t "bp.standalone"}}{{else if eq .Entity "file"}}{{t "bp.entity_file"}}{{else if eq .Entity "list"}}{{t "bp.entity_list"}}{{else}}{{t (print "crm." .Entity)}}{{end}}</td><td class="small">{{t "bp.n_steps" (len .Steps)}}</td>
   <td><a class="button ghost" href="/bp/templates/{{.ID}}/export" title="{{t "bp.export"}}">{{icon "download"}}</a></td>
   <td><form method="post" action="/bp/templates/{{.ID}}/delete" data-confirm="{{t "bp.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>
   {{else}}<div class="empty">{{t "bp.no_templates"}}</div>{{end}}</div>

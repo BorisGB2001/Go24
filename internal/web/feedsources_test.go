@@ -128,18 +128,19 @@ func TestFeedSourcesHTTP(t *testing.T) {
 	// the right column: an important post not confirmed yet, then confirmed
 	imp, err := srv.Feed.CreatePost(ctx, anna, "", "Собрание", "Всем быть", true)
 	must(err)
-	if p := get(ivan, "/feed"); !strings.Contains(p, `class="fside"`) || !strings.Contains(p, "/feed?post="+imp) {
+	if p := get(ivan, "/feed"); !strings.Contains(p, `class="fside"`) || !strings.Contains(p, `class="fside-row" href="/feed?post=`+imp) {
 		t.Fatal("ivan: the important post is not in the right column")
 	}
 	_, err = srv.Feed.MarkRead(ctx, ivan, imp)
 	must(err)
-	if p := get(ivan, "/feed"); strings.Contains(p, "/feed?post="+imp) {
+	if p := get(ivan, "/feed"); strings.Contains(p, `class="fside-row" href="/feed?post=`+imp) {
 		t.Fatal("ivan: a confirmed important post stays in the right column")
 	}
 	// deleted: out of the feed
 	srv.withdraw(ctx, feed.SourceMeeting, meet)
 	srv.withdraw(ctx, feed.SourceKB, page)
-	if p := get(anna, "/feed"); strings.Contains(p, "Планёрка") || strings.Contains(p, "Отпуска") {
+	// the posts only: «Ближайшие события» of the right column still has the meeting itself
+	if p, _, _ := strings.Cut(get(anna, "/feed"), `<aside class="fside">`); strings.Contains(p, "Планёрка") || strings.Contains(p, "Отпуска") {
 		t.Fatal("withdrawn posts are in the feed")
 	}
 }

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -8,8 +10,11 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/booking"
+	"go24/internal/bp"
 	"go24/internal/crm"
+	"go24/internal/i18n"
 	"go24/internal/tasks"
+	"go24/internal/telephony"
 )
 
 // «Роботы» of the CRM (administrators): the stages of a pipeline (or of leads) with their robots.
@@ -97,6 +102,35 @@ func (s *Server) crmRobots(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	} else {
 		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == "booking" })
 	}
+	var lines []telephony.Trunk // the infocall robot calls through one of them
+	if s.Telephony != nil && s.CRM.InfoCall != nil {
+		if lines, err = s.Telephony.Trunks(r.Context()); err != nil {
+			s.taskErr(w, r, err, "/crm")
+			return
+		}
+	} else {
+		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == "infocall" })
+	}
+	docs, err := s.CRM.DocTemplates(r.Context(), entity) // the document robot makes one of them
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
+	var procs []bp.Template // the process robot starts one of them: of the cards' kind (its smart process)
+	if s.BP != nil {
+		all, err := s.BP.Templates(r.Context(), entity, false)
+		if err != nil {
+			s.taskErr(w, r, err, "/crm")
+			return
+		}
+		for _, t := range all {
+			if t.TypeID == typeID(typ) {
+				procs = append(procs, t)
+			}
+		}
+	} else {
+		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == "bp" })
+	}
 	fields, err := s.robotFields(r, entity)
 	if err != nil {
 		s.taskErr(w, r, err, "/crm")
@@ -111,7 +145,8 @@ func (s *Server) crmRobots(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		"Fields": fields, "Dicts": dicts, "CondOps": crm.RobotCondOps, "SetRows": []int{0, 1, 2}, "ShareModes": crm.ShareModes,
 		"Entity": entity, "Pipelines": pipes, "Pipeline": pipeline, "Stages": stages, "Robots": byStage, "Tunnels": tunnels,
 		"Kinds": kinds, "Triggers": trByStage, "TriggerKinds": crm.TriggerKinds, "Acts": crm.ActivityKinds, "Projects": projects, "Users": users, "Back": r.URL.RequestURI(),
-		"Types": types, "Type": typ, "BookingLinks": links}})
+		"Types": types, "Type": typ, "BookingLinks": links, "Lines": lines,
+		"DocTemplates": docs, "Processes": procs, "ObserverModes": crm.ObserverModes}})
 }
 
 // robotField is a field the fields robot sets or a condition compares; Pick is the control its value is chosen
@@ -209,21 +244,92 @@ func (s *Server) crmRobotAdd(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	days, _ := strconv.Atoi(r.FormValue("days"))
 	delay, _ := strconv.Atoi(r.FormValue("delay"))
-	to, users, mode := r.FormValue("to"), []string(nil), ""
-	if r.FormValue("kind") == "responsible" {
+	to, users, mode, act := r.FormValue("to"), []string(nil), "", r.FormValue("act")
+	switch r.FormValue("kind") {
+	case "responsible":
 		to, users, mode = "", r.Form["new_responsible"], r.FormValue("share")
+	case "observers":
+		to, users = "", r.Form["observers"]
+	case "close":
+		act = r.FormValue("close_act")
 	}
-	err := s.CRM.AddRobot(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"), crm.RobotParams{
+	line, sound, err := s.robotInfoSound(r)
+	if err != nil {
+		http.Redirect(w, r, back+sepFor(back)+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	err = s.CRM.AddRobot(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"), crm.RobotParams{
 		Text: r.FormValue("text"), Details: r.FormValue("details"), Project: r.FormValue("project"), To: to, Days: days,
-		Act: r.FormValue("act"), Stage: r.FormValue("to_stage"), Link: r.FormValue("link"), Delay: delay, Unit: r.FormValue("unit"),
+		Act: act, Stage: r.FormValue("to_stage"), Link: r.FormValue("link"), Delay: delay, Unit: r.FormValue("unit"),
 		Min: formNumber(r.FormValue("min")), Max: formNumber(r.FormValue("max")), URL: r.FormValue("url"), Set: robotSets(r),
-		Users: users, Mode: mode, Skip: r.FormValue("skip") == "on",
+		Users: users, Mode: mode, Skip: r.FormValue("skip") == "on", Line: line, Sound: sound,
+		Obs: r.FormValue("obs"), Doc: r.FormValue("doc"), BP: r.FormValue("bp"),
 		If: &crm.RobotCond{Field: r.FormValue("if_field"), Op: r.FormValue("if_op"), Value: r.FormValue("if_value")}})
 	if err != nil {
 		http.Redirect(w, r, back+sepFor(back)+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// robotInfoSound keeps the message of an infocall robot being added (the WAV of the form's «sound») and checks its
+// line: the line's id and the message's checksum ("" for other robots).
+func (s *Server) robotInfoSound(r *http.Request) (string, string, error) {
+	if r.FormValue("kind") != "infocall" {
+		return "", "", nil
+	}
+	if s.Telephony == nil {
+		return "", "", i18n.E("err.robot_infocall")
+	}
+	trunks, err := s.Telephony.Trunks(r.Context())
+	if err != nil {
+		return "", "", err
+	}
+	line := r.FormValue("line")
+	if !slices.ContainsFunc(trunks, func(t telephony.Trunk) bool { return t.ID == line }) {
+		return "", "", i18n.E("err.robot_infocall")
+	}
+	f, _, err := r.FormFile("sound")
+	if err != nil {
+		return "", "", i18n.E("err.robot_sound")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 16<<20))
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := telephony.Greeting(data); err != nil {
+		return "", "", i18n.E("err.robot_sound")
+	}
+	sum, err := s.Telephony.SaveSound(r.Context(), data)
+	if err == nil {
+		s.Telephony.Kick() // Asterisk gets the file
+	}
+	return line, sum, err
+}
+
+// crmRobotSound gives the message of an infocall robot to listen to (administrators).
+func (s *Server) crmRobotSound(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if s.Telephony == nil {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := s.Telephony.Sound(r.Context(), r.PathValue("sum"))
+	if errors.Is(err, telephony.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, "robot sound", err)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Write(b)
 }
 
 // robotSets are the fields robot's rows of the form: set_field_N and set_value_N.

@@ -22,6 +22,7 @@ import (
 type calDay struct {
 	Date                time.Time
 	InMonth, Today, Off bool
+	Holiday             bool // a holiday of the company (Off too)
 	Items               []calendar.Event
 }
 
@@ -33,7 +34,8 @@ type timed struct {
 
 type calCol struct {
 	Date       time.Time
-	Today, Off bool             // Off: a day off of one's settings
+	Today, Off bool             // Off: a day off of one's settings or a holiday
+	Holiday    bool             // a holiday of the company
 	AllDay     []calendar.Event // all-day meetings and task deadlines
 	Timed      []timed
 }
@@ -76,7 +78,7 @@ func (s *Server) calendarGrid(w http.ResponseWriter, r *http.Request, sess auth.
 	cols := make([]calCol, n)
 	for i := range cols {
 		d := start.AddDate(0, 0, i)
-		cols[i] = calCol{Date: d, Today: sameDay(d, now), Off: cs.Off(d)}
+		cols[i] = calCol{Date: d, Today: sameDay(d, now), Off: cs.Off(d), Holiday: cs.Holiday(d)}
 		d1 := d.AddDate(0, 0, 1)
 		for _, e := range items {
 			if !e.Start.Before(d1) || e.End.Before(d) {
@@ -204,7 +206,7 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess auth.
 	days := make([]calDay, 42)
 	for i := range days {
 		d := start.AddDate(0, 0, i)
-		days[i] = calDay{Date: d, InMonth: d.Month() == month.Month(), Today: sameDay(d, now), Off: cs.Off(d)}
+		days[i] = calDay{Date: d, InMonth: d.Month() == month.Month(), Today: sameDay(d, now), Off: cs.Off(d), Holiday: cs.Holiday(d)}
 	}
 	for _, e := range items {
 		for i := range days { // a meeting over several days is shown on each of them
@@ -854,21 +856,38 @@ func (s *Server) eventMove(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	e.Start, e.End = start, end
-	if _, err := s.Calendar.Save(r.Context(), actor, e, invite); err != nil {
+	msg, err := s.meetingMove(r, sess, actor, e, before)
+	if err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}
-	s.feedMeeting(r.Context(), actor, id) // moved: the time of the post's meeting
-	msg := ""
-	if xs, err := s.Calendar.Externals(r.Context(), id); err == nil && len(xs) > 0 { // the same people from outside
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "msg": msg})
+}
+
+// meetingMove keeps the meeting (whole) at its new time, before — as it was: the invited are asked again, people from
+// outside get an update by mail. It gives what to tell the user ("" — nothing).
+func (s *Server) meetingMove(r *http.Request, sess auth.Session, actor string, e, before calendar.Event) (string, error) {
+	var invite []string
+	for _, a := range e.Attendees {
+		invite = append(invite, a.ID)
+	}
+	if _, err := s.Calendar.Save(r.Context(), actor, e, invite); err != nil {
+		return "", err
+	}
+	s.feedMeeting(r.Context(), actor, e.ID) // moved: the time of the post's meeting
+
+	if xs, err := s.Calendar.Externals(r.Context(), e.ID); err == nil && len(xs) > 0 { // the same people from outside
 		var addrs []string
 		for _, x := range xs {
 			addrs = append(addrs, x.Email)
 		}
+		if r.Form == nil { // a REST call
+			r.Form = url.Values{}
+		}
 		r.Form.Set("external", strings.Join(addrs, ", "))
-		msg = s.eventMailSend(r, sess, id, &before)
+		return s.eventMailSend(r, sess, e.ID, &before), nil
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "msg": msg})
+	return "", nil
 }
 
 // roomsPage: the meeting rooms of the company (Settings, administrators), each with its bookings of the week.

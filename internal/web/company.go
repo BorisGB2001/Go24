@@ -339,6 +339,11 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/company")
 		return
 	}
+	courses, err := s.Company.FinishedCourses(r.Context(), id) // «Обучение»: the courses passed
+	if err != nil {
+		s.taskErr(w, r, err, "/company")
+		return
+	}
 	tab := r.URL.Query().Get("tab") // the profile's tabs: "" (general), tasks, thanks, security (the person and administrators)
 	security := sess.UserID == id || sess.Admin
 	if tab != "tasks" && tab != "thanks" && (tab != "security" || !security) {
@@ -358,6 +363,7 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		"Tasks": open, "CanEdit": sess.UserID == id || sess.Admin, "Admin": sess.Admin, "Me": sess.UserID == id,
 		"Phone": s.telephonyOf(r.Context(), sess, id), "NumberLocked": s.Telephony != nil && !sess.Admin,
 		"HR": hr, "HRRights": company.HRRights, "Honor": honor, "CanHonor": canHonor,
+		"Courses": courses,
 	}})
 }
 

@@ -192,16 +192,17 @@ func (s *Server) apiFeedPostOf(p *feed.Post) apiFeedPost {
 }
 
 // apiFeedList: the posts the key's owner sees, the newest first, a page at a time (next — "before" of the next
-// page). The filter is the feed's: view=important|mine|fav|pinned|hidden, project (key), q, author, kind=poll|gratitude,
-// from (YYYY-MM-DD), tag.
+// page). The filter is the feed's: view=important|mine|fav|pinned|hidden|mentions, project (key), q, author, dest (addressees: user IDs
+// or dept:ID, repeated), kind=poll|gratitude, period=today|yesterday|week|month|quarter, from and till (YYYY-MM-DD), tag.
 func (s *Server) apiFeedList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	q := r.URL.Query()
 	view := q.Get("view")
-	if view != "" && !slices.Contains([]string{"important", "mine", "fav", "pinned", "hidden"}, view) {
+	if view != "" && !slices.Contains([]string{"important", "mine", "fav", "pinned", "hidden", "mentions"}, view) {
 		return i18n.E("err.bad_form")
 	}
 	f := feed.Filter{Important: view == "important", Mine: view == "mine", Favorites: view == "fav", Pinned: view == "pinned",
-		Hidden: view == "hidden", Query: q.Get("q"), Author: q.Get("author"), Tag: q.Get("tag")}
+		Hidden: view == "hidden", Mentions: view == "mentions", Query: q.Get("q"), Author: q.Get("author"), Tag: q.Get("tag"),
+		To: slices.DeleteFunc(q["dest"], func(v string) bool { return v == "" })}
 	if k := q.Get("kind"); k != "" {
 		if k != "poll" && k != "gratitude" {
 			return i18n.E("err.bad_form")
@@ -215,13 +216,18 @@ func (s *Server) apiFeedList(w http.ResponseWriter, r *http.Request, p apikeys.P
 		}
 		f.Project = proj.ID
 	}
-	if v := q.Get("from"); v != "" {
-		t, err := time.ParseInLocation("2006-01-02", v, time.Local)
-		if err != nil {
-			return i18n.E("err.bad_form")
-		}
-		f.From = t
+	period := q.Get("period")
+	if period != "" && (period == "range" || !slices.Contains(feed.Periods, period)) {
+		return i18n.E("err.bad_form")
 	}
+	for _, k := range []string{"from", "till"} {
+		if v := q.Get(k); v != "" {
+			if _, err := time.ParseInLocation("2006-01-02", v, time.Local); err != nil {
+				return i18n.E("err.bad_form")
+			}
+		}
+	}
+	f.From, f.Till = feed.Period(period, q.Get("from"), q.Get("till"), time.Now())
 	if b := q.Get("before"); b != "" {
 		t, err := time.Parse(time.RFC3339Nano, b)
 		if err != nil {

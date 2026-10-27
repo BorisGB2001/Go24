@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -17,9 +18,11 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/bp"
+	"go24/internal/calendar"
 	"go24/internal/company"
 	"go24/internal/feed"
 	"go24/internal/i18n"
+	"go24/internal/msgfmt"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -29,20 +32,26 @@ import (
 func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	q := r.URL.Query()
 	f := feed.Filter{Important: q.Get("view") == "important", Mine: q.Get("view") == "mine", Project: q.Get("project"),
-		Query: q.Get("q"), Author: q.Get("author"), Favorites: q.Get("view") == "fav", Hidden: q.Get("view") == "hidden", Tag: feed.NormTag(q.Get("tag"))}
+		Query: q.Get("q"), Author: q.Get("author"), Favorites: q.Get("view") == "fav", Hidden: q.Get("view") == "hidden", Tag: feed.NormTag(q.Get("tag")),
+		Mentions: q.Get("view") == "mentions", To: slices.DeleteFunc(q["dest"], func(v string) bool { return v == "" })}
 	f.Post = q.Get("post")
 	if slices.Contains(feed.Kinds, q.Get("kind")) {
 		f.Kind = q.Get("kind")
 	}
-	if t, err := time.ParseInLocation("2006-01-02", q.Get("from"), time.Local); err == nil {
-		f.From = t
+	period := q.Get("period")
+	if !slices.Contains(feed.Periods, period) {
+		period = ""
 	}
+	f.From, f.Till = feed.Period(period, q.Get("from"), q.Get("till"), time.Now())
 	// the filter as it is, for «more» and the tabs
 	keep := url.Values{}
-	for _, k := range []string{"q", "author", "kind", "from", "project", "post", "tag"} {
+	for _, k := range []string{"q", "author", "kind", "period", "from", "till", "project", "post", "tag"} {
 		if v := q.Get(k); v != "" {
 			keep.Set(k, v)
 		}
+	}
+	if len(f.To) > 0 {
+		keep["dest"] = f.To
 	}
 	if b := q.Get("before"); b != "" {
 		if t, err := time.Parse(time.RFC3339Nano, b); err == nil {
@@ -114,7 +123,28 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	saved, err := s.Feed.SavedFilters(r.Context(), sess.UserID)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	depts, err := s.Feed.DeptNames(r.Context(), f.To)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	// the filter as a saved one has it: with the tab
+	cur := url.Values{}
+	for k, v := range keep {
+		if k != "post" {
+			cur[k] = v
+		}
+	}
+	if v := q.Get("view"); v != "" {
+		cur.Set("view", v)
+	}
 	data := map[string]any{
+		"Saved": saved, "Current": cur.Encode(), "Dest": memberChips(f.To, depts), "Periods": feed.Periods, "Period": period, "TillText": q.Get("till"),
 		"Side": side, "MayAll": mayAll, "MayImportant": mayImportant, // the rights of «Настройки ленты»
 		"Items": items, "View": q.Get("view"), "Projects": mine, "More": more, "Me": sess.UserID, "Admin": sess.AdminActive(),
 		"Users": users, "Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji,
@@ -719,6 +749,34 @@ func (s *Server) feedSeen(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	writeJSON(w, http.StatusOK, map[string]any{"news": 0})
 }
 
+// feedFilterSave saves the filter of the feed under a name (POST /feed/filters: name, query) and opens it.
+func (s *Server) feedFilterSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	vals, err := url.ParseQuery(r.FormValue("query"))
+	if err != nil {
+		s.taskErr(w, r, i18n.E("err.bad_form"), "/feed")
+		return
+	}
+	query := vals.Encode() // as the page encodes the current filter, to know it
+	err = s.Feed.SaveFilter(r.Context(), sess.UserID, feed.SavedFilter{Name: r.FormValue("name"), Query: query})
+	if errors.Is(err, feed.ErrFilterName) {
+		err = i18n.E("feed.filter.name_required")
+	}
+	if err != nil {
+		s.taskErr(w, r, err, "/feed")
+		return
+	}
+	http.Redirect(w, r, "/feed?"+query, http.StatusSeeOther)
+}
+
+// feedFilterDelete forgets a saved filter (POST /feed/filters/delete: name).
+func (s *Server) feedFilterDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if err := s.Feed.DeleteFilter(r.Context(), sess.UserID, r.FormValue("name")); err != nil {
+		s.taskErr(w, r, err, "/feed")
+		return
+	}
+	http.Redirect(w, r, "/feed", http.StatusSeeOther)
+}
+
 func (s *Server) feedDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if err := s.removePost(r.Context(), sess, r.PathValue("id")); err != nil {
 		s.jsonErr(w, r, err)
@@ -909,8 +967,14 @@ func markHashtags(escaped string) string {
 	})
 }
 
+// feedMeeting is a meeting of «Ближайшие события» with its day: today | tomorrow | "" (another one).
+type feedMeeting struct {
+	calendar.Event
+	Day string
+}
+
 // feedSide is the right column of the feed: the coming birthdays of colleagues (with «Поздравить» — a
-// gratitude to them), the important posts the viewer has not confirmed yet; «Мои задачи» are the page's counters.
+// gratitude to them), «Ближайшие события» of one's calendar for a week, the important posts the viewer has not confirmed yet; «Мои задачи» are the page's counters.
 func (s *Server) feedSide(r *http.Request, sess auth.Session) (map[string]any, error) {
 	side := map[string]any{}
 	if tasks.IsGuestCtx(r.Context()) {
@@ -923,6 +987,24 @@ func (s *Server) feedSide(r *http.Request, sess auth.Session) (map[string]any, e
 		}
 		side["Birthdays"] = list[:min(len(list), 5)]
 	}
+	if s.Calendar != nil {
+		now := time.Now()
+		list, err := s.Calendar.Upcoming(r.Context(), sess.UserID, now, 7, 5)
+		if err != nil {
+			return nil, err
+		}
+		var near []feedMeeting
+		for _, e := range list {
+			m, day := feedMeeting{Event: e}, e.Start.Local().Format(time.DateOnly)
+			if e.Start.Before(now) || day == now.Format(time.DateOnly) {
+				m.Day = "today"
+			} else if day == now.AddDate(0, 0, 1).Format(time.DateOnly) {
+				m.Day = "tomorrow"
+			}
+			near = append(near, m)
+		}
+		side["Events"] = near
+	}
 	imp, err := s.Feed.List(r.Context(), sess.UserID, feed.Filter{Important: true, Posts: true})
 	if err != nil {
 		return nil, err
@@ -933,11 +1015,14 @@ func (s *Server) feedSide(r *http.Request, sess auth.Session) (map[string]any, e
 		if p := it.Post; p != nil && !p.Read && p.AuthorID != sess.UserID && len(unread) < 3 {
 			text := p.Title
 			if text == "" {
-				text = clipText(strings.Join(strings.Fields(p.Body), " "), 90)
+				text = clipText(strings.Join(strings.Fields(msgfmt.Plain(p.Body)), " "), 90)
 			}
 			unread = append(unread, note{p.ID, p.AuthorName, text})
 		}
 	}
 	side["Important"] = unread
+	if p := s.feedPulse(r, sess); p != nil {
+		side["Pulse"] = p
+	}
 	return side, nil
 }

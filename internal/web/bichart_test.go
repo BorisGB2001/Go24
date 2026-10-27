@@ -122,3 +122,62 @@ func TestBIDraw(t *testing.T) {
 		t.Error("no rows is not empty")
 	}
 }
+
+func TestBIDrawKinds(t *testing.T) {
+	res := biSample()
+	// stacked: one column per month, the stages one on another
+	st := biDraw(bi.Widget{Kind: "stack", Width: 6}, res, biTr)
+	if len(st.Series) != 3 {
+		t.Fatalf("stack %+v", st.Series)
+	}
+	a, b := st.Series[0].Bars[0], st.Series[2].Bars[0] // «Новая» and «Успех» in September
+	if a.X != b.X || math.Abs(b.Y+b.H-a.Y) > 0.01 {
+		t.Errorf("not stacked: %+v %+v", a, b)
+	}
+	if top := st.YTicks[len(st.YTicks)-1].Text; top != "6" { // the axis spans the sums: 3 + 1, 2 + 4
+		t.Errorf("stack axis to %s", top)
+	}
+	area := biDraw(bi.Widget{Kind: "area", Width: 6}, res, biTr)
+	if len(area.Series) != 3 || area.Series[0].Area == "" || strings.Count(area.Series[0].Area, ",") != 4 {
+		t.Errorf("area %+v", area.Series)
+	}
+	// a funnel: the stages in the rows' order, the shares of the first and of the step before
+	one := biResult{Columns: []biColumn{res.Columns[1], res.Columns[2]},
+		Rows: [][]any{{"Новая", 10.0}, {"Переговоры", 5.0}, {"Успех", 2.0}}, Keys: [][]string{{"new"}, {"talk"}, {"won"}}}
+	fn := biDraw(bi.Widget{Kind: "funnel", Width: 6}, one, biTr)
+	if len(fn.Steps) != 3 || fn.Steps[1].Pct != "50%" || fn.Steps[2].Pct != "20%" || fn.Steps[2].Conv != "40%" ||
+		fn.Steps[0].Conv != "" || fn.Steps[0].W != 100 || fn.Steps[2].W != 20 || !fn.Steps[1].Click || fn.Steps[1].Key != "talk" {
+		t.Errorf("funnel %+v", fn.Steps)
+	}
+	// a pivot: the months down, the stages across, the totals
+	pv := biDraw(bi.Widget{Kind: "pivot", Width: 12}, res, biTr)
+	if len(pv.PRows) != 2 || len(pv.PCols) != 3 || pv.PCols[0].Text != "Новая" {
+		t.Fatalf("pivot %+v %+v", pv.PCols, pv.PRows)
+	}
+	if r := pv.PRows[0]; r.Cells[0].Text != "3" || r.Cells[1].Text != "" || r.Cells[2].Text != "1" || r.Total.Text != "4" {
+		t.Errorf("pivot row %+v", r)
+	}
+	if len(pv.PSum) != 4 || pv.PSum[0].Text != "5" || pv.PSum[3].Text != "10" {
+		t.Errorf("pivot totals %+v", pv.PSum)
+	}
+	// a number against the period before
+	kpi := biDraw(bi.Widget{Kind: "kpi", Width: 3}, res, biTr)
+	prev := res
+	prev.Rows = [][]any{{"2026-08-01", "Новая", 8.0, 0.0}}
+	biCompare(&kpi, prev, biTr)
+	if k := kpi.KPI[0]; k.Delta != "+25%" || k.Trend != "up" || k.Prev != "8" {
+		t.Errorf("compare %+v", k)
+	}
+	if k := kpi.KPI[1]; k.Delta != "" || k.Trend != "up" || k.Prev != "0" {
+		t.Errorf("compare with nothing %+v", k)
+	}
+	// a text: paragraphs and headings
+	paras := biParas("# План\nна квартал\r\n\r\nПервый\nабзац\n\n\n## Итог")
+	if len(paras) != 4 || !paras[0].Head || paras[0].Text != "План" || paras[1].Text != "на квартал" || paras[2].Text != "Первый\nабзац" ||
+		!paras[3].Head || paras[3].Text != "Итог" {
+		t.Errorf("paras %+v", paras)
+	}
+	if tx := biDraw(bi.Widget{Kind: "text", Body: "Привет"}, biResult{}, biTr); tx.Empty || len(tx.Paras) != 1 {
+		t.Errorf("text %+v", tx)
+	}
+}

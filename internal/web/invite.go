@@ -30,9 +30,20 @@ func (s *Server) invitePage(w http.ResponseWriter, r *http.Request, sess auth.Se
 		s.fail(w, "invite departments", err)
 		return
 	}
+	requests, err := s.Company.JoinRequests(r.Context())
+	if err != nil {
+		s.fail(w, "join requests", err)
+		return
+	}
+	set, err := s.Company.StaffSettings(r.Context())
+	if err != nil {
+		s.fail(w, "staff settings", err)
+		return
+	}
 	s.render(w, r, "invite", page{TitleKey: "invite.title", Nav: "invite", Data: map[string]any{
 		"Invites": list, "Depts": depts, "Dept": r.URL.Query().Get("dept"), "Ready": s.Authentik != nil && s.AuthentikPublic != "",
-		"Now": time.Now(), "New": r.URL.Query().Get("new"), "Mail": s.inviterMailbox(r.Context(), sess.UserID) != ""}})
+		"Now": time.Now(), "New": r.URL.Query().Get("new"), "Mail": s.inviterMailbox(r.Context(), sess.UserID) != "",
+		"Requests": requests, "Link": s.joinLink(set), "Admin": sess.Admin}})
 }
 
 // inviteSend invites everyone of the form (a line each; the old single e-mail and name too): the sign-up link of

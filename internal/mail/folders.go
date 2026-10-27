@@ -207,12 +207,18 @@ func (s *Store) remote(ctx context.Context, mailboxID string, fn func(c *client.
 	if err != nil {
 		return err
 	}
+	if err := s.authorize(ctx, &a); err != nil {
+		return err
+	}
 	c, err := dialIMAP(a.IMAPHost, a.IMAPPort, a.TLS)
 	if err != nil {
 		return i18n.E("err.mail_connect", err.Error())
 	}
 	defer c.Logout()
-	if err := c.Login(a.Login, a.password); err != nil {
+	if err := imapLogin(c, a); err != nil {
+		if a.oauth != "" {
+			return i18n.E("err.mail_oauth_again")
+		}
 		return i18n.E("err.mail_login")
 	}
 	err = fn(c, a)

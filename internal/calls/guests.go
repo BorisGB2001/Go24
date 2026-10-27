@@ -182,3 +182,10 @@ func (g *Guests) Decide(ctx context.Context, room, id, by string, admit bool) (b
 		WHERE gu.id::text = $1 AND l.id = gu.link_id AND l.lk_room = $2 AND gu.state = 'waiting'`, id, room, state, by)
 	return err == nil && tag.RowsAffected() == 1, err
 }
+
+// Expel keeps the guest of the call out of it for good (the host put them out): their link lets them in no more.
+func (g *Guests) Expel(ctx context.Context, room, id, by string) error {
+	_, err := g.DB.Exec(ctx, `UPDATE call_guests gu SET state = $3, decided_by = $4 FROM call_guest_links l
+		WHERE gu.id::text = $1 AND l.id = gu.link_id AND l.lk_room = $2`, id, room, GuestDenied, by)
+	return err
+}

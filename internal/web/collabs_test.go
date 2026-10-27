@@ -97,9 +97,10 @@ func TestCollabsHTTP(t *testing.T) {
 		return res.StatusCode, string(b), res.Header.Get("Location")
 	}
 
-	// the owner makes a collab with the guest in it; it opens on its page
+	// the owner makes a collab with the guest in it; it opens with its start tool (the chat: here, without the
+	// messenger, its page)
 	st, _, loc := do(owner, "POST", "/collabs", url.Values{"name": {"Сайт для Альфы"}, "description": {"Редизайн"}, "members": {client}})
-	if st != http.StatusSeeOther || loc != "/p/CL1" {
+	if st != http.StatusSeeOther || loc != "/c/CL1" {
 		t.Fatalf("create: %d %s", st, loc)
 	}
 	c, err := ts.CollabByKey(ctx, owner, "CL1")

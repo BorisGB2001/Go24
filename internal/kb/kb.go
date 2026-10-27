@@ -216,6 +216,12 @@ func (s *Store) CreatePage(ctx context.Context, userID, spaceID, parentID, title
 
 // SavePage changes a page; the earlier text goes to its history.
 func (s *Store) SavePage(ctx context.Context, userID, id, title, body string) error {
+	return s.SavePageAt(ctx, userID, id, title, body, time.Time{})
+}
+
+// SavePageAt changes a page written over its version base (its updated time; zero — whatever it is now): if someone
+// saved the page since, nothing is written and the error is ErrChanged. The user's draft of the page goes.
+func (s *Store) SavePageAt(ctx context.Context, userID, id, title, body string, base time.Time) error {
 	p, sp, err := s.Page(ctx, userID, id)
 	if err != nil {
 		return err
@@ -226,26 +232,38 @@ func (s *Store) SavePage(ctx context.Context, userID, id, title, body string) er
 	if title, err = checkPage(title, body); err != nil {
 		return err
 	}
-	if title == p.Title && body == p.Body {
-		return nil
-	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `INSERT INTO kb_versions (page_id, title, body, edited_by, edited_at)
-		SELECT id, title, body, updated_by, updated_at FROM kb_pages WHERE id = $1`, id); err != nil {
+	var updated time.Time
+	if err := tx.QueryRow(ctx, `SELECT updated_at FROM kb_pages_all WHERE id = $1 FOR UPDATE`, p.ID).Scan(&updated); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE kb_pages SET title = $2, body = $3, updated_by = $4, updated_at = now() WHERE id = $1`,
-		id, title, body, userID); err != nil {
+	if !base.IsZero() && !updated.Equal(base) {
+		return ErrChanged
+	}
+	same := title == p.Title && body == p.Body
+	if !same {
+		if _, err := tx.Exec(ctx, `INSERT INTO kb_versions (page_id, title, body, edited_by, edited_at)
+			SELECT id, title, body, updated_by, updated_at FROM kb_pages WHERE id = $1`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE kb_pages SET title = $2, body = $3, updated_by = $4, updated_at = now() WHERE id = $1`,
+			id, title, body, userID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM kb_drafts WHERE user_id = $1 AND page_id = $2`, userID, p.ID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	_ = s.tell(ctx, userID, sp.ID, id, "kb_page_changed", title)
+	if !same {
+		_ = s.tell(ctx, userID, sp.ID, id, "kb_page_changed", title)
+	}
 	return nil
 }
 

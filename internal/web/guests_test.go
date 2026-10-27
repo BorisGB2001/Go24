@@ -608,13 +608,13 @@ func TestGuestInvites(t *testing.T) {
 	if _, body := do(emp, "GET", "/join/"+link.Token, nil); !strings.Contains(body, `action="/join/`+link.Token+`"`) {
 		t.Error("no «Присоединиться» for one signed in")
 	}
-	if res, _ := do(emp, "POST", "/join/"+link.Token, url.Values{}); res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/p/"+key {
+	if res, _ := do(emp, "POST", "/join/"+link.Token, url.Values{}); res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/c/"+key {
 		t.Fatalf("join: %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
 	if g, _ := ts.IsGuest(ctx, emp); g {
 		t.Error("the employee became a guest")
 	}
-	if res, _ := do(emp, "GET", "/join/"+link.Token, nil); res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/p/"+key {
+	if res, _ := do(emp, "GET", "/join/"+link.Token, nil); res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/c/"+key {
 		t.Errorf("a member opens the link again: %d", res.StatusCode)
 	}
 

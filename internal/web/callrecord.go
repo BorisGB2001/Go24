@@ -129,6 +129,10 @@ func (s *Server) callSettings(w http.ResponseWriter, r *http.Request, sess auth.
 			s.taskErr(w, r, err, "/settings/calls")
 			return
 		}
+		if err := s.Recordings.SetTranscribing(ctx, sess.UserID, r.FormValue("transcribe") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/calls")
+			return
+		}
 		http.Redirect(w, r, "/settings/calls?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
 		return
 	}
@@ -140,6 +144,11 @@ func (s *Server) callSettings(w http.ResponseWriter, r *http.Request, sess auth.
 			return
 		}
 		data["Record"] = on
+		if data["Transcribe"], err = s.Recordings.Transcribing(ctx); err != nil {
+			s.fail(w, "call settings", err)
+			return
+		}
+		data["Speech"] = s.Speech != nil
 	}
 	if s.External != nil {
 		services, err := s.External.Configs(ctx)
@@ -207,7 +216,7 @@ func (s *Server) followRecordings(ctx context.Context) {
 // recordingFailed ends the recording without a file and tells the call so.
 func (s *Server) recordingFailed(ctx context.Context, rec calls.Recording, why string) {
 	s.Log.Warn("call recording failed", "egress", rec.EgressID, "room", rec.Room, "why", why)
-	if err := s.Recordings.Finish(ctx, rec.ID, "", why); err != nil {
+	if err := s.Recordings.Finish(ctx, rec.ID, "", why, false); err != nil {
 		s.Log.Warn("call recording", "err", err)
 		return
 	}
@@ -217,7 +226,7 @@ func (s *Server) recordingFailed(ctx context.Context, rec calls.Recording, why s
 }
 
 // saveRecording puts the file Egress wrote on the Drive of the one who started the recording («Записи звонков»),
-// with the call's task when the call is of a task, and tells the call.
+// with the call's task when the call is of a task, and tells the call; its text is to be made when that is on.
 func (s *Server) saveRecording(ctx context.Context, rec calls.Recording, e calls.Egress) error {
 	local := filepath.Join(s.RecordDir, filepath.Base(e.File))
 	f, err := os.Open(local)
@@ -264,7 +273,7 @@ func (s *Server) saveRecording(ctx context.Context, rec calls.Recording, e calls
 	if err != nil {
 		return err
 	}
-	if err := s.Recordings.Finish(ctx, rec.ID, id, ""); err != nil {
+	if err := s.Recordings.Finish(ctx, rec.ID, id, "", s.transcribeOn(ctx)); err != nil {
 		return err
 	}
 	s.Log.Info("call recording saved", "egress", rec.EgressID, "file", id, "size", st.Size())

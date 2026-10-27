@@ -70,8 +70,17 @@ func (s *Server) signHRNew(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.fail(w, "sign hr", err)
 		return
 	}
+	self, err := s.Sign.SelfTemplates(r.Context())
+	if err != nil {
+		s.fail(w, "sign hr", err)
+		return
+	}
+	signers := map[string]string{} // «Документы от сотрудников»: the representative of each template
+	for _, t := range self {
+		signers[t.TemplateID] = t.SignerID
+	}
 	s.render(w, r, "signhr", page{TitleKey: "sign.hr.new", Nav: "sign", Data: map[string]any{"Templates": tpls, "Users": users,
-		"Fields": employeeFields, "Admin": sess.Admin}})
+		"Fields": employeeFields, "Admin": sess.Admin, "Self": signers}})
 }
 
 // hrEmployee is an employee an HR document goes to, with the values of the template's placeholders.
@@ -217,16 +226,8 @@ func (s *Server) signHRSend(r *http.Request, sess auth.Session, title, tplID, si
 		for k, v := range e.Values {
 			values[k] = v
 		}
-		if t.ID != "" {
-			now := time.Now()
-			if values["DocumentNumber"], err = s.CRM.NextDocNumber(r.Context(), t.ID, now); err != nil {
-				break
-			}
-			values["DocumentDate"] = now.Format(s.tr(r, "format.date"))
-		}
 		var data []byte
-		if data, err = docgen.Make(tpl, values, nil, images); err != nil {
-			err = i18n.E("err.doc_not_docx")
+		if data, err = s.hrDocument(r, t.ID, tpl, values, images); err != nil {
 			break
 		}
 		d := sign.Doc{Title: title + " — " + e.Name, AuthorID: sess.UserID, BatchID: batch, Hash: sign.Hash(data), RemindDays: remind}
@@ -254,6 +255,24 @@ func (s *Server) signHRSend(r *http.Request, sess auth.Session, title, tplID, si
 	s.Log.Info("sign hr send", "user_id", sess.UserID, "batch", batch, "copies", made)
 	s.signHRTurns(r, batch, sess.UserID)
 	return batch, nil
+}
+
+// hrDocument fills the template's copy for one employee: the number and date by the template's numerator (when a
+// template of go24, tplID), then the values.
+func (s *Server) hrDocument(r *http.Request, tplID string, tpl []byte, values map[string]string, images map[string]docgen.Image) ([]byte, error) {
+	if tplID != "" {
+		now := time.Now()
+		n, err := s.CRM.NextDocNumber(r.Context(), tplID, now)
+		if err != nil {
+			return nil, err
+		}
+		values["DocumentNumber"], values["DocumentDate"] = n, now.Format(s.tr(r, "format.date"))
+	}
+	data, err := docgen.Make(tpl, values, nil, images)
+	if err != nil {
+		return nil, i18n.E("err.doc_not_docx")
+	}
+	return data, nil
 }
 
 // signHRTurns tells those whose turn it is in the sending: the representative once for the whole sending, each

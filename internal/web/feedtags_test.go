@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -40,6 +41,16 @@ func TestHashtags(t *testing.T) {
 	h := markHashtags("Про #план &#39;#нет&#39; a#нет")
 	if h != `Про <a class="ftag" href="/feed?tag=%D0%BF%D0%BB%D0%B0%D0%BD">#план</a> &#39;#нет&#39; a#нет` {
 		t.Errorf("markHashtags = %s", h)
+	}
+	// links of a post are clickable, their anchors are not tags
+	ft := baseFuncs["feedtext"].(func(string) template.HTML)("#план: https://x.ru/a#b\n<i>")
+	if ft != `<a class="ftag" href="/feed?tag=%D0%BF%D0%BB%D0%B0%D0%BD">#план</a>: <a href="https://x.ru/a#b" target="_blank" rel="noopener">https://x.ru/a#b</a><br>&lt;i&gt;` {
+		t.Errorf("feedtext = %s", ft)
+	}
+	// formatted: the BB codes and the marks of the editor's buttons
+	ft = baseFuncs["feedtext"].(func(string) template.HTML)("[b]План[/b] на _неделю_, [u]важно[/u]\n[quote]цитата #нет[/quote]файл_имя")
+	if ft != `<b>План</b> на <i>неделю</i>, <u>важно</u><blockquote>цитата <a class="ftag" href="/feed?tag=%D0%BD%D0%B5%D1%82">#нет</a></blockquote>файл_имя` {
+		t.Errorf("feedtext formatted = %s", ft)
 	}
 }
 

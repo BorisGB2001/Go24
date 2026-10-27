@@ -1,0 +1,18 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/sign">{{t "sign.title"}}</a></div>
+<div class="pagehead"><h1>{{icon "file-plus"}} {{t "sign.self.new"}}</h1></div>
+{{if $d.Tpl}}<form method="post" action="/sign/my" class="card form-narrow" data-native>
+  <input type="hidden" name="template" value="{{$d.Tpl.TemplateID}}">
+  <h2>{{icon "file-text"}} {{$d.Tpl.Name}}</h2>
+  <p class="small muted">{{t "sign.self.fill"}}</p>
+  {{range $d.Fields}}<label for="sf-{{.Name}}">{{.Name}}</label>{{if .Date}}<input type="date" id="sf-{{.Name}}" name="v.{{.Name}}">{{else}}<textarea id="sf-{{.Name}}" name="v.{{.Name}}" rows="2" maxlength="2000"></textarea>{{end}}
+  {{else}}<p class="small muted">{{t "sign.self.no_fields"}}</p>{{end}}
+  <p class="small">{{icon "signature"}} {{t "sign.self.then" $d.Tpl.Signer}}</p>
+  <p><button class="primary">{{icon "file-plus"}} {{t "sign.self.create"}}</button> <a class="button ghost" href="/sign/my">{{t "common.cancel"}}</a></p>
+</form>
+{{else}}<div class="card flush">{{if $d.Templates}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.hr.template"}}</th><th>{{t "sign.hr.signer"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Templates}}<tr><td><a href="/sign/my?tpl={{.TemplateID}}" class="ttitle">{{icon "file-text"}} {{.Name}}</a></td>
+    <td class="small">{{.Signer}}</td><td class="nowrap"><a class="button small" href="/sign/my?tpl={{.TemplateID}}">{{icon "file-plus"}} {{t "sign.self.create"}}</a></td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{icon "file-plus"}} {{t "sign.self.empty"}}</div>{{end}}</div>{{end}}
+{{end}}

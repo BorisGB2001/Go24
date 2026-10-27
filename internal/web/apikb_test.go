@@ -315,6 +315,23 @@ func TestKBAPI(t *testing.T) {
 	if faq.Pages == 0 || len(faq.Tree) == 0 {
 		t.Fatalf("from a template: %+v", faq)
 	}
+	var ptpls []apiKBTemplate
+	call("GET", "/api/v1/kb/page-templates", annaKey, nil, 200, &ptpls)
+	if len(ptpls) == 0 || ptpls[0].ID != "p:meeting" || ptpls[0].Pages != 1 {
+		t.Fatalf("page templates: %+v", ptpls)
+	}
+	var fromTpl apiKBPage
+	call("POST", "/api/v1/kb/spaces/"+faq.ID+"/pages", annaKey, map[string]string{"template": "p:howto"}, 201, &fromTpl)
+	if fromTpl.Title == "" || strings.Contains(fromTpl.Body, "{{") || !strings.Contains(fromTpl.Body, "##") {
+		t.Fatalf("a page from a template: %+v", fromTpl)
+	}
+	var saved struct{ ID string }
+	call("POST", "/api/v1/kb/pages/"+fromTpl.ID+"/template", readOnly, map[string]string{"name": "Ева"}, 403, nil)
+	call("POST", "/api/v1/kb/pages/"+fromTpl.ID+"/template", annaKey, map[string]string{"name": "Наша инструкция"}, 201, &saved)
+	call("GET", "/api/v1/kb/page-templates", annaKey, nil, 200, &ptpls)
+	if last := ptpls[len(ptpls)-1]; last.ID != saved.ID || last.Name != "Наша инструкция" || last.Builtin {
+		t.Fatalf("saved page template: %+v", last)
+	}
 
 	// the trash
 	call("DELETE", "/api/v1/kb/pages/"+top.ID, readOnly, nil, 403, nil)
@@ -370,4 +387,25 @@ func TestKBAPI(t *testing.T) {
 	send(req, eveKey, 404)
 	req, _ = http.NewRequest("GET", hs.URL+"/api/v1/kb/files/00000000-0000-0000-0000-000000000000", nil)
 	send(req, annaKey, 404)
+	// a draft of the key's owner, «editing now» for the others; a PATCH over a version saved since — 409
+	var dp apiKBPage
+	call("POST", ab+"/pages", annaKey, map[string]string{"title": "Черновики", "body": "раз"}, 201, &dp)
+	var dr apiKBDraftOut
+	call("GET", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, nil, 404, nil)
+	call("PUT", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, map[string]any{"title": "Черновики", "body": "два", "base": dp.UpdatedAt}, 200, &dr)
+	if !dr.Changed || dr.Stale || dr.Body != "два" || !dr.Base.Equal(dp.UpdatedAt) {
+		t.Fatalf("draft: %+v", dr)
+	}
+	call("PUT", "/api/v1/kb/pages/"+dp.ID+"/draft", borisKey, map[string]any{"title": "x", "body": "x"}, 403, nil)
+	var seen apiKBPage
+	call("GET", "/api/v1/kb/pages/"+dp.ID, borisKey, nil, 200, &seen)
+	if len(seen.Editing) != 1 || seen.Editing[0] != "Анна" {
+		t.Fatalf("editing: %+v", seen.Editing)
+	}
+	call("PATCH", "/api/v1/kb/pages/"+dp.ID, annaKey, map[string]any{"body": "три", "base": dp.UpdatedAt}, 200, &seen)
+	call("GET", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, nil, 404, nil) // saved: the draft goes
+	call("PATCH", "/api/v1/kb/pages/"+dp.ID, annaKey, map[string]any{"body": "четыре", "base": dp.UpdatedAt}, 409, nil)
+	call("PUT", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, map[string]any{"title": "Черновики", "body": "пять"}, 200, &dr)
+	call("DELETE", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, nil, 204, nil)
+	call("GET", "/api/v1/kb/pages/"+dp.ID+"/draft", annaKey, nil, 404, nil)
 }

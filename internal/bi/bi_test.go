@@ -87,12 +87,18 @@ func TestRun(t *testing.T) {
 	deal("b", 3000, anna, won)
 	deal("c", 500, petr, "")
 
-	// by stage: the built-in names come from the locale; the sum and the count
+	// by stage: the built-in names come from the locale; the sum and the count; the stages as their pipeline goes
+	// (the first one before «won»), by the count when asked
 	res, err := s.Run(ctx, anna, Query{Dataset: "crm_deal", Dims: []string{"stage"},
 		Measures: []Measure{{Agg: "count"}, {Agg: "sum", Field: "amount"}}}, tr)
 	must(err)
-	if len(res.Rows) != 2 || res.Rows[0][0] != "«crm.stage.won»" || res.Rows[0][1] != 2.0 || res.Rows[0][2] != 4000.0 {
+	if len(res.Rows) != 2 || res.Rows[1][0] != "«crm.stage.won»" || res.Rows[1][1] != 2.0 || res.Rows[1][2] != 4000.0 {
 		t.Fatalf("by stage: %v", res.Rows)
+	}
+	res, err = s.Run(ctx, anna, Query{Dataset: "crm_deal", Dims: []string{"stage"}, Measures: []Measure{{Agg: "count"}}, Sort: -2}, tr)
+	must(err)
+	if len(res.Rows) != 2 || res.Rows[0][0] != "«crm.stage.won»" {
+		t.Fatalf("by stage, the most first: %v", res.Rows)
 	}
 	// by responsible, filtered to the won; and by month of creation
 	res, err = s.Run(ctx, anna, Query{Dataset: "crm_deal", Dims: []string{"responsible"}, Measures: []Measure{{Agg: "avg", Field: "amount"}},

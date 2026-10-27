@@ -76,9 +76,14 @@ func (s *Server) appsSettings(w http.ResponseWriter, r *http.Request, sess auth.
 			access[app] = append(access[app], tasks.User{ID: ref.ID, Name: ref.Name})
 		}
 	}
+	files, err := s.Apps.StaticFiles(r.Context())
+	if err != nil {
+		s.fail(w, "app files", err)
+		return
+	}
 	s.render(w, r, "apps_settings", page{TitleKey: "apps.title", Nav: "apps_settings", Data: map[string]any{
 		"Apps": list, "Empty": apps.App{}, "Scopes": apikeys.AllScopes, "Base": strings.TrimRight(s.BaseURL, "/"), "Access": access,
-		"Places": places, "Events": events, "Bots": bots}})
+		"Places": places, "Events": events, "Bots": bots, "Files": files, "MaxArchive": apps.MaxArchive >> 20}})
 }
 
 // appSave: op=save (a new one with id «new»), access («Кому доступно»: to — people and «dept:ID»), install,
@@ -88,8 +93,9 @@ func (s *Server) appSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/settings/apps", http.StatusSeeOther)
+	r.Body = http.MaxBytesReader(w, r.Body, apps.MaxArchive+1<<20) // the archive of a static application and the fields
+	if err := r.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		s.taskErr(w, r, apps.ErrArchive, "/settings/apps")
 		return
 	}
 	ctx, id := r.Context(), r.PathValue("id")
@@ -129,9 +135,11 @@ func (s *Server) appSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			id = ""
 		}
 		a = apps.App{ID: id, Name: r.FormValue("name"), HandlerURL: r.FormValue("handler_url"), InstallURL: r.FormValue("install_url"),
-			MenuTitle: r.FormValue("menu_title"), APIOnly: r.FormValue("api_only") == "on", Scopes: r.Form["scopes"]}
+			MenuTitle: r.FormValue("menu_title"), APIOnly: r.FormValue("api_only") == "on", Static: r.FormValue("static") == "on",
+			Scopes: r.Form["scopes"]}
 		if id, err = s.Apps.Save(ctx, sess.UserID, a); err == nil {
 			kind = "app_saved"
+			err = s.appArchive(r, id)
 		}
 	}
 	if kind != "" {
@@ -182,7 +190,46 @@ func (s *Server) appPage(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if options == "" {
 		options = "{}"
 	}
-	s.appFrame(w, r, sess, a, a.HandlerURL, placement, options, false)
+	handler := a.HandlerURL
+	if a.Static {
+		handler = a.StaticURL(s.BaseURL)
+	}
+	s.appFrame(w, r, sess, a, handler, placement, options, false)
+}
+
+// appArchive puts the archive sent with the form (archive) as the static application's files; none sent — nothing.
+func (s *Server) appArchive(r *http.Request, id string) error {
+	f, _, err := r.FormFile("archive")
+	if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
+		return nil
+	}
+	if err != nil {
+		return apps.ErrArchive
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, apps.MaxArchive+1))
+	if err != nil {
+		return apps.ErrArchive
+	}
+	return s.Apps.SetArchive(r.Context(), id, raw)
+}
+
+// appStatic gives a file of an installed static application (its page in the frame posts here too, as to a handler).
+// The files are the application's own code: they go in a sandbox (an origin of their own, «null»), so they reach
+// neither go24's cookies nor its pages; REST — through go24.js and the page around the frame.
+func (s *Server) appStatic(w http.ResponseWriter, r *http.Request) {
+	f, err := s.Apps.StaticFile(r.Context(), r.PathValue("id"), r.PathValue("path"))
+	if err != nil {
+		http.Error(w, s.tr(r, "err.not_found"), http.StatusNotFound)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Content-Type", f.Type)
+	_, _ = w.Write(f.Data)
 }
 
 // appTab is the tab of an application in a card (a place it bound its handler to): the frame of the card opens it
@@ -274,6 +321,9 @@ func (s *Server) appFrameAuth(w http.ResponseWriter, r *http.Request, sess auth.
 		return
 	}
 	var origins []string
+	if a.Static { // its sandbox has no origin of its own
+		origins = append(origins, "null")
+	}
 	for _, raw := range []string{a.HandlerURL, a.InstallURL} {
 		if u, err := url.Parse(raw); err == nil && raw != "" && u.Host != "" {
 			origins = append(origins, u.Scheme+"://"+u.Host)

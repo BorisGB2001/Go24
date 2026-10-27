@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -19,10 +20,11 @@ var (
 	ErrKind     = i18n.E("bi.err.kind")
 	ErrPeriod   = i18n.E("bi.err.period")
 	ErrRights   = i18n.E("bi.err.rights")
+	ErrBody     = i18n.E("bi.err.body")
 )
 
-// Kinds of a widget: a number, columns, a line, a pie, a table.
-var Kinds = []string{"kpi", "bar", "line", "pie", "table"}
+// Kinds of a widget: a number, columns, stacked columns, a line, areas, a pie, a funnel, a table, a pivot table, a text.
+var Kinds = []string{"kpi", "bar", "stack", "line", "area", "pie", "funnel", "table", "pivot", "text"}
 
 // Widths of a widget, in columns of the grid of 12: a quarter, a third, a half, two thirds, the whole row.
 var Widths = []int{3, 4, 6, 8, 12}
@@ -58,7 +60,12 @@ type Widget struct {
 	Width           int
 	Query           Query
 	NoPeriod        bool
+	Compare         bool   // a number: its change against the period before, as long
+	Body            string // a text: its paragraphs, «# » starts a heading
 }
+
+// MaxBody is the longest text of a text widget.
+const MaxBody = 10000
 
 // CanEdit: the viewer changes the dashboard's widgets and settings — its author, the administrators and those
 // «Права доступа» let; nobody changes a ready one.
@@ -107,6 +114,24 @@ func Span(period string, dateFrom, dateTo *time.Time, now time.Time) (from, to *
 		}
 	}
 	return from, to
+}
+
+// Before is the period as long just before [from, to): the months before a span of whole months (a quarter — the
+// quarter before), the days before one of whole days; false when the period has an open end.
+func Before(from, to *time.Time) (a, b time.Time, ok bool) {
+	if from == nil || to == nil || !to.After(*from) {
+		return a, b, false
+	}
+	f, t := *from, *to
+	if f.Day() == 1 && t.Day() == 1 && f.Hour() == 0 && t.Hour() == 0 && f.Minute() == 0 && t.Minute() == 0 {
+		if n := (t.Year()-f.Year())*12 + int(t.Month()-f.Month()); n > 0 {
+			return f.AddDate(0, -n, 0), f, true
+		}
+	}
+	if days := int(math.Round(t.Sub(f).Hours() / 24)); days > 0 && f.AddDate(0, 0, days).Equal(t) {
+		return f.AddDate(0, 0, -days), f, true
+	}
+	return f.Add(-t.Sub(f)), f, true
 }
 
 // dashboardSQL gives the dashboards the viewer ($1, $2 — an administrator) sees: the ready ones are everyone's to view,
@@ -230,8 +255,8 @@ func (s *Store) CopyDashboard(ctx context.Context, by, id, title string, name fu
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period)
-			SELECT $2, pos, kind, title, width, query, no_period FROM bi_widgets WHERE dashboard_id = $1`, id, nid)
+		_, err = tx.Exec(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period, compare, body)
+			SELECT $2, pos, kind, title, width, query, no_period, compare, body FROM bi_widgets WHERE dashboard_id = $1`, id, nid)
 		if err != nil || name == nil {
 			return err
 		}
@@ -256,12 +281,12 @@ func (s *Store) DeleteDashboard(ctx context.Context, id string) error {
 	return err
 }
 
-const widgetSQL = `SELECT id, dashboard_id, pos, kind, title, width, query, no_period FROM bi_widgets`
+const widgetSQL = `SELECT id, dashboard_id, pos, kind, title, width, query, no_period, compare, body FROM bi_widgets`
 
 func scanWidget(r pgx.Row) (Widget, error) {
 	var w Widget
 	var q []byte
-	if err := r.Scan(&w.ID, &w.DashboardID, &w.Pos, &w.Kind, &w.Title, &w.Width, &q, &w.NoPeriod); err != nil {
+	if err := r.Scan(&w.ID, &w.DashboardID, &w.Pos, &w.Kind, &w.Title, &w.Width, &q, &w.NoPeriod, &w.Compare, &w.Body); err != nil {
 		return w, err
 	}
 	return w, json.Unmarshal(q, &w.Query)
@@ -293,6 +318,12 @@ func (s *Store) CheckWidget(ctx context.Context, w Widget) error {
 	if !slices.Contains(Widths, w.Width) {
 		return ErrKind
 	}
+	if w.Kind == "text" { // no query: the text of the widget
+		if len([]rune(w.Body)) > MaxBody {
+			return ErrBody
+		}
+		return nil
+	}
 	return s.Check(ctx, w.Query)
 }
 
@@ -309,15 +340,15 @@ func (s *Store) SaveWidget(ctx context.Context, w Widget) (string, error) {
 	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if w.ID == "" {
-			err := tx.QueryRow(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period)
-				VALUES ($1, (SELECT coalesce(max(pos) + 1, 0) FROM bi_widgets WHERE dashboard_id = $1), $2, $3, $4, $5, $6)
-				RETURNING id`, w.DashboardID, w.Kind, w.Title, w.Width, q, w.NoPeriod).Scan(&w.ID)
+			err := tx.QueryRow(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period, compare, body)
+				VALUES ($1, (SELECT coalesce(max(pos) + 1, 0) FROM bi_widgets WHERE dashboard_id = $1), $2, $3, $4, $5, $6, $7, $8)
+				RETURNING id`, w.DashboardID, w.Kind, w.Title, w.Width, q, w.NoPeriod, w.Compare, w.Body).Scan(&w.ID)
 			if err != nil {
 				return err
 			}
 		} else {
-			tag, err := tx.Exec(ctx, `UPDATE bi_widgets SET kind = $2, title = $3, width = $4, query = $5, no_period = $6
-				WHERE id = $1`, w.ID, w.Kind, w.Title, w.Width, q, w.NoPeriod)
+			tag, err := tx.Exec(ctx, `UPDATE bi_widgets SET kind = $2, title = $3, width = $4, query = $5, no_period = $6,
+				compare = $7, body = $8 WHERE id = $1`, w.ID, w.Kind, w.Title, w.Width, q, w.NoPeriod, w.Compare, w.Body)
 			if err != nil {
 				return err
 			}
@@ -343,8 +374,8 @@ func (s *Store) CopyWidget(ctx context.Context, id string) (string, error) {
 			w.DashboardID, w.Pos); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period)
-			SELECT dashboard_id, pos + 1, kind, title, width, query, no_period FROM bi_widgets WHERE id = $1 RETURNING id`,
+		return tx.QueryRow(ctx, `INSERT INTO bi_widgets (dashboard_id, pos, kind, title, width, query, no_period, compare, body)
+			SELECT dashboard_id, pos + 1, kind, title, width, query, no_period, compare, body FROM bi_widgets WHERE id = $1 RETURNING id`,
 			id).Scan(&nid)
 	})
 	return nid, err

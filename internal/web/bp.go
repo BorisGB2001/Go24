@@ -296,6 +296,20 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 			return
 		}
 	}
+	if lid := r.URL.Query().Get("list"); t.ID == "" && lid != "" { // «Новый шаблон» of a list's page
+		t.Entity, t.ListID = bp.EntityList, lid
+	}
+	lists, err := s.BP.Lists(bpAdmin(r, sess), sess.UserID)
+	if err != nil {
+		s.taskErr(w, r, err, "/bp")
+		return
+	}
+	var list *bp.List // of a template of a list's elements: its fields «Изменить элемент» sets
+	for i := range lists {
+		if lists[i].ID == t.ListID {
+			list = &lists[i]
+		}
+	}
 	users, err := s.Tasks.ListUsers(r.Context())
 	if err != nil {
 		s.taskErr(w, r, err, "/bp")
@@ -361,7 +375,7 @@ func (s *Server) bpTemplatePage(w http.ResponseWriter, r *http.Request, sess aut
 			starters = append(starters, tasks.User{ID: ref.ID, Name: ref.Name})
 		}
 	}
-	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldRows": bpFieldRows(t.Fields, users), "NewRows": bpFieldRows(nil, users), "FieldKinds": bp.FieldKinds, "UserFields": userFields, "Types": types,
+	s.render(w, r, "bptemplate", page{Title: t.Name, Nav: "bp", Data: map[string]any{"T": t, "Starters": starters, "FieldRows": bpFieldRows(t.Fields, users), "NewRows": bpFieldRows(nil, users), "FieldKinds": bp.FieldKinds, "UserFields": userFields, "Types": types, "Lists": lists, "List": list,
 		"AllFields": fields, "DateFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date"), "TimeFields": dateFields(bp.AllFields(t.Fields, t.Steps), "date", "datetime"), "AbsenceKinds": company.AbsenceKinds, "Kinds": bp.StepKinds, "CardFields": bp.CardFields, "OwnFields": ownFields, "Modes": bp.Modes, "PickModes": bp.PickModes, "Delegations": bp.Delegations, "Deeds": crm.ActivityKinds, "Docs": docs, "Scopes": bp.FieldScopes, "Others": others, "MaxLoops": bp.MaxLoops, "Ops": bp.Ops, "Users": users, "Projects": projects, "Stages": stages}})
 }
 
@@ -488,7 +502,13 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 		t.Name, t.Description, t.Active = r.FormValue("name"), r.FormValue("description"), r.FormValue("active") == "on"
 		t.AutoCreate, t.AutoChange = r.FormValue("auto_create") == "on", r.FormValue("auto_change") == "on"
 		// a smart process is «deal:<its type>»: its cards are deals of its pipelines
-		t.Entity, t.TypeID, _ = strings.Cut(r.FormValue("entity"), ":")
+		// a list's elements are «list:<the list>»
+		var of string
+		t.Entity, of, _ = strings.Cut(r.FormValue("entity"), ":")
+		t.TypeID, t.ListID = of, ""
+		if t.Entity == bp.EntityList {
+			t.TypeID, t.ListID = "", of
+		}
 		t.Fields = parseFields(r, "f", users)
 		if len(t.Steps) == 0 { // a new template starts with a notification to the starter, to be changed
 			t.Steps = []bp.Step{{Kind: "notify", To: "starter", Text: s.tr(r, "bp.first_step")}}
@@ -565,6 +585,16 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 			st.Entity, st.Sets = r.FormValue("card_entity"), parseSets(r.FormValue("sets"))
 		case "absence":
 			st.Absence, st.Start, st.End = r.FormValue("absence"), r.FormValue("start"), r.FormValue("end")
+		case "task":
+			st.Users, st.Watchers, st.Note = r.Form["users"], r.Form["watchers"], strings.TrimSpace(r.FormValue("note"))
+			st.High, st.Control, st.Wait = r.FormValue("high") == "on", r.FormValue("control") == "on", r.FormValue("wait") == "on"
+			for _, line := range strings.Split(r.FormValue("items"), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					st.Items = append(st.Items, line)
+				}
+			}
+		case "event":
+			st.Users, st.Start, st.End, st.Note = r.Form["users"], r.FormValue("start"), r.FormValue("end"), strings.TrimSpace(r.FormValue("note"))
 		}
 		// «перед шагом №»: the steps from it on move a number down, and so do the jumps and the branches to them
 		if at, _ := strconv.Atoi(r.FormValue("at")); at >= 1 && at <= len(t.Steps) {

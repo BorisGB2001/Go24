@@ -1,7 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="feedwrap">
-<div class="feed" data-feed data-me="{{$d.Me}}" data-failed="{{t "common.save_failed"}}" data-cmore="{{t "feed.comments_earlier"}}"{{if $d.General}} data-general{{end}}>
+<div class="feed" data-feed data-me="{{$d.Me}}" data-failed="{{t "common.save_failed"}}" data-cmore="{{t "feed.comments_earlier"}}" data-expand="{{t "feed.expand"}}" data-collapse="{{t "feed.collapse"}}"{{if $d.General}} data-general{{end}}>
 <div class="pagehead"><h1>{{t "title.feed"}}</h1>{{if $d.Admin}}<a class="btn" href="/feed/settings" title="{{t "feed.settings"}}">{{icon "settings"}} {{t "feed.settings"}}</a>{{end}}</div>
 <div class="card composer">
   <form method="post" action="/feed" data-post enctype="multipart/form-data">
@@ -9,6 +9,7 @@
     {{with $d.IM}}<div class="flash" data-im-src>{{icon "message-circle"}} {{t "feed.from_message" .Sender}}{{with $d.IMFile}} · {{icon "paperclip"}} {{.}}{{end}}
       <input type="hidden" name="im_room" value="{{.Room}}"><input type="hidden" name="im_event" value="{{.Event}}"></div>{{end}}
     <input type="text" name="title" maxlength="300" placeholder="{{t "feed.title_placeholder"}}">
+    {{template "fmtbar"}}
     <textarea name="body" rows="3" required placeholder="{{t "feed.placeholder"}}" data-mention{{if or $d.IM $d.ThankOpen}} autofocus{{end}}>{{$d.IMBody}}</textarea>
     <div class="row">
       <label class="small muted">{{t "feed.to"}}</label>
@@ -46,16 +47,28 @@
   {{with $d.View}}<input type="hidden" name="view" value="{{.}}">{{end}}
   <input type="search" name="q" value="{{$d.F.Query}}" placeholder="{{t "feed.search"}}" style="flex:2;min-width:160px">
   <div style="flex:1;min-width:160px">{{template "upick" (upick "author" $d.F.Author $d.Users "ph" (t "feed.filter.author"))}}</div>
-  <label class="small muted">{{t "feed.filter.from"}}</label><input type="date" name="from" value="{{$d.FromText}}" style="width:auto">
+  <div style="flex:1;min-width:160px" title="{{t "feed.filter.dest_hint"}}">{{template "upick" (upick "dest" $d.Dest $d.Users "multi" "depts" "ph" (t "feed.filter.dest"))}}</div>
+  {{with $d.Projects}}<select name="project" style="width:auto"><option value="">{{t "feed.filter.project_any"}}</option>{{range .}}<option value="{{.ID}}"{{if eq .ID $d.F.Project}} selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
+  <select name="period" style="width:auto" data-period title="{{t "feed.filter.period"}}"><option value="">{{t "feed.filter.period_any"}}</option>{{range $d.Periods}}<option value="{{.}}"{{if eq . $d.Period}} selected{{end}}>{{t (print "feed.filter.period." .)}}</option>{{end}}</select>
+  <span class="row" data-period-range{{if ne $d.Period "range"}} hidden{{end}}><label class="small muted">{{t "feed.filter.from"}}</label><input type="date" name="from" value="{{$d.FromText}}" style="width:auto">
+    <label class="small muted">{{t "feed.filter.till"}}</label><input type="date" name="till" value="{{$d.TillText}}" style="width:auto"></span>
   <input type="text" name="tag" value="{{$d.F.Tag}}" placeholder="{{t "feed.filter.tag"}}" style="width:120px">
   <select name="kind" style="width:auto"><option value="">{{t "feed.filter.kind_all"}}</option>{{range $d.Kinds}}<option value="{{.}}" {{if eq . $d.F.Kind}}selected{{end}}>{{t (print "feed.filter.kind." .)}}</option>{{end}}</select>
   <button class="ghost">{{icon "search"}} {{t "feed.filter.find"}}</button>
   {{if $d.Filtered}}<a class="button ghost" href="/feed{{with $d.View}}?view={{.}}{{end}}">{{icon "x"}} {{t "feed.filter.reset"}}</a>{{end}}
 </form>
+{{if or $d.Saved (and $d.Current (not $.Guest))}}<div class="row fsaved">
+  {{range $d.Saved}}<span class="fsaved-chip{{if eq .Query $d.Current}} on{{end}}"><a href="/feed?{{.Query}}">{{icon "filter"}} {{.Name}}</a>
+    <form method="post" action="/feed/filters/delete"><input type="hidden" name="name" value="{{.Name}}"><button class="ghost" title="{{t "feed.filter.delete"}}">{{icon "x"}}</button></form></span>{{end}}
+  {{if $d.Current}}<details class="fsaved-new"><summary class="button ghost">{{icon "device-floppy"}} {{t "feed.filter.save"}}</summary>
+    <form method="post" action="/feed/filters" class="row"><input type="hidden" name="query" value="{{$d.Current}}">
+      <input type="text" name="name" required maxlength="100" placeholder="{{t "feed.filter.name"}}" style="width:200px"><button>{{t "common.save"}}</button></form></details>{{end}}
+</div>{{end}}
 <div class="tabs">
   <a href="/feed" {{if not $d.View}}class="on"{{end}}>{{t "feed.all"}}</a>
   <a href="/feed?view=important" {{if eq $d.View "important"}}class="on"{{end}}>{{icon "flame"}} {{t "feed.important_tab"}}</a>
   <a href="/feed?view=mine" {{if eq $d.View "mine"}}class="on"{{end}}>{{t "feed.mine"}}</a>
+  <a href="/feed?view=mentions" {{if eq $d.View "mentions"}}class="on"{{end}} title="{{t "feed.mentions_hint"}}">@ {{t "feed.mentions_tab"}}</a>
   <a href="/feed?view=fav" {{if eq $d.View "fav"}}class="on"{{end}}>{{icon "bookmark"}} {{t "feed.fav_tab"}}</a>
   <a href="/feed?view=hidden" {{if eq $d.View "hidden"}}class="on"{{end}}>{{icon "eye-off"}} {{t "feed.hidden_tab"}}</a>
 </div>
@@ -85,16 +98,19 @@
     <a href="/u/{{.AuthorID}}" class="person" data-user="{{.AuthorID}}">{{photo .AuthorName (photoURL .AuthorID .AuthorPhoto) false}}<b>{{.AuthorName}}</b></a>
     <span class="muted small">{{icon "chevron-right"}} {{if .ProjectKey}}<a href="/p/{{.ProjectKey}}">{{.ProjectName}}</a>{{if .To}}, {{end}}{{else if not .To}}{{t "feed.to_all"}}{{end}}{{range $i, $r := .To}}{{if $i}}, {{end}}{{if $r.Dept}}🏢 {{$r.Name}}{{else}}<a href="/u/{{$r.ID}}" data-user="{{$r.ID}}">{{$r.Name}}</a>{{end}}{{end}}</span>
     <span style="flex:1"></span>
-    <span class="muted small">{{datetime .CreatedAt}}{{if .Edited}} · {{t "feed.edited"}}{{end}}</span>
-    <button type="button" class="ghost fmark{{if .Fav}} on{{end}}" data-mark="fav" title="{{t "feed.fav"}}">{{icon "bookmark"}}</button>
-    <button type="button" class="ghost fmark{{if .Pinned}} on{{end}}" data-mark="pin" title="{{t "feed.pin"}}">{{icon "pin"}}</button>
-    <button type="button" class="ghost fmark{{if .Following}} on{{end}}" data-mark="follow" data-hint-on="{{t "feed.unfollow"}}" data-hint-off="{{t "feed.follow"}}" title="{{if .Following}}{{t "feed.unfollow"}}{{else}}{{t "feed.follow"}}{{end}}">{{icon "bell"}}</button>
-    <button type="button" class="ghost fmark{{if .Hidden}} on{{end}}" data-mark="hide" data-hint-on="{{t "feed.unhide"}}" data-hint-off="{{t "feed.hide"}}" title="{{if .Hidden}}{{t "feed.unhide"}}{{else}}{{t "feed.hide"}}{{end}}">{{icon "eye-off"}}</button>
-    {{if or .ProjectKey .To}}<button type="button" class="ghost fmark" data-share title="{{t "feed.share"}}">{{icon "share"}}</button>{{end}}
-    <a class="button ghost fmark" href="/tasks/new?feed={{.ID}}" title="{{t "feed.post_task"}}">{{icon "checkbox"}}</a>
-    <a class="button ghost fmark" href="/calendar/new?feed={{.ID}}" title="{{t "feed.post_event"}}">{{icon "calendar-event"}}</a>
-    {{if or (eq .AuthorID $.Me) $.Admin}}{{if not .Source}}<button type="button" class="ghost" data-edit title="{{t "task.change"}}">{{icon "edit"}}</button>{{end}}
-    <button type="button" class="ghost" data-delete title="{{t "common.delete"}}">{{icon "trash"}}</button>{{end}}
+    <span class="muted small"><a class="fdate" href="/feed?post={{.ID}}" title="{{t "feed.post_open"}}">{{datetime .CreatedAt}}</a>{{if .Edited}} · {{t "feed.edited"}}{{end}}</span>
+    <button type="button" class="ghost fmark{{if .Fav}} on{{end}}" data-mark="fav" data-hint-on="{{t "feed.unfav"}}" data-hint-off="{{t "feed.fav"}}" title="{{if .Fav}}{{t "feed.unfav"}}{{else}}{{t "feed.fav"}}{{end}}">{{icon "bookmark"}}</button>
+    <details class="tsettings dmore fmore"><summary class="button ghost" title="{{t "feed.actions"}}">{{icon "dots"}}</summary><div class="pop">
+      <button type="button" class="ghost" data-plink data-label="{{t "feed.post_link"}}" data-copied="{{t "feed.link_copied"}}">{{icon "link"}} <span>{{t "feed.post_link"}}</span></button>
+      <button type="button" class="ghost fmark{{if .Pinned}} on{{end}}" data-mark="pin" data-hint-on="{{t "feed.unpin"}}" data-hint-off="{{t "feed.pin"}}">{{icon "pin"}} <span>{{if .Pinned}}{{t "feed.unpin"}}{{else}}{{t "feed.pin"}}{{end}}</span></button>
+      <button type="button" class="ghost fmark{{if .Following}} on{{end}}" data-mark="follow" data-hint-on="{{t "feed.unfollow_short"}}" data-hint-off="{{t "feed.follow_short"}}" title="{{if .Following}}{{t "feed.unfollow"}}{{else}}{{t "feed.follow"}}{{end}}">{{icon "bell"}} <span>{{if .Following}}{{t "feed.unfollow_short"}}{{else}}{{t "feed.follow_short"}}{{end}}</span></button>
+      <button type="button" class="ghost fmark{{if .Hidden}} on{{end}}" data-mark="hide" data-hint-on="{{t "feed.unhide"}}" data-hint-off="{{t "feed.hide"}}">{{icon "eye-off"}} <span>{{if .Hidden}}{{t "feed.unhide"}}{{else}}{{t "feed.hide"}}{{end}}</span></button>
+      {{if or .ProjectKey .To}}<button type="button" class="ghost" data-share title="{{t "feed.share"}}">{{icon "share"}} <span>{{t "feed.share"}}</span></button>{{end}}
+      <a class="button ghost" href="/tasks/new?feed={{.ID}}">{{icon "checkbox"}} {{t "feed.post_task"}}</a>
+      <a class="button ghost" href="/calendar/new?feed={{.ID}}">{{icon "calendar-event"}} {{t "feed.post_event"}}</a>
+      {{if or (eq .AuthorID $.Me) $.Admin}}{{if not .Source}}<button type="button" class="ghost" data-edit>{{icon "edit"}} <span>{{t "task.change"}}</span></button>{{end}}
+      <button type="button" class="ghost" data-delete title="{{t "common.delete"}}">{{icon "trash"}} <span>{{t "common.delete"}}</span></button>{{end}}
+    </div></details>
   </header>
   {{if .Important}}<div class="fimp">{{icon "flame"}} {{t "feed.important_badge"}}{{if not .Until.IsZero}} <span class="muted small">· {{t "feed.important_until" (datetime .Until)}}</span>{{end}}</div>{{end}}
   <div data-view>{{if .Source}}{{template "fsource" .}}{{else}}{{with .Title}}<h3>{{.}}</h3>{{end}}
@@ -147,6 +163,7 @@
   <input type="hidden" name="full" value="1">
   <div class="form-error" data-error hidden></div>
   <input type="text" name="title" value="{{$d.Title}}" maxlength="300" placeholder="{{t "feed.title_placeholder"}}">
+  {{template "fmtbar"}}
   <textarea name="body" rows="4" required data-mention>{{$d.Body}}</textarea>
   <div class="row">
     <label class="small muted">{{t "feed.to"}}</label>
@@ -182,6 +199,12 @@
   <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-edit-cancel>{{t "common.cancel"}}</button></p>
 </form>
 {{end}}
+
+{{/* the editor's buttons of a post: they wrap the selection of the post's text in BB codes */}}
+{{define "fmtbar"}}<div class="fmtbar" data-fmtbar data-url-ask="{{t "feed.fmt.url_ask"}}">
+  <button type="button" class="ghostbtn" data-fmt="b" title="{{t "feed.fmt.b"}}">{{icon "bold"}}</button><button type="button" class="ghostbtn" data-fmt="i" title="{{t "feed.fmt.i"}}">{{icon "italic"}}</button><button type="button" class="ghostbtn" data-fmt="u" title="{{t "feed.fmt.u"}}">{{icon "underline"}}</button><button type="button" class="ghostbtn" data-fmt="s" title="{{t "feed.fmt.s"}}">{{icon "strikethrough"}}</button>
+  <span class="fmtbar-sep"></span><button type="button" class="ghostbtn" data-fmt="list" title="{{t "feed.fmt.list"}}">{{icon "list"}}</button><button type="button" class="ghostbtn" data-fmt="olist" title="{{t "feed.fmt.olist"}}">{{icon "list-numbers"}}</button><button type="button" class="ghostbtn" data-fmt="quote" title="{{t "feed.fmt.quote"}}">{{icon "quote"}}</button><button type="button" class="ghostbtn" data-fmt="code" title="{{t "feed.fmt.code"}}">{{icon "code"}}</button><button type="button" class="ghostbtn" data-fmt="url" title="{{t "feed.fmt.url"}}">{{icon "link"}}</button>
+</div>{{end}}
 
 {{/* files and pictures of a post or a comment: pictures shown, the others listed */}}
 {{/* the results of a poll: the answers with their votes; the count of an answer opens «Кто голосовал» (not in an
@@ -239,6 +262,14 @@
   <a class="fside-row line" href="/my?view=overdue"><span>{{t "counter.overdue"}}</span><span class="cnt{{if .C.Overdue}} red{{end}}">{{.C.Overdue}}</span></a>
   <a class="fside-row line" href="/my?view=comments"><span>{{t "counter.comments"}}</span><span class="cnt{{if .C.Comments}} green{{end}}">{{.C.Comments}}</span></a>
   <a class="fside-row line" href="/my?view=control"><span>{{t "counter.to_control"}}</span><span class="cnt">{{.C.ToControl}}</span></a></div>
+{{with .S}}{{with .Events}}<div class="card"><h3 class="small">{{icon "calendar-event"}} {{t "feed.side.events"}}</h3>
+  {{range .}}<a class="fside-row" href="/calendar/{{.ID}}{{if .Repeat}}?at={{.Start.Format "2006-01-02T15:04"}}{{end}}"><b>{{if .Important}}{{icon "exclamation-mark"}} {{end}}{{if .Video}}{{icon "video"}} {{end}}{{.Title}}</b>
+    <span class="muted small">{{if eq .Day "today"}}{{t "calendar.today"}}{{else if eq .Day "tomorrow"}}{{t "feed.side.tomorrow"}}{{else}}{{day .Start}}{{end}}{{if not .AllDay}}, {{clock .Start}}–{{clock .End}}{{end}}{{if eq .MyStatus "invited"}} · {{t "feed.side.event_invited"}}{{end}}</span></a>{{end}}
+  <a class="small" href="/calendar?view=list">{{t "feed.side.all_events"}}</a></div>{{end}}{{end}}
+{{with .S}}{{with .Pulse}}<div class="card fside-pulse"><h3 class="small">{{icon "chart-line"}} {{t "pulse.title"}}</h3>
+  <div class="fside-row line"><span>{{t "pulse.today"}}</span><span><b>{{.Today}}</b> <span class="muted small">{{t "pulse.of" .Total}}</span></span></div>
+  <div class="fside-row line"><span>{{t "pulse.index"}}</span><b>{{.Index}}%</b></div>
+  <a class="small" href="/company/pulse">{{t "pulse.more"}}</a></div>{{end}}{{end}}
 {{with .S}}{{with .Birthdays}}<div class="card"><h3 class="small">🎂 {{t "birthdays.title"}}</h3>
   {{range .}}<div class="fside-row line"><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name (photoURL .ID .PhotoKey) false}}<span><b>{{.Name}}</b><br><span class="muted small">{{if .Today}}{{t "feed.side.today"}}{{else}}{{bday .Date false}}{{end}}</span></span></a>
     <a class="button ghost small" href="/feed?thank={{.ID}}" title="{{t "feed.side.congratulate"}}">🎉</a></div>{{end}}

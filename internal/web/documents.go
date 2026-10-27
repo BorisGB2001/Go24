@@ -66,6 +66,11 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 		s.taskErr(w, r, err, "/crm")
 		return
 	}
+	nums, err := s.CRM.Numerators(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
 	access := map[string][]tasks.User{} // the chips of the pickers
 	for tpl, list := range refs {
 		for _, ref := range list {
@@ -74,7 +79,8 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 	}
 	s.render(w, r, "documents", page{TitleKey: "docs.templates", Nav: "crm_deals", Data: map[string]any{"Templates": list,
 		"Fields": docFields, "PartyFields": partyFields, "ProductFields": productFields, "MyCompany": my, "Companies": companies, "Office": s.Office != nil,
-		"Access": access, "Builtins": docBuiltins, "Images": images, "ImageKinds": crm.DocImageKinds}})
+		"Access": access, "Builtins": docBuiltins, "Images": images, "ImageKinds": crm.DocImageKinds,
+		"Numerators": nums, "Resets": crm.NumeratorResets, "Now": time.Now()}})
 }
 
 // docMyCompany chooses «Моя компания» of the templates (administrators).
@@ -948,17 +954,58 @@ func (s *Server) crmDocumentDelete(w http.ResponseWriter, r *http.Request, sess 
 	http.Redirect(w, r, back+"#documents", http.StatusSeeOther)
 }
 
-// docTemplateNumerator changes the format of a template's numbers.
+// docTemplateNumerator chooses the numerator of a template (numerator_id) or changes the format of its numbers.
 func (s *Server) docTemplateNumerator(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
-	if err := s.CRM.SetDocNumerator(r.Context(), r.PathValue("id"), r.FormValue("numerator")); err != nil {
+	var err error
+	if num := r.FormValue("numerator_id"); num != "" {
+		err = s.CRM.SetDocTemplateNumerator(r.Context(), r.PathValue("id"), num)
+	} else {
+		err = s.CRM.SetDocNumerator(r.Context(), r.PathValue("id"), r.FormValue("numerator"))
+	}
+	if err != nil {
 		s.taskErr(w, r, err, "/crm/documents")
 		return
 	}
 	http.Redirect(w, r, "/crm/documents?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
+}
+
+// numeratorForm is a numerator from the form of «Нумераторы».
+func numeratorForm(r *http.Request) crm.Numerator {
+	start, _ := strconv.ParseInt(r.FormValue("start"), 10, 64)
+	step, _ := strconv.Atoi(r.FormValue("step"))
+	pad, _ := strconv.Atoi(r.FormValue("pad"))
+	return crm.Numerator{ID: r.FormValue("id"), Name: r.FormValue("name"), Format: r.FormValue("format"), Start: start,
+		Step: step, Pad: pad, Reset: r.FormValue("reset")}
+}
+
+// docNumeratorSave adds a numerator (no id) or saves its settings («Нумераторы».
+func (s *Server) docNumeratorSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if _, err := s.CRM.SaveNumerator(r.Context(), numeratorForm(r)); err != nil {
+		s.taskErr(w, r, err, "/crm/documents")
+		return
+	}
+	http.Redirect(w, r, "/crm/documents?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#numerators", http.StatusSeeOther)
+}
+
+// docNumeratorDelete deletes a numerator no template numbers by.
+func (s *Server) docNumeratorDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if err := s.CRM.DeleteNumerator(r.Context(), r.FormValue("id")); err != nil {
+		s.taskErr(w, r, err, "/crm/documents")
+		return
+	}
+	http.Redirect(w, r, "/crm/documents#numerators", http.StatusSeeOther)
 }
 
 // docTemplateAccess is «Кому доступен» of a template: people and departments; nobody chosen — everybody.

@@ -84,12 +84,28 @@ type Widget struct {
 	// dialogue is told to its operator (KPIOperator) and to the heads of the lines (KPIHeads)
 	KPIFirst, KPIFurther  int
 	KPIOperator, KPIHeads bool
+	// «Максимальное количество диалогов у оператора» (0 — no limit) counted till the operator's answer («answer») or
+	// till the dialogue is closed («close»): an operator at the limit gets no new dialogues of «evenly» and «strict»
+	// lines, they wait in the queue; CRMForward — a client CRM knows goes to their card's responsible
+	MaxChats     int
+	MaxChatsType string
+	CRMForward   bool
 	// the chat bot «Интерактивное меню»: answers a new dialogue first with BotText and the menu; BotOther — what a text
 	// that picks no item does: «menu» (the menu again) or «queue» (to the operators)
 	BotOn    bool
 	BotText  string
 	BotMenu  []BotItem
 	BotOther string
+	// the widget's look and «Правила показа»: the button's corner, the pages it shows on («all», «only» the Pages or
+	// «except» them; «*» in a page — any characters), ShowDelay seconds before it shows; «Автоприглашение» — HelloText
+	// pops up by the button after HelloDelay seconds; HideOffline — no button out of working hours (but for a dialogue)
+	Position, PagesMode string
+	Pages               []string
+	ShowDelay           int
+	HelloOn             bool
+	HelloText           string
+	HelloDelay          int
+	HideOffline         bool
 }
 
 // Day: is the weekday (0 Sunday … 6 Saturday) a working day of the line?
@@ -175,6 +191,9 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 	if err := cleanBot(&w); err != nil {
 		return "", err
 	}
+	if err := cleanShow(&w); err != nil {
+		return "", err
+	}
 	if w.ConsentText = strings.TrimSpace(w.ConsentText); w.ConsentOn && w.ConsentText == "" {
 		w.ConsentText = s.tr("ol.consent_default", w.Name)
 	}
@@ -193,13 +212,15 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 		welcome_text = $15, noanswer_text = $16, noanswer_after = $17, close_text = $18, autoclose = $19,
 		vote_on = $20, vote_text = $21, history_on = $22, crm_auto = $23, consent_on = $24, consent_text = $25,
 		kpi_first = $26, kpi_further = $27, kpi_operator = $28, kpi_heads = $29,
-		bot_on = $30, bot_text = $31, bot_menu = $32, bot_other = $33
+		bot_on = $30, bot_text = $31, bot_menu = $32, bot_other = $33, max_chats = $34, max_chats_type = $35, crm_forward = $36,
+		position = $37, pages_mode = $38, pages = $39, show_delay = $40, hello_on = $41, hello_text = $42, hello_delay = $43, hide_offline = $44
 		WHERE id::text = $1`, w.ID, w.Name, w.Greeting, w.Color, origins, nonNil(w.Operators), w.Active,
 		w.QueueMode, w.AnswerWait, w.HoursOn, w.HoursDays, w.HoursFrom, w.HoursTo, w.OfflineText,
 		w.WelcomeText, w.NoanswerText, w.NoanswerAfter, w.CloseText, w.Autoclose,
 		w.VoteOn, w.VoteText, w.HistoryOn, w.CRMAuto, w.ConsentOn, w.ConsentText,
 		w.KPIFirst, w.KPIFurther, w.KPIOperator, w.KPIHeads,
-		w.BotOn, w.BotText, w.BotMenu, w.BotOther)
+		w.BotOn, w.BotText, w.BotMenu, w.BotOther, w.MaxChats, w.MaxChatsType, w.CRMForward,
+		w.Position, w.PagesMode, w.Pages, w.ShowDelay, w.HelloOn, w.HelloText, w.HelloDelay, w.HideOffline)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
@@ -217,6 +238,13 @@ func cleanLine(w *Widget) error {
 	}
 	if w.AnswerWait == 0 {
 		w.AnswerWait = 3
+	}
+	switch w.MaxChatsType {
+	case "":
+		w.MaxChatsType = "answer"
+	case "answer", "close":
+	default:
+		return i18n.E("err.ol_widget")
 	}
 	if w.NoanswerAfter == 0 {
 		w.NoanswerAfter = 5
@@ -239,11 +267,89 @@ func cleanLine(w *Widget) error {
 		}
 	}
 	if w.AnswerWait < 1 || w.AnswerWait > 1440 || w.NoanswerAfter < 1 || w.NoanswerAfter > 1440 || w.Autoclose < 0 || w.Autoclose > 720 ||
-		w.KPIFirst < 0 || w.KPIFirst > 1440 || w.KPIFurther < 0 || w.KPIFurther > 1440 ||
+		w.KPIFirst < 0 || w.KPIFirst > 1440 || w.KPIFurther < 0 || w.KPIFurther > 1440 || w.MaxChats < 0 || w.MaxChats > 1000 ||
 		!reHour.MatchString(w.HoursFrom) || !reHour.MatchString(w.HoursTo) || w.HoursFrom == w.HoursTo || (w.HoursOn && len(w.HoursDays) == 0) {
 		return i18n.E("err.ol_hours")
 	}
 	return nil
+}
+
+// cleanShow checks the widget's corner and «Правила показа», filling in the defaults.
+func cleanShow(w *Widget) error {
+	switch w.Position {
+	case "":
+		w.Position = "bottom-right"
+	case "bottom-right", "bottom-left", "top-right", "top-left":
+	default:
+		return i18n.E("err.ol_widget")
+	}
+	switch w.PagesMode {
+	case "":
+		w.PagesMode = "all"
+	case "all", "only", "except":
+	default:
+		return i18n.E("err.ol_widget")
+	}
+	pages := []string{}
+	for _, p := range w.Pages {
+		if p = strings.TrimSpace(p); p != "" {
+			if len(p) > 500 {
+				return i18n.E("err.ol_widget")
+			}
+			pages = append(pages, p)
+		}
+	}
+	if len(pages) > 100 || (w.PagesMode != "all" && len(pages) == 0) {
+		return i18n.E("err.ol_pages")
+	}
+	w.Pages = pages
+	if w.HelloText = strings.TrimSpace(w.HelloText); len([]rune(w.HelloText)) > 1000 || (w.HelloOn && w.HelloText == "") {
+		return i18n.E("err.ol_hello")
+	}
+	if w.ShowDelay < 0 || w.ShowDelay > 600 || w.HelloDelay < 0 || w.HelloDelay > 600 {
+		return i18n.E("err.ol_widget")
+	}
+	return nil
+}
+
+// ShowsOn: does the widget show on the page (its whole address) by the «Правила показа»? The widget's script decides
+// the same way on the site (widget.js).
+func (w Widget) ShowsOn(page string) bool {
+	if w.PagesMode != "only" && w.PagesMode != "except" {
+		return true
+	}
+	page, _, _ = strings.Cut(page, "#")
+	hit := false
+	for _, p := range w.Pages {
+		if pageMatch(p, page) {
+			hit = true
+			break
+		}
+	}
+	return hit == (w.PagesMode == "only")
+}
+
+// pageMatch: does the address match the mask («*» — any characters; the rest — as is, ignoring the case)? A mask
+// without «*» matches the address also with a «/» at the end.
+func pageMatch(mask, page string) bool {
+	mask, page = strings.ToLower(mask), strings.ToLower(page)
+	if !strings.Contains(mask, "*") {
+		return page == mask || page == mask+"/" || page+"/" == mask
+	}
+	parts := strings.Split(mask, "*")
+	if !strings.HasPrefix(page, parts[0]) {
+		return false
+	}
+	page = page[len(parts[0]):]
+	last := parts[len(parts)-1]
+	for _, p := range parts[1 : len(parts)-1] {
+		i := strings.Index(page, p)
+		if i < 0 {
+			return false
+		}
+		page = page[i+len(p):]
+	}
+	return strings.HasSuffix(page, last)
 }
 
 func (s *Store) DeleteWidget(ctx context.Context, id string) error {
@@ -254,7 +360,8 @@ func (s *Store) DeleteWidget(ctx context.Context, id string) error {
 const widgetSQL = `SELECT id, name, greeting, color, origins, operators::text[], active, created_at, queue_mode, answer_wait,
 	hours_on, hours_days, hours_from, hours_to, offline_text, welcome_text, noanswer_text, noanswer_after, close_text, autoclose,
 	vote_on, vote_text, history_on, crm_auto, consent_on, consent_text,
-	kpi_first, kpi_further, kpi_operator, kpi_heads, bot_on, bot_text, bot_menu, bot_other FROM ol_widgets`
+	kpi_first, kpi_further, kpi_operator, kpi_heads, max_chats, max_chats_type, crm_forward, bot_on, bot_text, bot_menu, bot_other,
+	position, pages_mode, pages, show_delay, hello_on, hello_text, hello_delay, hide_offline FROM ol_widgets`
 
 func nonNil(v []string) []string {
 	if v == nil {
@@ -348,8 +455,10 @@ type Message struct {
 	FileSecret         string
 	// a CRM form an operator sent (kind form) or the client filled (form_done): the form, its link's token and key
 	FormID, FormToken, FormSecret string
-	FormDone                      *time.Time // when the client filled the sent form
+	FormDone                      *time.Time // when the client filled the sent form (booked by the sent link)
 	Buttons                       []string   // the chat bot's menu (kind bot): «1. Оплата», …
+	// a booking link an operator sent (kind booking, its key in FormSecret) or the client booked by (booking_done)
+	BookingLinkID, BookingToken string
 }
 
 // Image: is the message's file a picture to show?
@@ -373,7 +482,9 @@ func (m Message) Text() string {
 }
 
 // Auto: an automatic message of the line.
-func (m Message) Auto() bool { return m.Kind != "" && m.Kind != "form" && !m.Internal() }
+func (m Message) Auto() bool {
+	return m.Kind != "" && m.Kind != "form" && m.Kind != "booking" && !m.Internal()
+}
 
 // Internal: a message only go24's people see — a service line or an operator's hidden message.
 func (m Message) Internal() bool { return m.Kind == "note" || m.Kind == "hidden" }
@@ -471,7 +582,17 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 			return err
 		}
 		keep := ""
-		if operator != nil && contains(ops, *operator) {
+		if qw.CRMForward { // the responsible of the client's CRM card
+			var owner *string
+			if err := tx.QueryRow(ctx, `SELECT coalesce((SELECT responsible_id FROM crm_contacts WHERE id = s.contact_id),
+				(SELECT responsible_id FROM crm_leads WHERE id = s.lead_id))::text FROM ol_sessions s WHERE s.id = $1`, id).Scan(&owner); err != nil {
+				return err
+			}
+			if owner != nil && contains(ops, *owner) {
+				keep = *owner
+			}
+		}
+		if keep == "" && operator != nil && contains(ops, *operator) {
 			keep = *operator // the one who talked to them before
 		}
 		if _, err := s.assign(ctx, tx, qw, id, keep, nil); err != nil {
@@ -551,8 +672,10 @@ func (s *Store) VisitorMessages(ctx context.Context, widgetID, token string, aft
 
 func (s *Store) messages(ctx context.Context, sessionID string, after int64) ([]Message, error) {
 	rows, err := s.db.Query(ctx, `SELECT m.id, coalesce(u.name, ''), m.body, m.at, m.kind, coalesce(m.author_id::text, ''),
-		m.file_name, m.file_type, m.file_size, m.file_secret, coalesce(m.form_id::text, ''), coalesce(f.token, ''), m.form_secret, m.form_done, m.buttons
+		m.file_name, m.file_type, m.file_size, m.file_secret, coalesce(m.form_id::text, ''), coalesce(f.token, ''), m.form_secret, m.form_done, m.buttons,
+		coalesce(m.booking_link_id::text, ''), coalesce(bl.token, '')
 		FROM ol_messages m LEFT JOIN users u ON u.id = m.author_id LEFT JOIN crm_forms f ON f.id = m.form_id
+		LEFT JOIN booking_links bl ON bl.id = m.booking_link_id
 		WHERE m.session_id = $1 AND m.id > $2 ORDER BY m.id LIMIT 500`, sessionID, after)
 	if err != nil {
 		return nil, err
@@ -602,6 +725,9 @@ func (s *Store) Contact(ctx context.Context, widgetID, token, name, phone, email
 	}
 	if entity != "" {
 		if err := s.bind(ctx, id, entity, client, creator, false); err != nil {
+			return err
+		}
+		if err := s.forward(ctx, id); err != nil {
 			return err
 		}
 		return s.fire(ctx, id, "form")

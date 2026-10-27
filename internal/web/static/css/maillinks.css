@@ -13,6 +13,9 @@
 .minvite .props { margin: 4px 0 8px; }
 .minv-form .row { gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .minv-form textarea { width: 100%; margin-top: 4px; }
+.minv-propose { margin-top: 8px; }
+.minv-propose > summary { cursor: pointer; }
+.minv-propose input[type="datetime-local"] { max-width: 100%; }
 .minv-conflict { color: var(--warn); }
 
 .msender { margin: 12px 0 0; padding: 10px 12px; }

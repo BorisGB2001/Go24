@@ -37,15 +37,20 @@ func New(url, key, secret string) *Provider {
 const TokenTTL = 6 * time.Hour
 
 // Token is a LiveKit access token (a JWT signed with HS256) to join one room: identity is the go24 user id, name
-// what the others see.
-func (p *Provider) Token(identity, name, room string, now time.Time) (string, error) {
+// what the others see; host — the person leads the call (as «ведущий»), which everyone in it sees in
+// the participant's metadata.
+func (p *Provider) Token(identity, name, room string, host bool, now time.Time) (string, error) {
 	if p == nil {
 		return "", errors.New("calls: not configured")
 	}
-	return p.sign(map[string]any{
+	c := map[string]any{
 		"iss": p.Key, "sub": identity, "name": name, "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(TokenTTL).Unix(),
 		"video": map[string]any{"room": room, "roomJoin": true, "canPublish": true, "canSubscribe": true, "canPublishData": true},
-	})
+	}
+	if host {
+		c["metadata"] = `{"host":true}`
+	}
+	return p.sign(c)
 }
 
 // sign makes a JWT (HS256) of the claims with the API secret.
@@ -65,27 +70,99 @@ func (p *Provider) sign(c map[string]any) (string, error) {
 // ErrNoAPI: go24 has no address of LiveKit's API.
 var ErrNoAPI = errors.New("calls: no LiveKit API address")
 
-// Participants are the identities (go24 user IDs) in a LiveKit room now, without a recorder; none — the room is
+// participant is a participant of a LiveKit room as its RoomService tells (enums come as names or as numbers).
+type participant struct {
+	Identity string `json:"identity"`
+	Kind     any    `json:"kind"`
+	Tracks   []struct {
+		Sid    string `json:"sid"`
+		Source any    `json:"source"`
+		Muted  bool   `json:"muted"`
+	} `json:"tracks"`
+}
+
+// recorder: the participant is the recorder of the call (LiveKit Egress), nobody of it.
+func (x participant) recorder() bool { return x.Kind == "EGRESS" || x.Kind == float64(4) }
+
+// Sources of tracks as go24 names them (LiveKit's TrackSource).
+const (
+	Microphone = "microphone"
+	Camera     = "camera"
+	Screen     = "screen_share" // the screen and its sound
+)
+
+// trackSource is the source of a track: LiveKit's enum by its name or its number.
+func trackSource(v any) string {
+	switch v {
+	case "CAMERA", float64(1):
+		return Camera
+	case "MICROPHONE", float64(2):
+		return Microphone
+	case "SCREEN_SHARE", float64(3), "SCREEN_SHARE_AUDIO", float64(4):
+		return Screen
+	}
+	return ""
+}
+
+// participants are the people in a LiveKit room now with their tracks, without a recorder; none — the room is
 // empty or gone.
-func (p *Provider) Participants(ctx context.Context, room string) ([]string, error) {
+func (p *Provider) participants(ctx context.Context, room string) ([]participant, error) {
 	var out struct {
-		Participants []struct {
-			Identity string `json:"identity"`
-			Kind     any    `json:"kind"`
-		} `json:"participants"`
+		Participants []participant `json:"participants"`
 	}
 	found, err := p.roomService(ctx, room, "ListParticipants", map[string]string{"room": room}, &out)
 	if err != nil || !found { // the room is gone: nobody
 		return nil, err
 	}
-	var ids []string
+	var ps []participant
 	for _, x := range out.Participants {
-		if x.Kind == "EGRESS" || x.Kind == float64(4) { // the recorder of the call is nobody of it
-			continue
+		if !x.recorder() {
+			ps = append(ps, x)
 		}
+	}
+	return ps, nil
+}
+
+// Participants are the identities (go24 user IDs) in a LiveKit room now, without a recorder; none — the room is
+// empty or gone.
+func (p *Provider) Participants(ctx context.Context, room string) ([]string, error) {
+	ps, err := p.participants(ctx, room)
+	var ids []string
+	for _, x := range ps {
 		ids = append(ids, x.Identity)
 	}
-	return ids, nil
+	return ids, err
+}
+
+// Mute turns off the tracks of the source (Microphone, Camera, Screen) of the participant — or, identity "", of
+// everyone in the room but except — as the host of a call does; the person may turn them on again.
+// It gives how many people it muted.
+func (p *Provider) Mute(ctx context.Context, room, identity, source, except string) (int, error) {
+	ps, err := p.participants(ctx, room)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, x := range ps {
+		if (identity != "" && x.Identity != identity) || x.Identity == except {
+			continue
+		}
+		muted := false
+		for _, t := range x.Tracks {
+			if t.Muted || trackSource(t.Source) != source {
+				continue
+			}
+			if _, err := p.roomService(ctx, room, "MutePublishedTrack", map[string]any{"room": room, "identity": x.Identity,
+				"track_sid": t.Sid, "muted": true}, nil); err != nil {
+				return n, err
+			}
+			muted = true
+		}
+		if muted {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // RemoveParticipant puts the participant out of the room (a guest whose link is revoked); one not there is no error.

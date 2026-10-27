@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"go24/internal/calendar"
 	"go24/internal/company"
 	"go24/internal/crm"
 	"go24/internal/feed"
@@ -33,7 +34,7 @@ var (
 
 // StepKinds in the order the constructor offers them.
 var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "pick", "start",
-	"stage", "update", "create", "comment", "activity", "document", "absence", "wait", "log", "webhook"}
+	"stage", "update", "create", "comment", "activity", "document", "absence", "event", "wait", "log", "end", "webhook"}
 
 // UserInfo are the fields «Информация о сотруднике» (userinfo) puts into the process, as user_<…>: the employee's
 // card; the manager is a user field (a step may go to them), the departments — their names.
@@ -102,7 +103,7 @@ type Step struct {
 	Days     int      `json:"days,omitempty"`     // task deadline, pause length
 	Stage    string   `json:"stage,omitempty"`    // stage: the CRM stage id
 	URL      string   `json:"url,omitempty"`      // webhook: where the process's data go (n8n's Webhook node)
-	Users    []string `json:"users,omitempty"`    // approve, review: more people besides To; post: its addressees (none — all employees)
+	Users    []string `json:"users,omitempty"`    // approve, review: more people besides To; post: its addressees (none — all employees); event: whose calendars
 	Mode     string   `json:"mode,omitempty"`     // approve: one of Modes ("" — any)
 	Field    string   `json:"field,omitempty"`    // if, loop, set: the form's field; wait: the date (time) field to wait till instead of Days
 	Op       string   `json:"op,omitempty"`       // if: one of Ops
@@ -119,12 +120,17 @@ type Step struct {
 	Sets     []Assign `json:"sets,omitempty"`     // update, create: the card's fields; start: the fields of the process started; document: the template's placeholders
 	Template string   `json:"template,omitempty"` // start: the template of the process started
 	Absence  string   `json:"absence,omitempty"`  // absence: the reason, one of company.AbsenceKinds
-	Start    string   `json:"start,omitempty"`    // absence: the form's date field it begins on
-	End      string   `json:"end,omitempty"`      // absence: … and ends on
+	Start    string   `json:"start,omitempty"`    // absence: the form's date field it begins on; event: the date or date-and-time field
+	End      string   `json:"end,omitempty"`      // absence: … and ends on; event: as Start ("" — an hour, a date — the day)
 	Deed     string   `json:"deed,omitempty"`     // activity: one of crm.ActivityKinds
-	Note     string   `json:"note,omitempty"`     // activity: the description ({…} filled)
+	Note     string   `json:"note,omitempty"`     // activity, event: the description ({…} filled)
 	Doc      string   `json:"doc,omitempty"`      // document: the template of the document generator (of the card's kind)
 	Skip     bool     `json:"skip,omitempty"`     // pick: not the people absent today (To — the reserve when all are)
+	Watchers []string `json:"watchers,omitempty"` // task: its observers (Users — the accomplices)
+	High     bool     `json:"high,omitempty"`     // task: «Важная задача»
+	Control  bool     `json:"control,omitempty"`  // task: «Принять работу после завершения»
+	Wait     bool     `json:"wait,omitempty"`     // task: «Ожидать завершения задачи» — the process stays on the step till then
+	Items    []string `json:"items,omitempty"`    // task: its checklist
 }
 
 // Assign is a field of a CRM card a step sets: a key of CardFields or the name of an own field, and the value ({…} filled).
@@ -208,6 +214,7 @@ type Files interface {
 type Template struct {
 	ID, Name, Description, Entity string
 	TypeID                        string // a template of deals: of this smart process's cards ("" — of deals)
+	ListID                        string // a template of a list's elements: of this list («Списки»)
 	Fields                        []Field
 	Steps                         []Step
 	Active                        bool
@@ -229,6 +236,8 @@ type Store struct {
 	// Document makes a document of a CRM card by a template of the document generator, of the user, and says its id
 	// («Создание документа»; nil — the step fails)
 	Document func(ctx context.Context, userID, entity, entityID, templateID string, values map[string]string) (string, error)
+	// Calendar holds the meetings of «Событие календаря» (nil — the step fails)
+	Calendar *calendar.Store
 	// Files are the documents of «Общий диск» a template of files is about (nil — its processes do not start)
 	Files Files
 	// Tr translates in the portal's language: «Да»/«Нет» of a bool field in texts (nil — "Y"/"N")
@@ -242,7 +251,7 @@ func NewStore(db *pgxpool.Pool, t *tasks.Store, c *crm.Store, co *company.Store)
 func scanTemplate(r pgx.CollectableRow) (Template, error) {
 	var t Template
 	var f, s []byte
-	if err := r.Scan(&t.ID, &t.Name, &t.Description, &t.Entity, &t.TypeID, &f, &s, &t.Active, &t.AutoCreate, &t.AutoChange,
+	if err := r.Scan(&t.ID, &t.Name, &t.Description, &t.Entity, &t.TypeID, &t.ListID, &f, &s, &t.Active, &t.AutoCreate, &t.AutoChange,
 		&t.CreatedAt); err != nil {
 		return t, err
 	}
@@ -252,7 +261,7 @@ func scanTemplate(r pgx.CollectableRow) (Template, error) {
 	return t, json.Unmarshal(s, &t.Steps)
 }
 
-const templateSQL = `SELECT id, name, description, entity, coalesce(type_id::text, ''), fields, steps, active, auto_create, auto_change,
+const templateSQL = `SELECT id, name, description, entity, coalesce(type_id::text, ''), coalesce(list_id::text, ''), fields, steps, active, auto_create, auto_change,
 	created_at FROM bp_templates`
 
 // Templates are the templates (of an entity; "" — all), active ones only when active is set.
@@ -287,7 +296,8 @@ func checkTemplate(t *Template) error {
 	if t.Entity == "" {
 		t.Entity = "none"
 	}
-	if t.Entity != "none" && t.Entity != EntityFile && !crm.Entities[t.Entity] || t.TypeID != "" && t.Entity != "deal" {
+	if t.Entity != "none" && t.Entity != EntityFile && t.Entity != EntityList && !crm.Entities[t.Entity] || t.TypeID != "" && t.Entity != "deal" ||
+		(t.Entity == EntityList) != (t.ListID != "") {
 		return i18n.E("err.bad_form")
 	}
 	if t.Entity == "none" { // a standalone process has no card to start by
@@ -309,19 +319,11 @@ func checkTemplate(t *Template) error {
 				return i18n.E("err.bp_field")
 			}
 			consts[f.Key] = f.Scope == "const"
-			if f.Key == "" || seen[f.Key] || strings.ContainsAny(f.Key, " {}:") || f.Label == "" || !contains(FieldKinds, f.Kind) ||
-				f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 {
+			if seen[f.Key] {
 				return i18n.E("err.bp_field")
 			}
-			for _, o := range f.Options {
-				if o == "" || len([]rune(o)) > 200 {
-					return i18n.E("err.bp_field")
-				}
-			}
-			if f.Default != "" {
-				if _, err := cleanValue(f, f.Default); err != nil {
-					return err
-				}
+			if err := checkField(f); err != nil {
+				return err
 			}
 			seen[f.Key], kinds[f.Key] = true, f.Kind
 		}
@@ -353,17 +355,27 @@ func checkTemplate(t *Template) error {
 			return i18n.E("err.bp_step")
 		}
 		if (st.Kind == "task" && st.Project == "") || (st.Kind == "stage" && (st.Stage == "" || t.Entity != "deal" && t.Entity != "lead")) ||
-			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo", "pick"}, st.Kind)) ||
+			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo", "pick", "end"}, st.Kind)) ||
 			(st.Kind == "webhook" && hooks.CheckURL(st.URL) != nil) {
 			return i18n.E("err.bp_step")
 		}
 		if st.Kind == "absence" && (!contains(company.AbsenceKinds, st.Absence) || kinds[st.Start] != "date" || kinds[st.End] != "date") {
 			return i18n.E("err.bp_step")
 		}
+		// «Событие календаря»: in the calendars of Users, from a date (time) field till another or for an hour (the day)
+		isDate := func(k string) bool { return kinds[k] == "date" || kinds[k] == "datetime" }
+		if st.Kind == "event" && (len(st.Users) == 0 || !isDate(st.Start) || st.End != "" && !isDate(st.End)) {
+			return i18n.E("err.bp_step")
+		}
 		if err := checkCardStep(t.Entity, st); err != nil {
 			return err
 		}
-		for _, to := range append(st.People(), st.From) { // a user field of the form or of a request before the step
+		// «Задача»: its observers, checklist, «важная», acceptance and waiting are of a task only
+		if st.Kind != "task" && (len(st.Watchers) > 0 || len(st.Items) > 0 || st.High || st.Control || st.Wait) ||
+			len(st.Watchers) > 50 || len(st.Items) > 50 || slices.ContainsFunc(st.Items, func(v string) bool { return len([]rune(v)) > 1000 }) {
+			return i18n.E("err.bp_step")
+		}
+		for _, to := range slices.Concat(st.People(), []string{st.From}, st.Watchers) { // a user field of the form or of a request before the step
 			if key, ok := strings.CutPrefix(to, FieldPrefix); ok && kinds[key] != "user" {
 				return i18n.E("err.bp_step")
 			}
@@ -400,6 +412,26 @@ func checkTemplate(t *Template) error {
 		return i18n.E("err.bp_no_steps")
 	}
 	return checkParallel(t.Steps)
+}
+
+// checkField: a field of a form (or of a list) has a key without spaces and braces, a label, a kind, a select's
+// options and a default right for it.
+func checkField(f Field) error {
+	if f.Key == "" || strings.ContainsAny(f.Key, " {}:") || f.Label == "" || !contains(FieldKinds, f.Kind) ||
+		f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 {
+		return i18n.E("err.bp_field")
+	}
+	for _, o := range f.Options {
+		if o == "" || len([]rune(o)) > 200 {
+			return i18n.E("err.bp_field")
+		}
+	}
+	if f.Default != "" {
+		if _, err := cleanValue(f, f.Default); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkParallel: a parallel step's branches are of a step at least, follow one another before the join and hold no
@@ -493,6 +525,18 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 			}
 			continue
 		}
+		if t.Entity == EntityList && st.Kind == "update" { // «Изменить элемент»: the name or the list's fields
+			l, err := s.list(ctx, t.ListID)
+			if err != nil {
+				return "", i18n.E("err.bad_form")
+			}
+			for _, a := range st.Sets {
+				if _, ok := listField(l, a.Field); !ok {
+					return "", i18n.E("err.bp_card_field", i+1, a.Field)
+				}
+			}
+			continue
+		}
 		entity := t.Entity
 		if st.Kind == "create" {
 			entity = st.Entity
@@ -507,13 +551,13 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 	st, _ := json.Marshal(t.Steps)
 	if t.ID == "" {
 		err := s.db.QueryRow(ctx, `INSERT INTO bp_templates (name, description, entity, fields, steps, active, created_by, type_id,
-			auto_create, auto_change) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-			t.Name, t.Description, t.Entity, f, st, t.Active, userID, optional(t.TypeID), t.AutoCreate, t.AutoChange).Scan(&t.ID)
+			auto_create, auto_change, list_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+			t.Name, t.Description, t.Entity, f, st, t.Active, userID, optional(t.TypeID), t.AutoCreate, t.AutoChange, optional(t.ListID)).Scan(&t.ID)
 		return t.ID, err
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE bp_templates SET name = $2, description = $3, entity = $4, fields = $5, steps = $6, active = $7,
-		type_id = $8, auto_create = $9, auto_change = $10 WHERE id::text = $1`, t.ID, t.Name, t.Description, t.Entity, f, st, t.Active,
-		optional(t.TypeID), t.AutoCreate, t.AutoChange)
+		type_id = $8, auto_create = $9, auto_change = $10, list_id = $11 WHERE id::text = $1`, t.ID, t.Name, t.Description, t.Entity, f, st, t.Active,
+		optional(t.TypeID), t.AutoCreate, t.AutoChange, optional(t.ListID))
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
@@ -691,7 +735,7 @@ func (s *Store) Instances(ctx context.Context, userID, entity, entityID string) 
 
 // CardInstances are the processes of a CRM card, for one who may read it.
 func (s *Store) CardInstances(ctx context.Context, userID, entity, entityID string) ([]Instance, error) {
-	if !crm.Entities[entity] && entity != EntityFile {
+	if !crm.Entities[entity] && entity != EntityFile && entity != EntityList {
 		return nil, i18n.E("err.bad_form")
 	}
 	if err := s.cardCheck(ctx, userID, entity, entityID); err != nil {
@@ -846,6 +890,19 @@ func (s *Store) Start(ctx context.Context, userID, templateID, entityID string, 
 	return s.start(ctx, userID, t, entityID, values, false, "")
 }
 
+// StartRobot starts a process of the template on a CRM card for a robot of the CRM («Запустить бизнес-процесс»): as
+// an autostart does — of the one who moved the card, with the form empty, a template of the card's kind only.
+func (s *Store) StartRobot(ctx context.Context, userID, templateID, entityID string) (string, error) {
+	t, err := s.Template(ctx, templateID)
+	if err != nil {
+		return "", err
+	}
+	if t.Entity == "none" || t.Entity == EntityFile || t.Entity == EntityList {
+		return "", i18n.E("err.bad_form")
+	}
+	return s.start(ctx, userID, t, entityID, nil, true, "")
+}
+
 // start: auto — the template starts by itself on a card's change, as its author, with the form empty (so a required
 // field does not stop it) and without checking the author's access to the card.
 func (s *Store) start(ctx context.Context, userID string, t Template, entityID string, values map[string]string, auto bool, parent string) (string, error) {
@@ -990,6 +1047,18 @@ func (s *Store) cardRight(ctx context.Context, userID, entity, op, id string) er
 			return ErrNotFound
 		}
 		return s.Files.BPRight(ctx, userID, op, id)
+	case EntityList: // the element's list: seen, or its elements changed
+		e, err := s.element(ctx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := s.List(ctx, userID, e.ListID); err != nil {
+			return err
+		}
+		if op == "write" && !s.CanWriteList(ctx, userID, e.ListID) {
+			return ErrForbidden
+		}
+		return nil
 	case "deal":
 		var d crm.Deal
 		d, err = s.CRM.Deal(ctx, id)
@@ -1286,7 +1355,8 @@ func (s *Store) notify(ctx context.Context, to, actor, instance, text string) {
 		to, a, text, "/bp/i/"+instance)
 }
 
-// WakeDue goes on with the processes whose pause (or a parallel branch's) is over (the worker calls it).
+// WakeDue goes on with the processes whose pause (or a parallel branch's) is over or whose task waited for is done (the
+// worker calls it).
 func (s *Store) WakeDue(ctx context.Context, now time.Time) []error {
 	rows, err := s.db.Query(ctx, `UPDATE bp_instances SET wake_at = NULL, step = step + 1
 		WHERE status = 'running' AND wake_at IS NOT NULL AND wake_at <= $1 RETURNING id::text`, now)
@@ -1297,8 +1367,22 @@ func (s *Store) WakeDue(ctx context.Context, now time.Time) []error {
 	if err != nil {
 		return []error{err}
 	}
-	rows, err = s.db.Query(ctx, `UPDATE bp_branches b SET wake_at = NULL, waiting = false, step = b.step + 1 FROM bp_instances i
-		WHERE i.id = b.instance_id AND i.status = 'running' AND b.wake_at IS NOT NULL AND b.wake_at <= $1 RETURNING i.id::text`, now)
+	// «Ожидать завершения задачи»: the task is completed or deleted
+	rows, err = s.db.Query(ctx, `UPDATE bp_instances i SET wait_task = NULL, step = step + 1
+		WHERE status = 'running' AND wait_task IS NOT NULL
+			AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = i.wait_task AND t.status <> 'completed') RETURNING id::text`)
+	if err != nil {
+		return []error{err}
+	}
+	done, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return []error{err}
+	}
+	ids = append(ids, done...)
+	rows, err = s.db.Query(ctx, `UPDATE bp_branches b SET wake_at = NULL, wait_task = NULL, waiting = false, step = b.step + 1 FROM bp_instances i
+		WHERE i.id = b.instance_id AND i.status = 'running' AND (b.wake_at IS NOT NULL AND b.wake_at <= $1
+			OR b.wait_task IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = b.wait_task AND t.status <> 'completed'))
+		RETURNING i.id::text`, now)
 	if err != nil {
 		return []error{err}
 	}

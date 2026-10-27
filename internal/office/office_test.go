@@ -79,10 +79,17 @@ func TestConvert(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		var claims map[string]any
 		switch {
-		case r.URL.Path != "/converter" || s.Verify(req.Token, &claims) != nil || claims["outputtype"] != "pdf":
+		case r.URL.Path != "/converter" || s.Verify(req.Token, &claims) != nil || (claims["outputtype"] != "pdf" && claims["outputtype"] != "png"):
 			io.WriteString(w, `{"error": -8}`)
 		case req.Key == "bad":
 			io.WriteString(w, `{"error": -4}`)
+		case claims["outputtype"] == "png":
+			th, _ := claims["thumbnail"].(map[string]any)
+			if req.Key != "k1-t" || th["first"] != true || th["width"] != float64(400) {
+				io.WriteString(w, `{"error": -8}`)
+				return
+			}
+			io.WriteString(w, `{"endConvert": true, "percent": 100, "fileUrl": "http://192.168.1.15:8080/office/cache/files/out.png"}`)
 		default:
 			io.WriteString(w, `{"endConvert": true, "percent": 100, "fileUrl": "http://192.168.1.15:8080/office/cache/files/out.pdf"}`)
 		}
@@ -95,5 +102,9 @@ func TestConvert(t *testing.T) {
 	}
 	if _, err := s.Convert(context.Background(), "http://go24:8080/f", "docx", "bad", "a.docx", "pdf"); !errors.Is(err, ErrConvert) {
 		t.Errorf("a failed conversion: %v", err)
+	}
+	// the thumbnail of the first page: a PNG, a key of its own
+	if link, err := s.Thumbnail(context.Background(), "http://go24:8080/f", "docx", "k1", "a.docx", 400); err != nil || link != ds.URL+"/cache/files/out.png" {
+		t.Errorf("thumbnail = %q %v", link, err)
 	}
 }

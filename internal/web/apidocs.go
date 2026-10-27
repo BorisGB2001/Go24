@@ -33,6 +33,10 @@ func (s *Server) apiDocsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/document-templates/{id}", s.api("documents:write", s.apiDocTemplateChange))
 	mux.HandleFunc("PUT /api/v1/document-templates/{id}/file", s.api("documents:write", s.apiDocTemplateFile))
 	mux.HandleFunc("DELETE /api/v1/document-templates/{id}", s.api("documents:write", s.apiDocTemplateDelete))
+	mux.HandleFunc("GET /api/v1/document-numerators", s.api("documents:read", s.apiNumerators))
+	mux.HandleFunc("POST /api/v1/document-numerators", s.api("documents:write", s.apiNumeratorSave))
+	mux.HandleFunc("PATCH /api/v1/document-numerators/{id}", s.api("documents:write", s.apiNumeratorSave))
+	mux.HandleFunc("DELETE /api/v1/document-numerators/{id}", s.api("documents:write", s.apiNumeratorDelete))
 	mux.HandleFunc("GET /api/v1/documents", s.api("documents:read", s.apiDocList))
 	mux.HandleFunc("POST /api/v1/documents", s.api("documents:write", s.apiDocMake))
 	mux.HandleFunc("GET /api/v1/documents/{id}", s.api("documents:read", s.apiDocGet))
@@ -61,7 +65,8 @@ type apiDocTemplate struct {
 	Name      string    `json:"name"`
 	Entity    string    `json:"entity"` // the kind of cards: deals, leads, contacts, companies
 	FileName  string    `json:"file_name"`
-	Numerator string    `json:"numerator"`
+	Numerator string    `json:"numerator"`    // its numerator's format
+	NumberBy  string    `json:"numerator_id"` // its numerator (/api/v1/document-numerators)
 	CreatedAt time.Time `json:"created_at"`
 	Fields    []string  `json:"fields,omitempty"` // its placeholders (a single template)
 	Access    []apiUser `json:"access,omitempty"` // «Кому доступен»: people and departments («dept:ID»); none — all
@@ -69,7 +74,7 @@ type apiDocTemplate struct {
 
 func apiDocTemplateOf(t crm.DocTemplate) apiDocTemplate {
 	return apiDocTemplate{ID: t.ID, Name: t.Name, Entity: crmKind(t.Entity), FileName: t.FileName, Numerator: t.Numerator,
-		CreatedAt: t.CreatedAt}
+		NumberBy: t.NumeratorID, CreatedAt: t.CreatedAt}
 }
 
 // apiDocTemplates are the templates the key's owner may make documents by (?entity=deals — of a kind of cards);
@@ -178,12 +183,14 @@ func (s *Server) apiDocTemplateAdd(w http.ResponseWriter, r *http.Request, p api
 }
 
 // apiDocTemplateChange changes the template's numerator and «Кому доступен» (administrators):
-// {"numerator": "{NUMBER}/{YEAR}", "access": ["user id", "dept:ID"]} — what is given; access [] — everybody.
+// {"numerator_id": "…" (another numerator), "numerator": "{NUMBER}/{YEAR}" (its format), "access": ["user id",
+// "dept:ID"]} — what is given; access [] — everybody.
 func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if !s.apiSess(r, p).Admin {
 		return tasks.ErrForbidden
 	}
 	var in struct {
+		NumberBy  string    `json:"numerator_id"`
 		Numerator *string   `json:"numerator"`
 		Access    *[]string `json:"access"`
 	}
@@ -194,6 +201,11 @@ func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p 
 	t, err := s.CRM.DocTemplate(r.Context(), id)
 	if err != nil {
 		return err
+	}
+	if in.NumberBy != "" {
+		if err := s.CRM.SetDocTemplateNumerator(r.Context(), id, in.NumberBy); err != nil {
+			return err
+		}
 	}
 	if in.Numerator != nil {
 		if err := s.CRM.SetDocNumerator(r.Context(), id, *in.Numerator); err != nil {
@@ -248,6 +260,94 @@ func (s *Server) apiDocTemplateDelete(w http.ResponseWriter, r *http.Request, p 
 		return err
 	}
 	if err := s.CRM.DeleteDocTemplate(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiNumerator is a numerator of the templates' documents («Нумераторы», as numerator.*).
+type apiNumerator struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Format    string    `json:"format"` // {NUMBER}, {YEAR}, {MONTH}, {DAY} and text
+	Start     int64     `json:"start"`
+	Step      int       `json:"step"`
+	Pad       int       `json:"pad"`   // the digits of {NUMBER}, with leading zeros; 0 — as is
+	Reset     string    `json:"reset"` // never, day, month, year
+	Last      *int64    `json:"last"`  // the last number given
+	Next      string    `json:"next"`  // the number the next document gets now
+	Templates []string  `json:"templates"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func apiNumeratorOf(n crm.Numerator) apiNumerator {
+	return apiNumerator{ID: n.ID, Name: n.Name, Format: n.Format, Start: n.Start, Step: n.Step, Pad: n.Pad, Reset: n.Reset,
+		Last: n.Last, Next: n.Preview(time.Now()), Templates: n.Templates, CreatedAt: n.CreatedAt}
+}
+
+// apiNumerators are all the numerators (administrators).
+func (s *Server) apiNumerators(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if !s.apiSess(r, p).Admin {
+		return tasks.ErrForbidden
+	}
+	list, err := s.CRM.Numerators(r.Context())
+	if err != nil {
+		return err
+	}
+	out := make([]apiNumerator, 0, len(list))
+	for _, n := range list {
+		out = append(out, apiNumeratorOf(n))
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiNumeratorSave adds a numerator (POST) or changes what is given of its settings (PATCH …/{id}):
+// {"name", "format", "start", "step", "pad", "reset"}.
+func (s *Server) apiNumeratorSave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if !s.apiSess(r, p).Admin {
+		return tasks.ErrForbidden
+	}
+	n := crm.Numerator{Format: "{NUMBER}", Start: 1, Step: 1, Reset: "never"}
+	if id := r.PathValue("id"); id != "" {
+		var err error
+		if n, err = s.CRM.Numerator(r.Context(), id); err != nil {
+			return err
+		}
+	}
+	in := struct {
+		Name   *string `json:"name"`
+		Format *string `json:"format"`
+		Start  *int64  `json:"start"`
+		Step   *int    `json:"step"`
+		Pad    *int    `json:"pad"`
+		Reset  *string `json:"reset"`
+	}{&n.Name, &n.Format, &n.Start, &n.Step, &n.Pad, &n.Reset}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	id, err := s.CRM.SaveNumerator(r.Context(), n)
+	if err != nil {
+		return err
+	}
+	if n, err = s.CRM.Numerator(r.Context(), id); err != nil {
+		return err
+	}
+	status := http.StatusOK
+	if r.Method == http.MethodPost {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, apiNumeratorOf(n))
+	return nil
+}
+
+// apiNumeratorDelete deletes a numerator no template numbers by.
+func (s *Server) apiNumeratorDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if !s.apiSess(r, p).Admin {
+		return tasks.ErrForbidden
+	}
+	if err := s.CRM.DeleteNumerator(r.Context(), r.PathValue("id")); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

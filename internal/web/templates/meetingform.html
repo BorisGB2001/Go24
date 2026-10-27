@@ -1,0 +1,22 @@
+{{define "content"}}
+{{$d := .Data}}{{$m := $d.M}}
+<div class="crumbs"><a href="/worktime/meetings">{{t "meeting.title"}}</a>{{if $m.ID}} · <a href="/worktime/meetings/{{$m.ID}}">{{$m.Title}}</a>{{end}}</div>
+<div class="pagehead"><h1>{{if $m.ID}}{{t "meeting.edit"}}{{else}}{{t "meeting.new"}}{{end}}</h1></div>
+<form class="card" style="max-width:760px" method="post" action="/worktime/meetings{{if $m.ID}}/{{$m.ID}}{{end}}" data-ajax data-failed="{{t "common.save_failed"}}">
+  <div class="form-error" data-error hidden></div>
+  <label>{{t "meeting.f.title"}} <span class="req">*</span></label>
+  <input name="title" value="{{$m.Title}}" maxlength="{{$d.TitleMax}}" required autofocus placeholder="{{t "meeting.title_hint"}}">
+  <div class="row evwhen"><span><label>{{t "meeting.f.start"}} <span class="req">*</span></label>
+    <input type="datetime-local" name="start" value="{{$m.Start.Format "2006-01-02T15:04"}}" required></span>
+    <span><label>{{t "meeting.f.minutes"}}</label><select name="minutes">{{range $d.Durations}}<option value="{{.}}" {{if eq . $m.Minutes}}selected{{end}}>{{dur (mul . 60)}}</option>{{end}}</select></span></div>
+  <label>{{t "meeting.f.place"}}</label>
+  <input name="place" value="{{$m.Place}}" maxlength="{{$d.TitleMax}}" placeholder="{{t "meeting.place_hint"}}">
+  <label>{{t "meeting.f.description"}}</label>
+  <textarea name="description" rows="4">{{$m.Description}}</textarea>
+  <label>{{t "meeting.f.owner"}} <span class="req">*</span></label>{{template "upick" (upick "owner" $m.Owner.ID $d.Users "required")}}
+  <label>{{t "meeting.f.keeper"}}</label>{{template "upick" (upick "keeper" $m.Keeper.ID $d.Users "ph" (t "meeting.keeper_hint"))}}
+  <label>{{t "meeting.f.members"}}</label>{{template "upick" (upick "members" $d.Members $d.Users "multi")}}
+  <p class="muted small">{{t "meeting.form_hint"}}</p>
+  <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="{{$d.Back}}">{{t "common.cancel"}}</a></p>
+</form>
+{{end}}

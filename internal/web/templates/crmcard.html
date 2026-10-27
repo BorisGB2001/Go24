@@ -1,3 +1,104 @@
+{{/* «Настроить карточку»: a section's name — its own, else the standard one of the kind of card */}}
+{{define "crmsecname"}}{{if .S.Name}}{{.S.Name}}{{else if eq .S.Code "main"}}{{t (print "crm.card.sec.main." .D.LayoutKind)}}{{else if eq .S.Code "more"}}{{t "crm.card.sec.more"}}{{else}}{{t "crm.card.sec.new"}}{{end}}{{end}}
+
+{{/* a field's name in «Настроить карточку» */}}
+{{define "crmfname"}}{{if hasPrefix .C "f:"}}{{with index .D.FieldBy .C}}{{.Name}}{{end}}{{else if eq .C "utm"}}{{t "crm.utm"}}{{else if eq .C "contacts"}}{{t "crm.f.contacts"}}{{else if eq .C "created"}}{{t "crm.f.created"}}{{else}}{{t (print "crm.f." .C)}}{{end}}{{end}}
+
+{{/* a field of the card's form by its code (the built-in ones, "f:ID" — an own field) */}}
+{{define "crmedit"}}{{$d := .D}}{{$i := $d.Item}}{{$e := $d.Entity}}{{$c := .C}}
+{{if hasPrefix $c "f:"}}{{with index $d.FieldBy $c}}{{$st := ""}}{{if or (eq $e "deal") (eq $e "lead")}}{{$st = $i.Stage.ID}}{{end}}{{template "crmfield" (dict "F" . "Stage" $st)}}{{end}}
+{{else if eq $c "position"}}<label>{{t "crm.f.position"}}</label><input type="text" name="position" value="{{$i.Position}}" maxlength="300">
+{{else if eq $c "name"}}<label>{{t "crm.f.name"}}</label><input type="text" name="name" value="{{$i.Name}}" maxlength="300">
+{{else if eq $c "company_title"}}<label>{{t "crm.f.company_title"}}</label><input type="text" name="company_title" value="{{$i.CompanyTitle}}" maxlength="300">
+{{else if eq $c "origin"}}{{template "crmdictsel" (dict "Name" "origin" "Kind" "source" "Dicts" $d.Dicts "Value" $i.Origin.ID)}}
+  {{if eq $e "lead"}}<label>{{t "crm.f.source_info"}}</label><input type="text" name="source" value="{{$i.Source}}" maxlength="300">{{end}}
+{{else if eq $c "contact_type"}}{{template "crmdictsel" (dict "Name" "contact_type" "Kind" "contact_type" "Dicts" $d.Dicts "Value" $i.ContactType.ID)}}
+{{else if eq $c "company_type"}}{{template "crmdictsel" (dict "Name" "company_type" "Kind" "company_type" "Dicts" $d.Dicts "Value" $i.CompanyType.ID)}}
+{{else if eq $c "industry"}}{{template "crmdictsel" (dict "Name" "industry" "Kind" "industry" "Dicts" $d.Dicts "Value" $i.Industry.ID)}}
+{{else if eq $c "deal_type"}}{{template "crmdictsel" (dict "Name" "deal_type" "Kind" "deal_type" "Dicts" $d.Dicts "Value" $i.DealType.ID)}}
+{{else if or (eq $c "phone") (eq $c "email")}}<input type="hidden" name="with_comms" value="1"><label>{{t (print "crm.f." $c)}}</label>
+  <div class="crmcomms" data-crmcomms>{{range commRows $i.Comms $c true}}<div class="row nowrap crmcomm"><input type="hidden" name="comm_kind" value="{{$c}}">
+    <select name="comm_type" style="width:auto" aria-label="{{t "crm.comm.type"}}">{{$typ := .Type}}{{range commTypes $c}}<option value="{{.}}" {{if eq . $typ}}selected{{end}}>{{t (print "crm.comm." $c "." .)}}</option>{{end}}</select>
+    <input type="{{if eq $c "phone"}}tel{{else}}email{{end}}" name="comm_value" value="{{.Value}}" maxlength="300" style="flex:1" aria-label="{{t (print "crm.f." $c)}}">
+    <button type="button" class="ghost small" data-comm-del title="{{t "common.remove"}}" aria-label="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}
+    <button type="button" class="link small" data-comm-add>{{icon "plus"}} {{t "crm.comm.add"}}</button></div>
+{{else if eq $c "website"}}<label>{{t "crm.f.website"}}</label><input type="text" name="website" value="{{$i.Website}}" maxlength="300">
+{{else if eq $c "address"}}<label>{{t "crm.f.address"}}</label><input type="text" name="address" value="{{$i.Address}}" maxlength="300">
+{{else if eq $c "amount"}}<label>{{t "crm.f.amount"}}</label><div class="row"><input type="text" name="amount" value="{{$i.Amount}}" inputmode="decimal" style="flex:1" {{if $d.Rows}}readonly title="{{t "crm.amount_from_rows"}}"{{end}}>
+  {{template "crmcurrency" (dict "List" $d.Currencies "Value" $i.Currency)}}</div>
+{{else if eq $c "company"}}<label>{{t "crm.f.company"}}</label><select name="company"><option value=""></option>
+  {{range $d.Companies}}<option value="{{.ID}}" {{if eq .ID $i.Company.ID}}selected{{end}}>{{.Title}}</option>{{end}}</select>
+{{else if eq $c "contacts"}}<label>{{t "crm.f.contacts"}}</label><div class="crmcontacts" data-crmcontacts>
+  {{range $x := $i.Contacts}}<select name="contact"><option value=""></option>
+    {{range $d.AllContacts}}<option value="{{.ID}}" {{if eq .ID $x.ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
+  <select name="contact"><option value=""></option>{{range $d.AllContacts}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+  <button type="button" class="ghost small" data-addcontact>{{icon "plus"}} {{t "crm.add_contact"}}</button></div>
+{{else if eq $c "close_date"}}<label>{{t "crm.f.close_date"}}</label><input type="date" name="close_date" value="{{dinput $i.CloseDate}}">
+{{else if eq $c "responsible"}}<label>{{t "crm.f.responsible"}}</label>{{template "upick" (upick "responsible" $i.Responsible.ID $d.Users "required")}}
+{{else if eq $c "observers"}}<label>{{t "crm.f.observers"}}</label><input type="hidden" name="with_observers" value="1">
+  {{template "upick" (upick "observers" (crmObserverIDs $i.Observers) $d.Users "multi" "ph" (t "crm.observers_hint"))}}
+{{else if eq $c "comment"}}<label>{{t "crm.f.comment"}}</label><textarea name="comment" rows="3">{{$i.Comment}}</textarea>
+{{else if eq $c "utm"}}{{with $d.UTM}}{{$u := .}}<details {{if not $u.IsZero}}open{{end}}><summary>{{t "crm.utm"}}{{if $d.UTMInherited}} <span class="muted small">{{t "crm.utm_from_lead"}}</span>{{end}}</summary>
+  <input type="hidden" name="with_utm" value="1"><div class="crmutm">
+  <div><label>utm_source</label><input type="text" name="utm_source" value="{{$u.Source}}" maxlength="200"></div>
+  <div><label>utm_medium</label><input type="text" name="utm_medium" value="{{$u.Medium}}" maxlength="200"></div>
+  <div><label>utm_campaign</label><input type="text" name="utm_campaign" value="{{$u.Campaign}}" maxlength="200"></div>
+  <div><label>utm_content</label><input type="text" name="utm_content" value="{{$u.Content}}" maxlength="200"></div>
+  <div><label>utm_term</label><input type="text" name="utm_term" value="{{$u.Term}}" maxlength="200"></div></div></details>{{end}}
+{{end}}{{end}}
+
+{{/* a field of the card's view by its code: shown when it has a value */}}
+{{define "crmview"}}{{$d := .D}}{{$i := $d.Item}}{{$e := $d.Entity}}{{$c := .C}}
+{{if hasPrefix $c "f:"}}{{with index $d.FieldBy $c}}{{if .Value}}<span class="k">{{.Name}}</span><span>{{if eq .Kind "bool"}}{{t "bool.true"}}{{else if eq .Kind "url"}}<a href="{{.Value}}" target="_blank" rel="noopener">{{.Value}}</a>{{else}}{{.Text (t "format.date")}}{{end}}</span>{{end}}{{end}}
+{{else if eq $c "position"}}{{with $i.Position}}<span class="k">{{t "crm.f.position"}}</span><span>{{.}}</span>{{end}}
+{{else if eq $c "amount"}}<span class="k">{{t "crm.f.amount"}}</span><span><b>{{money $i.Amount}} {{$i.Currency}}</b></span>
+{{else if eq $c "name"}}{{with $i.Name}}<span class="k">{{t "crm.f.name"}}</span><span>{{.}}</span>{{end}}
+{{else if eq $c "company_title"}}{{with $i.CompanyTitle}}<span class="k">{{t "crm.f.company_title"}}</span><span>{{.}}</span>{{end}}
+{{else if eq $c "contact_type"}}{{if $i.ContactType.ID}}<span class="k">{{t "crm.f.contact_type"}}</span><span>{{template "crmdict" $i.ContactType}}</span>{{end}}
+{{else if eq $c "company_type"}}{{if $i.CompanyType.ID}}<span class="k">{{t "crm.f.company_type"}}</span><span>{{template "crmdict" $i.CompanyType}}</span>{{end}}
+{{else if eq $c "industry"}}{{if $i.Industry.ID}}<span class="k">{{t "crm.f.industry"}}</span><span>{{template "crmdict" $i.Industry}}</span>{{end}}
+{{else if eq $c "deal_type"}}{{if $i.DealType.ID}}<span class="k">{{t "crm.f.deal_type"}}</span><span>{{template "crmdict" $i.DealType}}</span>{{end}}
+{{else if eq $c "origin"}}{{if or $i.Origin.ID (and (eq $e "lead") $i.Source)}}<span class="k">{{t "crm.f.origin"}}</span><span>{{template "crmdict" $i.Origin}}{{if eq $e "lead"}}{{with $i.Source}}{{if $i.Origin.ID}} · {{end}}<span class="muted">{{.}}</span>{{end}}{{end}}</span>{{end}}
+{{else if eq $c "utm"}}{{with $d.UTM}}{{if not .IsZero}}<span class="k">{{t "crm.utm"}}</span><span class="small">{{with .Source}}<code>utm_source={{.}}</code> {{end}}{{with .Medium}}<code>utm_medium={{.}}</code> {{end}}{{with .Campaign}}<code>utm_campaign={{.}}</code> {{end}}{{with .Content}}<code>utm_content={{.}}</code> {{end}}{{with .Term}}<code>utm_term={{.}}</code>{{end}}{{if $d.UTMInherited}} <span class="muted">{{t "crm.utm_from_lead"}}</span>{{end}}</span>{{end}}{{end}}
+{{else if or (eq $c "phone") (eq $c "email")}}{{with commRows $i.Comms $c false}}{{$all := .}}<span class="k">{{t (print "crm.f." $c)}}</span><span class="crmcommlist">{{range .}}<span><a href="{{if eq $c "phone"}}tel:{{else}}mailto:{{end}}{{.Value}}">{{.Value}}</a>{{if gt (len $all) 1}} <span class="muted small">{{t (print "crm.comm." $c "." .Type)}}</span>{{end}}</span>{{end}}</span>{{end}}
+{{else if eq $c "website"}}{{with $i.Website}}<span class="k">{{t "crm.f.website"}}</span><span>{{.}}</span>{{end}}
+{{else if eq $c "address"}}{{with $i.Address}}<span class="k">{{t "crm.f.address"}}</span><span>{{.}}</span>{{end}}
+{{else if eq $c "company"}}{{if $i.Company.ID}}<span class="k">{{t "crm.f.company"}}</span><span><a href="/crm/companies/{{$i.Company.ID}}">{{$i.Company.Name}}</a></span>{{end}}
+{{else if eq $c "contacts"}}{{with $i.Contacts}}<span class="k">{{if gt (len .) 1}}{{t "crm.f.contacts"}}{{else}}{{t "crm.f.contact"}}{{end}}</span><span>{{range $n, $x := .}}{{if $n}}, {{end}}<a href="/crm/contacts/{{$x.ID}}">{{$x.Name}}</a>{{end}}</span>{{end}}
+{{else if eq $c "close_date"}}{{with $i.CloseDate}}<span class="k">{{t "crm.f.close_date"}}</span><span>{{day (deref .)}}</span>{{end}}{{with $i.ClosedAt}}<span class="k">{{t "crm.closed"}}</span><span>{{date .}}</span>{{end}}
+{{else if eq $c "responsible"}}<span class="k">{{t "crm.f.responsible"}}</span><span>{{person $i.Responsible.Name}}</span>
+{{else if eq $c "observers"}}{{with $i.Observers}}<span class="k">{{t "crm.f.observers"}}</span><span>{{range $n, $o := .}}{{if $n}}, {{end}}{{person $o.Name}}{{end}}</span>{{end}}
+{{else if eq $c "comment"}}{{with $i.Comment}}<span class="k">{{t "crm.f.comment"}}</span><span>{{nl2br .}}</span>{{end}}
+{{else if eq $c "created"}}<span class="k">{{t "crm.f.created"}}</span><span>{{datetime $i.CreatedAt}}</span>
+{{end}}{{end}}
+
+{{/* «Настроить карточку»: sections with their fields and «Скрытые поля»; drag a field or move it by the arrows, add,
+   rename and delete sections (static/js/crmlayout.js keeps the result in the form's "layout") */}}
+{{define "crmlayout"}}{{$d := .Data}}{{$k := $d.Kind}}{{$i := $d.Item}}
+<div class="card crmlayout"><h2>{{icon "settings"}} {{t "crm.card.setup"}}</h2>
+  <p class="small muted">{{t "crm.card.setup_hint"}}{{if $d.LayoutOwn}} · {{t "crm.card.own"}}{{else if $d.LayoutCommon}} · {{t "crm.card.common"}}{{end}}</p>
+  <form method="post" action="/crm/{{$k}}/{{$i.ID}}/layout" data-crmlayout data-new-name="{{t "crm.card.sec.new"}}">
+    <input type="hidden" name="layout" value="">
+    <div class="crmlsecs">{{range $d.Layout}}<div class="crmlsec" data-sec data-code="{{.Code}}">
+      <div class="row nowrap"><input type="text" class="crmlsec-name" value="{{.Name}}" placeholder="{{template "crmsecname" (dict "S" . "D" $d)}}" maxlength="100" aria-label="{{t "crm.card.sec_name"}}" style="flex:1">
+        <button type="button" class="ghost small" data-sec-del title="{{t "crm.card.sec_delete"}}" aria-label="{{t "crm.card.sec_delete"}}">{{icon "trash"}}</button></div>
+      <ul class="crmlfields">{{range .Fields}}{{template "crmlfield" (dict "C" . "D" $d)}}{{end}}</ul></div>{{end}}</div>
+    <p><button type="button" class="ghost small" data-sec-add>{{icon "plus"}} {{t "crm.card.sec_add"}}</button></p>
+    <div class="crmlsec crmlhidden" data-hidden><b class="small">{{icon "eye-off"}} {{t "crm.card.hidden"}}</b> <span class="small muted">{{t "crm.card.hidden_hint"}}</span>
+      <ul class="crmlfields">{{range $d.Hidden}}{{template "crmlfield" (dict "C" . "D" $d)}}{{end}}</ul></div>
+    <p class="row"><button class="primary">{{t "crm.card.save_mine"}}</button>
+      {{if $d.LayoutAdmin}}<button class="ghost" name="common" value="1">{{icon "users"}} {{t "crm.card.save_common"}}</button>{{end}}
+      {{if $d.LayoutOwn}}<button class="ghost" name="reset" value="mine" formnovalidate>{{t "crm.card.reset_mine"}}</button>{{end}}
+      {{if and $d.LayoutAdmin $d.LayoutCommon}}<button class="ghost" name="reset" value="common" formnovalidate data-confirm="{{t "crm.card.reset_common_confirm"}}">{{t "crm.card.reset_common"}}</button>{{end}}
+      <a class="button ghost" href="/crm/{{$k}}/{{$i.ID}}">{{t "common.cancel"}}</a></p>
+  </form>
+</div>
+<script src="{{asset "js/crmlayout.js"}}"></script>{{end}}
+
+{{define "crmlfield"}}<li draggable="true" data-code="{{.C}}"><span class="grip">⋮⋮</span><span class="crmlf-name">{{template "crmfname" .}}</span>
+  <button type="button" class="ghost small" data-up title="{{t "crm.card.up"}}" aria-label="{{t "crm.card.up"}}">↑</button><button type="button" class="ghost small" data-down title="{{t "crm.card.down"}}" aria-label="{{t "crm.card.down"}}">↓</button>
+  <button type="button" class="ghost small" data-hide title="{{t "crm.card.hide"}}" aria-label="{{t "crm.card.hide"}}">{{icon "eye-off"}}</button><button type="button" class="ghost small" data-show title="{{t "crm.card.show"}}" aria-label="{{t "crm.card.show"}}">{{icon "eye"}}</button></li>{{end}}
+
 {{/* an own field in a card's form; one required at the card's stage (or always) must be filled */}}
 {{define "crmfield"}}{{$f := .F}}{{$req := $f.RequiredAt .Stage}}
 {{if eq $f.Kind "bool"}}<label class="check"><input type="checkbox" name="f_{{$f.ID}}" value="1"{{if $f.Value}} checked{{end}}> {{$f.Name}}</label>
@@ -58,80 +159,26 @@
       <p><button class="primary">{{t "crm.convert_do"}}</button></p></form></div></details>{{end}}{{end}}
 <div class="layout2">
 <div>
-  <div class="card">
+  {{if $d.LayoutEdit}}{{template "crmlayout" .}}{{else}}
+  <div class="card crmfields">
+  <a class="crmlayout-gear ghost button small" href="/crm/{{$k}}/{{$i.ID}}?layout=1" title="{{t "crm.card.setup"}}" aria-label="{{t "crm.card.setup"}}">{{icon "settings"}}</a>
   {{if $d.Edit}}
     <form method="post" action="/crm/{{$k}}/{{$i.ID}}">
       {{if eq $e "contact"}}<label>{{t "crm.f.name"}}</label><input type="text" name="name" value="{{$i.Name}}" required maxlength="300">
-        <label>{{t "crm.f.position"}}</label><input type="text" name="position" value="{{$i.Position}}" maxlength="300">
       {{else}}<label>{{t "crm.f.title"}}</label><input type="text" name="title" value="{{$i.Title}}" required maxlength="300">{{end}}
-      {{if eq $e "lead"}}<label>{{t "crm.f.name"}}</label><input type="text" name="name" value="{{$i.Name}}" maxlength="300">
-        <label>{{t "crm.f.company_title"}}</label><input type="text" name="company_title" value="{{$i.CompanyTitle}}" maxlength="300">
-        {{template "crmdictsel" (dict "Name" "origin" "Kind" "source" "Dicts" $d.Dicts "Value" $i.Origin.ID)}}
-        <label>{{t "crm.f.source_info"}}</label><input type="text" name="source" value="{{$i.Source}}" maxlength="300">{{end}}
-      {{if eq $e "contact"}}{{template "crmdictsel" (dict "Name" "contact_type" "Kind" "contact_type" "Dicts" $d.Dicts "Value" $i.ContactType.ID)}}
-        {{template "crmdictsel" (dict "Name" "origin" "Kind" "source" "Dicts" $d.Dicts "Value" $i.Origin.ID)}}{{end}}
-      {{if eq $e "company"}}{{template "crmdictsel" (dict "Name" "company_type" "Kind" "company_type" "Dicts" $d.Dicts "Value" $i.CompanyType.ID)}}
-        {{template "crmdictsel" (dict "Name" "industry" "Kind" "industry" "Dicts" $d.Dicts "Value" $i.Industry.ID)}}{{end}}
-      {{if and (eq $e "deal") (not $d.Type)}}{{template "crmdictsel" (dict "Name" "deal_type" "Kind" "deal_type" "Dicts" $d.Dicts "Value" $i.DealType.ID)}}{{end}}
-      {{if eq $e "deal"}}{{template "crmdictsel" (dict "Name" "origin" "Kind" "source" "Dicts" $d.Dicts "Value" $i.Origin.ID)}}{{end}}
-      {{if ne $e "deal"}}<input type="hidden" name="with_comms" value="1">{{range list "phone" "email"}}{{$kind := .}}<label>{{t (print "crm.f." $kind)}}</label>
-        <div class="crmcomms" data-crmcomms>{{range commRows $i.Comms $kind true}}<div class="row nowrap crmcomm"><input type="hidden" name="comm_kind" value="{{$kind}}">
-          <select name="comm_type" style="width:auto" aria-label="{{t "crm.comm.type"}}">{{$typ := .Type}}{{range commTypes $kind}}<option value="{{.}}" {{if eq . $typ}}selected{{end}}>{{t (print "crm.comm." $kind "." .)}}</option>{{end}}</select>
-          <input type="{{if eq $kind "phone"}}tel{{else}}email{{end}}" name="comm_value" value="{{.Value}}" maxlength="300" style="flex:1" aria-label="{{t (print "crm.f." $kind)}}">
-          <button type="button" class="ghost small" data-comm-del title="{{t "common.remove"}}" aria-label="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}
-          <button type="button" class="link small" data-comm-add>{{icon "plus"}} {{t "crm.comm.add"}}</button></div>{{end}}
-        <script src="{{asset "js/crmcomms.js"}}"></script>{{end}}
-      {{if eq $e "company"}}<label>{{t "crm.f.website"}}</label><input type="text" name="website" value="{{$i.Website}}" maxlength="300">
-        <label>{{t "crm.f.address"}}</label><input type="text" name="address" value="{{$i.Address}}" maxlength="300">{{end}}
-      {{if or (eq $e "deal") (eq $e "lead")}}<label>{{t "crm.f.amount"}}</label><div class="row"><input type="text" name="amount" value="{{$i.Amount}}" inputmode="decimal" style="flex:1" {{if $d.Rows}}readonly title="{{t "crm.amount_from_rows"}}"{{end}}>
-        {{template "crmcurrency" (dict "List" $d.Currencies "Value" $i.Currency)}}</div>{{end}}
-      {{if or (eq $e "deal") (eq $e "contact")}}<label>{{t "crm.f.company"}}</label><select name="company"><option value=""></option>
-        {{range $d.Companies}}<option value="{{.ID}}" {{if eq .ID $i.Company.ID}}selected{{end}}>{{.Title}}</option>{{end}}</select>{{end}}
-      {{if eq $e "deal"}}<label>{{t "crm.f.contacts"}}</label><div class="crmcontacts" data-crmcontacts>
-        {{range $c := $i.Contacts}}<select name="contact"><option value=""></option>
-          {{range $d.AllContacts}}<option value="{{.ID}}" {{if eq .ID $c.ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
-        <select name="contact"><option value=""></option>{{range $d.AllContacts}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
-        <button type="button" class="ghost small" data-addcontact>{{icon "plus"}} {{t "crm.add_contact"}}</button></div>
-        <label>{{t "crm.f.close_date"}}</label><input type="date" name="close_date" value="{{dinput $i.CloseDate}}">{{end}}
-      <label>{{t "crm.f.responsible"}}</label>{{template "upick" (upick "responsible" $i.Responsible.ID $d.Users "required")}}
-      {{if or (eq $e "deal") (eq $e "lead")}}<label>{{t "crm.f.observers"}}</label><input type="hidden" name="with_observers" value="1">
-        {{template "upick" (upick "observers" (crmObserverIDs $i.Observers) $d.Users "multi" "ph" (t "crm.observers_hint"))}}{{end}}
-      <label>{{t "crm.f.comment"}}</label><textarea name="comment" rows="3">{{$i.Comment}}</textarea>
-      {{if and (or (eq $e "deal") (eq $e "lead")) $d.UTM}}{{$u := $d.UTM}}<details {{if not $u.IsZero}}open{{end}}><summary>{{t "crm.utm"}}{{if $d.UTMInherited}} <span class="muted small">{{t "crm.utm_from_lead"}}</span>{{end}}</summary>
-        <input type="hidden" name="with_utm" value="1"><div class="crmutm">
-        <div><label>utm_source</label><input type="text" name="utm_source" value="{{$u.Source}}" maxlength="200"></div>
-        <div><label>utm_medium</label><input type="text" name="utm_medium" value="{{$u.Medium}}" maxlength="200"></div>
-        <div><label>utm_campaign</label><input type="text" name="utm_campaign" value="{{$u.Campaign}}" maxlength="200"></div>
-        <div><label>utm_content</label><input type="text" name="utm_content" value="{{$u.Content}}" maxlength="200"></div>
-        <div><label>utm_term</label><input type="text" name="utm_term" value="{{$u.Term}}" maxlength="200"></div></div></details>{{end}}
-      {{with $d.Fields}}<input type="hidden" name="with_fields" value="1">{{$st := ""}}{{if or (eq $e "deal") (eq $e "lead")}}{{$st = $i.Stage.ID}}{{end}}
-        {{range .}}{{template "crmfield" (dict "F" . "Stage" $st)}}{{end}}{{end}}
+      {{if $d.Fields}}<input type="hidden" name="with_fields" value="1">{{end}}
+      {{range $d.Layout}}{{if .Fields}}<fieldset class="crmsec"><legend>{{template "crmsecname" (dict "S" . "D" $d)}}</legend>
+        {{range .Fields}}{{template "crmedit" (dict "C" . "D" $d)}}{{end}}</fieldset>{{end}}{{end}}
+      {{with $d.Hidden}}<details class="crmsec crmhidden"{{if $d.HiddenOpen}} open{{end}}><summary>{{t "crm.card.hidden"}} <span class="muted">{{len .}}</span></summary>
+        {{range .}}{{template "crmedit" (dict "C" . "D" $d)}}{{end}}</details>{{end}}
+      {{if ne $e "deal"}}<script src="{{asset "js/crmcomms.js"}}"></script>{{end}}
       <p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/crm/{{$k}}/{{$i.ID}}">{{t "common.cancel"}}</a></p>
     </form>
   {{else}}
-    <div class="props">
-      {{if eq $e "contact"}}{{with $i.Position}}<span class="k">{{t "crm.f.position"}}</span><span>{{.}}</span>{{end}}{{end}}
-      {{if or (eq $e "deal") (eq $e "lead")}}<span class="k">{{t "crm.f.amount"}}</span><span><b>{{money $i.Amount}} {{$i.Currency}}</b></span>{{end}}
-      {{if eq $e "lead"}}{{with $i.Name}}<span class="k">{{t "crm.f.name"}}</span><span>{{.}}</span>{{end}}{{with $i.CompanyTitle}}<span class="k">{{t "crm.f.company_title"}}</span><span>{{.}}</span>{{end}}{{end}}
-      {{if eq $e "contact"}}{{if $i.ContactType.ID}}<span class="k">{{t "crm.f.contact_type"}}</span><span>{{template "crmdict" $i.ContactType}}</span>{{end}}{{end}}
-      {{if eq $e "company"}}{{if $i.CompanyType.ID}}<span class="k">{{t "crm.f.company_type"}}</span><span>{{template "crmdict" $i.CompanyType}}</span>{{end}}
-        {{if $i.Industry.ID}}<span class="k">{{t "crm.f.industry"}}</span><span>{{template "crmdict" $i.Industry}}</span>{{end}}{{end}}
-      {{if eq $e "deal"}}{{if $i.DealType.ID}}<span class="k">{{t "crm.f.deal_type"}}</span><span>{{template "crmdict" $i.DealType}}</span>{{end}}{{end}}
-      {{if ne $e "company"}}{{if or $i.Origin.ID (and (eq $e "lead") $i.Source)}}<span class="k">{{t "crm.f.origin"}}</span><span>{{template "crmdict" $i.Origin}}{{if eq $e "lead"}}{{with $i.Source}}{{if $i.Origin.ID}} · {{end}}<span class="muted">{{.}}</span>{{end}}{{end}}</span>{{end}}{{end}}
-      {{with $d.UTM}}{{if not .IsZero}}<span class="k">{{t "crm.utm"}}</span><span class="small">{{with .Source}}<code>utm_source={{.}}</code> {{end}}{{with .Medium}}<code>utm_medium={{.}}</code> {{end}}{{with .Campaign}}<code>utm_campaign={{.}}</code> {{end}}{{with .Content}}<code>utm_content={{.}}</code> {{end}}{{with .Term}}<code>utm_term={{.}}</code>{{end}}{{if $d.UTMInherited}} <span class="muted">{{t "crm.utm_from_lead"}}</span>{{end}}</span>{{end}}{{end}}
-      {{if ne $e "deal"}}{{range list "phone" "email"}}{{$kind := .}}{{with commRows $i.Comms . false}}<span class="k">{{t (print "crm.f." $kind)}}</span><span class="crmcommlist">{{range .}}<span><a href="{{if eq $kind "phone"}}tel:{{else}}mailto:{{end}}{{.Value}}">{{.Value}}</a>{{if gt (len (commRows $i.Comms $kind false)) 1}} <span class="muted small">{{t (print "crm.comm." $kind "." .Type)}}</span>{{end}}</span>{{end}}</span>{{end}}{{end}}{{end}}
-      {{if eq $e "company"}}{{with $i.Website}}<span class="k">{{t "crm.f.website"}}</span><span>{{.}}</span>{{end}}{{with $i.Address}}<span class="k">{{t "crm.f.address"}}</span><span>{{.}}</span>{{end}}{{end}}
-      {{if or (eq $e "deal") (eq $e "contact")}}{{if $i.Company.ID}}<span class="k">{{t "crm.f.company"}}</span><span><a href="/crm/companies/{{$i.Company.ID}}">{{$i.Company.Name}}</a></span>{{end}}{{end}}
-      {{if eq $e "deal"}}{{with $i.Contacts}}<span class="k">{{if gt (len .) 1}}{{t "crm.f.contacts"}}{{else}}{{t "crm.f.contact"}}{{end}}</span><span>{{range $n, $c := .}}{{if $n}}, {{end}}<a href="/crm/contacts/{{$c.ID}}">{{$c.Name}}</a>{{end}}</span>{{end}}
-        {{with $i.CloseDate}}<span class="k">{{t "crm.f.close_date"}}</span><span>{{day (deref .)}}</span>{{end}}{{with $i.ClosedAt}}<span class="k">{{t "crm.closed"}}</span><span>{{date .}}</span>{{end}}{{end}}
-      {{range $d.Fields}}{{if .Value}}<span class="k">{{.Name}}</span><span>{{if eq .Kind "bool"}}{{t "bool.true"}}{{else if eq .Kind "url"}}<a href="{{.Value}}" target="_blank" rel="noopener">{{.Value}}</a>{{else}}{{.Text (t "format.date")}}{{end}}</span>{{end}}{{end}}
-      <span class="k">{{t "crm.f.responsible"}}</span><span>{{person $i.Responsible.Name}}</span>
-      {{if or (eq $e "deal") (eq $e "lead")}}{{with $i.Observers}}<span class="k">{{t "crm.f.observers"}}</span><span>{{range $n, $o := .}}{{if $n}}, {{end}}{{person $o.Name}}{{end}}</span>{{end}}{{end}}
-      <span class="k">{{t "crm.f.created"}}</span><span>{{datetime $i.CreatedAt}}</span>
-    </div>
-    {{with $i.Comment}}<p>{{nl2br .}}</p>{{end}}
+    {{range $s := $d.Layout}}<section class="crmsec">{{if or $s.Name (gt (len $d.Layout) 1)}}<h3 class="small muted">{{template "crmsecname" (dict "S" $s "D" $d)}}</h3>{{end}}
+      <div class="props">{{range $s.Fields}}{{template "crmview" (dict "C" . "D" $d)}}{{end}}</div></section>{{end}}
   {{end}}
-  </div>
+  </div>{{end}}
   {{if or (eq $e "company") (eq $e "contact")}}{{if or $d.Requisites $d.CanWrite}}<div class="card" id="requisites"><h2>{{icon "file-text"}} {{t "crm.requisites"}}</h2>
     {{range $d.Requisites}}<div class="crmreq"><div class="small">{{template "crmreq" .}}</div>
       <div class="row muted small"><span style="flex:1">{{t (print "crm.req.preset." .Preset)}}{{if .Default}} · <b>{{t "crm.req.default"}}</b>{{end}}</span>

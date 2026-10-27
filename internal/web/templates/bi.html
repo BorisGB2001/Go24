@@ -5,6 +5,11 @@
   <a class="button ghost" href="/bi/groups">{{icon "folder"}} {{t "bi.groups"}}</a>
   <a class="button ghost" href="/bi/files">{{icon "table"}} {{t "bi.files.title"}}</a>
   {{if $d.Admin}}<a class="button ghost" href="/bi/keys">{{icon "key"}} {{t "bi.keys.title"}}</a>{{end}}
+  <details class="bi-menu"><summary class="button ghost" title="{{t "bi.import_hint"}}">{{icon "cloud-upload"}} {{t "bi.import"}}</summary>
+    <form class="card pop" method="post" action="/bi/import" enctype="multipart/form-data">
+      <label>{{t "bi.import_hint"}}<input type="file" name="file" accept=".json,application/json" required></label>
+      <button class="primary">{{t "bi.import_do"}}</button>
+    </form></details>
   <details class="bi-menu"><summary class="button primary">{{icon "plus"}} {{t "bi.new"}}</summary>
     <form class="card pop" method="post" action="/bi">
       <label>{{t "bi.d.title"}}<input type="text" name="title" required maxlength="200" autofocus></label>

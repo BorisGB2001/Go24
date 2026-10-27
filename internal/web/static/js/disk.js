@@ -5,7 +5,15 @@
 // «Пропустить» asks); rows dragged onto a folder or onto the path above move there, onto «Корзина» — go to the trash.
 // A click on a file opens the viewer (pictures, PDF, video, sound, documents as HTML) with ‹ › through the files of
 // the folder, zoom and turn of pictures, full screen and print; «Список» / «Плитка» is remembered in this browser.
+// The right button on a row opens its menu «…» at the pointer. Thumbnails of pictures, PDF and documents come from
+// /files/{id}/thumb; a file with none shows its icon.
 (() => {
+  // a thumbnail the server has none of (404) gives way to the file's icon next to it
+  document.querySelectorAll('img[data-thumb]').forEach(img => {
+    const none = () => { const icon = img.nextElementSibling; if (icon?.classList.contains('ticon')) icon.hidden = false; img.remove(); };
+    if (img.complete && !img.naturalWidth) none();
+    else img.addEventListener('error', none);
+  });
   const root = document.querySelector('[data-disk]');
   if (!root) return;
   const base = root.dataset.disk;
@@ -14,8 +22,10 @@
   const l = k => root.dataset['l' + k.replace(/(^|-)(\w)/g, (_, __, c) => c.toUpperCase())] || k;
   const which = base === '/disk/my' ? 'my' : base === '/disk/company' ? 'company' :
     base.startsWith('/disk/sh/') ? 'sh:' + base.slice(9) : base.startsWith('/disk/u/') ? 'u:' + base.slice(8) : base.replace('/disk/p/', '');
-  // the filter by type applies as soon as it is picked
-  document.querySelector('[data-disk-filter] select')?.addEventListener('change', e => e.target.form.requestSubmit());
+  // the filter: the dates «с — по» are for the period «Период» only
+  const period = document.querySelector('[data-disk-period]');
+  const range = () => { const r = document.querySelector('[data-disk-range]'); if (r) r.hidden = period.value !== 'range'; };
+  if (period) { range(); period.addEventListener('change', range); }
 
   // ---- selection ----
   const rows = () => [...root.querySelectorAll('tr[data-item]')];
@@ -288,10 +298,11 @@
     if (await post(base + '/move', body)) location.reload();
   });
 
-  // ---- list or tiles ----
+  // ---- list, tiles or big tiles ----
   const viewKey = 'go24.disk.view';
   const setView = v => {
-    root.classList.toggle('tiles', v === 'tiles');
+    root.classList.toggle('tiles', v === 'tiles' || v === 'big');
+    root.classList.toggle('big', v === 'big');
     document.querySelectorAll('[data-view-mode]').forEach(b => b.classList.toggle('on', b.dataset.viewMode === v));
   };
   let view = 'list';
@@ -349,7 +360,10 @@
       ed.href = a.dataset.edit;
       bar.append(ed);
     }
-    bar.append(about, dl, link, full, btn('×', l('close'), closeViewer, 'mviewer-x'));
+    const send = btn('💬', l('send'), null, 'mv-send'); // disksend.js opens the chats
+    send.dataset.diskSend = id;
+    send.dataset.name = name;
+    bar.append(about, dl, link, send, full, btn('×', l('close'), closeViewer, 'mviewer-x'));
     const body = el('div', 'mviewer-body');
     viewer.append(bar, body);
     viewer.addEventListener('click', e => { if (e.target === viewer || e.target === body) closeViewer(); });
@@ -429,6 +443,28 @@
     }
   }, true);
 
+  // ---- the right button on a row opens its menu «…» at the pointer list does ----
+  root.addEventListener('contextmenu', e => {
+    const row = e.target.closest('tr[data-item]');
+    const more = row?.querySelector('details.dmore');
+    if (!more || e.target.closest('.pop, input, textarea') || e.shiftKey) return;
+    e.preventDefault();
+    root.querySelectorAll('details.dmore[open]').forEach(d => d.removeAttribute('open'));
+    const pop = more.querySelector('.pop');
+    more.setAttribute('open', '');
+    pop.style.position = 'fixed';
+    pop.style.right = 'auto';
+    const r = pop.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(e.clientX, innerWidth - r.width - 8)) + 'px';
+    pop.style.top = Math.max(8, Math.min(e.clientY, innerHeight - r.height - 8)) + 'px';
+    const back = () => {
+      if (more.open) return;
+      pop.style.position = pop.style.left = pop.style.top = pop.style.right = '';
+      more.removeEventListener('toggle', back);
+    };
+    more.addEventListener('toggle', back);
+  });
+
   // ---- «История версий»: the file's versions, each to download; a former one comes back with «Восстановить» ----
   const ver = document.querySelector('[data-disk-ver]');
   const verL = k => ver.dataset['l' + k[0].toUpperCase() + k.slice(1)] || k;
@@ -446,6 +482,11 @@
     ver.querySelector('[data-disk-ver-name]').textContent = d.name;
     const vform = ver.querySelector('[data-disk-ver-form]');
     vform.elements.namedItem('file').value = id;
+    const up = ver.querySelector('[data-disk-ver-up]');
+    if (up) {
+      up.hidden = !('mine' in b.dataset);
+      up.querySelector('[data-disk-newver]').dataset.diskNewver = id;
+    }
     ver.querySelector('[data-disk-ver-list]').replaceChildren(...d.versions.map(v => {
       const tr = document.createElement('tr');
       const td = (...kids) => { const c = document.createElement('td'); c.append(...kids); tr.append(c); return c; };

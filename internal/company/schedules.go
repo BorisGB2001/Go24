@@ -149,6 +149,15 @@ type DayPlan struct {
 	Shift      string // the shift's name
 }
 
+// Minutes is the planned length of the day without its break (0: not a working day or no fixed hours).
+func (p DayPlan) Minutes() int {
+	a, b := worktime.Minutes(p.Start), worktime.Minutes(p.End)
+	if !p.Work || a < 0 || b < 0 {
+		return 0
+	}
+	return max(shiftLen(a, b)-p.Break, 0)
+}
+
 // Norm is a person's working-time rules: the company's working time and, if they have one, their work schedule
 // with their planned shifts ("2006-01-02" → the shift).
 type Norm struct {

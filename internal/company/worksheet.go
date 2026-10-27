@@ -41,6 +41,7 @@ type SheetRow struct {
 	Days       int // days worked
 	Worked     int // seconds
 	Violations int // days with violations
+	Plan       int // seconds by the schedule: the planned working days of the month but absences
 }
 
 // BuildSheet lays out the month of the people: their days, absences and pending changes ("user|2006-01-02"), by
@@ -68,6 +69,9 @@ func BuildSheet(people []Person, days []Workday, absences []Absence, pending map
 				if a.UserID == p.ID && key >= a.From.Format(time.DateOnly) && key <= a.To.Format(time.DateOnly) {
 					c.Kind, c.Absence = "absence", a.Kind
 				}
+			}
+			if c.Kind != "absence" {
+				row.Plan += c.Plan.Minutes() * 60
 			}
 			if d, ok := byKey[p.ID+"|"+key]; ok {
 				c.Kind, c.Flags = "work", n.Violations(d, now)

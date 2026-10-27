@@ -95,6 +95,9 @@ func (s *Store) watchInbox(ctx context.Context, id string) error {
 	if err != nil || f.ID == "" || f.Local { // not synced yet: the next try
 		return err
 	}
+	if err := s.authorize(ctx, &a); err != nil {
+		return err
+	}
 	c, err := dialIMAP(a.IMAPHost, a.IMAPPort, a.TLS)
 	if err != nil {
 		return err
@@ -102,7 +105,7 @@ func (s *Store) watchInbox(ctx context.Context, id string) error {
 	ictx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer c.Logout()
-	if err := c.Login(a.Login, a.password); err != nil {
+	if err := imapLogin(c, a); err != nil {
 		return err
 	}
 	updates, poke := make(chan client.Update, 64), make(chan struct{}, 1)

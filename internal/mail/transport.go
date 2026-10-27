@@ -61,15 +61,17 @@ func Probe(st Settings) error {
 
 type account struct {
 	Mailbox
-	password string
+	password string // or the sealed token of a mailbox connected by signing in
+	oauth    string // the service signed in to ("" — a password)
+	token    string // the access token, once authorize has given it
 }
 
 func (s *Store) account(ctx context.Context, id string) (account, error) {
 	var a account
 	var sealed []byte
-	err := s.db.QueryRow(ctx, `SELECT id, user_id::text, email, imap_host, smtp_host, login, imap_port, smtp_port, tls, secret
+	err := s.db.QueryRow(ctx, `SELECT id, user_id::text, email, imap_host, smtp_host, login, imap_port, smtp_port, tls, secret, oauth
 		FROM mailboxes WHERE id::text = $1`, id).Scan(&a.ID, &a.UserID, &a.Email, &a.IMAPHost, &a.SMTPHost, &a.Login, &a.IMAPPort,
-		&a.SMTPPort, &a.TLS, &sealed)
+		&a.SMTPPort, &a.TLS, &sealed, &a.oauth)
 	if err != nil {
 		return a, err
 	}

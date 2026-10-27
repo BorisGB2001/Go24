@@ -1,0 +1,37 @@
+{{define "content"}}
+{{$d := .Data}}{{$c := $d.C}}
+<p class="muted small"><a href="/company/learning?tab=all">{{icon "school"}} {{t "learn.title"}}</a>{{if $c.ID}} › <a href="/company/learning/{{$c.ID}}">{{$c.Title}}</a>{{end}}</p>
+<h1>{{if $c.ID}}{{t "learn.edit"}}{{else}}{{t "learn.new"}}{{end}}</h1>
+<div class="card" style="max-width:760px">
+  <form method="post" action="/company/learning{{with $c.ID}}/{{.}}{{end}}" data-ajax data-failed="{{t "common.save_failed"}}">
+    <div class="form-error" data-error hidden></div>
+    <label>{{t "learn.f.title"}} <span class="req">*</span></label>
+    <input type="text" name="title" value="{{$c.Title}}" maxlength="{{$d.TitleMax}}" required autofocus>
+    <label>{{t "learn.f.description"}}</label>
+    <textarea name="description" rows="4" maxlength="{{$d.DescMax}}">{{$c.Description}}</textarea>
+    <label>{{t "learn.f.color"}}</label>
+    <div class="row lcolors">{{range $d.Colors}}<label class="lcolor c-{{.}}" title="{{t (print "learn.color." .)}}"><input type="radio" name="color" value="{{.}}"{{if eq . $c.Color}} checked{{end}}></label>{{end}}</div>
+    <label>{{t "learn.f.access"}}</label>
+    {{template "upick" (upick "access" $d.Access nil "multi" "depts" "ph" (t "learn.access_all"))}}
+    <label class="check"><input type="checkbox" name="published" value="1"{{if $c.Published}} checked{{end}}> {{t "learn.f.published"}}</label>
+    <p class="muted small">{{t "learn.published_hint"}}</p>
+    <p class="row"><button class="primary">{{t "common.save"}}</button>
+      {{if $c.ID}}<a class="button ghost" href="/company/learning/{{$c.ID}}">{{t "learn.open"}}</a>{{end}}</p>
+  </form>
+</div>
+{{if $c.ID}}
+<div class="row" style="max-width:760px"><h2 style="flex:1">{{t "learn.lessons"}}</h2>
+  <a class="button primary" href="/company/learning/{{$c.ID}}/l/new">{{icon "plus"}} {{t "learn.add_lesson"}}</a>
+  <a class="button ghost" href="/company/learning/{{$c.ID}}/l/new?kind=test">{{icon "list-check"}} {{t "learn.add_test"}}</a></div>
+{{if $d.Lessons}}<div class="card flush" style="max-width:760px"><table class="tlist llessons"><tbody>
+{{range $i, $l := $d.Lessons}}<tr id="l-{{$l.ID}}"><td class="muted">{{add $i 1}}</td>
+  <td><a href="/company/learning/{{$c.ID}}/l/{{$l.ID}}/edit"><b>{{$l.Title}}</b></a>{{if $l.Test}} <span class="pill">{{t "learn.test"}}</span>{{end}}{{with $l.Chapter}}<br><span class="muted small">{{.}}</span>{{end}}</td>
+  <td class="nowrap"><form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/move" class="inline"><input type="hidden" name="up" value="1"><button class="link" title="{{t "learn.up"}}"{{if eq $i 0}} disabled{{end}}>{{icon "arrow-up"}}</button></form>
+    <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/move" class="inline"><button class="link" title="{{t "learn.down"}}">{{icon "arrow-down"}}</button></form>
+    <form method="post" action="/company/learning/{{$c.ID}}/l/{{$l.ID}}/delete" class="inline" data-confirm="{{t "learn.delete_lesson_confirm" $l.Title}}"><button class="link muted" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+</tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty" style="max-width:760px">{{t "learn.no_lessons"}}</div>{{end}}
+<form method="post" action="/company/learning/{{$c.ID}}/delete" data-confirm="{{t "learn.delete_confirm" $c.Title}}" style="margin-top:24px">
+  <button class="ghost">{{icon "trash"}} {{t "learn.delete"}}</button></form>
+{{end}}
+{{end}}

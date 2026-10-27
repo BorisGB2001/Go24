@@ -17,6 +17,21 @@
     <p><button class="primary">{{icon "send"}} {{t "invite.send"}}</button></p>
   </form>
 </div>{{end}}
+{{if $d.Link}}<div class="card" style="max-width:720px"><h2>{{icon "link"}} {{t "staffset.register"}}</h2>
+  <div class="row"><input type="text" readonly value="{{$d.Link}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}">{{icon "copy"}} {{t "invite.copy"}}</button></div>
+  <div class="small muted">{{t "joinreq.link_hint"}}{{if $d.Admin}} · <a href="/settings/employees">{{t "staffset.title"}}</a>{{end}}</div>
+</div>{{else if $d.Admin}}<p class="small muted">{{t "joinreq.link_off"}} <a href="/settings/employees">{{t "staffset.title"}}</a></p>{{end}}
+{{with $d.Requests}}<div class="card flush" id="requests"><h2 style="padding:12px 16px 0">{{icon "user-plus"}} {{t "joinreq.title"}}</h2>
+  <table class="tlist"><thead><tr><th>{{t "invite.col.who"}}</th><th>{{t "joinreq.col.when"}}</th><th>{{t "invite.col.state"}}</th><th></th></tr></thead>
+  <tbody>{{range .}}<tr><td>{{.Name}}<div class="small muted">{{.Email}}</div></td>
+    <td class="small">{{datetime .Created}}{{with .IP}}<div class="muted">{{.}}</div>{{end}}</td>
+    <td>{{if eq .State "pending"}}<span class="pill st-pending">{{t "joinreq.pending"}}</span>{{else}}<span class="pill {{if eq .State "accepted"}}st-completed{{else}}st-deferred{{end}}">{{t (printf "joinreq.%s" .State)}}</span>
+      <div class="small muted">{{.DecidedBy}}{{with .DecidedAt}} · {{datetime .}}{{end}}</div>{{end}}</td>
+    <td class="nowrap">{{if eq .State "pending"}}<form method="post" action="/company/invite/requests/{{.ID}}/accept" class="inline">
+        <select name="department" title="{{t "invite.department"}}"><option value="">{{t "invite.department_none"}}</option>{{range $d.Depts}}<option value="{{.ID}}">{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+        <button class="primary">{{icon "check"}} {{t "joinreq.accept"}}</button></form>
+      <form method="post" action="/company/invite/requests/{{.ID}}/reject" class="inline" data-confirm="{{t "joinreq.reject_confirm" .Email}}"><button class="ghost danger">{{icon "x"}} {{t "joinreq.reject"}}</button></form>{{end}}</td></tr>{{end}}</tbody></table>
+</div>{{end}}
 {{with $d.Invites}}<div class="card flush">
   <table class="tlist"><thead><tr><th>{{t "invite.col.who"}}</th><th>{{t "invite.department"}}</th><th>{{t "invite.col.state"}}</th><th>{{t "invite.col.by"}}</th><th></th></tr></thead>
   <tbody>{{range .}}{{$st := .State $d.Now}}<tr{{if eq .Email $d.New}} class="hl"{{end}}><td>{{.Name}}<div class="small muted">{{.Email}}</div></td>

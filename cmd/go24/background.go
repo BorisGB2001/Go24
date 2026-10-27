@@ -126,7 +126,7 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 		}
 	}()
-	go func() { // task and drive trash: what is kept longer than the company setting goes for good, hourly; CRM rates
+	go func() { // task and drive trash: what is kept longer than the company setting goes for good, hourly; CRM rates; learning reminders
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
@@ -140,6 +140,11 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 				log.Warn("crm currency rates", "err", err)
 			} else if n > 0 {
 				log.Info("crm currency rates", "currencies", n)
+			}
+			if n, err := srv.Company.RemindLearning(ctx, time.Now()); err != nil && ctx.Err() == nil { // «Обучение»: due days
+				log.Error("learning reminders", "err", err)
+			} else if n > 0 {
+				log.Info("learning reminders", "sent", n)
 			}
 			if n, err := srv.Drive.PurgeExpired(ctx, time.Now()); err != nil && ctx.Err() == nil {
 				log.Error("drive trash", "err", err)
@@ -187,7 +192,7 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for {
-			for _, err := range slices.Concat(srv.BP.WakeDue(ctx, time.Now()), srv.BP.AutoStart(ctx), srv.BP.AutoStartFiles(ctx)) {
+			for _, err := range slices.Concat(srv.BP.WakeDue(ctx, time.Now()), srv.BP.AutoStart(ctx), srv.BP.AutoStartFiles(ctx), srv.BP.AutoStartLists(ctx)) {
 				log.Error("business process", "err", err)
 			}
 			select {

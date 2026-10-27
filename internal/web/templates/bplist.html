@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$d := .Data}}{{$l := $d.L}}{{$base := print "/bp/lists/" $l.ID}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a> {{icon "chevron-right"}} <a href="/bp/lists">{{t "lists.title"}}</a></div>
+<div class="pagehead"><h1>{{icon "list"}} {{$l.Name}}</h1><div class="row">
+  <a class="button ghost" href="{{$base}}/export?q={{$d.Q}}&sort={{$d.Sort}}{{if $d.Desc}}&desc=1{{end}}">{{icon "download"}} {{t "lists.export"}}</a>
+  {{if .User.Admin}}<a class="button ghost" href="{{$base}}/settings">{{icon "adjustments"}} {{t "lists.settings"}}</a>{{end}}
+  {{if $d.CanWrite}}<a class="button create" href="{{$base}}/add">{{icon "plus"}} {{t "lists.add"}}</a>{{end}}</div></div>
+{{with $l.Description}}<div class="sub">{{.}}</div>{{end}}
+<form method="get" action="{{$base}}" class="row filters"><input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "lists.search"}}" style="flex:1;max-width:360px">
+  {{with $d.Sort}}<input type="hidden" name="sort" value="{{.}}">{{end}}{{if $d.Desc}}<input type="hidden" name="desc" value="1">{{end}}
+  <button class="ghost">{{icon "search"}}</button></form>
+{{$cols := $l.ColumnFields}}
+<div class="card flush">{{if $d.Elements}}<div class="tablewrap"><table class="tlist"><thead><tr>
+  {{template "bplistth" (dict "D" $d "Base" $base "Key" "name" "Label" (t "lists.el_name"))}}
+  {{range $cols}}{{template "bplistth" (dict "D" $d "Base" $base "Key" .Key "Label" .Label)}}{{end}}
+  {{template "bplistth" (dict "D" $d "Base" $base "Key" "created" "Label" (t "lists.created_at"))}}</tr></thead><tbody>
+  {{range $d.Elements}}{{$e := .}}<tr><td><a href="/bp/el/{{.ID}}" class="ttitle">{{.Name}}</a></td>
+    {{range $cols}}<td class="small">{{template "bpvalue" (dict "F" . "V" (index $e.Values .Key) "Users" $d.Users)}}</td>{{end}}
+    <td class="small muted">{{datetime .CreatedAt}}{{with .CreatedBy.Name}} · {{.}}{{end}}</td></tr>{{end}}</tbody></table></div>
+  {{else}}<div class="empty">{{if $d.Q}}{{t "lists.not_found"}}{{else}}{{t "lists.empty"}}{{end}}</div>{{end}}</div>
+{{if or $d.Page $d.Next}}<div class="row">{{if $d.Page}}<a class="button ghost" href="{{$base}}?q={{$d.Q}}&sort={{$d.Sort}}{{if $d.Desc}}&desc=1{{end}}&page={{add $d.Page -1}}">{{icon "chevron-left"}}</a>{{end}}
+  {{with $d.Next}}<a class="button ghost" href="{{$base}}?q={{$d.Q}}&sort={{$d.Sort}}{{if $d.Desc}}&desc=1{{end}}&page={{.}}">{{icon "chevron-right"}}</a>{{end}}</div>{{end}}
+{{end}}
+
+{{/* bplistth is a column's head of a list's table: a click orders by it, a second one — the other way */}}
+{{define "bplistth"}}{{$d := .D}}<th><a href="{{.Base}}?sort={{.Key}}{{if and (eq $d.Sort .Key) (not $d.Desc)}}&desc=1{{end}}{{with $d.Q}}&q={{.}}{{end}}">{{.Label}}{{if eq $d.Sort .Key}} {{if $d.Desc}}↓{{else}}↑{{end}}{{end}}</a></th>{{end}}

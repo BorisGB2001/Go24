@@ -1,0 +1,24 @@
+{{define "content"}}
+{{$d := .Data}}{{$f := $d.Filter}}
+<div class="pagehead"><h1 style="flex:1">{{icon "presentation"}} {{t "meeting.title"}}</h1>
+  <a class="button primary" href="/worktime/meetings/new">{{icon "plus"}} {{t "meeting.new"}}</a></div>
+<div class="tabs">
+  <a href="/worktime">{{icon "clock"}} {{t "workday.page"}}</a>
+  <a href="/worktime/reports">{{icon "file-text"}} {{t "wreport.title"}}</a>
+  <a href="/worktime/meetings" class="on">{{icon "presentation"}} {{t "meeting.title"}}</a>
+</div>
+<form class="row filters" method="get" action="/worktime/meetings">
+  <span class="row presets">{{range list "" "owner" "member"}}<a class="chip{{if eq . $f.Role}} on{{end}}" href="/worktime/meetings?role={{.}}&status={{$f.Status}}&q={{$f.Query}}">{{t (print "meeting.role." (or . "all"))}}</a>{{end}}</span>
+  <input type="hidden" name="role" value="{{$f.Role}}">
+  <select name="status" style="width:auto" onchange="this.form.submit()"><option value="">{{t "meeting.any_status"}}</option>
+    {{range $d.Statuses}}<option value="{{.}}" {{if eq . $f.Status}}selected{{end}}>{{t (print "meeting.st." .)}}</option>{{end}}</select>
+  <input type="search" name="q" value="{{$f.Query}}" placeholder="{{t "meeting.search"}}" style="flex:1;min-width:200px">
+</form>
+{{if $d.List}}<div class="card flush"><table class="tlist meetings"><thead><tr><th>{{t "meeting.f.title"}}</th><th>{{t "meeting.f.start"}}</th>
+  <th>{{t "meeting.f.status"}}</th><th>{{t "meeting.f.owner"}}</th><th>{{t "meeting.f.members"}}</th></tr></thead>
+  <tbody>{{range $d.List}}<tr><td><a href="/worktime/meetings/{{.ID}}"><b>{{.Title}}</b></a>{{with .Place}}<br><span class="muted small">{{icon "pin"}} {{.}}</span>{{end}}</td>
+    <td class="nowrap">{{datetime .Start}}</td><td><span class="pill mst-{{.Status}}">{{t (print "meeting.st." .Status)}}</span></td>
+    <td><a href="/u/{{.Owner.ID}}" data-user="{{.Owner.ID}}">{{.Owner.Name}}</a></td>
+    <td class="muted small">{{len .Members}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty">{{t "meeting.none"}}</div>{{end}}
+{{end}}

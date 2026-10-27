@@ -23,6 +23,10 @@
   звук) и `redis` (через него LiveKit отдаёт задания Egress). Egress пишет файл в общий том `call-recordings`
   (`GO24_RECORD_DIR`), go24-worker переносит его на Диск того, кто начал запись («Записи звонков»), и пишет в чат
   или задачу звонка. Включает администратор: «Настройки → Звонки».
+- Расшифровка записи (GO24DEV-798): при «Расшифровывать записи звонков» сохранённая запись ждёт в очереди
+  (`call_recordings.transcript = 'pending'`), go24-worker раз в минуту берёт по одной: видео — ffmpeg вырезает звук
+  (16 кГц, моно, Opus, ~10 МБ в час), Whisper (`output=json`) отдаёт куски речи со временем, текст — файлом рядом с
+  записью. Падение воркера посреди расшифровки — до трёх попыток (`transcript_tries`). Говорящих Whisper не различает.
 - Внешние сервисы (GO24DEV-499): Zoom — POST /v2/users/{email|me}/meetings с токеном Server-to-Server OAuth
   (account_credentials); Яндекс Телемост — POST cloud-api.yandex.net/v1/telemost-api/conferences («OAuth <токен>»,
   telemost-api:conferences.create); VK Звонки — calls.start (токен пользователя VK ID, group_id — от сообщества) →

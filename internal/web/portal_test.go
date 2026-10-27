@@ -184,4 +184,33 @@ func TestPortalSettingsHTTP(t *testing.T) {
 	if srv.I18n.T("ru-RU", "format.date") != "02.01.2006" {
 		t.Error("the language's date format is not back")
 	}
+
+	// «Формат имени» (the page is in the portal's English): the names of the employees with a card are recomposed; those
+	// without keep Authentik's
+	must2 := func(_ any, err error) { t.Helper(); must(err) }
+	must2(pool.Exec(ctx, `UPDATE users SET first_name = 'Анна', last_name = 'Петрова', second_name = 'Сергеевна' WHERE id = $1`, anna))
+	name := func(id string) (n string) {
+		must(pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, id).Scan(&n))
+		return
+	}
+	if page := send(boss, "GET", "/settings/portal", "", nil, 200); !strings.Contains(page, `>Smith J. R.</option>`) {
+		t.Error("the page has no sample of the name formats")
+	}
+	ct, body = form(map[string]string{"name": "Лютик", "name_format": "last_first_second"}, nil)
+	send(boss, "POST", "/settings/portal", ct, body, 303)
+	if n := name(anna); n != "Петрова Анна Сергеевна" || name(boss) != "Борис" {
+		t.Errorf("names: %q %q", n, name(boss))
+	}
+	if portal.UserName("Иван", "Иванов", "") != "Иванов Иван" { // the profile saved now takes the format too
+		t.Error("UserName does not follow the portal")
+	}
+	api(key(boss, "settings:write"), "PUT", `{"name_format":"xx"}`, 422)
+	if got := api(key(boss, "settings:write"), "PUT", `{"name_format":"last_initials"}`, 200); got.NameFormat != "last_initials" || name(anna) != "Петрова А. С." {
+		t.Errorf("PUT name_format = %+v, %q", got, name(anna))
+	}
+	ct, body = form(map[string]string{"name": "Лютик", "name_format": "first_last"}, nil) // back to the default
+	send(boss, "POST", "/settings/portal", ct, body, 303)
+	if n := name(anna); n != "Анна Петрова" || srv.Portal.Current().NameFormat != "" {
+		t.Errorf("default: %q %+v", n, srv.Portal.Current())
+	}
 }

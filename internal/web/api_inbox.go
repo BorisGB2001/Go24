@@ -387,11 +387,12 @@ func (s *Server) apiGroup(w http.ResponseWriter, r *http.Request, p apikeys.Prin
 		Name    string   `json:"name"`
 		UserIDs []string `json:"user_ids"`
 		Channel bool     `json:"channel"`
+		Open    bool     `json:"open"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	room, err := s.Matrix.CreateGroup(r.Context(), p.UserID, in.Name, in.UserIDs, in.Channel)
+	room, err := s.Matrix.CreateOpenGroup(r.Context(), p.UserID, in.Name, in.UserIDs, in.Channel, in.Open)
 	if err != nil {
 		return err
 	}
@@ -430,7 +431,7 @@ func (s *Server) apiGroupMembers(w http.ResponseWriter, r *http.Request, p apike
 	for _, m := range g.Members {
 		out = append(out, apiMember{m.ID, m.Name, m.Owner, m.Admin, m.Guest, m.Removable})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"owner": g.Owner, "channel": g.Channel, "writer": g.Writer, "topic": g.Topic,
+	writeJSON(w, http.StatusOK, map[string]any{"owner": g.Owner, "channel": g.Channel, "open": g.Open, "writer": g.Writer, "topic": g.Topic,
 		"rights": apiRights(g.Rights), "can_add": g.CanAdd, "can_edit": g.CanEdit, "members": out})
 	return nil
 }
@@ -474,7 +475,8 @@ func (s *Server) apiGroupRemove(w http.ResponseWriter, r *http.Request, p apikey
 // apiGroupRename changes a group chat (the owner): {"name": "…"} — a new name, {"channel": true|false} — a channel
 // or a group chat, {"owner": "user id"} — the chat handed to them, {"admin": "user id", "on": true|false} — an
 // admin, {"topic": "…"} — its description,
-// {"rights": {"add", "edit", "write": "all"|"admins"|"owner"}} — who adds people, changes the chat and writes.
+// {"rights": {"add", "edit", "write": "all"|"admins"|"owner"}} — who adds people, changes the chat and writes,
+// {"open": true|false} — any employee finds it and joins, or by invitation only.
 func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.needMatrix(); err != nil {
 		return err
@@ -487,6 +489,7 @@ func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikey
 		On      bool       `json:"on"`
 		Topic   *string    `json:"topic"`
 		Rights  *apiRights `json:"rights"`
+		Open    *bool      `json:"open"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -498,6 +501,8 @@ func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikey
 		err = s.Matrix.SetRights(r.Context(), p.UserID, room, matrixsync.Rights(*in.Rights))
 	case in.Channel != nil:
 		err = s.Matrix.SetChannel(r.Context(), p.UserID, room, *in.Channel)
+	case in.Open != nil:
+		err = s.Matrix.SetOpen(r.Context(), p.UserID, room, *in.Open)
 	case in.Owner != "":
 		err = s.Matrix.SetOwner(r.Context(), p.UserID, room, in.Owner)
 	case in.Admin != "":
@@ -508,6 +513,36 @@ func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikey
 		err = s.Matrix.RenameGroup(r.Context(), p.UserID, room, in.Name)
 	}
 	if err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiOpenChats lists the open group chats and channels (?q= — by their name and description): any
+// employee joins them (POST …/rooms/{room}/join); none for guests.
+func (s *Server) apiOpenChats(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	cs, err := s.Matrix.OpenChats(r.Context(), p.UserID, r.URL.Query().Get("q"))
+	if err != nil {
+		return err
+	}
+	out := []map[string]any{}
+	for _, c := range cs {
+		out = append(out, map[string]any{"room": c.ID, "name": c.Name, "topic": c.Topic, "channel": c.Channel, "members": c.Members, "joined": c.Joined})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": out})
+	return nil
+}
+
+// apiJoinOpen: the key's owner joins an open chat.
+func (s *Server) apiJoinOpen(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	if err := s.Matrix.JoinOpen(r.Context(), p.UserID, r.PathValue("room")); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -247,7 +247,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
         </div>
       </details>
 {{else if eq .ID "company"}}
-      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "honor") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
+      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "honor") (eq $n "learning") (eq $n "pulse") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "meetings") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
         <summary>{{icon "users"}}<span class="lbl">{{t "nav.sec.company"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
         <div class="msub">
           <a href="/company" {{if eq $n "company"}}class="on"{{end}}><span class="lbl">{{t "nav.employees"}}</span></a>
@@ -255,10 +255,13 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
           <a href="/company/changes" {{if eq $n "staffchanges"}}class="on"{{end}}><span class="lbl">{{t "staff.title"}}</span></a>
           <a href="/company/thanks" {{if eq $n "thanks"}}class="on"{{end}}><span class="lbl">{{t "gratitude.page"}}</span></a>
           <a href="/company/honor" {{if eq $n "honor"}}class="on"{{end}}><span class="lbl">{{t "honor.title"}}</span></a>
+          <a href="/company/learning" {{if eq $n "learning"}}class="on"{{end}}><span class="lbl">{{t "learn.title"}}</span></a>
+          {{if .P.CanPulse}}<a href="/company/pulse" {{if eq $n "pulse"}}class="on"{{end}}><span class="lbl">{{t "pulse.title"}}</span></a>{{end}}
           <a href="/company/absences" {{if eq $n "absences"}}class="on"{{end}}><span class="lbl">{{t "absence.title"}}</span></a>
           <a href="/company/birthdays" {{if eq $n "birthdays"}}class="on"{{end}}><span class="lbl">{{t "birthdays.title"}}</span></a>
           <a href="/worktime" {{if eq $n "timeman"}}class="on"{{end}}><span class="lbl">{{t "workday.page"}}</span></a>
           <a href="/worktime/reports" {{if eq $n "workreports"}}class="on"{{end}}><span class="lbl">{{t "wreport.title"}}</span></a>
+          <a href="/worktime/meetings" {{if eq $n "meetings"}}class="on"{{end}}><span class="lbl">{{t "meeting.title"}}</span></a>
           <a href="/worktime/schedules" {{if eq $n "wschedules"}}class="on"{{end}}><span class="lbl">{{t "wschedule.title"}}</span></a>
           <a href="/company/bi" {{if eq $n "companybi"}}class="on"{{end}}><span class="lbl">{{t "bi.title"}}</span></a>
           {{if .P.CanInvite}}<a href="/company/invite" {{if eq $n "invite"}}class="on"{{end}}><span class="lbl">{{t "invite.title"}}</span></a>{{end}}
@@ -349,23 +352,25 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
           <noscript><button>{{t "common.save"}}</button></noscript>
         </form>
         {{if .Sort}}<form method="post" action="/prefs/sort"><input type="hidden" name="back" value="{{.Back}}">
-          <button class="ghost">{{icon "arrows-sort"}} {{t "list.sort_default"}}</button></form>{{end}}</div></details>{{end}}</th>
+          <button class="ghost">{{icon "arrows-sort"}} {{t "list.sort_default"}}</button></form>{{end}}
+        {{if .Back}}<form method="post" action="/prefs/tree"><input type="hidden" name="back" value="{{.Back}}"><input type="hidden" name="on" value="{{if .Tree}}0{{else}}1{{end}}">
+          <button class="ghost" title="{{t "list.tree_hint"}}">{{icon "hierarchy-2"}} {{t "list.tree"}}{{if .Tree}} {{icon "check"}}{{end}}</button></form>{{end}}</div></details>{{end}}</th>
     {{if .Gear}}<th class="bulkcol"><input type="checkbox" data-bulk-all title="{{t "bulk.all"}}"></th>{{end}}
     <th data-col="id" {{if not (index .Cols "id")}}hidden{{end}}>{{template "tsorth" (tsorth $l "id" "ID")}}</th>
     <th data-col="title">{{template "tsorth" (tsorth $l "title" (t "col.list.title"))}}</th>
     {{range .All}}{{if ne . "id"}}<th data-col="{{.}}" {{if not (index $l.Cols .)}}hidden{{end}}>{{template "tsorth" (tsorth $l . (t (print "col.list." .)))}}</th>{{end}}{{end}}
   </tr></thead>
   <tbody>
-  {{range .Tasks}}{{$t := .}}
-  <tr>
+  {{range .Rows}}{{$t := .}}
+  <tr{{if .Depth}} data-path="{{join .Path " "}}" class="tsub" hidden{{end}}{{if .Kids}} data-tree="{{.Key}}"{{end}}>
     <td class="gearcol">{{if $l.Gear}}<details class="trowmenu" data-lazy="/t/{{.Key}}/rowmenu?back={{urlquery $l.Back}}"><summary title="{{t "task.menu"}}">{{icon "menu-2"}}</summary><div class="pop"></div></details>{{end}}</td>
     {{if $l.Gear}}<td class="bulkcol"><input type="checkbox" name="task" value="{{.Key}}" form="bulk"></td>{{end}}
     <td data-col="id" class="tkey" {{if not (index $l.Cols "id")}}hidden{{end}}>{{.Key}}</td>
-    <td>{{if .Pinned}}<span class="markic" title="{{t "mark.pinned"}}">{{icon "mark-pin"}}</span>{{end}}{{if .Favorite}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}<a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}</a>{{range .Tags}} <a class="tag small" href="/tasks?tag={{.}}">#{{.}}</a>{{end}}{{if .Muted}} <span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}{{if .Unread}} <a href="/t/{{.Key}}" class="newcmt" title="{{t "counter.comments_task" .Unread}}">{{icon "message-circle"}} {{.Unread}}</a>{{end}}
+    <td{{if .Depth}} style="padding-left:calc({{.Depth}} * 1.4em + .6em)"{{end}}>{{if .Kids}}<button type="button" class="ttree" data-tree-toggle aria-expanded="false" title="{{t "list.tree_show" .Kids}}">{{icon "chevron-right"}}<span class="small">{{.Kids}}</span></button>{{else if .Depth}}<span class="ttree-pad"></span>{{end}}{{if .Pinned}}<span class="markic" title="{{t "mark.pinned"}}">{{icon "mark-pin"}}</span>{{end}}{{if .Favorite}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}<a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}</a>{{range .Tags}} <a class="tag small" href="/tasks?tag={{.}}">#{{.}}</a>{{end}}{{if .Muted}} <span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}{{if .Unread}} <a href="/t/{{.Key}}" class="newcmt" title="{{t "counter.comments_task" .Unread}}">{{icon "message-circle"}} {{.Unread}}</a>{{end}}
       {{if .SubTotal}} <a href="/t/{{.Key}}#subtasks" class="subcnt{{if eq .SubDone .SubTotal}} done{{end}}" title="{{t "subtasks.count" .SubDone .SubTotal}}">{{icon "hierarchy-2"}} {{.SubDone}}/{{.SubTotal}}</a>{{end}}
       {{if eq .Priority 2}} <span class="prio" title="{{t "task.high_priority"}}">{{icon "flame"}}</span>{{end}}
       {{with index $l.Info .ID}}{{if .ChecklistTotal}} <a href="/t/{{$t.Key}}#checklist" class="subcnt{{if eq .ChecklistDone .ChecklistTotal}} done{{end}}" title="{{t "list.checklist_count" .ChecklistDone .ChecklistTotal}}">{{icon "list-check"}} {{.ChecklistDone}}/{{.ChecklistTotal}}</a>{{end}}{{if .Files}} <a href="/t/{{$t.Key}}#files" class="subcnt" title="{{t "list.files_count" .Files}}">{{icon "paperclip"}} {{.Files}}</a>{{end}}{{end}}
-      {{if .ParentKey}}<div class="small muted">{{icon "hierarchy-2"}} {{.ParentKey}} {{.ParentTitle}}</div>{{end}}</td>
+      {{if and .ParentKey (not .Depth)}}<div class="small muted">{{icon "hierarchy-2"}} {{.ParentKey}} {{.ParentTitle}}</div>{{end}}</td>
     <td data-col="status" {{if not (index $l.Cols "status")}}hidden{{end}}><span class="pill {{statusClass .Status}}">{{t (print "status." .Status)}}</span></td>
     <td data-col="activity" class="small" {{if not (index $l.Cols "activity")}}hidden{{end}}>{{datetime .UpdatedAt}}</td>
     <td data-col="deadline" {{if not (index $l.Cols "deadline")}}hidden{{end}}>{{if $l.Gear}}<details class="tdl" data-lazy="/t/{{.Key}}/rowmenu?part=deadline&back={{urlquery $l.Back}}"><summary title="{{t "task.change_deadline"}}">{{end}}{{with date .Deadline}}<span class="dl{{if $t.Overdue}} over{{end}}">{{.}}</span>{{else}}<span class="muted">—</span>{{end}}{{if $l.Gear}}</summary><div class="pop"></div></details>{{end}}</td>

@@ -1,10 +1,20 @@
-{{define "bi-kind-icon"}}{{if eq . "kpi"}}{{icon "numbers"}}{{else if eq . "bar"}}{{icon "chart-bar"}}{{else if eq . "line"}}{{icon "chart-line"}}{{else if eq . "pie"}}{{icon "chart-pie"}}{{else}}{{icon "table"}}{{end}}{{end}}
+{{define "bi-kind-icon"}}{{if eq . "kpi"}}{{icon "numbers"}}{{else if eq . "bar"}}{{icon "chart-bar"}}{{else if eq . "stack"}}{{icon "chart-bar-stacked"}}{{else if eq . "line"}}{{icon "chart-line"}}{{else if eq . "area"}}{{icon "chart-area"}}{{else if eq . "pie"}}{{icon "chart-pie"}}{{else if eq . "funnel"}}{{icon "chart-funnel"}}{{else if eq . "pivot"}}{{icon "table-pivot"}}{{else if eq . "text"}}{{icon "align-left"}}{{else}}{{icon "table"}}{{end}}{{end}}
 
 {{/* a widget's chart: .Chart of a biPanel */}}
 {{define "bi-chart"}}{{$c := .Chart}}
 {{if $c.Err}}<p class="bi-err">{{icon "alert-triangle"}} {{$c.Err}}</p>
 {{else if $c.Empty}}<p class="bi-empty muted">{{t "bi.no_data"}}</p>
-{{else if eq $c.Kind "kpi"}}<div class="bi-kpi">{{range $i, $k := $c.KPI}}{{if eq $i 0}}<b>{{.Value}}</b><span>{{.Name}}</span>{{else}}<div class="bi-kpi2"><b>{{.Value}}</b> <span>{{.Name}}</span></div>{{end}}{{end}}</div>
+{{else if eq $c.Kind "text"}}<div class="bi-text">{{range $c.Paras}}{{if .Head}}<h4>{{.Text}}</h4>{{else}}<p>{{.Text}}</p>{{end}}{{end}}</div>
+{{else if eq $c.Kind "kpi"}}<div class="bi-kpi">{{range $i, $k := $c.KPI}}{{if eq $i 0}}<b>{{.Value}}</b><span>{{.Name}}</span>{{template "bi-delta" .}}{{else}}<div class="bi-kpi2"><b>{{.Value}}</b> <span>{{.Name}}</span> {{template "bi-delta" .}}</div>{{end}}{{end}}</div>
+{{else if eq $c.Kind "funnel"}}<ol class="bi-funnel">{{range $c.Steps}}<li{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}} title="{{.Name}}: {{.Value}}">
+  <span class="bi-fname">{{.Name}}</span><span class="bi-fbar"><i class="{{.Class}}" style="width:{{.W}}%"></i></span>
+  <b class="num">{{.Value}}</b><span class="num muted" title="{{t "bi.funnel.of_first"}}">{{.Pct}}</span><span class="num small muted" title="{{t "bi.funnel.of_prev"}}">{{with .Conv}}{{icon "arrow-down"}}{{.}}{{end}}</span></li>{{end}}
+</ol>{{if $c.Cut}}<p class="small muted">{{t "bi.cut"}}</p>{{end}}
+{{else if eq $c.Kind "pivot"}}{{$tot := and $c.PSum (gt (len $c.PCols) 1)}}<div class="bi-table"><table class="tlist bi-pivot">
+  <thead><tr><th>{{(index $c.Cols 0).Name}}</th>{{range $c.PCols}}<th class="num{{if .F}} bi-click{{end}}"{{if .F}} data-bi-f="{{.F}}" data-bi-v="{{.Key}}"{{end}}>{{.Text}}</th>{{end}}{{if $tot}}<th class="num">{{t "bi.total"}}</th>{{end}}</tr></thead>
+  <tbody>{{range $c.PRows}}<tr><th{{if .Head.F}} class="bi-click" data-bi-f="{{.Head.F}}" data-bi-v="{{.Head.Key}}"{{end}}>{{.Head.Text}}</th>{{range .Cells}}<td class="num">{{.Text}}</td>{{end}}{{if $tot}}<td class="num"><b>{{.Total.Text}}</b></td>{{end}}</tr>{{end}}</tbody>
+  {{if and $c.PSum (gt (len $c.PRows) 1)}}<tfoot><tr><td>{{t "bi.total"}}</td>{{range $i, $x := $c.PSum}}{{if or $tot (lt $i (len $c.PCols))}}<td class="num">{{.Text}}</td>{{end}}{{end}}</tr></tfoot>{{end}}
+</table>{{if $c.Cut}}<p class="small muted">{{t "bi.cut"}}</p>{{end}}</div>
 {{else if eq $c.Kind "table"}}<div class="bi-table"><table class="tlist">
   <thead><tr>{{range $c.Cols}}<th{{if .Num}} class="num"{{end}}>{{.Name}}</th>{{end}}</tr></thead>
   <tbody>{{range $c.Rows}}<tr>{{range .}}<td{{if .Num}} class="num"{{else if .F}} class="bi-click" data-bi-f="{{.F}}" data-bi-v="{{.Key}}"{{end}}>{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
@@ -21,11 +31,13 @@
 {{else}}{{if gt (len $c.Series) 1}}<ul class="bi-legend row">{{range $c.Series}}<li><i class="{{.Class}}"></i>{{.Name}}</li>{{end}}</ul>{{end}}
 <svg class="bi-svg" viewBox="0 0 {{$c.W}} {{$c.H}}" role="img" aria-label="{{$c.Value}}">
   {{range $c.YTicks}}<line class="bi-gl" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{.Y}}" y2="{{.Y}}"/><text class="bi-ylab" x="{{$c.LabX}}" y="{{.Y}}" dy="4" text-anchor="end">{{.Text}}</text>{{end}}
-  {{range $c.Series}}<g class="{{.Class}}">{{range .Bars}}<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></rect>{{end}}{{if .Points}}<polyline points="{{.Points}}"/>{{range .Dots}}<circle cx="{{.X}}" cy="{{.Y}}" r="3.5"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></circle>{{end}}{{end}}</g>{{end}}
+  {{range $c.Series}}<g class="{{.Class}}">{{range .Bars}}<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></rect>{{end}}{{with .Area}}<polygon class="bi-area" points="{{.}}"/>{{end}}{{if .Points}}<polyline points="{{.Points}}"/>{{range .Dots}}<circle cx="{{.X}}" cy="{{.Y}}" r="3.5"{{if .Click}} class="bi-click" data-bi-f="{{$c.F}}" data-bi-v="{{.Key}}"{{end}}><title>{{.Tip}}</title></circle>{{end}}{{end}}</g>{{end}}
   <line class="bi-axis" x1="{{$c.PlotL}}" x2="{{$c.PlotR}}" y1="{{$c.Base}}" y2="{{$c.Base}}"/>
   {{range $c.XTicks}}<text class="bi-xlab" x="{{.X}}" y="{{$c.LabY}}" text-anchor="middle">{{.Text}}</text>{{end}}
 </svg>{{end}}
 {{end}}
+{{/* bi-delta: a number's change against the period before */}}
+{{define "bi-delta"}}{{if .Prev}}<span class="bi-delta{{with .Trend}} {{.}}{{end}}" title="{{t "bi.prev_period"}}: {{.Prev}}">{{if eq .Trend "up"}}{{icon "arrow-up"}}{{else if eq .Trend "down"}}{{icon "arrow-down"}}{{end}}{{or .Delta "—"}} <span class="muted">{{t "bi.vs_prev"}} {{.Prev}}</span></span>{{end}}{{end}}
 {{/* bi-rights is the form of «Права доступа» of a dashboard or a group: .A — its action, .D — the page's data. */}}
 {{define "bi-rights"}}{{$d := .D}}
 <div class="card bi-settings" id="rights">
@@ -75,7 +87,7 @@
     <form method="post" action="/bi/w/{{$id}}/copy"><button class="ghost" title="{{t "bi.copy_widget"}}">{{icon "copy"}}</button></form>
     <form method="post" action="/bi/w/{{$id}}/delete" onsubmit="return confirm(this.dataset.q)" data-q="{{t "bi.delete_widget_q"}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
   </div>{{else}}{{if .W.NoPeriod}}<span class="pill" title="{{t "bi.w.no_period"}}">{{t "bi.p.all"}}</span>{{end}}
-    {{if not .Chart.Err}}<a class="button ghost bi-csv" href="/bi/w/{{.W.ID}}/csv{{$d.Keep}}" title="{{t "bi.csv"}}">{{icon "download"}}</a>{{end}}{{end}}</header>
+    {{if and (not .Chart.Err) (ne .W.Kind "text")}}<a class="button ghost bi-csv" href="/bi/w/{{.W.ID}}/csv{{$d.Keep}}" title="{{t "bi.csv"}}">{{icon "download"}}</a>{{end}}{{end}}</header>
   {{template "bi-chart" .}}
   {{with .Skipped}}<p class="small muted bi-skipped" title="{{t "bi.fl.skipped_hint"}}">{{icon "filter-off"}} {{t "bi.fl.skipped"}}: {{join . ", "}}</p>{{end}}
 </section>{{end}}

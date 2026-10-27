@@ -176,3 +176,23 @@ func TestDashboards(t *testing.T) {
 		t.Errorf("left %d", len(list))
 	}
 }
+
+func TestBefore(t *testing.T) {
+	loc := time.FixedZone("CET", 3600)
+	d := func(y int, m time.Month, day int) *time.Time { t := time.Date(y, m, day, 0, 0, 0, 0, loc); return &t }
+	for _, c := range []struct{ from, to, a, b *time.Time }{
+		{d(2026, 10, 1), d(2026, 11, 1), d(2026, 9, 1), d(2026, 10, 1)},      // a month
+		{d(2026, 10, 1), d(2027, 1, 1), d(2026, 7, 1), d(2026, 10, 1)},       // a quarter
+		{d(2026, 1, 1), d(2027, 1, 1), d(2025, 1, 1), d(2026, 1, 1)},         // a year
+		{d(2026, 10, 19), d(2026, 10, 26), d(2026, 10, 12), d(2026, 10, 19)}, // a week
+		{d(2026, 3, 31), d(2026, 4, 2), d(2026, 3, 29), d(2026, 3, 31)},      // days
+	} {
+		a, b, ok := Before(c.from, c.to)
+		if !ok || !a.Equal(*c.a) || !b.Equal(*c.b) {
+			t.Errorf("Before(%v, %v) = %v, %v", c.from, c.to, a, b)
+		}
+	}
+	if _, _, ok := Before(nil, d(2026, 1, 1)); ok {
+		t.Error("an open period has one before")
+	}
+}

@@ -119,6 +119,7 @@ type File struct {
 	Description string            `json:"description,omitempty"`
 	Entity      string            `json:"entity"`
 	Type        string            `json:"type,omitempty"` // a smart process's name (Entity "deal")
+	List        string            `json:"list,omitempty"` // of a list's elements: the list's name
 	AutoCreate  bool              `json:"auto_create,omitempty"`
 	AutoChange  bool              `json:"auto_change,omitempty"`
 	Fields      []Field           `json:"fields"`
@@ -134,23 +135,25 @@ func person(v string) bool {
 	return v != "" && !contains([]string{"starter", "manager", "responsible", "client"}, v) && !strings.HasPrefix(v, FieldPrefix)
 }
 
-// eachPerson calls f on every employee a step names; f returns the new value ("" drops one of Users).
+// eachPerson calls f on every employee a step names; f returns the new value ("" drops one of Users, Watchers).
 func eachPerson(st *Step, f func(string) string) {
 	for _, p := range []*string{&st.To, &st.From} {
 		if person(*p) {
 			*p = f(*p)
 		}
 	}
-	var users []string
-	for _, u := range st.Users {
-		if person(u) {
-			u = f(u)
+	for _, list := range []*[]string{&st.Users, &st.Watchers} {
+		var users []string
+		for _, u := range *list {
+			if person(u) {
+				u = f(u)
+			}
+			if u != "" {
+				users = append(users, u)
+			}
 		}
-		if u != "" {
-			users = append(users, u)
-		}
+		*list = users
 	}
-	st.Users = users
 }
 
 // eachDefault calls f on the default of every user field (of the form and of the requests) and keeps what it returns.
@@ -182,6 +185,11 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 	}
 	if t.TypeID != "" {
 		if err := s.db.QueryRow(ctx, `SELECT name FROM crm_types WHERE id::text = $1`, t.TypeID).Scan(&f.Type); err != nil {
+			return File{}, err
+		}
+	}
+	if t.ListID != "" {
+		if err := s.db.QueryRow(ctx, `SELECT name FROM lists WHERE id::text = $1`, t.ListID).Scan(&f.List); err != nil {
 			return File{}, err
 		}
 	}
@@ -238,12 +246,20 @@ func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (new
 			return "", 0, err
 		}
 	}
-	t.Name, t.Description, t.Entity, t.TypeID, t.AutoCreate, t.AutoChange = f.Name, f.Description, f.Entity, "", f.AutoCreate, f.AutoChange
+	t.Name, t.Description, t.Entity, t.TypeID, t.ListID, t.AutoCreate, t.AutoChange = f.Name, f.Description, f.Entity, "", "", f.AutoCreate, f.AutoChange
 	t.Fields, t.Steps = f.Fields, f.Steps
 	if f.Type != "" {
 		if err := s.db.QueryRow(ctx, `SELECT id::text FROM crm_types WHERE lower(name) = lower($1) ORDER BY created_at LIMIT 1`,
 			f.Type).Scan(&t.TypeID); errors.Is(err, pgx.ErrNoRows) {
 			return "", 0, i18n.E("err.bp_import_type", f.Type)
+		} else if err != nil {
+			return "", 0, err
+		}
+	}
+	if f.List != "" {
+		if err := s.db.QueryRow(ctx, `SELECT id::text FROM lists WHERE lower(name) = lower($1) ORDER BY created_at LIMIT 1`,
+			f.List).Scan(&t.ListID); errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, i18n.E("err.bp_import_list", f.List)
 		} else if err != nil {
 			return "", 0, err
 		}

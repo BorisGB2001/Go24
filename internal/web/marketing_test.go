@@ -291,6 +291,31 @@ func TestMarketingHTTP(t *testing.T) {
 		t.Fatalf("the copy's addressees: %+v %v", to, err)
 	}
 
+	// «Отправить повторно»: to those who got it and did not open it — Икс (Иван opened it, Мария was skipped)
+	if code, _, body := do(annaC, "GET", "/marketing/campaigns/"+id, nil); code != http.StatusOK || !strings.Contains(body, "/resend-unopened") {
+		t.Fatalf("no resend in the report: %d", code)
+	}
+	if _, loc, _ := do(annaC, "POST", "/marketing/campaigns/"+all[0].ID+"/resend-unopened", nil); !strings.Contains(loc, "msg=") {
+		t.Fatalf("a draft is resent: %s", loc)
+	}
+	_, loc, _ = do(annaC, "POST", "/marketing/campaigns/"+id+"/resend-unopened", nil)
+	rid := strings.TrimPrefix(loc, "/marketing/campaigns/")
+	re, err := srv.Marketing.Campaign(ctx, rid)
+	must(err)
+	if re.ResendOf != id || re.ResendTo != "unopened" || re.ResendTitle != c.Title || re.Subject != c.Subject || !re.Editable() || len(re.Segments) != 0 {
+		t.Fatalf("the resend: %+v", re)
+	}
+	if to, err := srv.Marketing.Addressees(ctx, anna, re); err != nil || len(to) != 1 || to[0].Email != "x@list.test" {
+		t.Fatalf("the resend's addressees: %+v %v", to, err)
+	}
+	if code, _, body := do(annaC, "GET", "/marketing/campaigns/"+rid, nil); code != http.StatusOK || !strings.Contains(body, `href="/marketing/campaigns/`+id+`"`) {
+		t.Fatalf("the resend's page: %d", code)
+	}
+	if _, err := srv.Marketing.ResendCampaign(ctx, anna, id, "all", "x"); err == nil {
+		t.Fatal("resent to all")
+	}
+	must(srv.Marketing.DeleteCampaign(ctx, anna, false, rid))
+
 	// the campaign deleted, its line stays in the card, without the letter
 	must(srv.Marketing.DeleteCampaign(ctx, anna, false, id))
 	evs, err = srv.CRM.Timeline(ctx, "contact", ivan.EntityID)

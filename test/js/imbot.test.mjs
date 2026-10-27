@@ -1,6 +1,7 @@
 // Chat bots in the messenger (static/js/im.js) in jsdom: «/» at the start of the field lists the
 // commands of the chat's bots (↓ and Enter put one into the field), the buttons under a bot's message — a command
-// goes to the bot (a blocking one takes the buttons off), PUT and SEND put a text into the field.
+// goes to the bot (a blocking one takes the buttons off), PUT and SEND put a text into the field; an item of the
+// bot's in the message's menu runs its command as MENU.
 // node test/js/imbot.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
@@ -8,7 +9,8 @@ import assert from 'node:assert/strict';
 
 const im = readFileSync(new URL('../../internal/web/static/js/im.js', import.meta.url), 'utf8');
 const tick = () => new Promise(r => setTimeout(r, 20));
-const bot = `<div class="msg" data-id="$b"><div class="bubble"><div class="text" data-body="Погода">Погода</div>
+const bot = `<div class="msg" data-id="$b"><div class="bubble"><details class="im-menu" open><summary>…</summary><div class="pop">
+  <button type="button" class="im-botmenu" data-kbd="command" data-command="weather" data-params="неделя">Прогноз</button></div></details><div class="text" data-body="Погода">Погода</div>
   <div class="im-kbd"><div class="im-kbd-row"><button type="button" data-kbd="command" data-command="weather" data-params="Москва" data-block="1">Ещё</button></div>
   <div class="im-kbd-row"><button type="button" data-kbd="PUT" data-value="/weather ">Город</button><button type="button" data-kbd="SEND" data-value="Спасибо">Спасибо</button></div></div></div></div>`;
 const dom = new JSDOM(`<!doctype html><body><div class="im" data-im data-room="!r" data-failed="Не удалось">
@@ -61,7 +63,7 @@ await tick();
 assert.equal($('.im-cmds'), null);
 
 // a command button: to the bot, and the buttons of the message are off
-$('[data-command="weather"]').click();
+$('.im-kbd [data-command="weather"]').click();
 await tick();
 assert.deepEqual(posts.at(-1), ['/im/button', { room: '!r', event: '$b', command: 'weather', params: 'Москва' }]);
 assert.ok([...d.querySelectorAll('.im-kbd button')].every(b => b.disabled));
@@ -74,5 +76,12 @@ $('[data-kbd="SEND"]').click();
 await tick();
 assert.equal(posts.at(-1)[0], '/im/send');
 assert.equal(posts.at(-1)[1].body, 'Спасибо');
+
+// an item of the menu: to the bot as MENU, the menu closes, the buttons stay on
+$('.im-botmenu').click();
+await tick();
+assert.deepEqual(posts.at(-1), ['/im/button', { room: '!r', event: '$b', command: 'weather', params: 'неделя', menu: '1' }]);
+assert.equal($('details.im-menu').open, false);
+assert.ok([...d.querySelectorAll('.im-kbd button')].every(b => !b.disabled));
 
 console.log('imbot: ok');

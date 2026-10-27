@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$d := .Data}}{{$s := $d.S}}
+<h1>{{icon "user-plus"}} {{t "staffset.title"}}</h1>
+<div class="sub"><a href="/settings">{{t "settings.title"}}</a> · {{t "staffset.subtitle"}}</div>
+<form method="post" action="/settings/employees" class="card stack" style="max-width:720px">
+  <h2>{{t "staffset.who_invites"}}</h2>
+  <label class="check"><input type="radio" name="invite" value="admins"{{if not $s.InviteAll}} checked{{end}}> {{t "staffset.invite_admins"}}</label>
+  <label class="check"><input type="radio" name="invite" value="all"{{if $s.InviteAll}} checked{{end}}> {{t "staffset.invite_all"}}</label>
+  <h2>{{t "staffset.register"}}</h2>
+  {{if not $d.Ready}}<div class="flash">{{icon "alert-triangle"}} {{t "invite.not_ready"}}</div>{{end}}
+  <label class="check"><input type="checkbox" name="register" value="1"{{if $s.Register}} checked{{end}}> {{t "staffset.register_on"}}</label>
+  <p class="muted small">{{t "staffset.register_hint"}}</p>
+  <label>{{t "staffset.domains"}} <input type="text" name="domains" value="{{join $s.Domains ", "}}" placeholder="firm.ru, firm.com"></label>
+  <p class="muted small">{{t "staffset.domains_hint"}}</p>
+  <label class="check"><input type="checkbox" name="approve" value="1"{{if $s.Approve}} checked{{end}}> {{t "staffset.approve"}}</label>
+  <p class="muted small">{{t "staffset.approve_hint"}}{{if not $d.Mail}} {{t "staffset.no_mail"}}{{end}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{if $d.Link}}<div class="card stack" style="max-width:720px" data-blocks data-copied="{{t "task.copied"}}">
+  <h2>{{icon "link"}} {{t "staffset.link"}}</h2>
+  <div class="row"><input type="text" readonly value="{{$d.Link}}" style="flex:1"><button type="button" class="ghost" data-copy="{{$d.Link}}">{{icon "copy"}} {{t "invite.copy"}}</button></div>
+  <form method="post" action="/settings/employees/link" data-confirm="{{t "staffset.renew_confirm"}}"><button class="ghost">{{icon "refresh"}} {{t "staffset.renew"}}</button></form>
+  <p class="muted small">{{t "staffset.link_hint"}} <a href="/company/invite#requests">{{t "joinreq.title"}}</a></p>
+</div>
+<script src="{{asset "js/task.js"}}"></script>{{end}}
+{{end}}

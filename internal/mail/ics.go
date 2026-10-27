@@ -12,7 +12,7 @@ import (
 
 // Invitations by mail, as Outlook sends and reads them: iCalendar (RFC 5545) carried by iTIP (RFC 5546) — METHOD
 // REQUEST (an invitation or its update, by SEQUENCE), REPLY (an answer to the organizer), CANCEL (the meeting is
-// off). go24 reads the first meeting of the calendar (not the changed occurrences of a series) and writes its own.
+// off), COUNTER (an attendee proposes a new time), DECLINECOUNTER (the organizer declines it). go24 reads the first meeting of the calendar (not the changed occurrences of a series) and writes its own.
 
 // Person is an organizer or an attendee of a meeting.
 type Person struct {
@@ -722,7 +722,8 @@ func icsPersonLine(name string, p Person, attendee bool) string {
 	return b.String()
 }
 
-// BuildICS writes a meeting as a calendar of the method (REQUEST, REPLY, CANCEL); now is its DTSTAMP.
+// BuildICS writes a meeting as a calendar of the method (REQUEST, REPLY, CANCEL, COUNTER, DECLINECOUNTER); now is
+// its DTSTAMP.
 func BuildICS(in Invite, method string, now time.Time) string {
 	var b strings.Builder
 	w := func(s string) { foldICS(&b, s) }
@@ -748,13 +749,14 @@ func BuildICS(in Invite, method string, now time.Time) string {
 	if in.Location != "" {
 		w("LOCATION:" + escapeICS(in.Location))
 	}
-	if in.Description != "" && method != "REPLY" {
+	answer := method == "REPLY" || method == "DECLINECOUNTER"
+	if in.Description != "" && !answer {
 		w("DESCRIPTION:" + escapeICS(in.Description))
 	}
 	if in.Comment != "" {
 		w("COMMENT:" + escapeICS(in.Comment))
 	}
-	if in.Repeat != "" && method != "REPLY" {
+	if in.Repeat != "" && !answer {
 		rule := "RRULE:FREQ=" + strings.ToUpper(in.Repeat) + ";INTERVAL=" + strconv.Itoa(max(in.Every, 1))
 		if len(in.Days) > 0 && in.Repeat == "weekly" {
 			var codes []string
@@ -797,6 +799,15 @@ func Reply(in Invite, me Person, status, comment string) Invite {
 	me.Status, me.RSVP = status, false
 	r.Attendees = []Person{me}
 	return r
+}
+
+// Counter is an attendee's proposal of a new time (start, end) for an invitation, with their answer (tentative,
+// declined) and words, as Outlook's «Предложить новое время» sends it.
+func Counter(in Invite, me Person, status, comment string, start, end time.Time) Invite {
+	c := Reply(in, me, status, comment)
+	c.Start, c.End, c.AllDay = start, end, false
+	c.Repeat, c.Every, c.Until, c.Days, c.Count = in.Repeat, in.Every, in.Until, in.Days, in.Count
+	return c
 }
 
 // InviteUID is the UID of a go24 meeting sent by mail.

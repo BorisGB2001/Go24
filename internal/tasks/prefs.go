@@ -273,9 +273,9 @@ func (s *Store) SetPageSize(ctx context.Context, userID string, n int) error {
 	return err
 }
 
-// Paginate returns the tasks of page n (from 1) of size each, the page actually shown (a page past the end shows
+// Paginate returns the items of page n (from 1) of size each, the page actually shown (a page past the end shows
 // the last one) and the number of pages.
-func Paginate(list []Task, n, size int) ([]Task, int, int) {
+func Paginate[T any](list []T, n, size int) ([]T, int, int) {
 	if size <= 0 {
 		size = DefaultPageSize
 	}
@@ -283,4 +283,84 @@ func Paginate(list []Task, n, size int) ([]Task, int, int) {
 	n = min(max(n, 1), pages)
 	from := (n - 1) * size
 	return list[from:min(from+size, len(list))], n, pages
+}
+
+const prefFlat = "list.flat"
+
+// Tree reports whether the user's task lists show subtasks under their parent tasks («Подзадачи под основной
+// задачей» lists; on unless the user turned it off).
+func (s *Store) Tree(ctx context.Context, userID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefFlat).Scan(&n)
+	return n == 0, err
+}
+
+// SetTree turns the tree of subtasks in the user's task lists on or off.
+func (s *Store) SetTree(ctx context.Context, userID string, on bool) error {
+	if on {
+		_, err := s.db.Exec(ctx, `DELETE FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefFlat)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, 'true')
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefFlat)
+	return err
+}
+
+// TreeRow is a row of a task list shown as a tree: the task, how deep it is under the tasks of the list (0 — a task
+// whose parent is not in the list), the keys of its ancestors in the list (from the top) and how many of its
+// subtasks the list has.
+type TreeRow struct {
+	Task
+	Depth int
+	Path  []string
+	Kids  int
+}
+
+// Tree arranges a list (already in its order) as a tree: a subtask whose parent task is in the list goes under it,
+// the subtasks of a task keep the order of the list. It returns the top tasks, each with its rows (itself first,
+// then its subtasks at any depth), so that pages are counted by the top tasks.
+func Tree(list []Task) [][]TreeRow {
+	in := make(map[string]bool, len(list))
+	for _, t := range list {
+		in[t.Key()] = true
+	}
+	kids := map[string][]Task{}
+	var tops []Task
+	for _, t := range list {
+		if t.ParentKey != "" && t.ParentKey != t.Key() && in[t.ParentKey] {
+			kids[t.ParentKey] = append(kids[t.ParentKey], t)
+		} else {
+			tops = append(tops, t)
+		}
+	}
+	seen := map[string]bool{}
+	var walk func(t Task, path []string, rows *[]TreeRow)
+	walk = func(t Task, path []string, rows *[]TreeRow) {
+		k := t.Key()
+		seen[k] = true
+		at := len(*rows)
+		*rows = append(*rows, TreeRow{Task: t, Depth: len(path), Path: path})
+		sub := append(slices.Clip(path), k)
+		for _, c := range kids[k] {
+			if !seen[c.Key()] {
+				(*rows)[at].Kids++
+				walk(c, sub, rows)
+			}
+		}
+	}
+	out := make([][]TreeRow, 0, len(tops))
+	for _, t := range tops {
+		var rows []TreeRow
+		walk(t, nil, &rows)
+		out = append(out, rows)
+	}
+	// a loop of parents (not possible through the forms) would leave its tasks out: they go to the top
+	for _, t := range list {
+		if !seen[t.Key()] {
+			var rows []TreeRow
+			walk(t, nil, &rows)
+			out = append(out, rows)
+		}
+	}
+	return out
 }

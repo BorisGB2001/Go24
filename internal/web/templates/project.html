@@ -64,8 +64,11 @@
     <summary><b>{{icon "settings"}} {{t "collab.settings"}}</b></summary>
     <form method="post" action="/p/{{$p.Key}}/collab-settings">
       <fieldset{{if $p.Archived}} disabled{{end}}>
+      <label>{{t "collab.start_tool"}}</label>
+      <select name="start_tool">{{$v := .StartTool}}{{range $d.StartTools}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.start_tool." .)}}</option>{{end}}</select>
+      <p class="small muted">{{t "collab.start_tool_hint"}}</p>
       <label>{{t "collab.invite_perm"}}</label>
-      <select name="invite_perm">{{$v := .InvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
+      <select name="invite_perm">{{$v = .InvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
       <label>{{t "collab.guest_invite_perm"}}</label>
       <select name="guest_invite_perm">{{$v = .GuestInvitePerm}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.perm." .)}}</option>{{end}}</select>
       <label class="check"><input type="checkbox" name="chat_history" {{if .ChatHistory}}checked{{end}}> {{t "collab.chat_history"}}</label>

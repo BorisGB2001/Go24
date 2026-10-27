@@ -40,7 +40,7 @@ var guestRoutes = map[string]bool{
 	"GET /search": true, "GET /my": true, "GET /call": true, "GET /call/user": true, "POST /call/ring/{id}/{action}": true, "POST /call/ring-more": true, "GET /people": true, "GET /presence": true, "POST /presence": true, "POST /prefs/columns": true, "GET /prefs/widths": true, "POST /prefs/widths": true,
 	"GET /tasks/new": true, "POST /tasks/new": true,
 	// collabs
-	"GET /collabs": true, "GET /p/{key}": true, "GET /p/{key}/photo": true, "GET /p/{key}/board": true,
+	"GET /collabs": true, "GET /c/{key}": true, "GET /p/{key}": true, "GET /p/{key}/photo": true, "GET /p/{key}/board": true,
 	"GET /p/{key}/gantt": true, "GET /join/{token}": true, "POST /join/{token}": true,
 	"POST /p/{key}/tasks": true, "POST /p/{key}/leave": true, "POST /p/{key}/invite": true,
 	// tasks

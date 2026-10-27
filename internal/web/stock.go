@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,9 +68,17 @@ func (s *Server) stockDocPage(w http.ResponseWriter, r *http.Request, sess auth.
 	var err error
 	if id == "new" {
 		d = crm.StockDoc{Kind: r.URL.Query().Get("kind"), Status: "draft", Date: time.Now(), Responsible: crm.Ref{ID: sess.UserID}}
-		if !crm.ValidStockKind(d.Kind) {
+		if src := r.URL.Query().Get("copy"); src != "" { // «Копировать»: the document's details and rows in a new draft
+			var c crm.StockDoc
+			if c, err = s.CRM.StockDoc(r.Context(), src); err == nil && !rights.Doc(c, "read") {
+				err = crm.ErrNotFound
+			}
+			d.Kind, d.Title, d.Supplier, d.SupplierKind, d.Reason = c.Kind, c.Title, c.Supplier, c.SupplierKind, c.Reason
+			d.Comment, d.Currency, d.Rows = c.Comment, c.Currency, c.Rows
+		}
+		if err == nil && !crm.ValidStockKind(d.Kind) {
 			err = crm.ErrNotFound
-		} else if !rights.Can(d.Kind, "write") {
+		} else if err == nil && !rights.Can(d.Kind, "write") {
 			err = i18n.E("err.forbidden")
 		}
 	} else if d, err = s.CRM.StockDoc(r.Context(), id); err == nil && !rights.Doc(d, "read") {
@@ -108,6 +117,7 @@ func (s *Server) stockDocPage(w http.ResponseWriter, r *http.Request, sess auth.
 	data["CanConduct"] = d.Status != "conducted" && rights.Doc(d, "conduct")
 	data["CanCancel"] = d.Status == "conducted" && rights.Doc(d, "cancel")
 	data["CanDelete"] = id != "new" && d.Editable() && rights.Doc(d, "delete")
+	data["CanCopy"] = id != "new" && rights.Can(d.Kind, "write")
 	title := s.tr(r, "stock.kind."+d.Kind)
 	if d.Number > 0 {
 		title += " № " + strconv.Itoa(d.Number)
@@ -183,6 +193,72 @@ func (s *Server) stockDocAction(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "crm.saved")), http.StatusSeeOther)
+}
+
+// stockDocsBulk: the group action on the checked documents of the list — "conduct" them (the earliest first, so an
+// arrival comes before what takes from it), "cancel" the conducting (the latest first) or "delete" them; each by the
+// person's rights on it, the ones that can't be done are skipped.
+func (s *Server) stockDocsBulk(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/store/docs"
+	if b := r.FormValue("back"); strings.HasPrefix(b, "/store/docs") {
+		back = b
+	}
+	if err := r.ParseForm(); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	rights, op := s.stockRights(r, sess), r.FormValue("op")
+	if op != "conduct" && op != "cancel" && op != "delete" {
+		s.taskErr(w, r, i18n.E("err.bad_form"), back)
+		return
+	}
+	var docs []crm.StockDoc
+	skipped := 0
+	for _, id := range r.PostForm["id"] {
+		if d, err := s.CRM.StockDoc(r.Context(), id); err == nil && rights.Doc(d, "read") {
+			docs = append(docs, d)
+		} else {
+			skipped++
+		}
+	}
+	sort.SliceStable(docs, func(i, j int) bool {
+		a, b := docs[i], docs[j]
+		if op == "cancel" {
+			a, b = b, a
+		}
+		if !a.Date.Equal(b.Date) {
+			return a.Date.Before(b.Date)
+		}
+		return a.CreatedAt.Before(b.CreatedAt)
+	})
+	done := 0
+	for _, d := range docs {
+		err := s.CRM.CheckStockDoc(r.Context(), rights, d.ID, "", op, nil)
+		if err == nil {
+			switch op {
+			case "conduct":
+				err = s.CRM.ConductStockDoc(r.Context(), sess.UserID, d.ID)
+			case "cancel":
+				err = s.CRM.CancelStockDoc(r.Context(), sess.UserID, d.ID)
+			default:
+				err = s.CRM.DeleteStockDoc(r.Context(), d.ID)
+			}
+		}
+		if err != nil {
+			skipped++
+			continue
+		}
+		done++
+	}
+	msg := s.tr(r, "crm.bulk_done", done)
+	if skipped > 0 {
+		msg += " " + s.tr(r, "stock.bulk_skipped", skipped)
+	}
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, back+sep+"msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // formDay reads a date of a form; empty or wrong is none.

@@ -194,10 +194,10 @@ func (s *Server) bookingRows(ctx context.Context, b booking.Booking) []crm.Produ
 }
 
 // bookingClientCard makes the client of a booking by a link a contact of the responsible one (the one with the
-// phone or e-mail if there is), bound to the booking.
-func (s *Server) bookingClientCard(ctx context.Context, resp string, b booking.Booking) {
+// phone or e-mail if there is), bound to the booking; it is the booking as it is then.
+func (s *Server) bookingClientCard(ctx context.Context, resp string, b booking.Booking) booking.Booking {
 	if s.CRM == nil || resp == "" || b.ContactID != "" {
-		return
+		return b
 	}
 	old := b
 	var err error
@@ -209,9 +209,10 @@ func (s *Server) bookingClientCard(ctx context.Context, resp string, b booking.B
 	}
 	if err != nil {
 		s.Log.Warn("booking client contact", "err", err)
-		return
+		return old
 	}
 	s.bookingEvents(ctx, resp, old, b)
+	return b
 }
 
 // bookingCRMPreset: the card a booking is made for («Записать» in a CRM card, ?crm=/crm/contacts/id) — its client

@@ -12,7 +12,7 @@
 </form>
 {{if $d.List}}<div class="collabs">
   {{range $d.List}}<div class="card collab">
-    <a href="/p/{{.Key}}" class="row ttitle">{{photo .Name .PhotoURL true}} <b>{{.Name}}</b></a>
+    <a href="/c/{{.Key}}" class="row ttitle">{{photo .Name .PhotoURL true}} <b>{{.Name}}</b></a>
     {{with .Description}}<p class="small muted">{{.}}</p>{{end}}
     <div class="small muted">{{t (print "collab.role." .MyRole)}} · {{t "collab.members_n" .Members}}{{if .Guests}} · <span class="pill guest">{{t "collab.guests_n" .Guests}}</span>{{end}} · {{t "project.open_tasks" .OpenTasks}}</div>
     <div class="row collab-links">

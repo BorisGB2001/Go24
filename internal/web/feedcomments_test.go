@@ -117,6 +117,11 @@ func TestFeedCommentsHTTP(t *testing.T) {
 	if p := do(anna, "GET", "/feed?post="+post, nil, 200); !strings.Contains(p, `data-quote="Анна"`) || !strings.Contains(p, `data-cmore=`) {
 		t.Error("the post has no «Цитировать»")
 	}
+	// «Ещё» (GO24DEV-766): the date is the link of the post, «Ссылка на сообщение» and the marks are in the menu
+	if p := do(anna, "GET", "/feed?post="+post, nil, 200); !strings.Contains(p, `class="fdate" href="/feed?post=`+post+`"`) ||
+		!strings.Contains(p, "data-plink") || !strings.Contains(p, `class="tsettings dmore fmore"`) {
+		t.Error("the post has no «Ещё» menu")
+	}
 	_, err = pool.Exec(ctx, `DELETE FROM feed_comments WHERE id <> $1`, cid)
 	must(err)
 

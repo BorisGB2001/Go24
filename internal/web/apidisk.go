@@ -36,8 +36,11 @@ func (s *Server) apiDiskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/move", s.api("disk:write", s.apiDiskMove))
 	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/copy", s.api("disk:write", s.apiDiskMove))
 	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/restore", s.api("disk:write", s.apiDiskRestore))
+	mux.HandleFunc("POST /api/v1/disk/drives/{drive}/leave", s.api("disk:write", s.apiDiskLeave))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}", s.api("disk:read", s.apiDiskDownload))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}/versions", s.api("disk:read", s.apiDiskVersions))
+	mux.HandleFunc("GET /api/v1/disk/files/{id}/thumb", s.api("disk:read", s.apiDiskThumb)) // as PREVIEW_URL
+	mux.HandleFunc("POST /api/v1/disk/files/{id}/send", s.api("disk:read", s.apiDiskSend))
 	mux.HandleFunc("GET /api/v1/disk/docs", s.api("disk:read", s.apiDiskDocs))
 	s.apiDiskLinkRoutes(mux)
 }
@@ -66,12 +69,16 @@ type apiDiskFile struct {
 	UploadedBy  apiUser    `json:"uploaded_by"`
 	LockedBy    *apiUser   `json:"locked_by,omitempty"`
 	LockedAt    *time.Time `json:"locked_at,omitempty"`
-	URL         string     `json:"url"` // the bytes: GET with the same key
+	URL         string     `json:"url"`             // the bytes: GET with the same key
+	Thumb       string     `json:"thumb,omitempty"` // the thumbnail (JPEG), as PREVIEW_URL: a picture, a PDF, a document
 }
 
 func apiDiskFileOf(f drive.File) apiDiskFile {
 	out := apiDiskFile{ID: f.ID, Name: f.Name, ContentType: f.ContentType, Size: f.Size, CreatedAt: f.CreatedAt,
 		UploadedBy: apiUser{f.UploaderID, f.Uploader}, URL: "/api/v1/disk/files/" + f.ID}
+	if hasThumb(f.Name, f.ContentType) {
+		out.Thumb = out.URL + "/thumb"
+	}
 	if f.LockerID != "" {
 		out.LockedBy, out.LockedAt = &apiUser{f.LockerID, f.Locker}, f.LockedAt
 	}
@@ -125,13 +132,29 @@ func (s *Server) apiOpenDrive(r *http.Request, p apikeys.Principal) (drive.Drive
 	return s.Drive.Open(r.Context(), p.UserID, r.PathValue("drive"))
 }
 
-// apiDiskList is a folder of the drive (?folder=ID, none — the top): its folders, files and the path to it.
+// apiDiskList is a folder of the drive (?folder=ID, none — the top): its folders, files and the path to it. The
+// filter of the page (?q=, type=, period= with from= and to=, author=) — the folders and files found on the whole drive,
+// as disk.folder.getchildren's filter.
 func (s *Server) apiDiskList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	d, err := s.apiOpenDrive(r, p)
 	if err != nil {
 		return err
 	}
-	folders, files, trail, err := s.Drive.List(r.Context(), d, r.URL.Query().Get("folder"))
+	var folders []drive.Folder
+	var files []drive.File
+	var trail []drive.Folder
+	if filter := diskFilterOf(r.URL.Query()); filter.On() {
+		var found []drive.File
+		if found, files, err = s.Drive.Search(r.Context(), d, filter.Q); filter.Files() {
+			found, files = nil, filter.Apply(files, time.Now())
+		}
+		for _, f := range found {
+			folders = append(folders, drive.Folder{ID: f.ID, Name: f.Name})
+		}
+		files = files[:min(len(files), searchMax)]
+	} else {
+		folders, files, trail, err = s.Drive.List(r.Context(), d, r.URL.Query().Get("folder"))
+	}
 	if err != nil {
 		return err
 	}
@@ -352,6 +375,24 @@ func (s *Server) apiDiskTrash(w http.ResponseWriter, r *http.Request, p apikeys.
 }
 
 // apiDiskRestore takes files and folders out of the drive's trash: {"files": [...], "folders": [...]}.
+// apiDiskLeave is «Отказаться от доступа» to a drive "sh:ID" or "sf:ID" — a folder or a file shared with the key's
+// owner: it is no longer among their drives, its owner is told.
+func (s *Server) apiDiskLeave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	which := r.PathValue("drive")
+	id, file := strings.CutPrefix(which, "sf:")
+	if !file {
+		var ok bool
+		if id, ok = strings.CutPrefix(which, "sh:"); !ok {
+			return drive.ErrNotFound
+		}
+	}
+	if err := s.Drive.LeaveShare(r.Context(), p.UserID, id, file); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 func (s *Server) apiDiskRestore(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in apiDiskSelection
 	if err := readJSON(r, &in); err != nil {

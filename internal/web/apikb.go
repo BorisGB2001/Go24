@@ -45,6 +45,8 @@ func (s *Server) apiKBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/kb/pages/{page}/versions/{v}/restore", s.api("kb:write", s.apiKBRestoreVersion))
 	mux.HandleFunc("GET /api/v1/kb/search", s.api("kb:read", s.apiKBSearch))
 	mux.HandleFunc("GET /api/v1/kb/templates", s.api("kb:read", s.apiKBTemplates))
+	mux.HandleFunc("GET /api/v1/kb/page-templates", s.api("kb:read", s.apiKBPageTemplates))
+	mux.HandleFunc("POST /api/v1/kb/pages/{page}/template", s.api("kb:write", s.apiKBSavePageTemplate))
 	mux.HandleFunc("GET /api/v1/kb/trash", s.api("kb:read", s.apiKBTrash))
 	mux.HandleFunc("POST /api/v1/kb/trash/restore", s.api("kb:write", s.apiKBTrashRestore))
 	mux.HandleFunc("GET /api/v1/kb/files/{id}", s.api("kb:read", s.apiKBDownload))
@@ -61,6 +63,9 @@ func (s *Server) apiKBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/kb/comments/{id}", s.api("kb:write", s.apiKBDeleteComment))
 	mux.HandleFunc("PUT /api/v1/kb/pages/{page}/like", s.api("kb:read", s.apiKBLike))
 	mux.HandleFunc("DELETE /api/v1/kb/pages/{page}/like", s.api("kb:read", s.apiKBLike))
+	mux.HandleFunc("GET /api/v1/kb/pages/{page}/draft", s.api("kb:write", s.apiKBDraft))
+	mux.HandleFunc("PUT /api/v1/kb/pages/{page}/draft", s.api("kb:write", s.apiKBSaveDraft))
+	mux.HandleFunc("DELETE /api/v1/kb/pages/{page}/draft", s.api("kb:write", s.apiKBDropDraft))
 }
 
 type apiKBSpace struct {
@@ -102,6 +107,7 @@ type apiKBPage struct {
 	Likes     []string      `json:"likes"`    // who likes it
 	Liked     bool          `json:"liked"`    // the key's owner likes it
 	Views     int           `json:"views"`    // how many people opened it
+	Editing   []string      `json:"editing"`  // the others editing it now
 }
 
 // apiKBComment is a comment under a page; the top ones carry their replies.
@@ -333,17 +339,28 @@ func (s *Server) apiKBWritePage(w http.ResponseWriter, r *http.Request, p apikey
 		return err
 	}
 	out.Comments, out.Likes, out.Liked, out.Views = talk.Count, talk.Likes, talk.Liked, talk.Views
+	if out.Editing, err = s.KB.Editing(r.Context(), p.UserID, pg.ID); err != nil {
+		return err
+	}
 	writeJSON(w, status, out)
 	return nil
 }
 
 // apiKBCreatePage writes a new page: {"title", "body" (Markdown), "parent": "ID" (none — at the top)}.
 func (s *Server) apiKBCreatePage(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	var in struct{ Title, Body, Parent string }
+	var in struct{ Title, Body, Parent, Template string }
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	id, err := s.KB.CreatePage(r.Context(), p.UserID, r.PathValue("space"), in.Parent, in.Title, in.Body)
+	var id string
+	var err error
+	if in.Template != "" { // the text is the template's (…/page-templates), the title may be left out
+		lang := s.I18n.Match(r.Header.Get("Accept-Language"))
+		id, err = s.KB.CreatePageFromTemplate(r.Context(), p.UserID, r.PathValue("space"), in.Parent, in.Template, in.Title,
+			kb.PageVars{Date: time.Now().Format(s.I18n.T(lang, "format.date"))}, s.apiTr(r), s.Storages.Copy)
+	} else {
+		id, err = s.KB.CreatePage(r.Context(), p.UserID, r.PathValue("space"), in.Parent, in.Title, in.Body)
+	}
 	if err != nil {
 		return err
 	}
@@ -352,8 +369,13 @@ func (s *Server) apiKBCreatePage(w http.ResponseWriter, r *http.Request, p apike
 }
 
 // apiKBSavePage changes a page: {"title", "body"} — what is left out stays; the earlier text goes to the history.
+// With "base" (the page's updated_at the text was written over) it is not saved if someone saved the page since:
+// 409. The owner's draft of the page goes.
 func (s *Server) apiKBSavePage(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	var in struct{ Title, Body *string }
+	var in struct {
+		Title, Body *string
+		Base        time.Time
+	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
@@ -368,7 +390,7 @@ func (s *Server) apiKBSavePage(w http.ResponseWriter, r *http.Request, p apikeys
 	if in.Body != nil {
 		body = *in.Body
 	}
-	if err := s.KB.SavePage(r.Context(), p.UserID, pg.ID, title, body); err != nil {
+	if err := s.KB.SavePageAt(r.Context(), p.UserID, pg.ID, title, body, in.Base); err != nil {
 		return err
 	}
 	return s.apiKBWritePage(w, r, p, pg.ID, http.StatusOK)
@@ -557,6 +579,11 @@ func (s *Server) apiKBTemplates(w http.ResponseWriter, r *http.Request, p apikey
 	if err != nil {
 		return err
 	}
+	writeJSON(w, http.StatusOK, apiKBTemplateList(list))
+	return nil
+}
+
+func apiKBTemplateList(list []kb.Template) []apiKBTemplate {
 	out := []apiKBTemplate{}
 	for _, t := range list {
 		x := apiKBTemplate{ID: t.ID, Name: t.Name, Description: t.Description, Builtin: t.Builtin, Pages: t.Pages, Author: t.Author}
@@ -565,7 +592,34 @@ func (s *Server) apiKBTemplates(w http.ResponseWriter, r *http.Request, p apikey
 		}
 		out = append(out, x)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+// apiKBPageTemplates are the templates a new page can start from ("template" of POST …/spaces/{space}/pages):
+// go24's and the company's.
+func (s *Server) apiKBPageTemplates(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	list, err := s.KB.PageTemplates(r.Context(), p.UserID, s.apiTr(r))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, apiKBTemplateList(list))
+	return nil
+}
+
+// apiKBSavePageTemplate saves the page as a template of the company: {"name", "description"} (both may be left out)
+// → {"id"}.
+func (s *Server) apiKBSavePageTemplate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct{ Name, Description string }
+	if r.ContentLength != 0 {
+		if err := readJSON(r, &in); err != nil {
+			return err
+		}
+	}
+	id, err := s.KB.SavePageTemplate(r.Context(), p.UserID, r.PathValue("page"), in.Name, in.Description, s.Storages.Copy)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 	return nil
 }
 
@@ -829,6 +883,60 @@ func (s *Server) apiKBDeleteComment(w http.ResponseWriter, r *http.Request, p ap
 // apiKBLike: PUT — «Нравится» of the key's owner at a page, DELETE — takes it back.
 func (s *Server) apiKBLike(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.KB.Like(r.Context(), p.UserID, r.PathValue("page"), r.Method == http.MethodPut); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// apiKBDraftOut is the key owner's unsaved text of a page.
+type apiKBDraftOut struct {
+	Title   string    `json:"title"`
+	Body    string    `json:"body"`
+	Base    time.Time `json:"base"` // the page's updated_at it is written over
+	SavedAt time.Time `json:"saved_at"`
+	Changed bool      `json:"changed"` // it differs from the page
+	Stale   bool      `json:"stale"`   // the page was saved by someone since base
+}
+
+// apiKBDraft is the key owner's draft of the page; 404 — none.
+func (s *Server) apiKBDraft(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if _, _, err := s.KB.Page(r.Context(), p.UserID, r.PathValue("page")); err != nil {
+		return err
+	}
+	d, err := s.KB.DraftOf(r.Context(), p.UserID, r.PathValue("page"))
+	if err != nil {
+		return err
+	}
+	if d == nil {
+		return kb.ErrNotFound
+	}
+	writeJSON(w, http.StatusOK, apiKBDraftOut{d.Title, d.Body, d.Base, d.Saved, d.Changed, d.Stale})
+	return nil
+}
+
+// apiKBSaveDraft keeps the key owner's text of the page without saving it: {"title", "body", "base" (none — the
+// page as it is now)}; as in the editor, it shows them «editing now» for a minute and a half.
+func (s *Server) apiKBSaveDraft(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Title, Body string
+		Base        time.Time
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if err := s.KB.SaveDraft(r.Context(), p.UserID, r.PathValue("page"), in.Title, in.Body, in.Base); err != nil {
+		return err
+	}
+	return s.apiKBDraft(w, r, p)
+}
+
+// apiKBDropDraft throws the key owner's draft of the page away.
+func (s *Server) apiKBDropDraft(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if _, _, err := s.KB.Page(r.Context(), p.UserID, r.PathValue("page")); err != nil {
+		return err
+	}
+	if err := s.KB.DropDraft(r.Context(), p.UserID, r.PathValue("page")); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

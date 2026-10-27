@@ -149,6 +149,30 @@ func TestMailLinksHTTP(t *testing.T) {
 		t.Fatalf("meeting = %+v %v", e, err)
 	}
 	do(eve, "POST", "/mail/letters/"+invite+"/invite", url.Values{"status": {"accepted"}, "reply": {"none"}}, 404)
+	if p := read(invite); !strings.Contains(p, "/mail/letters/"+invite+"/propose") || !strings.Contains(p, `name="start" value="`+start.Format("2006-01-02T15:04")) {
+		t.Fatal("no «Предложить новое время» on the card")
+	}
+
+	// a proposal of a new time for Anna's own meeting: «Принять предложение» moves it
+	own, err := srv.Calendar.Save(ctx, anna, calendar.Event{Title: "Обзор", Start: start.Add(24 * time.Hour), End: start.Add(25 * time.Hour)}, nil)
+	must(err)
+	_, err = pool.Exec(ctx, `UPDATE events SET ical_uid = 'own-1' WHERE id = $1`, own)
+	must(err)
+	newStart := start.Add(26 * time.Hour)
+	ctr := mail.Counter(mail.Invite{UID: "own-1", Summary: "Обзор", Organizer: mail.Person{Email: "anna@go24.test"}},
+		mail.Person{Email: "ivan@client.test", Name: "Иван"}, "tentative", "Можно позже?", newStart, newStart.Add(time.Hour))
+	counter := letter(inbox, "ivan@client.test", "Иван", "Предлагается новое время: Обзор", "", "own", mail.BuildICS(ctr, "COUNTER", time.Now()), time.Now().Add(-time.Minute))
+	if p := read(counter); !strings.Contains(p, "/mail/letters/"+counter+"/counter") || !strings.Contains(p, `value="accepted"`) || !strings.Contains(p, "Можно позже?") {
+		t.Fatalf("no proposal card: %.3000s", p)
+	}
+	do(eve, "POST", "/mail/letters/"+counter+"/counter", url.Values{"decision": {"accepted"}}, 404)
+	redirect(do(anna, "POST", "/mail/letters/"+counter+"/counter", url.Values{"decision": {"accepted"}, "folder": {inbox}}, 200))
+	if e, err := srv.Calendar.Get(ctx, anna, own); err != nil || !e.Start.Equal(newStart) || !e.End.Equal(newStart.Add(time.Hour)) {
+		t.Fatalf("moved meeting = %+v %v", e, err)
+	}
+	if p := read(counter); strings.Contains(p, "/mail/letters/"+counter+"/counter") {
+		t.Fatal("decided proposal still asks")
+	}
 
 	// a task of the letter: the form filled, the task linked both ways
 	if f := do(anna, "GET", "/tasks/new?mail="+order, nil, 200); !strings.Contains(f, `name="mail" value="`+order) || !strings.Contains(f, "Заказ на 10 коробок") ||
@@ -340,6 +364,17 @@ func TestMailLinksHTTP(t *testing.T) {
 	if links.Invite == nil || links.Invite["answer"] != "accepted" || links.Invite["uid"] != "plan-1" {
 		t.Fatalf("invite = %+v", links.Invite)
 	}
+	if c, _ := links.Invite["counter"].(map[string]any); c != nil {
+		t.Fatalf("a counter on an invitation: %+v", c)
+	}
+	var cl struct {
+		Invite map[string]any `json:"invite"`
+	}
+	must(json.Unmarshal([]byte(api(anna, "GET", "/api/v1/mail/messages/"+counter+"/links", "", 200)), &cl))
+	if c, _ := cl.Invite["counter"].(map[string]any); c == nil || c["decision"] != "accepted" || c["from"] != "ivan@client.test" || c["meeting"] == nil {
+		t.Fatalf("counter = %+v", cl.Invite)
+	}
+	api(anna, "POST", "/api/v1/mail/messages/"+counter+"/counter", `{"decision": "maybe"}`, 422)
 	api(anna, "POST", "/api/v1/mail/messages/"+invite+"/invite", `{"status": "declined", "reply": "none"}`, 200)
 	if st, _ := srv.Mail.InviteAnswer(ctx, anna, "plan-1"); st.Status != "declined" || st.EventID != "" {
 		t.Fatalf("declined = %+v", st)

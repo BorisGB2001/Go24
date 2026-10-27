@@ -24,11 +24,13 @@ import (
 // a stage of another pipeline of the same kind of cards, a move robot moves the deal itself there. A booking robot
 // («Отправить ссылку для записи») writes to the client as a mail robot does, with the address of a booking link. A robot may wait («Выполнить через» minutes, hours or days: the card
 // must still be in the stage then), may run only for an amount from–to and only when the card meets a condition; a
-// fields robot sets fields of the card, a webhook robot posts it to an address (robotfields.go). Texts may hold {title}, {amount},
+// fields robot sets fields of the card, a webhook robot posts it to an address (robotfields.go); documents, processes,
+// observers and deeds — robotmore.go. Texts may hold {title}, {amount},
 // {responsible}, {client}, {link}.
 
 // RobotKinds in the order the settings offer them.
-var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "comment", "fields", "webhook", "responsible", "stage", "copy", "move"}
+var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "infocall", "comment", "fields", "webhook", "responsible",
+	"observers", "document", "bp", "close", "stage", "copy", "move"}
 
 // TunnelKinds are the robots that lead into another pipeline (of deals and smart processes only).
 var TunnelKinds = []string{"copy", "move"}
@@ -63,6 +65,11 @@ type RobotParams struct {
 	Users   []string   `json:"users,omitempty"`   // responsible robot: the people it gives cards to (one — To of old robots)
 	Mode    string     `json:"mode,omitempty"`    // responsible robot among several: queue | even | random
 	Skip    bool       `json:"skip,omitempty"`    // responsible robot: passes over the absent («Пропускать отсутствующих»)
+	Line    string     `json:"line,omitempty"`    // infocall: the external line it calls through
+	Sound   string     `json:"sound,omitempty"`   // infocall: the message's checksum (telephony_sounds)
+	Obs     string     `json:"obs,omitempty"`     // observers robot: add | remove | set (its Users)
+	Doc     string     `json:"doc,omitempty"`     // document robot: the template's id
+	BP      string     `json:"bp,omitempty"`      // process robot: the template's id
 }
 
 // ShareModes are how the responsible robot shares cards among several people: in turn, to whom has the fewest open
@@ -95,7 +102,8 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 	for _, k := range RobotKinds {
 		ok = ok || k == kind
 	}
-	needText := !slices.Contains([]string{"responsible", "stage", "fields", "webhook"}, kind) && !slices.Contains(TunnelKinds, kind)
+	needText := !slices.Contains([]string{"responsible", "stage", "fields", "webhook", "infocall", "observers", "document", "bp", "close"}, kind) &&
+		!slices.Contains(TunnelKinds, kind)
 	if !ok || (needText && p.Text == "") || len([]rune(p.Text)) > 500 || len([]rune(p.Details)) > 5000 || p.Days < 0 || p.Days > 365 {
 		return i18n.E("err.robot")
 	}
@@ -106,6 +114,9 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 		p.Unit = ""
 	}
 	if err := s.checkRobotExtra(ctx, stageID, kind, &p); err != nil {
+		return err
+	}
+	if err := s.checkRobotMore(ctx, stageID, kind, &p); err != nil {
 		return err
 	}
 	switch kind {
@@ -148,6 +159,10 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 		}
 		if _, err := s.BookingURL(ctx, p.Link); err != nil {
 			return i18n.E("err.robot_booking")
+		}
+	case "infocall":
+		if s.InfoCall == nil || p.Line == "" || p.Sound == "" {
+			return i18n.E("err.robot_infocall")
 		}
 	case "copy", "move":
 		var other bool
@@ -263,10 +278,20 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 		err = s.robotMail(ctx, actorID, c, text, c.fill(p.Details, respName))
 	case "booking":
 		err = s.robotBooking(ctx, actorID, c, p, text, respName)
+	case "infocall":
+		err = s.robotInfoCall(ctx, actorID, c, p)
 	case "fields":
 		err = s.robotFields(ctx, actorID, c, p.Set, respName)
 	case "webhook":
 		err = s.robotWebhook(ctx, actorID, c, p.URL)
+	case "document":
+		err = s.robotDocument(ctx, actorID, c, p.Doc)
+	case "bp":
+		err = s.robotProcess(ctx, actorID, c, p.BP)
+	case "observers":
+		err = s.robotObservers(ctx, actorID, c, p)
+	case "close":
+		err = s.robotClose(ctx, actorID, c, p.Act)
 	case "responsible":
 		if to, err = s.shareTo(ctx, r, c); err != nil || to == c.responsible {
 			break
@@ -424,6 +449,29 @@ func (s *Store) robotBooking(ctx context.Context, actorID string, c card, p Robo
 		text = strings.TrimSpace(text + "\n\n" + u)
 	}
 	return s.robotMail(ctx, actorID, c, subject, text)
+}
+
+// robotInfoCall calls the client's phone (the lead's; the deal's contact's, or else its company's) and plays the message.
+func (s *Store) robotInfoCall(ctx context.Context, actorID string, c card, p RobotParams) error {
+	if s.InfoCall == nil {
+		return i18n.E("err.robot_infocall")
+	}
+	var to string
+	q := `SELECT phone FROM crm_leads WHERE id::text = $1`
+	if c.entity == "deal" {
+		q = `SELECT coalesce(nullif(x.phone, ''), c.phone, '') FROM crm_deals d LEFT JOIN crm_contacts x ON x.id = d.contact_id
+			LEFT JOIN crm_companies c ON c.id = d.company_id WHERE d.id::text = $1`
+	}
+	if err := s.db.QueryRow(ctx, q, c.id).Scan(&to); err != nil {
+		return err
+	}
+	if to = strings.TrimSpace(to); to == "" {
+		return i18n.E("err.robot_phone")
+	}
+	if err := s.InfoCall(ctx, p.Line, to, p.Sound); err != nil {
+		return err
+	}
+	return s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "infocall:"+to)
 }
 
 // RunRobotsDue runs the robots whose wait is over, for the cards still in the stage they waited in.

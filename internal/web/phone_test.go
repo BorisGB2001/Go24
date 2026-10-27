@@ -732,4 +732,23 @@ func TestPhone(t *testing.T) {
 		!strings.Contains(strings.Join(told, "\n"), "Пропущенный звонок от +79007770022") {
 		t.Fatalf("anna told: %q", told)
 	}
+
+	// «Мои настройки телефонии» in the profile: the employee keeps their own (not someone else's), the dialplan follows
+	if res, _ := do(eve, "POST", "/u/"+anna+"/telephony/prefs", url.Values{"forward": {"always"}, "to": {"+79001112233"}}, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve set anna's forwarding: %d", res.StatusCode)
+	}
+	res, _ = do(anna, "POST", "/u/"+anna+"/telephony/prefs", url.Values{"forward": {"noanswer"}, "after": {"25"}, "to": {"+7 900 111-22-33"}}, nil)
+	if res.StatusCode != http.StatusSeeOther || !strings.HasSuffix(res.Header.Get("Location"), "#ptel") {
+		t.Fatalf("anna's settings: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	if p, err := store.PrefsOf(ctx, anna); err != nil || p.Forward != telephony.ForwardNoAnswer || p.After != 25 || p.To != "+79001112233" {
+		t.Fatalf("anna's settings kept: %+v %v", p, err)
+	}
+	if res, _ := do(anna, "POST", "/u/"+anna+"/telephony/prefs", url.Values{"forward": {"always"}}, nil); res.StatusCode != http.StatusSeeOther ||
+		!strings.Contains(res.Header.Get("Location"), "msg=") {
+		t.Fatalf("forwarding without a mobile: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	if p, _ := store.PrefsOf(ctx, anna); p.Forward != telephony.ForwardNoAnswer {
+		t.Fatalf("forwarding without a mobile kept: %+v", p)
+	}
 }

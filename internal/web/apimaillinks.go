@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"go24/internal/apikeys"
 	"go24/internal/auth"
@@ -15,7 +16,13 @@ import (
 //   GET  /api/v1/mail/messages/{id}/links        the letter's meeting {invite: {method, uid, sequence, summary, location,
 //                                                start, end, all_day, organizer, attendees, answer, event_id, conflicts}},
 //                                                its tasks [{key, title}] and CRM cards [{entity, id, title, path}]
+//                                                — with proposed {start, end} (the new time the user proposed), counter
+//                                                {from, status, comment, decision, meeting: {id, start, end}} (a proposal
+//                                                that came to the user's meeting), counter_declined
 //   POST /api/v1/mail/messages/{id}/invite       {status: accepted|tentative|declined|cancelled, reply: send|none, comment} → {event_id}
+//   POST /api/v1/mail/messages/{id}/propose      «Предложить новое время» {status: tentative|declined, start, end, comment}
+//   POST /api/v1/mail/messages/{id}/counter      the organizer's decision on a proposal {decision: accepted|declined, comment}
+//                                                → {message}; accepted moves the meeting
 //   POST /api/v1/mail/messages/{id}/crm          {kind: lead|deal|contact|company} → {entity, id, path}; {target: /crm/deals/ID} — links it
 //   GET  /api/v1/mail/messages/{id}/votes        «Отслеживание» of a letter with voting buttons {options, asked, mine,
 //                                                count: {choice: n}, answers: [{id, from, name, choice, at}]}
@@ -51,6 +58,18 @@ func (s *Server) apiMailLinks(w http.ResponseWriter, r *http.Request, p apikeys.
 			conflicts = append(conflicts, map[string]any{"id": e.ID, "title": e.Title, "start": e.Start, "end": e.End})
 		}
 		inv["conflicts"] = conflicts
+		if c.State.ProposedStart != nil && c.State.ProposedEnd != nil {
+			inv["proposed"] = map[string]any{"start": c.State.ProposedStart, "end": c.State.ProposedEnd}
+		}
+		if c.Counter != nil {
+			cn := map[string]any{"from": c.Counter.Email, "name": c.Counter.Name, "status": c.Counter.Status, "comment": c.Inv.Comment,
+				"decision": c.Decision, "meeting": nil}
+			if e := c.Meeting; e != nil {
+				cn["meeting"] = map[string]any{"id": e.ID, "start": e.Start, "end": e.End}
+			}
+			inv["counter"] = cn
+		}
+		inv["counter_declined"] = c.Declined
 		out["invite"] = inv
 	}
 	var ts []map[string]any
@@ -81,6 +100,34 @@ func (s *Server) apiMailInvite(w http.ResponseWriter, r *http.Request, p apikeys
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"event_id": ev})
+	return nil
+}
+
+func (s *Server) apiMailPropose(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Status, Comment string
+		Start, End      time.Time
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if err := s.Mail.Propose(r.Context(), p.UserID, r.PathValue("id"), in.Status, in.Comment, in.Start, in.End); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
+}
+
+func (s *Server) apiMailCounter(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct{ Decision, Comment string }
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	msg, err := s.counterDecide(r, auth.Session{UserID: p.UserID}, r.PathValue("id"), in.Decision, in.Comment)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": msg})
 	return nil
 }
 

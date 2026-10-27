@@ -1,19 +1,24 @@
 // go24 «Виджет на сайт»: a button on any website that opens a chat with go24's operators and a contact form.
 // It lives in a shadow root, so the site's styles do not reach it. The visitor's token stays in this site's storage.
 // Files both ways (pictures are shown), the operator's name and photo, «печатает…» and «прочитано», a sound on an
-// operator's message; on a phone the chat takes the whole screen.
+// operator's message; on a phone the chat takes the whole screen. «Правила показа»: the button's corner, the pages
+// it shows on, a delay, «Автоприглашение» and no button out of the line's working hours.
 (() => {
   const cfg = /*CONFIG*/{};
   if (window.__go24widget) return;
-  window.__go24widget = true;
   const T = cfg.t, api = cfg.base + '/w/' + cfg.id + '/api/';
   const key = 'go24.widget.' + cfg.id;
   let token = '';
   try { token = localStorage.getItem(key) || ''; } catch (e) { /* no storage: a new dialogue each time */ }
+  // a visitor with a started dialogue sees the button anywhere and at any time
+  if (!token && (cfg.offline || !showsOn(location.href))) return;
+  window.__go24widget = true;
   let last = 0, timer = null, loaded = false, typed = 0;
 
+  const pos = cfg.position || 'bottom-right', top = pos.startsWith('top'), left = pos.endsWith('left');
   const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483000';
+  host.style.cssText = 'position:fixed;' + (left ? 'left' : 'right') + ':20px;' + (top ? 'top' : 'bottom') + ':20px;z-index:2147483000';
+  if (cfg.show_delay > 0 && !token) { host.style.display = 'none'; setTimeout(() => { host.style.display = ''; }, cfg.show_delay * 1000); }
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>
     :host{all:initial;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -49,10 +54,16 @@
     .fw .x{align-self:flex-end;background:none;border:0;font-size:16px;cursor:pointer;padding:4px 10px;color:#666}.fw iframe{flex:1;border:0;width:100%}
     .agree{padding:10px 12px;border-top:1px solid #e3e5e8;display:flex;flex-direction:column;gap:8px;font-size:12px}
     .agree .txt{max-height:150px;overflow:auto;white-space:pre-wrap;color:#555}.agree .send{padding:9px}
+    .box.top{bottom:auto;top:70px}.box.left{right:auto;left:0}
+    .hello{position:absolute;right:0;bottom:70px;width:260px;background:#fff;color:#222;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.22);padding:10px 30px 10px 12px;display:flex;gap:8px;cursor:pointer}
+    .hello.top{bottom:auto;top:70px}.hello.left{right:auto;left:0}
+    .hello img{width:36px;height:36px;border-radius:50%;object-fit:cover;flex:none}.hello b{display:block;font-size:12px;opacity:.7}
+    .hello .x{position:absolute;top:4px;right:4px;background:none;border:0;cursor:pointer;color:#888;font-size:14px}
     @media (max-width:480px){.box{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border-radius:0}}
   </style>
   <button class="btn" title="${esc(T.open)}">💬<span class="dot" hidden></span></button>
-  <div class="box" hidden>
+  <div class="hello${top ? ' top' : ''}${left ? ' left' : ''}" hidden>${cfg.hello_photo ? `<img alt="" src="${esc(cfg.hello_photo)}">` : ''}<div><b>${esc(cfg.name)}</b>${esc(cfg.hello)}</div><button type="button" class="x" title="${esc(T.close)}">✕</button></div>
+  <div class="box${top ? ' top' : ''}${left ? ' left' : ''}" hidden>
     <div class="head"><button data-tab="chat" class="on">${esc(T.chat)}</button><button data-tab="contact">${esc(T.contact)}</button><span style="flex:1"></span>${cfg.telegram ? `<a class="tg" href="https://t.me/${encodeURIComponent(cfg.telegram)}" target="_blank" rel="noopener" title="${esc(T.telegram)}">✈</a>` : ''}<button data-history title="${esc(T.history)}" hidden>✉</button><button data-close>✕</button></div>
     <div class="op" hidden><img alt="" hidden><b></b></div>
     <div class="msgs"></div>
@@ -79,6 +90,18 @@
       <button class="send">${esc(T.send)}</button>
     </form>
   </div>`;
+  // the «Правила показа» pages: «*» — any characters, the case is ignored; a mask without «*» — also with a «/» at the end
+  // (as openlines.Widget.ShowsOn)
+  function showsOn(page) {
+    if (cfg.pages_mode !== 'only' && cfg.pages_mode !== 'except') return true;
+    page = page.split('#')[0].toLowerCase();
+    const hit = (cfg.pages || []).some(m => {
+      m = m.toLowerCase();
+      if (!m.includes('*')) return page === m || page === m + '/' || page + '/' === m;
+      return new RegExp('^' + m.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 's').test(page);
+    });
+    return hit === (cfg.pages_mode === 'only');
+  }
   function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   document.body.appendChild(host);
   const $ = s => root.querySelector(s);
@@ -129,6 +152,14 @@
         b.addEventListener('click', () => { fw.querySelector('iframe').src = m.form.url; fw.hidden = false; });
         el.appendChild(b);
       }
+      if (m.booking) { // a booking link the operator sent: the client picks a time inside the chat
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'send fb'; b.dataset.booking = m.booking.id;
+        b.textContent = m.booking.done ? '✓ ' + T.booking_booked : T.booking_open;
+        b.disabled = m.booking.done;
+        b.addEventListener('click', () => { fw.querySelector('iframe').src = m.booking.url; fw.hidden = false; });
+        el.appendChild(b);
+      }
       if (m.buttons) { // the chat bot's menu: a button sends its item; only the last menu is live
         root.querySelectorAll('.bb').forEach(b => { b.disabled = true; });
         m.buttons.forEach(t => {
@@ -141,6 +172,9 @@
       if (m.form_done) {
         root.querySelectorAll('.fb[data-form="' + m.form_done + '"]').forEach(b => { b.textContent = '✓ ' + T.form_filled; b.disabled = true; });
         if (!fw.hidden) setTimeout(() => { fw.hidden = true; fw.querySelector('iframe').src = 'about:blank'; }, 1500);
+      }
+      if (m.booking_done) { // the client sees the booking's page in the frame until closing it
+        root.querySelectorAll('.fb[data-booking="' + m.booking_done + '"]').forEach(b => { b.textContent = '✓ ' + T.booking_booked; b.disabled = true; });
       }
       msgs.appendChild(el);
     });
@@ -197,7 +231,18 @@
   if (token) poll();
   schedule();
 
-  $('.btn').addEventListener('click', () => { box.hidden = !box.hidden; dot.hidden = true; schedule(); if (!box.hidden) poll(); });
+  // «Автоприглашение»: the operator's invitation pops up by the button once a visit, not to those already chatting
+  const hello = $('.hello'), helloKey = key + '.hello';
+  let invited = false;
+  try { invited = !!sessionStorage.getItem(helloKey); } catch (e) { /* shown again */ }
+  if (cfg.hello && !token && !invited) setTimeout(() => {
+    if (token || !box.hidden) return;
+    hello.hidden = false;
+    try { sessionStorage.setItem(helloKey, '1'); } catch (e) { /* not kept */ }
+  }, ((cfg.show_delay || 0) + (cfg.hello_delay || 0)) * 1000);
+  hello.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); hello.hidden = true; });
+  hello.addEventListener('click', () => { hello.hidden = true; if (box.hidden) $('.btn').click(); });
+  $('.btn').addEventListener('click', () => { hello.hidden = true; box.hidden = !box.hidden; dot.hidden = true; schedule(); if (!box.hidden) poll(); });
   $('[data-close]').addEventListener('click', () => { box.hidden = true; schedule(); });
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
     const chat = b.dataset.tab === 'chat';

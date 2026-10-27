@@ -20,7 +20,7 @@ func TestToken(t *testing.T) {
 	}
 	p := New("wss://lk", "key", "secret")
 	now := time.Unix(1_800_000_000, 0)
-	tok, err := p.Token("u1", "Анна", "task-GO-1", now)
+	tok, err := p.Token("u1", "Анна", "task-GO-1", false, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,5 +95,59 @@ func TestParticipants(t *testing.T) {
 	}
 	if ids, err := p.Participants(context.Background(), "gone"); err != nil || ids != nil {
 		t.Fatalf("a room that is gone: %v %v", ids, err)
+	}
+}
+
+// TestHostAndMute: the host's token carries {"host":true} in the metadata; Mute turns off the tracks of one source
+// of a participant or of everyone but the host (sources by name or number, muted ones and the recorder left alone).
+func TestHostAndMute(t *testing.T) {
+	p := New("wss://lk", "key", "secret")
+	tok, _ := p.Token("u1", "Анна", "im-1", true, time.Now())
+	raw, _ := base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1])
+	if !strings.Contains(string(raw), `"metadata":"{\"host\":true}"`) {
+		t.Fatalf("host token: %s", raw)
+	}
+	tok, _ = p.Token("u2", "Борис", "im-1", false, time.Now())
+	if raw, _ = base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1]); strings.Contains(string(raw), "metadata") {
+		t.Fatalf("not a host: %s", raw)
+	}
+	var muted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		switch r.URL.Path {
+		case "/twirp/livekit.RoomService/ListParticipants":
+			_, _ = w.Write([]byte(`{"participants":[
+				{"identity":"u1","tracks":[{"sid":"TR_a1","source":"MICROPHONE"}]},
+				{"identity":"u2","tracks":[{"sid":"TR_b1","source":2},{"sid":"TR_b2","source":"CAMERA"},{"sid":"TR_b3","source":"SCREEN_SHARE"},{"sid":"TR_b4","source":"SCREEN_SHARE_AUDIO"}]},
+				{"identity":"u3","tracks":[{"sid":"TR_c1","source":"MICROPHONE","muted":true}]},
+				{"identity":"EG_x","kind":"EGRESS","tracks":[{"sid":"TR_e","source":"MICROPHONE"}]}]}`))
+		case "/twirp/livekit.RoomService/MutePublishedTrack":
+			var in struct {
+				Identity string `json:"identity"`
+				TrackSid string `json:"track_sid"`
+				Muted    bool   `json:"muted"`
+			}
+			_ = json.Unmarshal(b, &in)
+			if in.Muted {
+				muted = append(muted, in.Identity+"/"+in.TrackSid)
+			}
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	p.APIURL = srv.URL
+	ctx := context.Background()
+	if n, err := p.Mute(ctx, "im-1", "", Microphone, "u1"); err != nil || n != 1 || strings.Join(muted, ",") != "u2/TR_b1" {
+		t.Fatalf("mute all: %d %v %v", n, err, muted)
+	}
+	muted = nil
+	if n, err := p.Mute(ctx, "im-1", "u2", Screen, "u1"); err != nil || n != 1 || strings.Join(muted, ",") != "u2/TR_b3,u2/TR_b4" {
+		t.Fatalf("stop the screen: %d %v %v", n, err, muted)
+	}
+	muted = nil
+	if n, err := p.Mute(ctx, "im-1", "u3", Camera, "u1"); err != nil || n != 0 || muted != nil {
+		t.Fatalf("no camera: %d %v %v", n, err, muted)
 	}
 }

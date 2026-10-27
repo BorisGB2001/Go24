@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"go24/internal/calendar"
 	"go24/internal/crm"
 	"go24/internal/feed"
 	"go24/internal/i18n"
@@ -184,7 +185,7 @@ func (s *Store) nextBranch(ctx context.Context, x Instance) (k int, joined bool,
 	return -1, true, nil
 }
 
-// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}, {created_document}.
+// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}, {created_document}, {created_task}.
 func (s *Store) fill(ctx context.Context, x Instance, text string) string {
 	return s.fillAs(ctx, x, text, true)
 }
@@ -204,6 +205,9 @@ func (s *Store) fillAs(ctx context.Context, x Instance, text string, shown bool)
 	}
 	if x.Entity != "none" {
 		pairs = append(pairs, "{title}", s.cardTitle(ctx, x.Entity, x.EntityID), "{card}", CardPath(x.Entity, x.EntityID))
+	}
+	if x.Entity == EntityList {
+		pairs = append(pairs, s.listValues(ctx, x.EntityID, shown)...)
 	}
 	return strings.NewReplacer(pairs...).Replace(text)
 }
@@ -230,6 +234,9 @@ func CardPath(entity, id string) string {
 	if entity == EntityFile {
 		return "/files/" + id + "/about"
 	}
+	if entity == EntityList {
+		return "/bp/el/" + id
+	}
 	return "/crm/" + map[string]string{"deal": "deals", "lead": "leads", "contact": "contacts", "company": "companies"}[entity] + "/" + id
 }
 
@@ -239,6 +246,10 @@ func (s *Store) cardTitle(ctx context.Context, entity, id string) string {
 		if s.Files != nil {
 			name, _, _ := s.Files.BPFile(ctx, id)
 			return name
+		}
+	case EntityList:
+		if e, err := s.element(ctx, id); err == nil {
+			return e.Name
 		}
 	case "deal":
 		if d, err := s.CRM.Deal(ctx, id); err == nil {
@@ -293,6 +304,12 @@ func (s *Store) who(ctx context.Context, x Instance, to string) (string, error) 
 				return x.StartedBy.ID, nil
 			}
 			return by, err
+		case EntityList: // who added the element
+			e, err := s.element(ctx, x.EntityID)
+			if err == nil && e.CreatedBy.ID == "" {
+				return x.StartedBy.ID, nil
+			}
+			return e.CreatedBy.ID, err
 		case "deal":
 			d, err := s.CRM.Deal(ctx, x.EntityID)
 			return d.Responsible.ID, err
@@ -382,7 +399,11 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		s.log(ctx, x.ID, x.Step, "", "step", "post:"+id)
 		return next, false, nil
 	case "update":
-		err := s.updateCard(ctx, x, st.Sets)
+		update := s.updateCard
+		if x.Entity == EntityList {
+			update = s.updateElement
+		}
+		err := update(ctx, x, st.Sets)
 		if err == nil {
 			s.log(ctx, x.ID, x.Step, "", "step", "update")
 		}
@@ -528,18 +549,62 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 			deadline = &d
 		}
 		desc := s.fill(ctx, x, "{process}: {link}")
-		key, err := s.Tasks.CreateTask(actx, x.StartedBy.ID, p, tasks.NewTask{Title: text, Description: desc, ResponsibleID: user, Priority: 1, Deadline: deadline})
+		if note := strings.TrimSpace(s.fill(ctx, x, st.Note)); note != "" {
+			desc = note + "\n\n" + desc
+		}
+		in := tasks.NewTask{Title: text, Description: desc, ResponsibleID: user, Priority: 1, Deadline: deadline,
+			RequiresControl: st.Control}
+		if st.High {
+			in.Priority = 2
+		}
+		for _, item := range st.Items {
+			in.Checklist = append(in.Checklist, s.fill(ctx, x, item))
+		}
+		for _, l := range []struct {
+			from []string
+			to   *[]string
+		}{{st.Users, &in.Accomplices}, {st.Watchers, &in.Auditors}} {
+			for _, to := range l.from {
+				u, err := s.who(ctx, x, to)
+				if err != nil {
+					return next, false, err
+				}
+				if u != user && !slices.Contains(*l.to, u) {
+					*l.to = append(*l.to, u)
+				}
+			}
+		}
+		key, err := s.Tasks.CreateTask(actx, x.StartedBy.ID, p, in)
+		if err != nil {
+			return next, false, err
+		}
+		id, err := s.Tasks.TaskIDByKey(ctx, key)
 		if err != nil {
 			return next, false, err
 		}
 		if crm.Entities[x.Entity] {
-			if id, err := s.Tasks.TaskIDByKey(ctx, key); err == nil {
-				_ = s.Tasks.AddCRMLink(actx, x.StartedBy.ID, id, CardPath(x.Entity, x.EntityID))
-			}
+			_ = s.Tasks.AddCRMLink(actx, x.StartedBy.ID, id, CardPath(x.Entity, x.EntityID))
 		}
-		s.feedReader(ctx, x, user)
+		if x.Values == nil {
+			x.Values = map[string]string{}
+		}
+		x.Values["created_task"] = "/tasks/" + key
+		if err := s.saveValues(ctx, x); err != nil {
+			return next, false, err
+		}
+		for _, u := range slices.Concat([]string{user}, in.Accomplices, in.Auditors) {
+			s.feedReader(ctx, x, u)
+		}
 		s.log(ctx, x.ID, x.Step, "", "step", "task:"+key)
-		return next, false, nil
+		if !st.Wait {
+			return next, false, nil
+		}
+		if x.branch > 0 {
+			_, err = s.db.Exec(ctx, `UPDATE bp_branches SET wait_task = $2 WHERE instance_id = $1 AND n = $3`, x.ID, id, x.branch-1)
+		} else {
+			_, err = s.db.Exec(ctx, `UPDATE bp_instances SET wait_task = $2 WHERE id = $1`, x.ID, id)
+		}
+		return next, err == nil, err
 	case "stage":
 		switch x.Entity {
 		case "deal":
@@ -573,6 +638,17 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", "absence:"+st.Absence)
 		return next, false, nil
+	case "event": // «Событие календаря»: a meeting of each of the people in their own calendar
+		ids, err := s.event(ctx, x, st, text)
+		if err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "event:"+strings.Join(ids, ","))
+		return next, false, nil
+	case "end": // «Завершение бизнес-процесса»: the process is over here, its branches and approvals with it
+		s.log(ctx, x.ID, x.Step, "", "ended", text)
+		s.notify(ctx, x.StartedBy.ID, "", x.ID, "✅ "+x.Name)
+		return next, true, s.finish(ctx, x.ID, "done")
 	case "wait":
 		wake := time.Now().AddDate(0, 0, st.Days)
 		if st.Field != "" { // «до даты» of the field: a date — its beginning; empty or past — no pause
@@ -601,6 +677,54 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		return next, false, s.webhook(ctx, x, st.URL)
 	}
 	return next, false, fmt.Errorf("unknown step %q", st.Kind)
+}
+
+// event puts the meeting of «Событие календаря» into the calendars of the step's people: from the Start field's time (a
+// date — the whole day) till End's (none — an hour later, a date — the same day).
+func (s *Store) event(ctx context.Context, x Instance, st Step, title string) ([]string, error) {
+	if s.Calendar == nil {
+		return nil, i18n.E("err.bp_no_calendar")
+	}
+	at := func(v string) (time.Time, bool, error) {
+		if t, err := time.ParseInLocation("2006-01-02T15:04", v, time.Local); err == nil {
+			return t, false, nil
+		}
+		t, err := time.ParseInLocation("2006-01-02", v, time.Local)
+		return t, true, err
+	}
+	start, allDay, err := at(x.Values[st.Start])
+	if err != nil {
+		return nil, i18n.E("err.bp_event_date")
+	}
+	end := start.Add(time.Hour)
+	if allDay {
+		end = start
+	}
+	if st.End != "" {
+		var day bool
+		if end, day, err = at(x.Values[st.End]); err != nil {
+			return nil, i18n.E("err.bp_event_date")
+		}
+		allDay = allDay && day
+	}
+	e := calendar.Event{Title: title, Description: s.fill(ctx, x, st.Note), Start: start, End: end, AllDay: allDay}
+	var ids, seen []string
+	for _, u := range st.Users {
+		user, err := s.who(ctx, x, u)
+		if err != nil {
+			return nil, err
+		}
+		if slices.Contains(seen, user) {
+			continue
+		}
+		seen = append(seen, user)
+		id, err := s.Calendar.Save(ctx, user, e, nil)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // userInfo puts the employee's card into the process's values (UserInfo).

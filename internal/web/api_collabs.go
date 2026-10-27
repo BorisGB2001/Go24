@@ -67,10 +67,11 @@ type apiCollabSettings struct {
 	ChatPerm        string `json:"chat_perm"`    // who writes in the chat: members | employees | managers
 	MsgTTL          int    `json:"msg_ttl"`      // the chat's messages go after so many seconds: 0 | 3600 | 86400 | 604800 | 2592000
 	// «Уведомления в коллабе»: what the bot tells in the chat — people, guests joining, invitations, the collab itself
-	EventsMembers bool `json:"events_members"`
-	EventsGuests  bool `json:"events_guests"`
-	EventsInvites bool `json:"events_invites"`
-	EventsCollab  bool `json:"events_collab"`
+	EventsMembers bool   `json:"events_members"`
+	EventsGuests  bool   `json:"events_guests"`
+	EventsInvites bool   `json:"events_invites"`
+	EventsCollab  bool   `json:"events_collab"`
+	StartTool     string `json:"start_tool"` // what the collab opens with: chat | tasks | drive | calendar | feed
 }
 
 type apiCollabLogEntry struct {

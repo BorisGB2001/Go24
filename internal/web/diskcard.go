@@ -80,6 +80,10 @@ func (s *Server) fileCard(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		}
 		bpWrite = s.Drive.BPRight(r.Context(), sess.UserID, "write", id) == nil
 	}
+	newVersion := false // «Загрузить новую версию»: the viewer may change the file on the drive they have
+	if err == nil && dr.Kind != "" {
+		newVersion, err = s.Drive.MayChange(r.Context(), sess.UserID, dr, id)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/disk/my")
 		return
@@ -88,7 +92,7 @@ func (s *Server) fileCard(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		"Card": c, "Type": fileType(c.Name, c.ContentType), "Versions": versions, "At": at, "Me": sess.UserID, "Admin": tasks.IsAdmin(r.Context()),
 		"Sharing": sh, "Drive": dr, "Users": users, "Departments": depts, "FileAccesses": drive.FileAccesses,
 		"LinksOff": lim.NoLinks, "Office": s.Office != nil, "Base": s.BaseURL, "Back": "/files/" + id + "/about#sharing",
-		"BPTemplates": bpTpls, "BPInstances": bpRuns, "BPWrite": bpWrite}})
+		"BPTemplates": bpTpls, "BPInstances": bpRuns, "BPWrite": bpWrite, "NewVersion": newVersion}})
 }
 
 // cardDrive is the drive of the file the viewer changes its «Общий доступ» in ("" — none): their own «Мой диск»,

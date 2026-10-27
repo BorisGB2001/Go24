@@ -89,6 +89,11 @@
         {{else}}<input type="text" name="f_{{.ID}}" value="{{.Value}}" maxlength="2000">{{end}}{{end}}{{end}}
         <p><button class="primary">{{t "common.save"}}</button></p></form></details>{{end}}
   </div>{{end}}{{end}}
+  {{if not $d.Tab}}{{with $d.Courses}}<div class="card" id="pcourses">
+    <h2>{{icon "school"}} {{t "learn.passed_courses"}} <span class="muted small">{{len .}}</span></h2>
+    <ul class="lprofile">{{range .}}<li class="row"><a href="/company/learning/{{.ID}}">{{.Title}}</a><span class="muted small">{{day .At}}</span>
+      {{if or $d.Me $d.Admin}}<a class="muted small" href="/company/learning/{{.ID}}/certificate?user={{$p.ID}}" target="_blank" title="{{t "learn.certificate"}}">{{icon "certificate"}}</a>{{end}}</li>{{end}}</ul>
+  </div>{{end}}{{end}}
 
   {{if eq $d.Tab "thanks"}}<div class="card" id="thanks">
     <h2 class="row">{{icon "star"}} {{t "gratitude.received"}} <span class="muted small">{{len $d.Thanks}}</span><span style="flex:1"></span>
@@ -158,6 +163,18 @@
     <p><a href="/telephony/calls{{if ne $l.UserID $.User.UserID}}?user={{$l.UserID}}{{end}}">{{icon "list"}} {{t "tel.calls"}}</a></p>
     <form method="post" action="/u/{{$l.UserID}}/telephony/password" data-confirm="{{t "tel.password_confirm" $l.Name}}">
       <button class="ghost">{{icon "key"}} {{t "tel.new_password"}}</button></form>
+    {{$pr := .Prefs}}<form method="post" action="/u/{{$l.UserID}}/telephony/prefs" class="stack" style="margin-top:12px">
+      <h3>{{t "tel.prefs"}}</h3>
+      {{if .OutLines}}<label>{{t "tel.out_line"}}
+        <select name="out"><option value="">{{t "tel.out_line_first"}}</option>{{range .OutLines}}<option value="{{.ID}}" {{if eq .ID $pr.OutTrunk}}selected{{end}}>{{.Name}}{{with .Number}} · {{.}}{{end}}</option>{{end}}</select></label>
+      {{else}}<p class="muted small">{{t "tel.out_line_none"}}</p>{{end}}
+      <label>{{t "tel.forward"}}
+        <select name="forward">{{range .Forwards}}<option value="{{.}}" {{if eq . $pr.Forward}}selected{{end}}>{{t (print "tel.forward." (or . "never"))}}</option>{{end}}</select></label>
+      <label>{{t "tel.forward_after"}} <input type="number" name="after" min="5" max="60" value="{{$pr.After}}" style="width:6em"></label>
+      <label>{{t "tel.forward_to"}} <input type="tel" name="to" value="{{or $pr.To $p.MobilePhone}}" inputmode="tel" placeholder="+7 900 000-00-00"></label>
+      <p class="muted small">{{t "tel.forward_hint"}}</p>
+      <div><button class="primary">{{t "common.save"}}</button></div>
+    </form>
   </div>{{end}}
   {{if and $d.Admin (not $d.Me)}}
   <div class="card">

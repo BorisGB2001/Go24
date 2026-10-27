@@ -27,14 +27,99 @@
     more.addEventListener('click', () => { old.forEach(c => { c.hidden = false; }); more.remove(); });
     box.prepend(more);
   });
+  // the card of the first link of a post or a comment (site, title, text and picture of the page);
+  // go24 fetches the page and its picture (as for the messenger), links inside go24 have none
+  const cards = new Map();
+  const linkCard = t => {
+    if (t.nextElementSibling?.classList.contains('im-link')) t.nextElementSibling.remove();
+    const a = [...t.querySelectorAll('a[href]')].find(a => /^https?:$/.test(a.protocol) && a.host !== location.host && !a.closest('pre, code, blockquote'));
+    if (!a) return;
+    const url = a.href;
+    if (!cards.has(url)) {
+      cards.set(url, fetch('/im/link?url=' + encodeURIComponent(url), { headers: { Accept: 'application/json' } })
+        .then(res => res.status === 200 ? res.json() : null).then(p => p && p.title ? p : null).catch(() => null));
+    }
+    cards.get(url).then(p => {
+      if (!p || !t.isConnected || t.nextElementSibling?.classList.contains('im-link')) return;
+      const c = document.createElement('a');
+      c.className = 'im-link flink'; c.href = url; c.target = '_blank'; c.rel = 'noopener noreferrer';
+      if (p.image) { const i = document.createElement('img'); i.loading = 'lazy'; i.alt = ''; i.src = p.image; i.onerror = () => i.remove(); c.append(i); }
+      const b = document.createElement('span');
+      [['site', p.site], ['title', p.title], ['desc', p.text]].forEach(([k, v]) => { if (!v) return; const e = document.createElement(k === 'title' ? 'b' : 'span'); e.className = k; e.textContent = v; b.append(e); });
+      c.append(b);
+      t.after(c);
+    });
+  };
+  // a long post: its text is folded, «Развернуть» shows all of it and «Свернуть» folds it back
+  const foldAt = 400;
+  const fold = root => root.querySelectorAll('.fbody').forEach(b => {
+    if (b.dataset.folded || b.scrollHeight <= foldAt * 1.25) return;
+    b.dataset.folded = '1';
+    b.classList.add('ffold');
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'ghostbtn small ffold-btn';
+    more.textContent = feed.dataset.expand;
+    more.addEventListener('click', () => {
+      const open = b.classList.toggle('ffold');
+      more.textContent = open ? feed.dataset.expand : feed.dataset.collapse;
+      if (open) b.closest('[data-post-id]')?.scrollIntoView({ block: 'nearest' });
+    });
+    b.after(more);
+  });
+  const linkCards = root => root.querySelectorAll('.fbody, [data-cview]').forEach(linkCard);
   const node = (html) => {
     const t = document.createElement('template');
     t.innerHTML = html.trim();
     const n = t.content.firstElementChild;
-    if (n) collapse(n);
+    if (n) { collapse(n); linkCards(n); fold(n); }
     return n;
   };
   collapse(feed);
+  linkCards(feed);
+  fold(feed);
+
+  // the editor's buttons of a post: the selection (none — an empty pair, the caret inside) is wrapped
+  // in a BB code; the lists start the selected lines with "• " or "1. "; «Ссылка» asks for the address. Ctrl+B, Ctrl+I,
+  // Ctrl+U do the same in any text field of the feed.
+  const format = (input, kind, ask) => {
+    const { selectionStart: a, selectionEnd: z, value: v } = input;
+    let sel = v.slice(a, z), out, caret;
+    if (kind === 'list' || kind === 'olist') {
+      const from = v.lastIndexOf('\n', a - 1) + 1; // whole lines
+      sel = v.slice(from, z);
+      out = sel.split('\n').map((l, i) => (kind === 'list' ? '• ' : `${i + 1}. `) + l.replace(/^(• |\d+\. )/, '')).join('\n');
+      input.setRangeText(out, from, z, 'end');
+    } else {
+      let open = `[${kind}]`;
+      const close = `[/${kind}]`;
+      if (kind === 'url') {
+        const href = (ask(input.closest('form')?.querySelector('[data-fmtbar]')?.dataset.urlAsk || '', 'https://') || '').trim();
+        if (!href || href === 'https://') return;
+        open = `[url=${href}]`;
+        if (!sel) sel = href;
+      }
+      out = open + sel + close;
+      caret = sel ? a + out.length : a + open.length;
+      input.setRangeText(out, a, z, 'end');
+      input.setSelectionRange(caret, caret);
+    }
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const bodyOf = el => el.closest('form')?.querySelector('textarea[name=body]');
+  feed.addEventListener('mousedown', e => { if (e.target.closest?.('[data-fmt]')) e.preventDefault(); }); // keeps the selection
+  feed.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-fmt]');
+    const input = b && bodyOf(b);
+    if (input) format(input, b.dataset.fmt, (q, d) => prompt(q, d));
+  });
+  feed.addEventListener('keydown', e => {
+    const kind = { b: 'b', i: 'i', u: 'u' }[e.key?.toLowerCase()];
+    if (!kind || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || !e.target.matches?.('textarea[name=body]')) return;
+    e.preventDefault();
+    format(e.target, kind);
+  });
 
   // the comment field: grows with the text, Enter sends, Shift+Enter starts a new line
   const grow = el => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
@@ -153,6 +238,8 @@
   feed.addEventListener('change', e => {
     if (e.target.matches('[data-important], [data-until-sel]')) untilShow(e.target.form);
     if (e.target.matches('[data-feed-to]')) toShow(e.target.form);
+    // the filter's date: «с — по» for «Диапазон» only
+    if (e.target.matches('[data-period]')) e.target.form.querySelector('[data-period-range]').hidden = e.target.value !== 'range';
   });
   form?.addEventListener('reset', () => setTimeout(() => {
     form.querySelector('[data-feed-people]')?.querySelectorAll('.upick-chip').forEach(c => c.remove());
@@ -374,17 +461,34 @@
     if (picker && !e.target.closest('[data-react]')) closePicker();
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeWho(); closePicker(); } });
+  document.addEventListener('click', e => { // «Ещё» of a post closes on a click elsewhere
+    document.querySelectorAll('.fmore[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+  });
 
   feed.addEventListener('click', async e => {
     const card = e.target.closest('[data-post-id]');
     if (!card) return;
     const id = card.dataset.postId;
+    // «Ещё» of the post closes on the choice of an action
+    if (e.target.closest('.fmore .pop button:not([data-plink]), .fmore .pop a')) e.target.closest('.fmore').open = false;
+    const plink = e.target.closest('[data-plink]'); // «Ссылка на сообщение»: the post alone
+    if (plink) {
+      const url = location.origin + '/feed?post=' + id;
+      try { await navigator.clipboard.writeText(url); } catch { prompt('', url); return; }
+      plink.querySelector('span').textContent = plink.dataset.copied;
+      setTimeout(() => { plink.querySelector('span').textContent = plink.dataset.label; plink.closest('.fmore').open = false; }, 1200);
+      return;
+    }
     const mark = e.target.closest('[data-mark]'); // «В избранное», «Закрепить», «Следить»: the viewer's own marks
     if (mark) {
       const { ok, data } = await post('/feed/' + id + '/' + mark.dataset.mark, {});
       if (!ok) { alert(data.error || failed); return; }
       mark.classList.toggle('on', data.on);
-      if (mark.dataset.hintOn) mark.title = data.on ? mark.dataset.hintOn : mark.dataset.hintOff;
+      if (mark.dataset.hintOn) { // the label of an item of «Ещё», the hint of an icon
+        const hint = data.on ? mark.dataset.hintOn : mark.dataset.hintOff;
+        const label = mark.querySelector('span');
+        if (label) label.textContent = hint; else mark.title = hint;
+      }
       if (mark.dataset.mark === 'pin' && feed.dataset.general !== undefined) location.reload(); // the pinned go above
       // «Скрыть» takes the post out of the feed, «Вернуть в ленту» — out of «Скрытые»
       if (mark.dataset.mark === 'hide' && data.on === !card.closest('[data-hidden-view]')) card.remove();

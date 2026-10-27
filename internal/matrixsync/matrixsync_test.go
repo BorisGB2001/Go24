@@ -119,6 +119,31 @@ func (f *fakeSynapse) chatEvent(room, sender, typ, key string, content map[strin
 	f.sent = append(f.sent, sentEvent{Room: room, Sender: sender, Content: c, ID: "$s" + strconv.Itoa(len(f.sent))})
 }
 
+// lastState is the content of the room's state event of the type last put (nil — none).
+func (f *fakeSynapse) lastState(room, typ string) map[string]any {
+	for i := len(f.state) - 1; i >= 0; i-- {
+		if strings.HasPrefix(f.state[i].Path, room+"/state/"+typ+"/") {
+			return f.state[i].Content
+		}
+	}
+	return nil
+}
+
+// restricted: the room's join rule lets the person in — "restricted" to a room (a space) they are in.
+func (f *fakeSynapse) restricted(room, who string) bool {
+	jr := f.lastState(room, "m.room.join_rules")
+	if jr == nil || jr["join_rule"] != "restricted" {
+		return false
+	}
+	allow, _ := jr["allow"].([]any)
+	for _, a := range allow {
+		if in, _ := a.(map[string]any)["room_id"].(string); f.rooms[in][who] {
+			return true
+		}
+	}
+	return false
+}
+
 // allowed: someone has the power level needed in the room (rooms made without levels let anyone in them do anything).
 // level is a level of the room's power levels (def — none set).
 func (f *fakeSynapse) level(room, key string, def float64) float64 {
@@ -228,14 +253,52 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out(map[string]any{})
 	case strings.HasPrefix(path, "/_matrix/client/v3/join/"):
 		room := strings.TrimPrefix(path, "/_matrix/client/v3/join/")
-		if !f.invited[room][who] && !f.rooms[room][who] {
+		open := !f.invited[room][who] && !f.rooms[room][who] && f.restricted(room, who)
+		if !f.invited[room][who] && !f.rooms[room][who] && !open {
 			w.WriteHeader(403)
 			out(map[string]string{"errcode": "M_FORBIDDEN"})
 			return
 		}
+		if open { // as Synapse: a join by the room's join rule names who authorised it
+			f.chatEvent(room, who, "m.room.member", who, map[string]any{"membership": "join", "join_authorised_via_users_server": "@x:t.lan"})
+		}
 		f.rooms[room][who] = true
 		out(map[string]any{})
+	case path == "/_matrix/client/v3/joined_rooms":
+		rooms := []string{}
+		for id, m := range f.rooms {
+			if m[who] {
+				rooms = append(rooms, id)
+			}
+		}
+		out(map[string]any{"joined_rooms": rooms})
+	case strings.HasPrefix(path, "/_synapse/admin/v1/rooms/") && strings.HasSuffix(path, "/state"):
+		room := strings.TrimSuffix(strings.TrimPrefix(path, "/_synapse/admin/v1/rooms/"), "/state")
+		key := ""
+		ev := func(typ, k string, c map[string]any) map[string]any {
+			return map[string]any{"type": typ, "state_key": k, "sender": "@x:t.lan", "content": c}
+		}
+		state := []map[string]any{ev("m.room.name", key, map[string]any{"name": f.names[room]})}
+		for _, typ := range []string{"m.room.join_rules", "m.room.topic"} {
+			if c := f.lastState(room, typ); c != nil {
+				state = append(state, ev(typ, key, c))
+			}
+		}
+		if f.levels[room] != nil {
+			state = append(state, ev("m.room.power_levels", key, f.levels[room]))
+		}
+		for mx, in := range f.rooms[room] {
+			if in {
+				state = append(state, ev("m.room.member", mx, map[string]any{"membership": "join"}))
+			}
+		}
+		out(map[string]any{"state": state})
 	case path == "/_matrix/client/v3/createRoom":
+		if v, ok := body["invite"]; ok && v == nil { // as Synapse: a null list of invitations fails
+			w.WriteHeader(500)
+			out(map[string]string{"errcode": "M_UNKNOWN"})
+			return
+		}
 		f.nroom++
 		id := "!r" + string(rune('a'+f.nroom)) + ":t.lan"
 		f.rooms[id] = map[string]bool{who: true}
@@ -405,7 +468,7 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				out(map[string]string{"errcode": "M_NOT_FOUND"})
 			case typ == "m.room.pinned_events":
 				out(map[string]any{"pinned": f.pins[room]})
-			case typ == "go24.autodelete" || typ == "m.room.topic": // the last one put, as Matrix keeps a room's state
+			case typ == "go24.autodelete" || typ == "m.room.topic" || typ == "m.room.join_rules": // the last one put, as Matrix keeps a room's state
 				for i := len(f.state) - 1; i >= 0; i-- {
 					if strings.HasPrefix(f.state[i].Path, room+"/state/"+typ+"/") {
 						out(f.state[i].Content)
@@ -581,9 +644,9 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		out(map[string]any{"chunk": chunk})
 	case strings.Contains(path, "/messages"):
-		room := strings.TrimPrefix(path, "/_matrix/client/v3/rooms/")
+		room := strings.TrimPrefix(strings.TrimPrefix(path, "/_matrix/client/v3/rooms/"), "/_synapse/admin/v1/rooms/")
 		room = room[:strings.Index(room, "/")]
-		if !f.rooms[room][who] {
+		if !f.rooms[room][who] && !strings.HasPrefix(path, "/_synapse/admin/") {
 			w.WriteHeader(403)
 			out(map[string]string{"errcode": "M_FORBIDDEN"})
 			return
