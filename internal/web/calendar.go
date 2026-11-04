@@ -236,6 +236,9 @@ func (s *Server) calendarPage(w http.ResponseWriter, r *http.Request, sess auth.
 func (s *Server) calRange(r *http.Request, sess auth.Session, from, to time.Time) ([]calendar.Event, *calScope, error) {
 	if key := r.URL.Query().Get("project"); key != "" {
 		p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, key)
+		if err == nil && !p.ToolOn("calendar") { // «Возможности группы»: the calendar is switched off
+			err = tasks.ErrToolOff
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -479,6 +482,8 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		"CanEdit": e.ID == "" || (e.OwnerID == actor || tasks.IsAdmin(r.Context())) && !e.ReadOnly && !e.Hidden, "At": at,
 		"Colors": calendar.Colors, "Zones": calendar.Zones(e.Start, e.TZ), "PortalTZ": portalTZ(),
 	}
+	// «Участники могут приглашать других»: one of the invited who has not declined adds people on the page
+	data["CanInvite"] = e.ID != "" && data["CanEdit"] != true && e.AllowInvite && e.MyStatus != "" && e.MyStatus != "declined"
 	if data["Sections"], err = s.Calendar.Sections(r.Context(), actor); err != nil { // one's own calendars
 		s.taskErr(w, r, err, "/calendar")
 		return
@@ -528,8 +533,8 @@ func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 		data["Admin"] = tasks.IsAdmin(r.Context())
 	}
-	if room, ev := r.URL.Query().Get("im_room"), r.URL.Query().Get("im_event"); e.ID == "" && room != "" && ev != "" && s.Matrix != nil {
-		s.eventFromMessage(r, sess, room, ev, data) // «Создать встречу» of a chat message
+	if room, ev := r.URL.Query().Get("im_room"), r.URL.Query().Get("im_event"); e.ID == "" && room != "" && s.Matrix != nil {
+		s.eventFromMessage(r, sess, room, ev, data) // «Создать встречу» of a chat message or of the chat's panel
 	}
 	s.render(w, r, "event", page{TitleKey: title, Nav: "calendar", Data: data})
 }
@@ -541,7 +546,7 @@ func copyOf(src calendar.Event, viewer string) calendar.Event {
 		Description: src.Description, Where: src.Where, Start: src.Start, End: src.End, AllDay: src.AllDay,
 		Repeat: src.Repeat, Every: src.Every, Until: src.Until, Days: slices.Clone(src.Days), Count: src.Count, Reminds: slices.Clone(src.Reminds), TZ: src.TZ,
 		Accessibility: src.Accessibility, Private: src.Private, Video: src.Video,
-		Color: src.Color, Important: src.Important}
+		Color: src.Color, Important: src.Important, AllowInvite: src.AllowInvite, QuietAnswers: src.QuietAnswers, HideGuests: src.HideGuests}
 	if src.OwnerID == viewer {
 		e.CalendarID = src.CalendarID
 	} else {
@@ -640,6 +645,11 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		} else if before != nil {
 			e.CategoryID = before.CategoryID
 		}
+		if r.FormValue("opts_on") == "1" { // «Ещё»: the options for the meeting's people (a form without them keeps them)
+			e.AllowInvite, e.QuietAnswers, e.HideGuests = r.FormValue("allow_invite") == "on", r.FormValue("notify_answers") != "on", r.FormValue("hide_guests") == "on"
+		} else if before != nil {
+			e.AllowInvite, e.QuietAnswers, e.HideGuests = before.AllowInvite, before.QuietAnswers, before.HideGuests
+		}
 		if at, perr := time.ParseInLocation("2006-01-02T15:04", r.FormValue("at"), time.Local); perr == nil && e.ID != "" {
 			// an occurrence of a repeated meeting; one taken out of the series is not sent by mail (it has no
 			// RECURRENCE-ID yet), the whole series is
@@ -655,7 +665,7 @@ func (s *Server) eventSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			if m := s.eventMailSend(r, sess, id, before); m != "" {
 				msg = m
 			}
-			if room, ev := r.FormValue("im_room"), r.FormValue("im_event"); e.ID == "" && room != "" && ev != "" && s.Matrix != nil {
+			if room, ev := r.FormValue("im_room"), r.FormValue("im_event"); e.ID == "" && room != "" && s.Matrix != nil {
 				s.eventMessageDone(r, sess, room, ev, id) // of a chat message: the answer there
 			}
 		}
@@ -726,6 +736,28 @@ func (s *Server) eventRespond(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	if r.FormValue("back") != "" { // answered from the search («Приглашения»): back to it
 		back = calBack(r)
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// eventAddPeople adds people to the meeting from its page (see calendar.Invite).
+func (s *Server) eventAddPeople(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.taskErr(w, r, i18n.E("err.bad_form"), "/calendar/"+id)
+		return
+	}
+	actor, r, err := s.calActor(r, sess)
+	if err == nil {
+		_, err = s.Calendar.Invite(r.Context(), actor, id, r.Form["invite"])
+	}
+	if err != nil {
+		s.taskErr(w, r, err, "/calendar/"+id)
+		return
+	}
+	back := "/calendar/" + id
+	if actor != sess.UserID {
+		back += "?as=" + url.QueryEscape(actor)
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }

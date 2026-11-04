@@ -1,11 +1,11 @@
-{{define "content"}}{{$d := .Data}}
+{{define "content"}}{{$d := .Data}}{{$chat := ""}}{{$inchat := ""}}{{with $d.Chat}}{{$chat = .}}{{end}}{{with $d.InChat}}{{$inchat = .}}{{end}}
 <div class="pagehead"><h1>{{t "sign.new"}}</h1></div>
 <form method="post" action="/sign" enctype="multipart/form-data" class="card form-narrow" data-native>
   {{with $d.Collab}}<input type="hidden" name="collab" value="{{.Key}}"><p class="small">{{icon "users-group"}} {{t "sign.collab.from" .Name}}</p>{{end}}
   {{if $d.Doc}}<input type="hidden" name="kind" value="{{$d.Kind}}"><input type="hidden" name="id" value="{{$d.ID}}"><input type="hidden" name="doc" value="{{$d.Doc.ID}}">
   <p>{{icon "file-text"}} <a href="/crm/{{$d.Kind}}/{{$d.ID}}/documents/{{$d.Doc.ID}}">{{$d.Doc.FileName}}</a></p>
   {{else if $d.Tpl}}<input type="hidden" name="tpl" value="{{$d.Tpl.ID}}"><p>{{icon "file-text"}} {{$d.Tpl.FileName}} <span class="small muted">· {{t "sign.tpl.of" $d.Tpl.Title}}</span></p>
-  {{else}}<label>{{t "sign.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>{{end}}
+  {{else}}<label>{{t "sign.file"}} <span class="small muted">· {{t "sign.file_types"}}</span></label><input type="file" name="file" accept=".docx,.pdf,.jpg,.jpeg,.png,.doc,.odt,.rtf" multiple required><p class="small muted">{{t "sign.files_hint"}}</p>{{end}}
   <label>{{t "sign.doc_title"}}</label><input type="text" name="title" maxlength="300" value="{{$d.Title}}" {{if $d.Doc}}required{{end}} placeholder="{{t "sign.title_hint"}}">
   <h3>{{icon "users"}} {{t "sign.side.company"}}</h3>
   <label>{{t "sign.reviewers"}}</label>{{template "upick" (upick "reviewer" $d.Reviewers $d.Users "multi" "ph" (t "sign.reviewers_ph"))}}
@@ -14,17 +14,22 @@
   <p class="small muted">{{t "sign.company_hint"}}</p>
   <h3>{{icon "user"}} {{t "sign.side.client"}}</h3>
   <div data-rows="{{$d.SideMax}}">
-    {{template "sgclient" (list $d.ClientName $d.ClientEmail)}}
+    {{template "sgclient" (list $d.ClientName $d.ClientEmail $d.ClientPhone $chat $inchat)}}
     <p><button type="button" class="ghost small" data-add-row="sg-client">{{icon "plus"}} {{t "sign.client_add"}}</button>
       {{range $i, $g := $d.Guests}}<button type="button" class="ghost small" data-add-row="sg-guest-{{$i}}" title="{{$g.Email}}">{{icon "plus"}} {{$g.Name}} <span class="pill guest">{{t "collab.guest"}}</span></button>{{end}}</p>
   </div>
-  <template id="sg-client">{{template "sgclient" (list "" "")}}</template>
-  {{range $i, $g := $d.Guests}}<template id="sg-guest-{{$i}}">{{template "sgclient" (list $g.Name $g.Email)}}</template>{{end}}
+  <template id="sg-client">{{template "sgclient" (list "" "" "" $chat "")}}</template>
+  {{range $i, $g := $d.Guests}}<template id="sg-guest-{{$i}}">{{template "sgclient" (list $g.Name $g.Email "" "" "")}}</template>{{end}}
   <p class="small muted">{{t "sign.client_hint"}}</p>
+  <label for="sg-qes">{{icon "certificate"}} {{t "sign.qes.kind"}}</label><select id="sg-qes" name="qes">
+    <option value="">{{t "sign.qes.kind_simple"}}</option><option value="company">{{t "sign.qes.kind_company"}}</option><option value="all">{{t "sign.qes.kind_all"}}</option></select>
+  <p class="small muted">{{t "sign.qes.kind_hint"}}</p>
   <label>{{icon "eye"}} {{t "sign.observers"}}</label>{{template "upick" (upick "observer" $d.Observers $d.Users "multi" "ph" (t "sign.observers_ph"))}}
   <p class="small muted">{{t "sign.observers_hint"}}</p>
   <label for="sg-remind">{{icon "bell"}} {{t "sign.remind"}}</label>{{template "sgremind" $d.Remind}}
   <p class="small muted">{{t "sign.remind_hint"}}</p>
+  <label for="sg-deadline">{{icon "calendar-event"}} {{t "sign.deadline"}}</label><input type="date" id="sg-deadline" name="deadline" value="{{$d.Deadline}}" min="{{$d.Today}}" style="width:12em">
+  <p class="small muted">{{t "sign.deadline_hint"}}</p>
   {{if not (or $d.Doc $d.Tpl)}}<label class="check"><input type="checkbox" name="save_template" value="1"> {{t "sign.tpl.save"}}</label>
   <p class="small muted">{{t "sign.tpl.save_hint"}}</p>{{end}}
   <p><button class="primary">{{icon "send"}} {{t "sign.send"}}</button>

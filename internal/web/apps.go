@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -240,8 +241,27 @@ func (s *Server) appTab(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		http.Error(w, s.tr(r, "err.not_found"), http.StatusNotFound)
 		return
 	}
-	options, _ := json.Marshal(apps.Options(p.Placement, r.URL.Query().Get("id")))
-	s.appFrame(w, r, sess, a, p.Handler, p.Placement, string(options), true)
+	options, err := s.placeOptions(r, sess, p)
+	if err != nil {
+		http.Error(w, s.tr(r, "err.not_found"), http.StatusNotFound)
+		return
+	}
+	s.appFrame(w, r, sess, a, p.Handler, p.Placement, options, true)
+}
+
+// placeOptions are PLACEMENT_OPTIONS of the place opened: of the card id=, or of the messenger's chat room= (and
+// message msg=, imapps.go).
+func (s *Server) placeOptions(r *http.Request, sess auth.Session, p apps.Placement) (string, error) {
+	var v any = apps.Options(p.Placement, r.FormValue("id"))
+	if slices.Contains(apps.IMPlaces, p.Placement) {
+		o, err := s.imAppOptions(r, sess, p, r.FormValue("room"), r.FormValue("msg"))
+		if err != nil {
+			return "", err
+		}
+		v = o
+	}
+	b, err := json.Marshal(v)
+	return string(b), err
 }
 
 // appFrame renders the page posting the employee's new tokens to the handler: the application's own page
@@ -286,8 +306,7 @@ func (s *Server) appFrameAuth(w http.ResponseWriter, r *http.Request, sess auth.
 		var p apps.Placement
 		if p, a, err = s.Apps.Placement(ctx, tab, sess.UserID); err == nil {
 			placement = p.Placement
-			o, _ := json.Marshal(apps.Options(p.Placement, r.FormValue("id")))
-			options = string(o)
+			options, err = s.placeOptions(r, sess, p)
 		}
 	} else if a, err = s.Apps.Get(ctx, r.FormValue("app")); err == nil {
 		if !a.Installed() || a.APIOnly {

@@ -44,6 +44,11 @@ type Service struct {
 	ThreadHint string // line under a task's thread header, in the installation's language
 	FeedName   string // name of the company feed room
 	GuestMark  string // after a guest's name in a collab room: «Анна (гость)»
+	// «Общий чат»: its name ("" — there is none), the bot's welcome of a new employee, the Authentik groups whose
+	// members are administrators (they write in it when only administrators do)
+	GeneralName  string
+	GeneralHello func(name string) string
+	AdminGroups  []string
 	// notifications repeated in the messenger (nil: not sent there)
 	Notify     *notify.Store
 	NotifyText func(notify.Item) string // one line of a notification, in the installation's language
@@ -55,6 +60,15 @@ type Service struct {
 
 	// a bot's event is queued for its application (go24 worker delivers it at once; nil: on its next round)
 	BotQueued func()
+
+	// CoPilot (go24 worker; nil: there is no CoPilot): the answer to a conversation through the AI connection of
+	// userID (about: what it knows of the chat's collab, "" — none), what went wrong in words, its name and greetings
+	// in a new private chat and in a new «Чат с CoPilot» of a collab, in the installation's language
+	CoPilotAsk         func(ctx context.Context, userID, about string, turns []Turn) (string, error)
+	CoPilotError       func(error) string
+	CoPilotName        string
+	CoPilotHello       string
+	CoPilotCollabHello string
 
 	// Remote: this process serves pages only; reconciling and bridging run in go24 worker (Wake notifies it)
 	Remote bool
@@ -105,7 +119,11 @@ func (s *Service) Run(ctx context.Context) {
 	go s.statusLoop(ctx)
 	go s.autoDeleteLoop(ctx)
 	go s.collabLogLoop(ctx)
+	if err := s.EnsureCoPilot(ctx); err != nil {
+		s.Log.Error("matrix: copilot", "err", err)
+	}
 	go s.botLoop(ctx)
+	go s.imV2Loop(ctx)
 	go func() { // go24 web asks for a reconcile (new project, members, employees)
 		w := s.listen(ctx, "go24_matrix_wake")
 		for {
@@ -394,9 +412,10 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	grows.Close()
 	all := map[string]bool{}
+	staff := map[string]string{} // go24 user → Matrix ID, of the employees
 	for u, mx := range active {
 		if _, guest := guests[u]; !guest {
-			all[mx] = true
+			all[mx], staff[u] = true, mx
 		}
 	}
 	space, _, err := s.ensureRoom(ctx, "space", nil, s.Company, "go24")
@@ -414,6 +433,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if err := s.members(ctx, feedRoom, all); err != nil {
 			return err
 		}
+	}
+	if err := s.reconcileGeneral(ctx, staff); err != nil {
+		return err
 	}
 
 	// project rooms: projects whose tasks every member sees

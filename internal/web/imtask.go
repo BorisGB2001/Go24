@@ -20,9 +20,9 @@ import (
 
 // ---------- a task made of a chat message («Создать задачу» in the message's menu) ----------
 
-// imSource is the message a new task is made of.
+// imSource is the message a new task is made of; Event "" — of none, from the chat's panel (Chat is its name).
 type imSource struct {
-	Room, Event, Sender string
+	Room, Event, Sender, Chat string
 }
 
 // imMessageURL is the go24 address of a chat message (the chat opened at it).
@@ -31,14 +31,24 @@ func (s *Server) imMessageURL(room, event string) string {
 }
 
 // taskFromMessage fills the new task's form: the title of the message's first line, the message and a link to it in
-// the description, the chat's project (a collab too) when the chat has one.
+// the description, the chat's project (a collab too) when the chat has one. With no message (event "") — a task of the
+// chat itself, from its panel's «Задачи».
 func (s *Server) taskFromMessage(r *http.Request, sess auth.Session, room, event string, f *taskForm) {
-	m, chat, projectID, err := s.Matrix.One(r.Context(), sess.UserID, room, event)
-	if err != nil {
-		return
+	var projectID string
+	if event == "" {
+		chat, project, err := s.Matrix.ChatInfo(r.Context(), sess.UserID, room)
+		if err != nil {
+			return
+		}
+		f.IM, projectID = &imSource{Room: room, Chat: chat}, project
+	} else {
+		m, chat, project, err := s.Matrix.One(r.Context(), sess.UserID, room, event)
+		if err != nil {
+			return
+		}
+		f.IM, projectID = &imSource{Room: room, Event: event, Sender: m.SenderName}, project
+		f.Title, f.Description = s.messageTask(r, m, chat, s.imMessageURL(room, event))
 	}
-	f.IM = &imSource{Room: room, Event: event, Sender: m.SenderName}
-	f.Title, f.Description = s.messageTask(r, m, chat, s.imMessageURL(room, event))
 	if projectID != "" {
 		for _, p := range f.Projects {
 			if p.ID == projectID {
@@ -72,14 +82,17 @@ func (s *Server) messageTask(r *http.Request, m matrixsync.Message, chat, link s
 	return title, clipText(head+"\n\n"+body+"\n\n"+link, 20000)
 }
 
-// taskMessageDone answers the message in its chat with the new task (as the person who made it) and copies the
-// message's file to the task.
+// taskMessageDone answers the message in its chat with the new task (as the person who made it), ties the task to
+// the chat (its panel's «Задачи») and copies the message's file to the task. With no message — a line in the chat.
 func (s *Server) taskMessageDone(r *http.Request, sess auth.Session, room, event, key string) {
 	ctx := r.Context()
-	m, _, _, err := s.Matrix.One(ctx, sess.UserID, room, event)
-	if err != nil {
-		s.Log.Warn("task of a message", "task", key, "err", err)
-		return
+	var m matrixsync.Message
+	var err error
+	if event != "" {
+		if m, _, _, err = s.Matrix.One(ctx, sess.UserID, room, event); err != nil {
+			s.Log.Warn("task of a message", "task", key, "err", err)
+			return
+		}
 	}
 	id, err := s.Tasks.TaskIDByKey(ctx, key)
 	var t tasks.Task
@@ -91,6 +104,10 @@ func (s *Server) taskMessageDone(r *http.Request, sess auth.Session, room, event
 		return
 	}
 	link := strings.TrimRight(s.BaseURL, "/") + "/t/" + key
+	if err := s.Matrix.TieItem(ctx, sess.UserID, room, "task", t.ID, event); err != nil {
+		s.Log.Warn("task of a chat", "task", key, "err", err)
+		return
+	}
 	if _, err := s.Matrix.Reply(ctx, sess.UserID, room, s.tr(r, "im.task_made", key, t.Title, link), m.ThreadRoot, event); err != nil {
 		s.Log.Warn("task of a message: the answer in the chat", "task", key, "err", err)
 	}

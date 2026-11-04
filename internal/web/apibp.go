@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -29,6 +30,7 @@ func (s *Server) apiBPRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/bp/instances", s.api("bp:read", s.apiBPInstances))
 	mux.HandleFunc("GET /api/v1/bp/instances/{id}", s.api("bp:read", s.apiBPInstance))
 	mux.HandleFunc("POST /api/v1/bp/instances/{id}/stop", s.api("bp:write", s.apiBPStop))
+	mux.HandleFunc("POST /api/v1/bp/instances/{id}/command", s.api("bp:write", s.apiBPCommand))
 	mux.HandleFunc("DELETE /api/v1/bp/instances/{id}", s.api("bp:write", s.apiBPDeleteInstance))
 	mux.HandleFunc("GET /api/v1/bp/tasks", s.api("bp:read", s.apiBPTasks))
 	mux.HandleFunc("POST /api/v1/bp/tasks/{id}/complete", s.api("bp:write", s.apiBPComplete))
@@ -200,6 +202,7 @@ type apiBPInstance struct {
 	EntityID   string            `json:"entity_id,omitempty"`
 	Status     string            `json:"status"` // running, done, rejected, failed, stopped
 	Step       int               `json:"step"`   // the step it is on (running)
+	Label      string            `json:"label"`  // the status «Установить статус» set
 	Values     map[string]string `json:"values"`
 	StartedBy  apiUser           `json:"started_by"`
 	CreatedAt  time.Time         `json:"created_at"`
@@ -207,16 +210,17 @@ type apiBPInstance struct {
 	WakeAt     *time.Time        `json:"wake_at,omitempty"` // a pause ends
 	URL        string            `json:"url"`
 	// one process, not the list
-	CanStop bool         `json:"can_stop,omitempty"`
-	Fields  []bp.Field   `json:"fields,omitempty"` // the form's and the requests' fields, the values' labels
-	Steps   []apiBPStep  `json:"steps,omitempty"`
-	Tasks   []*apiBPTask `json:"tasks,omitempty"`
-	Log     []apiBPLine  `json:"log,omitempty"`
+	CanStop  bool         `json:"can_stop,omitempty"`
+	Commands []string     `json:"commands,omitempty"` // the buttons of the «Команды» step it waits on the key's owner may press
+	Fields   []bp.Field   `json:"fields,omitempty"`   // the form's and the requests' fields, the values' labels
+	Steps    []apiBPStep  `json:"steps,omitempty"`
+	Tasks    []*apiBPTask `json:"tasks,omitempty"`
+	Log      []apiBPLine  `json:"log,omitempty"`
 }
 
 func (s *Server) apiBPInstanceOf(x bp.Instance) apiBPInstance {
 	out := apiBPInstance{ID: x.ID, TemplateID: x.TemplateID, Name: x.Name, Entity: x.Entity, EntityID: x.EntityID, Status: x.Status,
-		Values: x.Values, StartedBy: apiUser{x.StartedBy.ID, x.StartedBy.Name}, CreatedAt: x.CreatedAt, FinishedAt: x.FinishedAt,
+		Label: x.Label, Values: x.Values, StartedBy: apiUser{x.StartedBy.ID, x.StartedBy.Name}, CreatedAt: x.CreatedAt, FinishedAt: x.FinishedAt,
 		WakeAt: x.WakeAt, URL: s.BaseURL + "/bp/i/" + x.ID}
 	if x.Status == "running" {
 		out.Step = x.Step + 1
@@ -240,6 +244,10 @@ type apiBPTask struct {
 	Comment   string     `json:"comment"`
 	Fields    []bp.Field `json:"fields,omitempty"` // request: what to fill in
 	CanReject bool       `json:"can_reject,omitempty"`
+	Due       *time.Time `json:"due,omitempty"`    // «Время на выполнение»: decided by then, or the process goes on without the person
+	Remark    string     `json:"remark,omitempty"` // the comment is required: yes, approve (read, answer), reject
+	Yes       string     `json:"yes,omitempty"`    // the buttons' own texts
+	No        string     `json:"no,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	URL       string     `json:"url"`
 }
@@ -247,7 +255,7 @@ type apiBPTask struct {
 func (s *Server) apiBPTaskOf(a bp.Approval) *apiBPTask {
 	return &apiBPTask{ID: a.ID, ProcessID: a.InstanceID, Process: a.Name, Kind: a.Kind, Text: a.Text, Step: a.Step + 1,
 		User: apiUser{a.User.ID, a.User.Name}, StartedBy: a.StartedBy, Decision: a.Decision, Comment: a.Comment, Fields: a.Fields,
-		CanReject: a.CanReject, CreatedAt: a.CreatedAt, URL: s.BaseURL + "/bp/i/" + a.InstanceID}
+		CanReject: a.CanReject, Due: a.Due, Remark: a.Remark, Yes: a.Yes, No: a.No, CreatedAt: a.CreatedAt, URL: s.BaseURL + "/bp/i/" + a.InstanceID}
 }
 
 // apiBPInstances are the processes the key's owner started (newest first, 100 at most); ?entity=&entity_id= — of a
@@ -304,6 +312,9 @@ func (s *Server) apiBPWriteInstance(w http.ResponseWriter, r *http.Request, p ap
 	t, _ := s.BP.Template(ctx, x.TemplateID) // the field labels (the template may be gone)
 	out := s.apiBPInstanceOf(x)
 	out.CanStop, out.Fields = s.BP.CanStop(ctx, p.UserID, x), x.Form(t.Fields)
+	for _, c := range s.BP.Commands(ctx, p.UserID, x) {
+		out.Commands = append(out.Commands, c.Title)
+	}
 	for i, f := range out.Fields { // «Информация о сотруднике»: its fields are named by their keys
 		if f.Label == "" {
 			out.Fields[i].Label = f.Key
@@ -351,6 +362,27 @@ func (s *Server) apiBPStop(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 		return err
 	}
 	return s.apiBPWriteInstance(w, r, p, r.PathValue("id"), http.StatusOK)
+}
+
+// apiBPCommand presses a button of the «Команды» step the process waits on: {"step": its number, "command": the title}.
+func (s *Server) apiBPCommand(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Step    int    `json:"step"`
+		Command string `json:"command"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	ctx, _ := s.apiBPCtx(r, p)
+	x, err := s.BP.Instance(ctx, p.UserID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	n := slices.IndexFunc(s.BP.Commands(ctx, p.UserID, x), func(c bp.Command) bool { return c.Title == in.Command })
+	if err := s.BP.Command(ctx, p.UserID, x.ID, in.Step-1, n); err != nil {
+		return err
+	}
+	return s.apiBPWriteInstance(w, r, p, x.ID, http.StatusOK)
 }
 
 // apiBPDeleteInstance removes a process with its history (administrators).

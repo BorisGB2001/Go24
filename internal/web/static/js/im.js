@@ -156,6 +156,7 @@
     setReplies(root, 0, 0);
     const sp = im.querySelector('[data-search-pane]');
     if (sp) sp.hidden = true;
+    shutApp(im.querySelector('[data-app-pane]'));
     tmsgs.innerHTML = '';
     const { ok, data } = await get('/im/messages?room=' + encodeURIComponent(room) + '&thread=' + encodeURIComponent(root));
     if (ok) { tmsgs.append(node(data.html)); bottom(tmsgs); }
@@ -584,6 +585,7 @@
   const sq = sform?.querySelector('[name="q"]');
   const openSearch = (q, all) => {
     closeThread();
+    shutApp(im.querySelector('[data-app-pane]'));
     spane.hidden = false;
     sform.hidden = false;
     const box = sform.querySelector('[name="all"]');
@@ -745,6 +747,37 @@
   });
   im.addEventListener('keydown', e => { if (e.key === 'Escape' && emojiPop && !emojiPop.hidden) emojiPop.hidden = true; });
 
+  // «Прикрепить»: the paperclip opens its menu — a file from the computer, «Файл с Диска» (drivepick.js
+  // hands the file over), a new document, a poll, a task or a meeting of the chat; what is made goes into the chat (the
+  // thread, from the thread's field) and a new document opens in the editor
+  const attachShut = () => im.querySelectorAll('[data-attach-pop]').forEach(p => { p.hidden = true; p.previousElementSibling.setAttribute('aria-expanded', 'false'); });
+  im.addEventListener('click', e => {
+    const b = e.target.closest('[data-attach-menu]');
+    const pop = b?.nextElementSibling;
+    if (b) { const was = pop.hidden; attachShut(); pop.hidden = !was; b.setAttribute('aria-expanded', String(was)); return; }
+    setTimeout(attachShut); // after the item's own work: the file field, the drive's picker
+  });
+  im.addEventListener('keydown', e => { if (e.key === 'Escape') attachShut(); });
+  const attachTo = el => (el.closest('[data-send-thread]') ? { box: tmsgs, thread } : { box: msgs, thread: '' });
+  const attachPost = async (el, url, params) => {
+    const to = attachTo(el);
+    params.set('room', room);
+    if (to.thread) params.set('thread', to.thread);
+    const { ok, data } = await post(url, params);
+    if (!ok) { alert(data.error || failed); return null; }
+    if (!has(to.box, data.id)) to.box.append(node(data.html));
+    bottom(to.box);
+    return data;
+  };
+  im.addEventListener('disk-picked', e => attachPost(e.target, '/im/disk', new URLSearchParams({ file: e.detail.id })));
+  im.addEventListener('click', async e => {
+    const b = e.target.closest('[data-im-doc]');
+    if (!b) return;
+    const tab = window.open('', '_blank'); // opened by the click itself, or a popup blocker stops it
+    const data = await attachPost(b, '/im/doc', new URLSearchParams({ kind: b.dataset.imDoc }));
+    if (data && tab) tab.location = data.url; else tab?.close();
+  });
+
   // polls: «Опрос» beside the field opens the form (2–10 answers); a click on an answer votes (with several answers —
   // turns it on or off), «Отменить голос», «Завершить опрос»; the poll comes back drawn anew
   const pollDlg = im.querySelector('[data-poll-dlg]');
@@ -861,20 +894,82 @@
         if (ok) msg.remove(); else alert(data.error || failed);
         break;
       }
-      case 'forward': {
-        const list = pick.querySelector('[data-forward-list]');
-        list.innerHTML = '';
-        im.querySelectorAll('.im-room[data-room-id]').forEach(r => {
-          const o = document.createElement('button');
-          o.type = 'button'; o.className = 'ghost'; o.dataset.to = r.dataset.roomId; o.textContent = r.dataset.name;
-          list.append(o);
-        });
-        pick.dataset.event = msg.dataset.id;
-        pick.querySelector('[data-forward-filter]').value = '';
-        pick.showModal ? pick.showModal() : pick.setAttribute('open', '');
+      case 'select': choose(msg); break;
+      case 'forward': forward([msg.dataset.id]); break;
+    }
+  });
+  // «Переслать»: the chats of the list to pick from; several chosen messages go in their order
+  const forward = ids => {
+    const list = pick.querySelector('[data-forward-list]');
+    list.innerHTML = '';
+    im.querySelectorAll('.im-room[data-room-id]').forEach(r => {
+      const o = document.createElement('button');
+      o.type = 'button'; o.className = 'ghost'; o.dataset.to = r.dataset.roomId; o.textContent = r.dataset.name;
+      list.append(o);
+    });
+    pick.dataset.events = JSON.stringify(ids);
+    pick.querySelector('[data-forward-filter]').value = '';
+    pick.showModal ? pick.showModal() : pick.setAttribute('open', '');
+  };
+  // «Выбрать»: a click marks messages of the chat (or of the thread), the bar under them forwards,
+  // copies or deletes (one's own only) the chosen ones; «Отмена» or Esc leaves
+  const chosenIn = box => [...box.querySelectorAll('.msg.chosen')];
+  const selbar = box => box.parentElement.querySelector(':scope > [data-selbar]');
+  const recount = box => {
+    const bar = selbar(box), list = chosenIn(box);
+    if (!bar) return;
+    const n = bar.querySelector('[data-sel-count]');
+    n.textContent = n.dataset.fmt.replace('%s', list.length);
+    bar.querySelectorAll('[data-sel="forward"], [data-sel="copy"]').forEach(b => { b.disabled = !list.length; });
+    bar.querySelector('[data-sel="delete"]').disabled = !list.length || list.some(m => !m.matches('.mine') || !m.querySelector('[data-act="delete"]'));
+  };
+  const unchoose = box => {
+    box.classList.remove('selecting');
+    chosenIn(box).forEach(m => m.classList.remove('chosen'));
+    const bar = selbar(box);
+    if (bar) bar.hidden = true;
+  };
+  const choose = msg => {
+    const box = msg.closest('[data-msgs], [data-thread-msgs]');
+    if (!box || !selbar(box)) return;
+    box.classList.add('selecting');
+    msg.classList.add('chosen');
+    selbar(box).hidden = false;
+    recount(box);
+  };
+  [msgs, tmsgs].forEach(box => box?.addEventListener('click', e => {
+    if (!box.classList.contains('selecting')) return;
+    const m = e.target.closest('.msg');
+    if (!m || !m.querySelector(':scope > .bubble') || m.matches('.system, .uploading')) return;
+    e.preventDefault(); e.stopPropagation();
+    m.classList.toggle('chosen');
+    recount(box);
+  }, true));
+  im.querySelectorAll('[data-selbar]').forEach(bar => bar.addEventListener('click', async e => {
+    const b = e.target.closest('[data-sel]');
+    if (!b) return;
+    const box = bar.parentElement.querySelector('[data-msgs], [data-thread-msgs]'), list = chosenIn(box);
+    switch (b.dataset.sel) {
+      case 'cancel': unchoose(box); break;
+      case 'forward': forward(list.map(m => m.dataset.id)); unchoose(box); break;
+      case 'copy': // each with its author and time copies a choice
+        window.go24Copy?.(list.map(m => `${m.dataset.sender || ''} [${m.dataset.when || ''}]\n${
+          plain(m.querySelector('.text')) || m.querySelector('.im-filecard span, [data-name]')?.textContent?.trim() || ''}`).join('\n\n'));
+        unchoose(box);
+        break;
+      case 'delete': {
+        if (!confirm(im.dataset.deleteConfirm)) return;
+        const { ok, data } = await post('/im/delete', [['room', room], ...list.map(m => ['event', m.dataset.id])]);
+        if (!ok) { alert(data.error || failed); return; }
+        list.forEach(m => m.remove());
+        unchoose(box);
         break;
       }
     }
+  }));
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    [msgs, tmsgs].forEach(box => { if (box?.classList.contains('selecting')) unchoose(box); });
   });
   pick?.querySelector('[data-forward-filter]').addEventListener('input', e => {
     const q = e.target.value.toLowerCase();
@@ -883,7 +978,7 @@
   pick?.addEventListener('click', async e => {
     const o = e.target.closest('[data-to]');
     if (!o) return;
-    const { ok, data } = await post('/im/forward', { room, event: pick.dataset.event, to: o.dataset.to });
+    const { ok, data } = await post('/im/forward', [['room', room], ...JSON.parse(pick.dataset.events || '[]').map(id => ['event', id]), ['to', o.dataset.to]]);
     if (!ok) { alert(data.error || failed); return; }
     pick.close ? pick.close() : pick.removeAttribute('open');
     if (data.room === room && data.id) get('/im/messages?room=' + encodeURIComponent(room)).then(({ ok, data: d }) => { if (ok) { msgs.innerHTML = ''; msgs.append(node(d.html)); bottom(msgs); } });
@@ -1229,4 +1324,55 @@
     }
   }, true);
   document.addEventListener('focusout', e => { if (e.target === cfield) setTimeout(cclose, 150); });
+
+  // the widgets of applications (IM_SIDEBAR, IM_CONTEXT_MENU in the side panel, IM_TEXTAREA over the input field,
+  // IM_NAVIGATION instead of a chat): each opening is a new frame with the chat and the message (apphost.js names it)
+  function shutApp(box) {
+    if (!box || box.hidden) return;
+    box.hidden = true;
+    box.querySelector('[data-app-box]').replaceChildren();
+  }
+  const openApp = (b, msgID) => {
+    const place = b.dataset.place, box = im.querySelector(place === 'IM_TEXTAREA' ? '[data-app-pop]' : '[data-app-pane]');
+    if (!box || !window.go24AppFrame) return;
+    if (place !== 'IM_TEXTAREA') { closeThread(); if (spane) spane.hidden = true; }
+    const ctx = new URLSearchParams({ room });
+    if (msgID) ctx.set('msg', msgID);
+    const f = document.createElement('iframe');
+    f.title = b.dataset.title;
+    f.dataset.tab = b.dataset.imApp;
+    f.dataset.ctx = ctx.toString();
+    f.dataset.src = '/apps/tab/' + encodeURIComponent(b.dataset.imApp) + '?' + ctx;
+    f.allow = 'clipboard-read; clipboard-write; camera; microphone; fullscreen';
+    if (place === 'IM_TEXTAREA') { f.style.width = b.dataset.w + 'px'; f.style.height = b.dataset.h + 'px'; }
+    box.querySelector('[data-app-title]').textContent = b.dataset.title;
+    box.querySelector('[data-app-box]').replaceChildren(f);
+    box.hidden = false;
+    window.go24AppFrame(f);
+  };
+  im.addEventListener('click', e => {
+    const b = e.target.closest('[data-im-app]');
+    if (b) {
+      const msg = b.closest('.msg');
+      b.closest('details')?.removeAttribute('open');
+      const pop = im.querySelector('[data-app-pop]');
+      if (b.dataset.place === 'IM_TEXTAREA' && pop && !pop.hidden && pop.querySelector('iframe')?.dataset.tab === b.dataset.imApp) shutApp(pop);
+      else openApp(b, b.dataset.place === 'IM_CONTEXT_MENU' && msg ? msg.dataset.id : '');
+      return;
+    }
+    const x = e.target.closest('[data-app-close]');
+    if (x) shutApp(x.closest('[data-app-pane], [data-app-pop]'));
+  });
+  im.addEventListener('app-close', e => shutApp(e.target.closest('[data-app-pane], [data-app-pop]')));
+  // IM_CONTEXT_MENU: the items go into a message's «…» next to «Создать задачу», «Создать встречу»
+  const ctxApps = im.querySelector('template[data-ctx-apps]');
+  // (on the document: before the menu is placed by its size)
+  if (ctxApps) document.addEventListener('toggle', e => {
+    const d = e.target;
+    if (!d.matches?.('.im-menu') || !d.open || !im.contains(d) || d.querySelector('[data-im-app]')) return;
+    const links = d.querySelectorAll('.pop > [data-act-link]');
+    links[links.length - 1]?.after(ctxApps.content.cloneNode(true));
+  }, true);
+  const nav = im.querySelector('iframe[data-im-nav]');
+  if (nav && window.go24AppFrame) window.go24AppFrame(nav);
 })();

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -37,21 +38,53 @@ type Trunk struct {
 	Out                                        []string // who may call out by the line (when not OutAll)
 	Position                                   int
 
-	WorkOn           bool   // the line has working hours
-	WorkDays         []int  // 1 = Monday … 7 = Sunday
-	WorkFrom, WorkTo string // "09:00", the portal's time zone
-	NoAnswer         string // hangup | voicemail | forward: a call nobody answered
-	NoAnswerTo       string // where it is forwarded
-	OffHours         string // the same out of the working hours
-	OffHoursTo       string //
-	Greeting         []byte // on saving: a new greeting (WAV); nil — the old one stays
-	DropGreeting     bool   // on saving: no greeting any more
-	GreetingSum      string // the greeting's checksum ("" — none): its file's name
-	Menu             string // the voice menu answering the calls in the working hours instead of Ring ("" — none)
-	RateOn           bool   // the client is asked to rate the conversation when the employee hangs up
-	Group            string // the queue group rung instead of Ring ("" — none)
-	RateSum          string // the invitation's checksum ("" — none): its file's name
-	ToOwner          bool   // a client known to CRM rings the card's responsible first (OwnerRing seconds)
+	WorkOn           bool     // the line has working hours
+	WorkDays         []int    // 1 = Monday … 7 = Sunday
+	WorkFrom, WorkTo string   // "09:00", the line's time zone
+	WorkTZ           string   // the line's time zone ("" — go24's)
+	Holidays         []string // the days the line does not work: "MM-DD" every year, "YYYY-MM-DD" once
+	NoAnswer         string   // hangup | voicemail | forward: a call nobody answered
+	NoAnswerTo       string   // where it is forwarded
+	OffHours         string   // the same out of the working hours
+	OffHoursTo       string   //
+	Greeting         []byte   // on saving: a new greeting (WAV); nil — the old one stays
+	DropGreeting     bool     // on saving: no greeting any more
+	GreetingSum      string   // the greeting's checksum ("" — none): its file's name
+	Menu             string   // the voice menu answering the calls in the working hours instead of Ring ("" — none)
+	RateOn           bool     // the client is asked to rate the conversation when the employee hangs up
+	Group            string   // the queue group rung instead of Ring ("" — none)
+	RateSum          string   // the invitation's checksum ("" — none): its file's name
+	RecNoteOn        bool     // the client hears that the conversation is recorded (when the company records them)
+	RecNoteSum       string   // the notice's checksum ("" — none): its file's name
+	ToOwner          bool     // a client known to CRM rings the card's responsible first (OwnerRing seconds)
+	AdSource         string   // «Колл-трекинг»: the advertising channel whose number the line is ("" — none)
+	CRMCreate        string   // a number unknown to CRM makes: CRMLead | CRMDeal | CRMNone; "" — as LeadAuto
+	CRMCreateType    string   // for which calls: in | out | all
+}
+
+// What a line's call with a number unknown to CRM makes (Trunk.CRMCreate).
+const (
+	CRMLead = "lead" // a lead
+	CRMDeal = "deal" // a contact with the phone and a deal in the first pipeline
+	CRMNone = "none" // nothing
+)
+
+// Creates is what a call of the line with a number unknown to CRM makes in the direction dir (in | out): CRMLead,
+// CRMDeal or "" — nothing; lead is the company's «Создавать лид по неизвестному номеру».
+func (t Trunk) Creates(dir string, lead bool) string {
+	switch t.CRMCreate {
+	case CRMNone:
+		return ""
+	case CRMLead, CRMDeal:
+		if t.CRMCreateType == "all" || t.CRMCreateType == dir {
+			return t.CRMCreate
+		}
+		return ""
+	}
+	if lead && dir == "in" {
+		return CRMLead
+	}
+	return ""
 }
 
 // OwnerRing is how long the responsible for the calling client rings before the line goes on as usual.
@@ -63,6 +96,15 @@ const (
 	ActVoicemail = "voicemail"
 	ActForward   = "forward"
 )
+
+// RecordNotice is the file of the line's notice that the conversation is recorded ("" — not played: recording is off,
+// the line does not tell or has no notice).
+func (t Trunk) RecordNotice(record bool) string {
+	if !record || !t.RecNoteOn || t.RecNoteSum == "" {
+		return ""
+	}
+	return GreetingFile(t.RecNoteSum)
+}
 
 // Key names the line's accounts in Asterisk.
 func (t Trunk) Key() string { return "trunk-" + strings.ReplaceAll(t.ID, "-", "")[:12] }
@@ -77,8 +119,9 @@ var (
 // Trunks are the external lines in their order, with their passwords.
 func (s *Store) Trunks(ctx context.Context) ([]Trunk, error) {
 	rows, err := s.db.Query(ctx, `SELECT id::text, name, host, username, secret, auth_user, number, register, ring_mode,
-		ring_users::text[], out_all, out_users::text[], position, work_on, work_days, work_from, work_to, noanswer, noanswer_to, offhours,
-		offhours_to, coalesce(md5(greeting), ''), coalesce(menu::text, ''), rate_on, coalesce(md5(rate_prompt), ''), coalesce(ring_group::text, ''), to_owner FROM telephony_trunks ORDER BY position, created_at, id`)
+		ring_users::text[], out_all, out_users::text[], position, work_on, work_days, work_from, work_to, work_tz, holidays, noanswer, noanswer_to, offhours,
+		offhours_to, coalesce(md5(greeting), ''), coalesce(menu::text, ''), rate_on, coalesce(md5(rate_prompt), ''), coalesce(ring_group::text, ''), to_owner,
+		coalesce(ad_source::text, ''), rec_note_on, coalesce(md5(rec_note), ''), crm_create, crm_create_type FROM telephony_trunks ORDER BY position, created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +132,9 @@ func (s *Store) Trunks(ctx context.Context) ([]Trunk, error) {
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
 		err := r.Scan(&x.t.ID, &x.t.Name, &x.t.Host, &x.t.Username, &x.sec, &x.t.AuthUser, &x.t.Number, &x.t.Register, &x.t.RingMode,
-			&x.t.Ring, &x.t.OutAll, &x.t.Out, &x.t.Position, &x.t.WorkOn, &x.t.WorkDays, &x.t.WorkFrom, &x.t.WorkTo, &x.t.NoAnswer,
-			&x.t.NoAnswerTo, &x.t.OffHours, &x.t.OffHoursTo, &x.t.GreetingSum, &x.t.Menu, &x.t.RateOn, &x.t.RateSum, &x.t.Group, &x.t.ToOwner)
+			&x.t.Ring, &x.t.OutAll, &x.t.Out, &x.t.Position, &x.t.WorkOn, &x.t.WorkDays, &x.t.WorkFrom, &x.t.WorkTo, &x.t.WorkTZ, &x.t.Holidays, &x.t.NoAnswer,
+			&x.t.NoAnswerTo, &x.t.OffHours, &x.t.OffHoursTo, &x.t.GreetingSum, &x.t.Menu, &x.t.RateOn, &x.t.RateSum, &x.t.Group, &x.t.ToOwner,
+			&x.t.AdSource, &x.t.RecNoteOn, &x.t.RecNoteSum, &x.t.CRMCreate, &x.t.CRMCreateType)
 		return x, err
 	})
 	if err != nil {
@@ -152,6 +196,16 @@ func (s *Store) SaveTrunk(ctx context.Context, userID string, t Trunk) (string, 
 	if !clockRe.MatchString(t.WorkFrom) || !clockRe.MatchString(t.WorkTo) || t.WorkFrom >= t.WorkTo || (t.WorkOn && len(days) == 0) {
 		return "", i18n.E("err.trunk_hours")
 	}
+	if _, err := time.LoadLocation(t.WorkTZ); err != nil || t.WorkTZ == "Local" || strings.ContainsAny(t.WorkTZ, ", ") {
+		return "", i18n.E("err.trunk_hours")
+	}
+	if t.Holidays == nil {
+		t.Holidays = []string{}
+	}
+	slices.Sort(t.Holidays)
+	if t.Holidays = slices.Compact(t.Holidays); len(t.Holidays) > 400 || slices.ContainsFunc(t.Holidays, func(h string) bool { return holidayKey(h) == "" }) {
+		return "", i18n.E("err.ol_holiday")
+	}
 	if t.Greeting != nil {
 		if t.Greeting, err = Greeting(t.Greeting); err != nil {
 			return "", err
@@ -178,12 +232,14 @@ func (s *Store) SaveTrunk(ctx context.Context, userID string, t Trunk) (string, 
 			return "", err
 		}
 	}
-	rules := []any{t.WorkOn, t.WorkDays, t.WorkFrom, t.WorkTo, t.NoAnswer, t.NoAnswerTo, t.OffHours, t.OffHoursTo, t.Greeting, t.DropGreeting, t.Menu}
+	rules := []any{t.WorkOn, t.WorkDays, t.WorkFrom, t.WorkTo, t.NoAnswer, t.NoAnswerTo, t.OffHours, t.OffHoursTo, t.Greeting, t.DropGreeting, t.Menu,
+		t.WorkTZ, t.Holidays}
 	if t.ID == "" {
 		err := s.db.QueryRow(ctx, `INSERT INTO telephony_trunks (name, host, username, secret, auth_user, number, register, ring_mode,
-			ring_users, out_all, out_users, position, created_by, work_on, work_days, work_from, work_to, noanswer, noanswer_to, offhours, offhours_to, greeting, menu)
+			ring_users, out_all, out_users, position, created_by, work_on, work_days, work_from, work_to, noanswer, noanswer_to, offhours, offhours_to, greeting, menu,
+			work_tz, holidays)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid[], $10, $11::uuid[], (SELECT coalesce(max(position), 0) + 1 FROM telephony_trunks), $12,
-				$13, $14, $15, $16, $17, $18, $19, $20, CASE WHEN $22 THEN NULL ELSE $21::bytea END, nullif($23, '')::uuid)
+				$13, $14, $15, $16, $17, $18, $19, $20, CASE WHEN $22 THEN NULL ELSE $21::bytea END, nullif($23, '')::uuid, $24, $25)
 			RETURNING id::text`, append([]any{t.Name, t.Host, t.Username, sec, t.AuthUser, t.Number, t.Register, t.RingMode, t.Ring, t.OutAll, t.Out, userID},
 			rules...)...).Scan(&t.ID)
 		return t.ID, err
@@ -191,7 +247,8 @@ func (s *Store) SaveTrunk(ctx context.Context, userID string, t Trunk) (string, 
 	tag, err := s.db.Exec(ctx, `UPDATE telephony_trunks SET name = $2, host = $3, username = $4, secret = coalesce($5, secret), auth_user = $6,
 		number = $7, register = $8, ring_mode = $9, ring_users = $10::uuid[], out_all = $11, out_users = $12::uuid[], work_on = $13, work_days = $14,
 		work_from = $15, work_to = $16, noanswer = $17, noanswer_to = $18, offhours = $19, offhours_to = $20,
-		greeting = CASE WHEN $22 THEN NULL ELSE coalesce($21::bytea, greeting) END, menu = nullif($23, '')::uuid WHERE id::text = $1`,
+		greeting = CASE WHEN $22 THEN NULL ELSE coalesce($21::bytea, greeting) END, menu = nullif($23, '')::uuid,
+		work_tz = $24, holidays = $25 WHERE id::text = $1`,
 		append([]any{t.ID, t.Name, t.Host, t.Username, sec, t.AuthUser, t.Number, t.Register, t.RingMode, t.Ring, t.OutAll, t.Out}, rules...)...)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
@@ -215,6 +272,17 @@ func handle(t Trunk, label, act, to string, busy bool, greeting string) string {
 		return fmt.Sprintf(" same => n%s,Busy(5)\n same => n,Hangup()\n", label)
 	}
 	return fmt.Sprintf(" same => n%s,Hangup()\n", label)
+}
+
+// holidayKey is a holiday of a line ("12-31" every year, "2026-12-31" once) as its extension of go24-hol-K: "1231",
+// "20261231"; "" — not a date.
+func holidayKey(h string) string {
+	for _, f := range []string{"01-02", "2006-01-02"} {
+		if d, err := time.Parse(f, h); err == nil && d.Format(f) == h {
+			return strings.ReplaceAll(h, "-", "")
+		}
+	}
+	return ""
 }
 
 // weekdays are the days of the working hours as Asterisk's GotoIfTime wants them: "mon&tue&fri".
@@ -250,15 +318,27 @@ func action(act, to string) (string, string, error) {
 // SetTrunkRating sets whether the line asks the client to rate the conversation, with its invitation: prompt — a new
 // one (WAV, made fit for Asterisk), drop — none any more. Asking needs an invitation.
 func (s *Store) SetTrunkRating(ctx context.Context, id string, on bool, prompt []byte, drop bool) error {
-	if prompt != nil {
+	return s.setTrunkSound(ctx, id, "rate_on", "rate_prompt", "err.trunk_rate_prompt", on, prompt, drop)
+}
+
+// SetTrunkRecordNotice sets whether the line tells the client the conversation is recorded, with its notice: note — a
+// new one (WAV, made fit for Asterisk), drop — none any more. Telling needs a notice.
+func (s *Store) SetTrunkRecordNotice(ctx context.Context, id string, on bool, note []byte, drop bool) error {
+	return s.setTrunkSound(ctx, id, "rec_note_on", "rec_note", "err.trunk_rec_note", on, note, drop)
+}
+
+// setTrunkSound keeps a line's sound (the column file) and the switch playing it (the column on), which is off without
+// the sound (the error noSound).
+func (s *Store) setTrunkSound(ctx context.Context, id, onCol, fileCol, noSound string, on bool, wav []byte, drop bool) error {
+	if wav != nil {
 		var err error
-		if prompt, err = Greeting(prompt); err != nil {
+		if wav, err = Greeting(wav); err != nil {
 			return err
 		}
 	}
 	var has bool
-	err := s.db.QueryRow(ctx, `UPDATE telephony_trunks SET rate_prompt = CASE WHEN $3 THEN NULL ELSE coalesce($2::bytea, rate_prompt) END
-		WHERE id::text = $1 RETURNING rate_prompt IS NOT NULL`, id, prompt, drop).Scan(&has)
+	err := s.db.QueryRow(ctx, `UPDATE telephony_trunks SET `+fileCol+` = CASE WHEN $3 THEN NULL ELSE coalesce($2::bytea, `+fileCol+`) END
+		WHERE id::text = $1 RETURNING `+fileCol+` IS NOT NULL`, id, wav, drop).Scan(&has)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -267,9 +347,9 @@ func (s *Store) SetTrunkRating(ctx context.Context, id string, on bool, prompt [
 	}
 	if on && !has {
 		on = false
-		err = i18n.E("err.trunk_rate_prompt")
+		err = i18n.E(noSound)
 	}
-	if _, xerr := s.db.Exec(ctx, `UPDATE telephony_trunks SET rate_on = $2 WHERE id::text = $1`, id, on); xerr != nil {
+	if _, xerr := s.db.Exec(ctx, `UPDATE telephony_trunks SET `+onCol+` = $2 WHERE id::text = $1`, id, on); xerr != nil {
 		return xerr
 	}
 	return err
@@ -294,10 +374,58 @@ func (s *Store) SetTrunkOwner(ctx context.Context, id string, on bool) error {
 	return err
 }
 
+// SetTrunkAdSource makes the line the number of an advertising channel for «Колл-трекинг» ("" or an unknown one —
+// of none).
+func (s *Store) SetTrunkAdSource(ctx context.Context, id, source string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE telephony_trunks SET ad_source = (SELECT a.id FROM mkt_ad_sources a WHERE a.id::text = $2)
+		WHERE id::text = $1`, id, source)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = ErrNotFound
+	}
+	return err
+}
+
+// SetTrunkCRM is the line's «Создавать в CRM»: what (CRMLead, CRMDeal, CRMNone; "" — as the company's setting) for
+// which calls (in, out, all; anything else — in).
+func (s *Store) SetTrunkCRM(ctx context.Context, id, what, calls string) error {
+	switch what {
+	case "", CRMLead, CRMDeal, CRMNone:
+	default:
+		what = ""
+	}
+	if calls != "out" && calls != "all" {
+		calls = "in"
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE telephony_trunks SET crm_create = $2, crm_create_type = $3 WHERE id::text = $1`, id, what, calls)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = ErrNotFound
+	}
+	return err
+}
+
+// TrunkOf is the external line of a number of the log (Call.Line); false — none.
+func TrunkOf(trunks []Trunk, number string) (Trunk, bool) {
+	for _, t := range trunks {
+		if number != "" && t.Number == number {
+			return t, true
+		}
+	}
+	return Trunk{}, false
+}
+
 // TrunkRatePrompt is the invitation to rate the conversation of a line (a WAV for Asterisk); nil — none.
 func (s *Store) TrunkRatePrompt(ctx context.Context, id string) ([]byte, error) {
+	return s.trunkSound(ctx, id, "rate_prompt")
+}
+
+// TrunkRecordNotice is the notice of a line that the conversation is recorded (a WAV for Asterisk); nil — none.
+func (s *Store) TrunkRecordNotice(ctx context.Context, id string) ([]byte, error) {
+	return s.trunkSound(ctx, id, "rec_note")
+}
+
+func (s *Store) trunkSound(ctx context.Context, id, col string) ([]byte, error) {
 	var g []byte
-	err := s.db.QueryRow(ctx, `SELECT rate_prompt FROM telephony_trunks WHERE id::text = $1`, id).Scan(&g)
+	err := s.db.QueryRow(ctx, `SELECT `+col+` FROM telephony_trunks WHERE id::text = $1`, id).Scan(&g)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -388,7 +516,20 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, pref
 			" same => n,GotoIf(${DIALPLAN_EXISTS(go24-black,${GO24_BNUM:-10},1)}?black,1)\n")
 		fmt.Fprintf(&d, " same => n,Gosub(go24-in,s,1(%s,%s,%s))\n", t.Number, first, k)
 		if t.WorkOn {
-			fmt.Fprintf(&d, " same => n,GotoIfTime(%s-%s,%s,*,*%s?work:off)\n same => n(work),NoOp()\n", t.WorkFrom, t.WorkTo, weekdays(t.WorkDays), zone)
+			lz, lzone := tz, zone // the line's own time zone, or go24's
+			if t.WorkTZ != "" {
+				lz, lzone = t.WorkTZ, ","+t.WorkTZ
+			} else if lzone == "" {
+				lz = ""
+			}
+			if len(t.Holidays) > 0 { // a holiday (go24-hol-K: its days, "1231" every year, "20261231" once) is out of the working hours
+				fmt.Fprintf(&d, " same => n,GotoIf($[${DIALPLAN_EXISTS(go24-hol-%[1]s,${STRFTIME(${EPOCH},%[2]s,%%m%%d)},1)} | "+
+					"${DIALPLAN_EXISTS(go24-hol-%[1]s,${STRFTIME(${EPOCH},%[2]s,%%Y%%m%%d)},1)}]?off)\n", k, lz)
+			}
+			fmt.Fprintf(&d, " same => n,GotoIfTime(%s-%s,%s,*,*%s?work:off)\n same => n(work),NoOp()\n", t.WorkFrom, t.WorkTo, weekdays(t.WorkDays), lzone)
+		}
+		if note := t.RecordNotice(record); note != "" { // «Предупреждать о записи разговора»: before anyone rings
+			fmt.Fprintf(&d, " same => n,Answer()\n same => n,Playback(%s)\n", note)
 		}
 		if t.ToOwner { // the client's responsible in CRM first (go24-owner asks go24); not answered — as usual
 			fmt.Fprintf(&d, " same => n,Gosub(go24-owner,s,1(%d,%s))\n same => n,GotoIf($[\"${DIALSTATUS}\" = \"ANSWER\"]?%s)\n",
@@ -420,6 +561,12 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, pref
 			fmt.Fprintf(&d, " same => n(rate),Gosub(go24-rate,s,1(%s))\n", rate)
 		}
 		d.WriteString(" same => n(done),Hangup()\nexten => black,1,Busy(5)\n same => n,Hangup()\n")
+		if t.WorkOn && len(t.Holidays) > 0 {
+			fmt.Fprintf(&d, "\n[go24-hol-%s]\n", k)
+			for _, h := range t.Holidays {
+				fmt.Fprintf(&d, "exten => %s,1,NoOp()\n", holidayKey(h))
+			}
+		}
 	}
 	out := OutLines(trunks, numbers, limits, prefs)
 	d.WriteString("\n[go24-out]\n")
@@ -437,8 +584,12 @@ func RenderTrunks(trunks []Trunk, numbers, menus, limits map[string]string, pref
 		if crm[n] {
 			sub = "go24-out-crm"
 		}
+		note := "" // go24-dial-out plays the line's notice of recording to the client who answered
+		if f := t.RecordNotice(record); f != "" {
+			note = "Set(GO24_RECNOTE=" + f + ")\n same => n,"
+		}
 		for _, pat := range []string{"_X.", "_+X."} {
-			fmt.Fprintf(&d, "exten => %s/%s,1,Gosub(%s,s,1(%s,%s,${EXTEN}))\n", pat, n, sub, t.Key(), t.Number)
+			fmt.Fprintf(&d, "exten => %s/%s,1,%sGosub(%s,s,1(%s,%s,${EXTEN}))\n", pat, n, note, sub, t.Key(), t.Number)
 		}
 	}
 	d.WriteString("exten => _X.,1,Gosub(go24-no-line,s,1)\nexten => _+X.,1,Gosub(go24-no-line,s,1)\n")

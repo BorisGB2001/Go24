@@ -236,6 +236,11 @@ func colorName(hex string) string {
 	return best
 }
 
+// ICSText escapes a text value of a calendar file; ICSLine writes a content line folded at 75 octets.
+func ICSText(s string) string { return escapeText(s) }
+
+func ICSLine(b *strings.Builder, l string) { foldLine(b, l) }
+
 func escapeText(s string) string {
 	return strings.NewReplacer(`\`, `\\`, ";", `\;`, ",", `\,`, "\r\n", `\n`, "\n", `\n`).Replace(s)
 }

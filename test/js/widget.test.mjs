@@ -237,5 +237,24 @@ assert.equal(root.querySelector('.m.o[data-id="9"] .bb').disabled, false);
   assert.equal(late.shadowRoot.querySelector('.box').hidden, false, 'a click opens the chat');
   assert.equal(late.ownerDocument.defaultView.sessionStorage.getItem('go24.widget.w1.hello'), '1', 'once a visit');
 }
-console.log('widget.js: display rules, chat, rating, conversation by e-mail, contact form, files, typing, read, CRM form, chat bot and consent passed');
+
+// «Ссылка на чат»: on the line's own page the chat is open on all of it, with no button, close or invitation, whatever
+// the rules of showing
+{
+  const d = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only', url: 'https://go24.test/online/w1', pretendToBeVisual: true });
+  d.window.fetch = async () => ({ ok: true, json: async () => ({ messages: [] }) });
+  d.window.eval(src.replace('/*CONFIG*/{}', JSON.stringify({ ...cfg, page: true, offline: true, pages_mode: 'only', pages: ['https://shop.example/*'],
+    show_delay: 5, hello: 'Подсказать?', t: { ...cfg.t, close: 'Закрыть' } })));
+  const h = d.window.document.body.lastElementChild, r = h.shadowRoot, box = r.querySelector('.box');
+  assert.match(h.style.cssText, /inset: 0/);
+  assert.notEqual(h.style.display, 'none', 'no delay');
+  assert.equal(box.hidden, false, 'the chat is open');
+  assert.ok(box.classList.contains('page'));
+  assert.equal(r.querySelector('.btn').hidden, true, 'no button');
+  assert.equal(r.querySelector('[data-close]').hidden, true, 'nothing to close');
+  assert.match(r.querySelector('.msgs').textContent, /Здравствуйте!/);
+  await new Promise(res => setTimeout(res, 30));
+  assert.equal(r.querySelector('.hello').hidden, true, 'no invitation');
+}
+console.log('widget.js: display rules, the chat page, chat, rating, conversation by e-mail, contact form, files, typing, read, CRM form, chat bot and consent passed');
 process.exit(0);

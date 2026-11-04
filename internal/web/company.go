@@ -33,8 +33,8 @@ func (s *Server) tree(r *http.Request) (*company.Department, []*company.Departme
 // employeesViewCookie remembers the list's view in this browser: list or tiles.
 const employeesViewCookie = "go24_emp_view"
 
-// employees: GET /company — the list of «Сотрудники» (?q, ?dept, ?fired, ?preset=here|absent|new) as a table or
-// tiles (?view=tiles|list, remembered); ?format=csv — the same people for Excel.
+// employees: GET /company — the list of «Сотрудники» (?q, ?dept, ?team, ?interest, ?fired, ?preset=here|absent|new) as a table or
+// tiles (?view=tiles|list, remembered), ?sort= a column of company.ListSorts (&desc=1); ?format=csv — the same people for Excel.
 func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	_, depts, err := s.tree(r)
 	if err != nil {
@@ -42,8 +42,8 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	q := r.URL.Query()
-	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("dept"), TeamID: q.Get("team"), Fired: sess.Admin && q.Get("fired") == "1",
-		Guests: sess.Admin && q.Get("guests") == "1"}
+	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("dept"), TeamID: q.Get("team"), Interest: q.Get("interest"),
+		Fired: sess.Admin && q.Get("fired") == "1", Guests: sess.Admin && q.Get("guests") == "1"}
 	if f.Guests { // guests have no departments, nor working days and absences
 		f.DepartmentID = ""
 	} else if slices.Contains(company.EmployeePresets, q.Get("preset")) {
@@ -53,6 +53,12 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
+	}
+	sort, desc := q.Get("sort"), q.Get("desc") == "1"
+	if slices.Contains(company.ListSorts, sort) {
+		company.SortEmployees(list, sort, desc)
+	} else {
+		sort, desc = "", false
 	}
 	switch q.Get("format") {
 	case "csv":
@@ -86,7 +92,7 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 	}
 	keep := url.Values{}
-	for _, k := range []string{"q", "dept", "team", "fired", "preset", "guests"} {
+	for _, k := range []string{"q", "dept", "team", "interest", "fired", "preset", "guests", "sort", "desc"} {
 		if v := q.Get(k); v != "" {
 			keep.Set(k, v)
 		}
@@ -94,6 +100,7 @@ func (s *Server) employees(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	s.render(w, r, "company", page{TitleKey: "title.employees", Nav: "company", Data: map[string]any{
 		"Employees": list, "Departments": depts, "Filter": f, "Admin": sess.Admin, "Presets": company.EmployeePresets,
 		"Tiles": view == "tiles", "Absent": absent, "Keep": listQuery{keep}, "Team": team, "CardDAV": s.carddavURL(r),
+		"Grid": s.employeeGrid(r, sess, f, sort, desc),
 	}})
 }
 
@@ -169,8 +176,14 @@ func (s *Server) structure(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	access, err := s.Company.StructAccessOf(r.Context(), sess.UserID, sess.Admin)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
 	s.render(w, r, "structure", page{TitleKey: "title.structure", Nav: "structure", Data: map[string]any{
-		"Root": root, "Departments": depts, "Users": users, "Admin": sess.Admin, "Me": sess.UserID,
+		"Root": root, "Departments": depts, "Users": users, "Admin": sess.Admin, "Me": sess.UserID, "Access": access,
+		"Drag": access.Any("edit") || access.Any("staff"),
 	}})
 }
 
@@ -212,34 +225,50 @@ func (s *Server) teams(w http.ResponseWriter, r *http.Request, sess auth.Session
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// departments manages the structure (administrators): op=add|update|delete, and what is dragged in it —
-// op=move (a department id under parent), op=move_user (a person user from one department to another, to).
-// Asked for JSON (the drags), it answers 204 or {"error"}.
+// departments manages the structure as «Права доступа» of it allow (administrators — all): op=add|update|delete,
+// and what is dragged in it — op=move (a department id under parent), op=move_user (a person user from one department
+// to another, to). Asked for JSON (the drags), it answers 204 or {"error"}.
 func (s *Server) departments(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/company/structure"
-	if !sess.Admin {
-		if wantsJSON(r) {
-			s.jsonErr(w, r, company.ErrForbidden)
-			return
-		}
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
-		return
+	_ = r.ParseForm()
+	id, parent := r.FormValue("id"), r.FormValue("parent")
+	can := func(action string, depts ...string) error {
+		return s.structCheck(r, sess.UserID, sess.Admin, action, depts...)
 	}
 	var err error
 	switch r.FormValue("op") {
 	case "add":
-		err = s.Company.AddDepartment(r.Context(), r.FormValue("parent"), r.FormValue("name"), r.FormValue("head"))
+		if err = can("create", parent); err == nil {
+			err = s.Company.AddDepartment(r.Context(), parent, r.FormValue("name"), r.FormValue("head"))
+		}
 	case "update":
-		_ = r.ParseForm()
-		err = s.Company.UpdateDepartment(r.Context(), r.FormValue("id"), r.FormValue("parent"), r.FormValue("name"), r.FormValue("head"), r.Form["deputies"]...)
+		if err = can("edit", id); err == nil && parent != "" {
+			err = s.structMoveCheck(r, sess, id, parent)
+		}
+		if err == nil {
+			err = s.Company.UpdateDepartment(r.Context(), id, parent, r.FormValue("name"), r.FormValue("head"), r.Form["deputies"]...)
+		}
 	case "delete":
-		err = s.Company.DeleteDepartment(r.Context(), r.FormValue("id"))
+		if err = can("delete", id); err == nil {
+			err = s.Company.DeleteDepartment(r.Context(), id)
+		}
 	case "move":
-		err = s.Company.MoveDepartment(r.Context(), r.FormValue("id"), r.FormValue("parent"))
+		if err = can("edit", id); err == nil {
+			err = s.structMoveCheck(r, sess, id, parent)
+		}
+		if err == nil {
+			err = s.Company.MoveDepartment(r.Context(), id, parent)
+		}
 	case "move_user":
-		err = s.Company.MoveEmployee(r.Context(), sess.UserID, r.FormValue("user"), r.FormValue("from"), r.FormValue("to"))
+		if err = can("staff", r.FormValue("from"), r.FormValue("to")); err == nil {
+			err = s.Company.MoveEmployee(r.Context(), sess.UserID, r.FormValue("user"), r.FormValue("from"), r.FormValue("to"))
+		}
 	default:
 		err = i18n.E("err.bad_form")
+	}
+	if errors.Is(err, company.ErrForbidden) && !wantsJSON(r) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
 	}
 	if wantsJSON(r) {
 		if err != nil {
@@ -247,6 +276,7 @@ func (s *Server) departments(w http.ResponseWriter, r *http.Request, sess auth.S
 			return
 		}
 		s.Log.Info("department "+r.FormValue("op"), "user_id", sess.UserID, "id", r.FormValue("id"), "target", r.FormValue("user"))
+		s.syncDeptChats(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -255,6 +285,7 @@ func (s *Server) departments(w http.ResponseWriter, r *http.Request, sess auth.S
 		return
 	}
 	s.Log.Info("department "+r.FormValue("op"), "user_id", sess.UserID, "id", r.FormValue("id"))
+	s.syncDeptChats(r.Context())
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
@@ -344,6 +375,24 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/company")
 		return
 	}
+	var popular []company.Interest // «Интересы» offered to add: the common ones the person has not got
+	if sess.UserID == id || sess.Admin {
+		all, err := s.Company.PopularInterests(r.Context(), "", 40)
+		if err != nil {
+			s.taskErr(w, r, err, "/company")
+			return
+		}
+		for _, x := range all {
+			if !slices.ContainsFunc(p.Interests, func(t string) bool { return strings.EqualFold(t, x.Tag) }) {
+				popular = append(popular, x)
+			}
+		}
+	}
+	salary, err := s.salaryOf(r.Context(), sess, id) // «Зарплата и отпуск»
+	if err != nil {
+		s.taskErr(w, r, err, "/company")
+		return
+	}
 	tab := r.URL.Query().Get("tab") // the profile's tabs: "" (general), tasks, thanks, security (the person and administrators)
 	security := sess.UserID == id || sess.Admin
 	if tab != "tasks" && tab != "thanks" && (tab != "security" || !security) {
@@ -363,7 +412,7 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		"Tasks": open, "CanEdit": sess.UserID == id || sess.Admin, "Admin": sess.Admin, "Me": sess.UserID == id,
 		"Phone": s.telephonyOf(r.Context(), sess, id), "NumberLocked": s.Telephony != nil && !sess.Admin,
 		"HR": hr, "HRRights": company.HRRights, "Honor": honor, "CanHonor": canHonor,
-		"Courses": courses,
+		"Courses": courses, "Popular": popular, "Salary": salary,
 	}})
 }
 
@@ -532,21 +581,45 @@ func (s *Server) photoFile(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	_, _ = io.Copy(w, obj)
 }
 
+// userDepartments sets the employee's departments: administrators, and those «Права доступа» of the structure let
+// add and take away people in every department the person goes into or out of, and in one they are in already.
 func (s *Server) userDepartments(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		s.taskErr(w, r, i18n.E("err.bad_form"), "/u/"+id)
 		return
 	}
-	if err := s.Company.SetDepartments(r.Context(), sess.UserID, id, r.Form["dept"]); err != nil {
+	if err := s.setDepartments(r, sess, id, func([]string) []string { return r.Form["dept"] }); err != nil {
+		if errors.Is(err, company.ErrForbidden) {
+			http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+			return
+		}
 		s.taskErr(w, r, err, "/u/"+id)
 		return
 	}
+	s.syncDeptChats(r.Context())
 	http.Redirect(w, r, "/u/"+id, http.StatusSeeOther)
+}
+
+// setDepartments gives the employee the departments made of those they are in, when the viewer may (see userDepartments).
+func (s *Server) setDepartments(r *http.Request, sess auth.Session, id string, to func(was []string) []string) error {
+	p, err := s.Company.Profile(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	var was []string
+	for _, d := range p.Departments {
+		was = append(was, d.ID)
+	}
+	now := to(was)
+	if !sess.Admin {
+		// a person of other departments only, not brought in: theirs must let it too
+		if err := s.structCheck(r, sess.UserID, false, "staff", changedDepts(was, now)...); err != nil || p.Guest ||
+			!s.structAnyOf(r, sess.UserID, "staff", was) {
+			return company.ErrForbidden
+		}
+	}
+	return s.Company.SetDepartments(r.Context(), sess.UserID, id, now)
 }
 
 // userActive dismisses or returns an employee (administrators; logged).
@@ -556,10 +629,18 @@ func (s *Server) userActive(w http.ResponseWriter, r *http.Request, sess auth.Se
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
-	active := r.FormValue("active") == "1"
-	if err := s.Company.SetActive(r.Context(), sess.UserID, id, active); err != nil {
+	if err := s.setActive(r, sess, id, r.FormValue("active") == "1"); err != nil {
 		s.taskErr(w, r, err, "/u/"+id)
 		return
+	}
+	s.afterActive(r.Context())
+	http.Redirect(w, r, "/u/"+id, http.StatusSeeOther)
+}
+
+// setActive dismisses or returns one employee for an administrator, into the log and the audit.
+func (s *Server) setActive(r *http.Request, sess auth.Session, id string, active bool) error {
+	if err := s.Company.SetActive(r.Context(), sess.UserID, id, active); err != nil {
+		return err
 	}
 	s.Log.Info("employee active", "user_id", sess.UserID, "target", id, "active", active)
 	kind := "user_fired"
@@ -569,9 +650,14 @@ func (s *Server) userActive(w http.ResponseWriter, r *http.Request, sess auth.Se
 	var name string
 	_ = s.DB.QueryRow(r.Context(), `SELECT name FROM users WHERE id::text = $1`, id).Scan(&name)
 	s.audit(r, audit.Event{Kind: kind, UserID: sess.UserID, Target: name, TargetID: id})
+	return nil
+}
+
+// afterActive: the departments' chats, Matrix and telephony follow the dismissed and the returned.
+func (s *Server) afterActive(ctx context.Context) {
+	s.syncDeptChats(ctx)
 	s.Matrix.Wake()    // a dismissed employee's Matrix account is closed right away
 	s.Telephony.Kick() // and their SIP accounts
-	http.Redirect(w, r, "/u/"+id, http.StatusSeeOther)
 }
 
 // userEmployee makes a guest of collabs an employee (an administrator): out of the guests' groups of Authentik

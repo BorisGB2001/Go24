@@ -252,7 +252,7 @@ func (s *Store) file(ctx context.Context, userID string, list []letter, action s
 			}
 		}
 		if len(gone) > 0 {
-			if err := s.purge(ctx, gone); err != nil {
+			if err := s.purge(ctx, gone, true); err != nil {
 				return err
 			}
 		}
@@ -296,8 +296,9 @@ func (s *Store) roleFolder(ctx context.Context, mailboxID, role string) (Folder,
 	return s.folderByRole(ctx, mailboxID, role)
 }
 
-// purge deletes letters for good: on the server (\Deleted, then EXPUNGE) and in go24.
-func (s *Store) purge(ctx context.Context, list []letter) error {
+// purge deletes letters for good: on the server (\Deleted, then EXPUNGE) and in go24. keep — those of «Удалённые»
+// and «Нежелательная почта» are kept for «Восстановить удалённые элементы» (see recover.go).
+func (s *Store) purge(ctx context.Context, list []letter, keep bool) error {
 	var remote []letter
 	for _, l := range list {
 		if !l.local && l.uid <= maxUID {
@@ -310,14 +311,24 @@ func (s *Store) purge(ctx context.Context, list []letter) error {
 				if _, err := c.Select(folder[0].name, false); err != nil {
 					return err
 				}
+				var made []string // the folder's letters kept: dropped when they stay on the server after all
+				if keep {
+					var err error
+					if made, err = s.keepGone(ctx, c, folder); err != nil {
+						s.dropKept(made)
+						return err
+					}
+				}
 				set := new(imap.SeqSet)
 				for _, l := range folder {
 					set.AddNum(uint32(l.uid))
 				}
 				if err := c.UidStore(set, imap.FormatFlagsOp(imap.AddFlags, true), []interface{}{imap.DeletedFlag}, nil); err != nil {
+					s.dropKept(made)
 					return err
 				}
 				if err := c.Expunge(nil); err != nil {
+					s.dropKept(made)
 					return err
 				}
 			}
@@ -557,5 +568,5 @@ func (s *Store) Empty(ctx context.Context, userID, folderID string) error {
 	if err != nil || len(list) == 0 {
 		return err
 	}
-	return s.purge(ctx, list)
+	return s.purge(ctx, list, true)
 }

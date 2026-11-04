@@ -43,7 +43,16 @@ func (s *Store) LogChanges(ctx context.Context, userID, entity, id string, list 
 	if err != nil {
 		return err
 	}
-	return s.event(ctx, s.db, entity, id, userID, "changed", string(body))
+	if err := s.event(ctx, s.db, entity, id, userID, "changed", string(body)); err != nil {
+		return err
+	}
+	for _, c := range list {
+		if s.ChatJoin != nil && (c.Field == "responsible" || c.Field == "observers") {
+			s.ChatJoin(ctx, entity, id)
+			break
+		}
+	}
+	return nil
 }
 
 func clip(v string) string {

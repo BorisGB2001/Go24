@@ -90,7 +90,7 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	var mine []any
 	for _, p := range projects {
-		if p.CanWork() && p.MyRole != "admin" {
+		if p.CanWork() && p.MyRole != "admin" && p.ToolOn("feed") { // not a group with its feed switched off
 			mine = append(mine, p)
 		}
 	}

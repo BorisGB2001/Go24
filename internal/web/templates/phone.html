@@ -8,6 +8,7 @@
   data-transferred="{{t "phone.transferred" "%s"}}" data-xfer-failed="{{t "phone.xfer_failed"}}" data-xfer-calling="{{t "phone.xfer_calling" "%s"}}"
   data-xfer-talking="{{t "phone.xfer_talking" "%s"}}" data-xfer-ended="{{t "phone.xfer_ended"}}">
   <div class="sp-top"><span class="sp-dot" data-sp-dot></span><b>{{icon "phone"}} {{$d.Number}}</b><span class="muted small" data-sp-status>{{t "phone.connecting"}}</span></div>
+  {{with $d.Away}}<p class="flash small">{{t "phone.away" (t (printf "tel.away.%s" .))}}</p>{{end}}
   <div class="sp-who" data-sp-who hidden>
     <img alt="" data-sp-photo hidden>
     <div><a data-sp-link target="_blank" rel="noopener"><b data-sp-name></b></a><span class="muted small" data-sp-num></span></div>
@@ -22,6 +23,7 @@
     <button type="button" class="sp-hang" data-sp-hang title="{{t "phone.hangup"}}" hidden>{{icon "phone-off"}} <span data-sp-hang-text data-hangup="{{t "phone.hangup"}}" data-decline="{{t "phone.decline"}}">{{t "phone.hangup"}}</span></button>
     <button type="button" class="sp-hold ghost" data-sp-hold title="{{t "phone.hold"}}" aria-label="{{t "phone.hold"}}" hidden>{{icon "player-pause"}}</button>
     <button type="button" class="ghost" data-sp-xfer title="{{t "phone.transfer"}}" aria-label="{{t "phone.transfer"}}" hidden>{{icon "arrows-exchange"}}</button>
+    {{if $d.Pickup}}<button type="button" class="ghost" data-sp-pick title="{{t "phone.pick_hint"}}" aria-label="{{t "phone.pick"}}">{{icon "phone"}} {{t "phone.pick"}}</button>{{end}}
   </div>
   <div class="sp-xfer stack" data-sp-xfer-panel hidden>
     <div class="stack" data-sp-xfer-ask>
@@ -45,6 +47,9 @@
     <div class="sp-client" data-sp-client hidden><span class="muted small" data-sp-client-kind></span><b data-sp-client-name></b><div data-sp-client-extra></div></div>
     <div data-sp-deals hidden><span class="small"><b>{{t "phone.card_deals"}}</b></span><ul class="sp-list" data-sp-deal-list></ul></div>
     <div data-sp-create hidden class="row wrap"></div>
+    <div class="ss-box stack" data-sp-sales hidden data-back="{{t "tel.sales.back"}}" data-again="{{t "tel.sales.again"}}" data-end="{{t "tel.sales.end"}}">
+      <div class="row"><span class="small"><b>{{t "phone.card_sales"}}</b></span><select data-sales-pick class="small" style="width:auto" hidden></select></div>
+      <div data-sales-view></div></div>
     <label class="stack"><span class="small"><b>{{t "phone.card_comment"}}</b></span>
       <textarea data-sp-note rows="3" maxlength="2000" placeholder="{{t "phone.card_comment_hint"}}"></textarea></label>
     <div class="row"><button type="button" class="small" data-sp-note-save>{{t "common.save"}}</button><span class="muted small" data-sp-note-state></span></div>
@@ -57,5 +62,6 @@
   <audio data-sp-audio2 autoplay></audio>
 </div>
 <script src="{{asset "js/vendor/jssip-3.10.1.min.js"}}"></script>
+<script src="{{asset "js/salescript.js"}}"></script>
 <script src="{{asset "js/softphone.js"}}"></script>
 {{end}}

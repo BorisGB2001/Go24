@@ -1,0 +1,8 @@
+{{/* «Тематика» and «Ключевые слова» of a group (GO24DEV-811): the line on its card and the fields of its form. */}}
+{{define "groupsubject"}}{{if or .Subject .Keywords}}<div class="row tags small" style="margin-top:6px">{{if .Subject}}<a class="pill" href="/projects?tab=all&subject={{.SubjectID}}">{{icon "folder"}} {{.Subject}}</a>{{end}}
+  {{range .Keywords}}<span class="tag"><a href="/projects?tab=all&kw={{.}}">#{{.}}</a></span>{{end}}</div>{{end}}{{end}}
+
+{{define "groupsubjectform"}}{{$p := .Project}}{{if .Subjects}}<label>{{t "subjects.subject"}}</label>
+<select name="subject"><option value="">{{t "subjects.none"}}</option>{{range .Subjects}}<option value="{{.ID}}" {{if and $p (eq .ID $p.SubjectID)}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
+<label>{{t "subjects.keywords"}}</label>
+<input type="text" name="keywords" value="{{if $p}}{{join $p.Keywords ", "}}{{end}}" placeholder="{{t "subjects.keywords_hint"}}">{{end}}

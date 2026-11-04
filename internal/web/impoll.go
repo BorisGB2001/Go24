@@ -13,7 +13,7 @@ func (s *Server) imPoll(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	_ = r.ParseForm()
 	m, err := s.Matrix.CreatePoll(r.Context(), sess.UserID, r.FormValue("room"), r.FormValue("thread"), r.FormValue("question"),
 		r.Form["answer"], r.FormValue("multi") == "1", r.FormValue("hidden") == "1")
-	s.pollAnswer(w, r, m, err, http.StatusCreated)
+	s.imAnswer(w, r, m, err, http.StatusCreated)
 }
 
 // imPollAction votes (vote: the answers chosen, none — the vote is taken back) or ends one's own poll (end); the
@@ -31,10 +31,11 @@ func (s *Server) imPollAction(w http.ResponseWriter, r *http.Request, sess auth.
 		http.NotFound(w, r)
 		return
 	}
-	s.pollAnswer(w, r, m, err, http.StatusOK)
+	s.imAnswer(w, r, m, err, http.StatusOK)
 }
 
-func (s *Server) pollAnswer(w http.ResponseWriter, r *http.Request, m matrixsync.Message, err error, status int) {
+// imAnswer gives a chat message as the messenger draws it, or the error.
+func (s *Server) imAnswer(w http.ResponseWriter, r *http.Request, m matrixsync.Message, err error, status int) {
 	var html string
 	if err == nil {
 		html, err = s.imFragment(r, "immsg", m)

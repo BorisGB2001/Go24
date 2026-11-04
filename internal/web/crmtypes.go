@@ -23,6 +23,9 @@ func (s *Server) crmTabs(r *http.Request, sess auth.Session, data map[string]any
 	if data["Types"], err = s.CRM.Types(r.Context()); err != nil {
 		return err
 	}
+	if data["Simple"], err = s.CRM.Simple(r.Context()); err != nil { // «Простой режим»: no «Лиды» tab
+		return err
+	}
 	// «Валюты»: the list for the forms; the sums of the lists are in the base one
 	list, err := s.CRM.Currencies(r.Context())
 	for _, c := range list {

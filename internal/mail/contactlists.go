@@ -66,16 +66,21 @@ func Members(text string) ([]Member, error) {
 func (c ContactList) String() string {
 	lines := make([]string, len(c.Members))
 	for i, m := range c.Members {
-		lines[i] = m.Email
-		if m.Name != "" {
-			name := m.Name
-			if strings.ContainsAny(name, `,;"<>()@:\.[]`) {
-				name = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(name) + `"`
-			}
-			lines[i] = name + " <" + m.Email + ">"
-		}
+		lines[i] = m.String()
 	}
 	return strings.Join(lines, "\n")
+}
+
+// String is the address as it is typed: «Имя <адрес>» (the name quoted when it must be), or the address.
+func (m Member) String() string {
+	if m.Name == "" {
+		return m.Email
+	}
+	name := m.Name
+	if strings.ContainsAny(name, `,;"<>()@:\.[]`) {
+		name = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(name) + `"`
+	}
+	return name + " <" + m.Email + ">"
 }
 
 func scanContactLists(rows pgx.Rows, err error) ([]ContactList, error) {

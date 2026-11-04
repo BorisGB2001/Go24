@@ -17,7 +17,15 @@ type Sheet struct {
 	Rows   [][]string
 	// Images are the rows' pictures (the signers' handwritten signatures), by the row's index: in its last cell.
 	Images map[int]Image
+	// Check is the block after the table — how to check the document: its lines and a picture (a QR code) beside.
+	Check    []string
+	CheckPic *Image
+	// alone: the sheet is the whole document (SheetDoc), no page break before it.
+	alone bool
 }
+
+// checkRow is the key of the picture of Check among the rows' ones.
+const checkRow = -1
 
 func para(text string, bold bool, size int) string {
 	rpr := ""
@@ -49,7 +57,9 @@ func tc(ps string) string {
 // xml is the sheet as WordprocessingML, from a new page; pics — the rows' pictures, with their relationship ids.
 func (s Sheet) xml(pics map[int]*picture) string {
 	var b strings.Builder
-	b.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
+	if !s.alone {
+		b.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
+	}
 	b.WriteString(para(s.Title, true, 28))
 	for _, l := range s.Lines {
 		b.WriteString(para(l, false, 18))
@@ -80,6 +90,12 @@ func (s Sheet) xml(pics map[int]*picture) string {
 		}
 		b.WriteString(`</w:tbl><w:p/>`)
 	}
+	if p := pics[checkRow]; p != nil {
+		b.WriteString(`<w:p><w:r><w:t>` + drawing(p, 91999) + `</w:t></w:r></w:p>`)
+	}
+	for _, l := range s.Check {
+		b.WriteString(para(l, false, 16))
+	}
 	return b.String()
 }
 
@@ -97,6 +113,13 @@ func AppendSheet(doc []byte, s Sheet) ([]byte, error) {
 		if p := pictureOf(img); p != nil && i >= 0 && i < len(s.Rows) {
 			p.rel = "rIdGo24Sig" + strconv.Itoa(i+1)
 			pics[i], exts[p.ext] = p, true
+			list = append(list, p)
+		}
+	}
+	if s.CheckPic != nil {
+		if p := pictureOf(*s.CheckPic); p != nil {
+			p.rel = "rIdGo24Check"
+			pics[checkRow], exts[p.ext] = p, true
 			list = append(list, p)
 		}
 	}
@@ -165,4 +188,39 @@ func AppendSheet(doc []byte, s Sheet) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// SheetDoc is the sheet as a Word document of its own (A4), to put after a document that is not Word (a PDF).
+func SheetDoc(s Sheet) ([]byte, error) {
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	for _, f := range [][2]string{
+		{"[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+			`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+			`<Default Extension="xml" ContentType="application/xml"/>` +
+			`<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+			`</Types>`},
+		{"_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+			`</Relationships>`},
+		{"word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+			`<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>` +
+			`</w:body></w:document>`},
+	} {
+		w, err := zw.Create(f[0])
+		if err == nil {
+			_, err = w.Write([]byte(f[1]))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	s.alone = true
+	return AppendSheet(b.Bytes(), s)
 }

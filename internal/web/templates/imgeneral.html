@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "messages"}} {{t "imgeneral.title"}}</h1>
+<form method="post" action="/settings/general-chat" class="card stack">
+  <p class="muted small">{{t "imgeneral.hint"}}{{with $d.Room}} <a href="/im?room={{urlquery .}}">{{t "imgeneral.open"}}</a>{{end}}</p>
+  <fieldset class="stack">
+    <legend>{{t "imgeneral.who"}}</legend>
+    <label><input type="radio" name="who" value="all" {{if eq $d.Set.Who "all"}}checked{{end}}> {{t "imgeneral.all"}}</label>
+    <label><input type="radio" name="who" value="admins" {{if eq $d.Set.Who "admins"}}checked{{end}}> {{t "imgeneral.admins"}}</label>
+  </fieldset>
+  <label><input type="checkbox" name="hello" value="1" {{if not $d.Set.NoHello}}checked{{end}}> {{t "imgeneral.hello"}}</label>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}

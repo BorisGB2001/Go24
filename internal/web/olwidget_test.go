@@ -243,3 +243,81 @@ func must2[T any](v T, err error) T {
 	}
 	return v
 }
+
+// TestWidgetChatLinkHTTP: «Ссылка на чат» — the line's chat on a page of its own (/online/{id}), the widget there in its
+// page mode; the link and its QR code in the widgets' settings (administrators); an inactive line has no page.
+func TestWidgetChatLinkHTTP(t *testing.T) {
+	dbURL := os.Getenv("GO24_TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("GO24_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var op string
+	if err := pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, name, email) VALUES ('op', 'Оля', 'op@t') RETURNING id`).Scan(&op); err != nil {
+		t.Fatal(err)
+	}
+	ol := openlines.NewStore(pool, crm.NewStore(pool))
+	ol.Tr = func(key string, _ ...any) string { return key }
+	srv := &Server{DB: pool, Tasks: tasks.NewStore(pool), CRM: ol.CRM, OpenLines: ol, BaseURL: "https://go24.example",
+		Sessions: auth.NewSessions(strings.Repeat("s", 32), false), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	wid := must2(ol.SaveWidget(ctx, op, openlines.Widget{Name: "Поддержка", Active: true, Operators: []string{op}}))
+	hs := httptest.NewServer(srv.Routes())
+	defer hs.Close()
+	get := func(path string, s *auth.Session, want int) (string, http.Header) {
+		t.Helper()
+		req := must2(http.NewRequest("GET", hs.URL+path, nil))
+		if s != nil {
+			rec := httptest.NewRecorder()
+			if err := srv.Sessions.Set(rec, *s); err != nil {
+				t.Fatal(err)
+			}
+			req.AddCookie(rec.Result().Cookies()[0])
+		}
+		res := must2(http.DefaultClient.Do(req))
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != want {
+			t.Fatalf("GET %s: %d, want %d: %.300s", path, res.StatusCode, want, raw)
+		}
+		return string(raw), res.Header
+	}
+
+	page, _ := get("/online/"+wid, nil, 200)
+	if !strings.Contains(page, "<title>Поддержка</title>") || !strings.Contains(page, `src="/w/`+wid+`/widget.js?page=1"`) {
+		t.Fatalf("the chat page: %.500s", page)
+	}
+	if js, _ := get("/w/"+wid+"/widget.js?page=1", nil, 200); !strings.Contains(js, `"page":true`) {
+		t.Fatal("the widget of the page is not in its page mode")
+	}
+	if js, _ := get("/w/"+wid+"/widget.js", nil, 200); !strings.Contains(js, `"page":false`) {
+		t.Fatal("the widget of a site is in the page mode")
+	}
+
+	admin := &auth.Session{UserID: op, Admin: true}
+	if p, _ := get("/openlines/widgets", admin, 200); !strings.Contains(p, "https://go24.example/online/"+wid) ||
+		!strings.Contains(p, "/openlines/widgets/"+wid+"/qr") {
+		t.Fatal("no chat link or QR code in the widgets' settings")
+	}
+	png, h := get("/openlines/widgets/"+wid+"/qr?download=1", admin, 200)
+	if h.Get("Content-Type") != "image/png" || !strings.HasPrefix(png, "\x89PNG") || !strings.Contains(h.Get("Content-Disposition"), "chat-qr.png") {
+		t.Fatalf("the QR code: %v", h)
+	}
+	get("/openlines/widgets/"+wid+"/qr", &auth.Session{UserID: op}, 403)
+
+	_, err = ol.SaveWidget(ctx, op, openlines.Widget{ID: wid, Name: "Поддержка", Operators: []string{op}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get("/online/"+wid, nil, 404)
+}

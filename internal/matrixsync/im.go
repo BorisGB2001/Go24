@@ -47,8 +47,10 @@ type Room struct {
 	Mentions  int // unread messages that mention the person (Matrix highlights), the «@» of the list
 	Threads   int // unread replies in the chat's threads (Unread counts the main timeline only)
 	Encrypted bool
-	// a group chat of a collab (collab_chats): the messenger keeps it on the collabs' tab, with the collab's name
+	// a group chat of a collab (collab_chats): the messenger keeps it on the collabs' tab, with the collab's name;
+	// CoPilot — it is a «Чат с CoPilot» of the collab
 	CollabID, CollabKey, CollabName string
+	CoPilot                         bool
 }
 
 // Message is one message as go24 shows it.
@@ -185,6 +187,9 @@ func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imP
 	if by := autoDeleteBy(ev); by != "" && ev.Sender == s.M.UserID("go24") { // a collab's, as its settings say
 		ev.Sender = by
 	}
+	if by := s.commentAuthor(ev); by != "" { // a reader's comment on a channel's post
+		ev.Sender = by
+	}
 	m := Message{ID: ev.EventID, RoomID: roomID, SenderMXID: ev.Sender, At: time.UnixMilli(ev.TS), Mine: ev.Sender == me}
 	switch ev.Type {
 	case "m.room.encrypted":
@@ -202,7 +207,7 @@ func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imP
 			m.ThreadRoot, _ = rel["event_id"].(string)
 		}
 	case "m.room.message":
-		body, _ := ev.Content["body"].(string)
+		body := commentText(ev.Content)
 		if body == "" {
 			return m, false // redacted
 		}
@@ -233,7 +238,7 @@ func (s *Service) message(ev matrix.Event, roomID, me string, who map[string]imP
 		}
 		if ed := ev.Unsigned.Relations.Replace; ed != nil { // edited: the server gives its latest edit along
 			if nc, ok := ed.Content["m.new_content"].(map[string]any); ok {
-				if b, _ := nc["body"].(string); b != "" {
+				if b := commentText(nc); b != "" {
 					m.Body, m.Edited = b, true
 				}
 				if c := callOf(nc); c != nil { // a call's line as the call has ended
@@ -274,6 +279,9 @@ func eventPeople(ev matrix.Event) []string {
 	if by := autoDeleteBy(ev); by != "" {
 		return []string{ev.Sender, by}
 	}
+	if by, _ := ev.Content[commentBy].(string); by != "" && ev.Type == "m.room.message" {
+		return []string{ev.Sender, by}
+	}
 	return []string{ev.Sender}
 }
 
@@ -300,6 +308,9 @@ func (s *Service) chatEvent(ev matrix.Event, m *Message, who map[string]imPerson
 			return false
 		}
 		target := *ev.StateKey
+		if target == s.M.UserID("go24") {
+			return false // let into a channel for its readers' comments
+		}
 		switch ev.Content["membership"] {
 		case "invite":
 			if ev.Content["is_direct"] == true {
@@ -333,7 +344,7 @@ func (s *Service) chatEvent(ev matrix.Event, m *Message, who map[string]imPerson
 		m.Event = "photo"
 	case "m.room.power_levels":
 		target, event := levelChange(ev)
-		if target == "" {
+		if target == "" || target == s.M.UserID("go24") {
 			return false
 		}
 		m.Event, m.Target = event, strings.TrimPrefix(strings.SplitN(target, ":", 2)[0], "@")
@@ -445,16 +456,19 @@ func (s *Service) Rooms(ctx context.Context, userID string) ([]Room, error) {
 		kinds[id] = k
 	}
 	rows.Close()
-	type inCollab struct{ ID, Key, Name string }
+	type inCollab struct {
+		ID, Key, Name string
+		CoPilot       bool
+	}
 	collabOf := map[string]inCollab{} // a collab's group chats
-	rows, err = s.DB.Query(ctx, `SELECT c.room_id, p.id::text, p.key, p.name FROM collab_chats c JOIN projects p ON p.id = c.project_id`)
+	rows, err = s.DB.Query(ctx, `SELECT c.room_id, p.id::text, p.key, p.name, c.copilot FROM collab_chats c JOIN projects p ON p.id = c.project_id`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var id string
 		var c inCollab
-		if err := rows.Scan(&id, &c.ID, &c.Key, &c.Name); err != nil {
+		if err := rows.Scan(&id, &c.ID, &c.Key, &c.Name, &c.CoPilot); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -484,7 +498,7 @@ func (s *Service) Rooms(ctx context.Context, userID string) ([]Room, error) {
 	for id, r := range sy.Rooms.Join {
 		room := Room{ID: id, Kind: kinds[id], Unread: r.Unread.Notifications, Mentions: r.Unread.Highlights, Muted: muted[id]}
 		if c, ok := collabOf[id]; ok {
-			room.CollabID, room.CollabKey, room.CollabName = c.ID, c.Key, c.Name
+			room.CollabID, room.CollabKey, room.CollabName, room.CoPilot = c.ID, c.Key, c.Name, c.CoPilot
 		}
 		for _, t := range r.Threads {
 			room.Threads += t.Notifications
@@ -893,7 +907,8 @@ func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string
 		return Message{}, forbidden(err)
 	}
 	orig, ok := s.message(ev, roomID, me, nil)
-	if !ok || ev.Sender != me || !orig.plain {
+	relayed := s.commentAuthor(ev) == me // one's comment on a channel's post: go24 sent it, go24 changes it
+	if !ok || (ev.Sender != me && !relayed) || !orig.plain {
 		return Message{}, i18n.E("err.forbidden")
 	}
 	old, parts := lastContent(ev), BotParts{}
@@ -920,7 +935,11 @@ func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string
 		a.Only = only
 		nc["go24.attach"] = a
 	}
-	edit := map[string]any{"msgtype": "m.text", "body": "* " + body, "m.new_content": nc,
+	who, _ := s.people(ctx, []string{me})
+	if relayed {
+		nc, tok = asComment(nc, me, who[me].Name), ""
+	}
+	edit := map[string]any{"msgtype": "m.text", "body": "* " + nc["body"].(string), "m.new_content": nc,
 		"m.relates_to": map[string]any{"rel_type": "m.replace", "event_id": eventID}}
 	if f, ok := nc["formatted_body"].(string); ok {
 		edit["format"], edit["formatted_body"] = nc["format"], "* "+f
@@ -929,7 +948,6 @@ func (s *Service) edit(ctx context.Context, userID, roomID, eventID, body string
 		return Message{}, forbidden(err)
 	}
 	orig.Body, orig.Edited = body, true
-	who, _ := s.people(ctx, []string{me})
 	if p, ok := who[me]; ok {
 		orig.SenderID, orig.SenderName, orig.SenderPhoto, orig.SenderGuest, orig.SenderBot = p.ID, p.Name, p.Photo, p.Guest, p.Bot
 		if p.Bot {
@@ -949,7 +967,9 @@ func (s *Service) Delete(ctx context.Context, userID, roomID, eventID string) er
 	if err != nil {
 		return forbidden(err)
 	}
-	if ev.Sender != me || ev.Type != "m.room.message" {
+	if s.commentAuthor(ev) == me { // one's comment on a channel's post: go24 sent it, go24 takes it back
+		tok = ""
+	} else if ev.Sender != me || ev.Type != "m.room.message" {
 		return i18n.E("err.forbidden")
 	}
 	return forbidden(s.M.RedactAs(ctx, tok, roomID, eventID))
@@ -1001,6 +1021,23 @@ func (s *Service) Forward(ctx context.Context, userID, fromRoom, eventID, toRoom
 		m = one[0]
 	}
 	return m, err
+}
+
+// ForwardAll forwards several messages of a chat, one by one in the given order (the chosen ones of «Выбрать»);
+// the first that cannot be forwarded stops it.
+func (s *Service) ForwardAll(ctx context.Context, userID, fromRoom string, events []string, toRoom string) ([]Message, error) {
+	if len(events) == 0 {
+		return nil, i18n.E("err.not_found")
+	}
+	var out []Message
+	for _, ev := range events {
+		m, err := s.Forward(ctx, userID, fromRoom, ev, toRoom)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 // SendFile posts a file (a picture, a voice message) as the employee: it goes into the Matrix media repository
@@ -1121,6 +1158,20 @@ func (s *Service) RoomCollab(ctx context.Context, roomID string) string {
 	return pid
 }
 
+// ChatProjectKey is the key of the project (a collab too) whose chat this is — its own chat, a chat of its task or a
+// group chat of a collab; "" for other chats. Documents made in the chat lie on that project's drive.
+func (s *Service) ChatProjectKey(ctx context.Context, roomID string) string {
+	pid := s.roomProject(ctx, roomID)
+	if pid == "" {
+		pid = s.CollabOf(ctx, roomID)
+	}
+	var key string
+	if pid != "" {
+		_ = s.DB.QueryRow(ctx, `SELECT key FROM projects WHERE id::text = $1`, pid).Scan(&key)
+	}
+	return key
+}
+
 // roomProject is the project (a collab too) whose room — or whose task's room — this is; "" for other chats.
 func (s *Service) roomProject(ctx context.Context, roomID string) string {
 	var pid string
@@ -1147,6 +1198,9 @@ func (s *Service) post(ctx context.Context, me, tok, roomID, root string, conten
 		return Message{}, i18n.E(ChatClosedKeys[why])
 	}
 	id, err := s.M.Send(ctx, roomID, content, tok)
+	if err != nil && root != "" { // a reader's comment on a channel's post
+		id, err = s.comment(ctx, me, tok, roomID, content, err)
+	}
 	if err != nil {
 		return Message{}, forbidden(err)
 	}
@@ -1523,7 +1577,7 @@ func liveChange(ev matrix.Event, roomID string) *Message {
 		rel, _ := ev.Content["m.relates_to"].(map[string]any)
 		nc, _ := ev.Content["m.new_content"].(map[string]any)
 		target, _ := rel["event_id"].(string)
-		if b, _ := nc["body"].(string); rel["rel_type"] == "m.replace" && target != "" && b != "" {
+		if b := commentText(nc); rel["rel_type"] == "m.replace" && target != "" && b != "" {
 			if c := callOf(nc); c != nil {
 				return &Message{ID: target, RoomID: roomID, Change: "edit", Body: b, Call: c, Notice: true, At: time.UnixMilli(ev.TS)}
 			}

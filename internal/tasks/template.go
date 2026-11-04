@@ -27,6 +27,7 @@ type Template struct {
 	ResponsibleID, ResponsibleName     string
 	Priority                           Priority
 	DeadlineAfter                      *int // minutes after creation (nil = no deadline)
+	EstimateMinutes                    *int // «Плановые трудозатраты»
 	RequiresControl                    bool
 	AllowChangeDeadline, MatchWorkTime bool
 	Accomplices, Auditors, Checklist   []string
@@ -197,7 +198,7 @@ func (t Template) AfterHours() int {
 func (t Template) NewTask(now time.Time) NewTask {
 	in := NewTask{Title: t.Title, Description: t.Description, ResponsibleID: t.ResponsibleID, Priority: t.Priority,
 		RequiresControl: t.RequiresControl, AllowChangeDeadline: t.AllowChangeDeadline, MatchWorkTime: t.MatchWorkTime, Params: t.Params,
-		Accomplices: t.Accomplices, Auditors: t.Auditors, Checklist: t.Checklist, TemplateID: t.ID}
+		Accomplices: t.Accomplices, Auditors: t.Auditors, Checklist: t.Checklist, TemplateID: t.ID, EstimateMinutes: t.EstimateMinutes}
 	if t.DeadlineAfter != nil {
 		d := now.Add(time.Duration(*t.DeadlineAfter) * time.Minute)
 		in.Deadline = &d
@@ -211,7 +212,7 @@ const templateSelect = `SELECT t.id, t.creator_id, cu.name, t.project_id, p.key,
 		t.replicate, t.period, t.every, t.workdays_only, t.week_days::int[], t.month_day, t.year_month, t.at_time,
 		t.starts_on, t.ends_on, t.times, t.created_count, t.next_run, t.last_run, t.created_at,
 		coalesce(t.parent_id::text, ''), coalesce(pt.title, ''), (SELECT count(*) FROM task_templates c WHERE c.parent_id = t.id),
-		t.for_new_users
+		t.for_new_users, t.no_time_tracking, t.estimate_minutes
 	FROM task_templates t JOIN users cu ON cu.id = t.creator_id JOIN users ru ON ru.id = t.responsible_id
 	JOIN projects p ON p.id = t.project_id LEFT JOIN task_templates pt ON pt.id = t.parent_id`
 
@@ -223,7 +224,7 @@ func scanTemplate(row pgx.Row) (Template, error) {
 		&t.DatesFromSubtasks, &t.AutoComplete, &t.ResultRequired, &t.Accomplices, &t.Auditors, &t.Checklist,
 		&r.On, &r.Period, &r.Every, &r.WorkdaysOnly, &r.WeekDays, &r.MonthDay, &r.YearMonth, &r.At,
 		&r.StartsOn, &r.EndsOn, &r.Times, &t.CreatedCount, &t.NextRun, &t.LastRun, &t.CreatedAt,
-		&t.ParentID, &t.ParentTitle, &t.SubCount, &t.ForNewUsers)
+		&t.ParentID, &t.ParentTitle, &t.SubCount, &t.ForNewUsers, &t.NoTimeTracking, &t.EstimateMinutes)
 	return t, err
 }
 
@@ -346,7 +347,14 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 		}
 		return out
 	}
-	t.Accomplices, t.Auditors, t.Checklist = clean(t.Accomplices), clean(t.Auditors), clean(t.Checklist)
+	t.Accomplices, t.Auditors = clean(t.Accomplices), clean(t.Auditors)
+	lines := []string{} // a checklist keeps its indents (nested items) and its repeated items
+	for _, v := range t.Checklist {
+		if v = strings.TrimRight(v, " \t\r"); strings.TrimSpace(v) != "" {
+			lines = append(lines, v)
+		}
+	}
+	t.Checklist = lines
 	sched, err := s.Schedule(ctx)
 	if err != nil {
 		return "", err
@@ -375,7 +383,7 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 	args := []any{userID, p.ID, t.Title, strings.TrimSpace(t.Description), t.ResponsibleID, t.Priority, t.DeadlineAfter,
 		t.RequiresControl, t.AllowChangeDeadline, t.MatchWorkTime, t.Accomplices, t.Auditors, t.Checklist,
 		r.On, r.Period, r.Every, r.WorkdaysOnly, r.WeekDays, r.MonthDay, r.YearMonth, r.At, r.StartsOn, r.EndsOn, r.Times, next,
-		t.DatesFromSubtasks, t.AutoComplete, t.ResultRequired, t.ForNewUsers}
+		t.DatesFromSubtasks, t.AutoComplete, t.ResultRequired, t.ForNewUsers, t.NoTimeTracking, t.EstimateMinutes}
 	if t.ID == "" {
 		var id string
 		var parent *string
@@ -385,9 +393,9 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 		err := s.db.QueryRow(ctx, `INSERT INTO task_templates (creator_id, project_id, title, description, responsible_id, priority,
 			deadline_after, requires_control, allow_change_deadline, match_work_time, accomplices, auditors, checklist,
 			replicate, period, every, workdays_only, week_days, month_day, year_month, at_time, starts_on, ends_on, times, next_run,
-			dates_from_subtasks, auto_complete, result_required, for_new_users, new_users_since, parent_id)
-			VALUES (coalesce((SELECT creator_id FROM task_templates WHERE id = $30), $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid[], $12::uuid[], $13, $14, $15, $16, $17, $18::smallint[], $19, $20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, CASE WHEN $29 THEN now() END, $30)
+			dates_from_subtasks, auto_complete, result_required, for_new_users, new_users_since, no_time_tracking, estimate_minutes, parent_id)
+			VALUES (coalesce((SELECT creator_id FROM task_templates WHERE id = $32), $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid[], $12::uuid[], $13, $14, $15, $16, $17, $18::smallint[], $19, $20, $21, $22, $23, $24, $25,
+			$26, $27, $28, $29, CASE WHEN $29 THEN now() END, $30, $31, $32)
 			RETURNING id`, append(args, parent)...).Scan(&id)
 		return id, err
 	}
@@ -398,7 +406,7 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 		ends_on = $23, times = $24, next_run = $25, dates_from_subtasks = $26, auto_complete = $27, result_required = $28,
 		-- employees who came before the mark was put on do not get the task
 		new_users_since = CASE WHEN NOT $29 THEN NULL WHEN for_new_users THEN new_users_since ELSE now() END, for_new_users = $29,
-		updated_at = now() WHERE id = $1`, append([]any{t.ID}, args[1:]...)...)
+		no_time_tracking = $30, estimate_minutes = $31, updated_at = now() WHERE id = $1`, append([]any{t.ID}, args[1:]...)...)
 	return t.ID, err
 }
 

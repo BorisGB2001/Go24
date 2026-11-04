@@ -183,7 +183,7 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/my")
 		return
 	}
-	data := map[string]any{"AfterMove": h.AfterMove, "Layout": lay, "QuickSteps": quick, "Boxes": list, "FolderID": fid, "Searches": searches, "Favs": favs, "FavSet": favSet, "Filters": mail.Filters, "Sorts": mail.Sorts, "New": q.Get("new") == "1", "Pane": mailPane(r),
+	data := map[string]any{"AfterMove": h.AfterMove, "CoPilot": s.aiOn(ctx, sess.UserID, "mail"), "Layout": lay, "QuickSteps": quick, "Boxes": list, "FolderID": fid, "Searches": searches, "Favs": favs, "FavSet": favSet, "Filters": mail.Filters, "Sorts": mail.Sorts, "Policies": mail.Policies, "New": q.Get("new") == "1", "Pane": mailPane(r),
 		"Panes": mailPanes, "Cols": mailColsOf(r), "Unseen": unseen, "Categories": cats, "CatByID": catMap(cats), "Colors": mail.Colors, "Conv": conv, "ConvOn": mailConv(r),
 		"SnoozePresets": snoozePresets, "FlagPresets": flagPresets, "RemindPresets": remindPresets, "Back": r.URL.RequestURI(), "Mode": q.Get("mode"),
 		"OAuth": s.Mail.OAuthEnabled()}
@@ -208,6 +208,16 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		}
 		data["Search"] = sv
 	}
+	if strings.HasPrefix(fid, mail.PersonFolder) { // a favorite person: the list's title is the name
+		pp, err := s.Mail.FavPeople(ctx, sess.UserID, []string{strings.ToLower(fid[len(mail.PersonFolder):])})
+		if err != nil {
+			s.taskErr(w, r, err, "/mail")
+			return
+		}
+		for _, p := range pp {
+			data["Person"] = p
+		}
+	}
 	if fid != "" && !mail.Virtual(fid) {
 		f, err := s.Mail.Folder(ctx, sess.UserID, fid)
 		if err != nil {
@@ -225,7 +235,11 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	ml := mailList{ListOpts: mail.ListOpts{Folder: fid, Sort: "date"}}
 	if fid != "" {
 		ml = mailListOf(w, r, fid, role, prefs.Focused, conv)
-		if data["Messages"], err = s.Mail.ListBy(ctx, sess.UserID, ml.ListOpts); err != nil {
+		var msgs []mail.Message
+		if msgs, err = s.Mail.ListBy(ctx, sess.UserID, ml.ListOpts); err == nil {
+			err = s.Mail.Dress(ctx, sess.UserID, msgs) // «Условное форматирование»
+		}
+		if data["Messages"] = msgs; err != nil {
 			s.taskErr(w, r, err, "/mail")
 			return
 		}
@@ -237,6 +251,12 @@ func (s *Server) mailPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		}
 		if ml.Focus && ml.View == mail.ViewFocused {
 			if data["OtherN"], data["OtherFrom"], err = s.Mail.OtherNews(ctx, sess.UserID, fid); err != nil {
+				s.taskErr(w, r, err, "/mail")
+				return
+			}
+		}
+		if h.Nudges && (role == "inbox" || fid == mail.AllInboxes) && ml.Q == "" && ml.Filter == "" && ml.View != mail.ViewOther { // «Напоминания»
+			if data["Nudges"], err = s.Mail.Nudges(ctx, sess.UserID); err != nil {
 				s.taskErr(w, r, err, "/mail")
 				return
 			}
@@ -440,7 +460,23 @@ func (s *Server) mailRead(r *http.Request, sess auth.Session, id string) (map[st
 		"SnoozePresets": snoozePresets, "FlagPresets": flagPresets, "RemindPresets": remindPresets, "Docs": docs, "Outside": outside,
 		"Unsub": unsub, "UnsubPage": unsubPage, "Focus": prefs.Focused && m.FolderRole == "inbox",
 		"ReadAfter": h.ReadAfter, "Unread": unread}
+	if data["Check"], err = s.Mail.CheckSender(r.Context(), sess.UserID, m); err != nil { // «Не удалось проверить отправителя»… (senderauth.go)
+		return nil, err
+	}
+	data["Policies"] = mail.Policies
+	if data["Retention"], err = s.Mail.LetterRetention(r.Context(), sess.UserID, m.ID); err != nil { // «Назначить политику» (retention.go)
+		return nil, err
+	}
 	if err := s.mailExtras(r, sess, m, thread, data); err != nil { // its meeting, tasks, CRM, the sender (maillinks.go)
+		return nil, err
+	}
+	if err := s.mailTranslateData(r, sess.UserID, m, data); err != nil { // «Перевести» (mailtranslate.go)
+		return nil, err
+	}
+	if err := s.mailReactData(r, sess.UserID, thread, data); err != nil { // reactions (mailreact.go)
+		return nil, err
+	}
+	if err := s.mailRepliesData(r, sess.UserID, m, prefs.Suggest, data); err != nil { // «Предлагаемые ответы» (mailsuggest.go)
 		return nil, err
 	}
 	return data, nil
@@ -633,7 +669,7 @@ func (s *Server) mailSend(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		imp, _ := strconv.Atoi(r.FormValue("importance"))
 		err = s.Mail.SendLetter(r.Context(), sess.UserID, id, mail.Letter{From: r.FormValue("from"), To: r.FormValue("to"), CC: r.FormValue("cc"), BCC: r.FormValue("bcc"),
 			Subject: r.FormValue("subject"), Text: r.FormValue("body"), HTML: r.FormValue("html"), Files: files, Importance: max(-1, min(1, imp)),
-			Receipt: r.FormValue("receipt") != "", Delivery: r.FormValue("delivery") != "", Refs: refs})
+			Sensitivity: r.FormValue("sensitivity"), Receipt: r.FormValue("receipt") != "", Delivery: r.FormValue("delivery") != "", Refs: refs})
 	}
 	if err != nil {
 		http.Redirect(w, r, back+"&new=1&msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
@@ -653,7 +689,7 @@ func (s *Server) mailLead(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		http.Redirect(w, r, "/crm/leads/"+m.LeadID, http.StatusSeeOther)
 		return
 	}
-	if err := s.CRM.Check(r.Context(), sess.UserID, "lead", "write", sess.UserID); err != nil {
+	if err := s.CRM.Check(r.Context(), sess.UserID, "lead", "add", sess.UserID); err != nil {
 		s.mailErr(w, r, err, mailURL(m.FolderID, m.ID))
 		return
 	}

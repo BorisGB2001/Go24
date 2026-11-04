@@ -83,7 +83,9 @@ func (s *Store) forward(ctx context.Context, userID, mailboxID string, news []ar
 			continue
 		}
 		if err := s.sendOn(ctx, userID, n.id, "redirect", b.To, "auto-forwarded"); err != nil {
-			errs = append(errs, err)
+			if !errors.Is(err, ErrNoForward) { // «Не пересылать» stays here, as Outlook keeps it
+				errs = append(errs, err)
+			}
 			rest = append(rest, n) // not sent on: the letter stays whatever was chosen
 			continue
 		}

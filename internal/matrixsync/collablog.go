@@ -16,7 +16,7 @@ import (
 
 // collabLogKinds: which switch of the settings tells an action of the log ("" — never told: the collab's making).
 var collabLogKinds = map[string]string{
-	"member_added": "members", "member_removed": "members", "left": "members", "role_changed": "members", "owner_changed": "members",
+	"member_added": "members", "member_joined": "members", "member_removed": "members", "left": "members", "role_changed": "members", "owner_changed": "members",
 	"joined":         "guests",
 	"invite_created": "invites", "invite_resent": "invites", "invite_revoked": "invites",
 	"settings": "collab", "info": "collab", "archived": "collab", "restored": "collab",

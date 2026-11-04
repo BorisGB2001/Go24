@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"go24/internal/apikeys"
 	"go24/internal/auth"
 	"go24/internal/crm"
 	"go24/internal/db"
@@ -73,7 +75,7 @@ func TestSignHR(t *testing.T) {
 		must(err)
 	}
 	srv := &Server{DB: pool, Tasks: tasks.NewStore(pool), CRM: crm.NewStore(pool), Storages: storages.NewStore(pool, nil, s3),
-		Sign: sign.NewStore(pool), BaseURL: "https://go24", Sessions: auth.NewSessions(strings.Repeat("s", 32), false),
+		Keys: apikeys.NewStore(pool), Sign: sign.NewStore(pool), BaseURL: "https://go24", Sessions: auth.NewSessions(strings.Repeat("s", 32), false),
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	docx := func(text string) []byte {
@@ -276,5 +278,55 @@ func TestSignHR(t *testing.T) {
 	must(err)
 	if b.Title != "Ознакомление" || b.Total != 1 || len(docs[0].Parties) != 1 || docs[0].Current().UserID != kim || notes(kim, "/sign/"+docs[0].ID) != 1 {
 		t.Fatalf("own file batch: %+v %+v", b, docs)
+	}
+
+	// «Сейф»: the signed HR documents — everyone's to the administrator, by the employee, the department, the days and
+	// the title, in a ZIP archive; to the employee — their own; to others nothing, nor the document
+	safe := func(who, query string) string {
+		t.Helper()
+		code, body, _ := do(who, "GET", "/sign?f=safe"+query, nil)
+		if code != http.StatusOK {
+			t.Fatalf("%s's safe%s: %d", who, query, code)
+		}
+		return body
+	}
+	in := func(body string) bool { return strings.Contains(body, `href="/sign/`+d.ID+`"`) }
+	today := time.Now().Format(time.DateOnly)
+	for q, want := range map[string]bool{"": true, "&dept=" + sales: true, "&dept=" + sub: false, "&emp=" + eve: true,
+		"&emp=" + kim: false, "&q=%D0%BE%D0%A2%D0%9F%D1%83%D1%81%D0%BA": true, "&q=xyz": false, "&from=" + today + "&to=" + today: true,
+		"&from=" + time.Now().AddDate(0, 0, 1).Format(time.DateOnly): false} {
+		if in(safe(anna, q)) != want {
+			t.Fatalf("anna's safe%s: want %v", q, want)
+		}
+	}
+	if body := safe(eve, ""); !in(body) || strings.Contains(body, `name="emp"`) {
+		t.Fatal("eve's safe")
+	}
+	if in(safe(kim, "")) || in(safe(bob, "")) {
+		t.Fatal("kim or bob see eve's document in the safe")
+	}
+	if code, _, _ := do(kim, "GET", "/sign/"+d.ID, nil); code != http.StatusNotFound {
+		t.Fatalf("kim opens eve's document: %d", code)
+	}
+	code, body, _ := do(anna, "GET", "/sign/safe/zip?dept="+sales, nil)
+	zr, err := zip.NewReader(strings.NewReader(body), int64(len(body)))
+	must(err)
+	if code != http.StatusOK || len(zr.File) != 1 || !strings.HasPrefix(zr.File[0].Name, "Приказ об отпуске — Ева (") {
+		t.Fatalf("archive: %d %d %q", code, len(zr.File), zr.File[0].Name)
+	}
+	if _, body, _ = do(kim, "GET", "/sign/safe/zip", nil); len(body) > 100 {
+		t.Fatalf("kim's archive: %d bytes", len(body))
+	}
+	key, err := srv.Keys.Create(ctx, eve, "k", []string{"documents:read"}, time.Hour)
+	must(err)
+	req, _ := http.NewRequest("GET", hs.URL+"/api/v1/sign/safe?emp="+kim, nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	res, err := http.DefaultClient.Do(req)
+	must(err)
+	var list []apiSignDoc
+	must(json.NewDecoder(res.Body).Decode(&list))
+	res.Body.Close()
+	if len(list) != 1 || list[0].ID != d.ID || list[0].Files["result"] == "" {
+		t.Fatalf("api safe: %+v", list)
 	}
 }

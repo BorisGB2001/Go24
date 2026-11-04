@@ -24,6 +24,7 @@ func (s *Server) apiCalendarRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/calendar/events/{id}", s.api("calendar:write", s.apiCalSave))
 	mux.HandleFunc("DELETE /api/v1/calendar/events/{id}", s.api("calendar:write", s.apiCalDelete))
 	mux.HandleFunc("POST /api/v1/calendar/events/{id}/respond", s.api("calendar:write", s.apiCalRespond))
+	mux.HandleFunc("POST /api/v1/calendar/events/{id}/invite", s.api("calendar:write", s.apiCalInvite))
 	mux.HandleFunc("POST /api/v1/calendar/events/{id}/join", s.api("calendar:write", s.apiCalJoin))
 	mux.HandleFunc("POST /api/v1/calendar/events/{id}/chat", s.api("calendar:write", s.apiCalChat))
 	mux.HandleFunc("GET /api/v1/calendar/open", s.api("calendar:read", s.apiCalOpen))
@@ -105,6 +106,10 @@ type apiEvent struct {
 	Category      string        `json:"category,omitempty"`      // an open event: the id of its category
 	ActivityKind  string        `json:"activity_kind,omitempty"` // kind crm (a CRM activity): todo | call | meeting, its card in crm
 	Chat          string        `json:"chat,omitempty"`          // «Чат встречи»: its messenger room
+	AllowInvite   bool          `json:"allow_invite,omitempty"`  // the invited may invite others (POST …/invite)
+	QuietAnswers  bool          `json:"quiet_answers,omitempty"` // the organizer is not told of the answers
+	HideGuests    bool          `json:"hide_guests,omitempty"`   // the invited see themselves only among the attendees
+	Others        int           `json:"others,omitempty"`        // hide_guests: how many more are invited
 }
 
 // apiCRMRef is a CRM card of a meeting: entity deal | lead | contact | company.
@@ -139,7 +144,8 @@ func toAPIEvent(e calendar.Event) apiEvent {
 		End: e.End, AllDay: e.AllDay, Project: e.ProjectKey, Company: e.Company, MyStatus: e.MyStatus, Repeat: e.Repeat,
 		Until: e.Until, Reminds: e.Reminds, Accessibility: e.Accessibility, Private: e.Private, Hidden: e.Hidden,
 		Task: e.TaskKey, Overdue: e.Overdue, Person: e.PersonID, AbsenceKind: e.AbsenceKind, Color: e.Color, Important: e.Important,
-		Calendar: e.CalendarID, Of: e.Of, TimeZone: e.TZ, Category: e.CategoryID, Chat: e.ChatRoom}
+		Calendar: e.CalendarID, Of: e.Of, TimeZone: e.TZ, Category: e.CategoryID, Chat: e.ChatRoom,
+		AllowInvite: e.AllowInvite, QuietAnswers: e.QuietAnswers, HideGuests: e.HideGuests, Others: e.Others}
 	if len(e.Reminds) > 0 {
 		a.RemindBefore = &e.Reminds[len(e.Reminds)-1]
 	}
@@ -280,52 +286,72 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if err != nil {
 		return err
 	}
-	var in struct {
-		Title         *string      `json:"title"`
-		Description   *string      `json:"description"`
-		Where         *string      `json:"where"`
-		Start         *time.Time   `json:"start"`
-		End           *time.Time   `json:"end"`
-		AllDay        *bool        `json:"all_day"`
-		Project       *string      `json:"project"` // a project's key ("" — personal)
-		Company       *bool        `json:"company"`
-		Attendees     *[]string    `json:"attendees"`
-		Repeat        *string      `json:"repeat"`
-		Every         *int         `json:"every"`
-		Until         *string      `json:"until"`         // 2006-01-02, "" — no end
-		RepeatDays    *[]int       `json:"repeat_days"`   // weekly: 1 — Monday … 7 — Sunday; [] — the day of the start
-		RepeatCount   *int         `json:"repeat_count"`  // ends after so many meetings; 0 — by until or never
-		RemindBefore  *int         `json:"remind_before"` // minutes, one reminder; -1 — no reminder
-		Reminds       *[]int       `json:"reminds"`       // minutes, all reminders; [] — none
-		Accessibility *string      `json:"accessibility"`
-		Private       *bool        `json:"private"`
-		Room          *string      `json:"room"` // a meeting room's id ("" — none)
-		Video         *bool        `json:"video"`
-		Color         *string      `json:"color"` // #rrggbb, "" — the colour of its calendar
-		Important     *bool        `json:"important"`
-		Calendar      *string      `json:"calendar"` // one of one's own calendars ("" — the main one)
-		CRM           *[]apiCRMRef `json:"crm"`      // the CRM cards, all of them; [] — none
-		TimeZone      *string      `json:"timezone"` // an IANA zone, "" — the portal's
-		Category      *string      `json:"category"` // an open event's category ("" — an ordinary meeting)
-	}
+	var in apiEventIn
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	var e calendar.Event
-	var invite []string
-	id := r.PathValue("id")
 	at, scope, err := apiOccurrence(r)
 	if err != nil {
 		return err
 	}
+	a, err := s.calSave(r, p, r.PathValue("id"), at, scope, in)
+	if err != nil {
+		return err
+	}
+	status := http.StatusOK
+	if r.Method == http.MethodPost {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, a)
+	return nil
+}
+
+// apiEventIn is a meeting as the REST takes it: only the fields given change.
+type apiEventIn struct {
+	Title         *string      `json:"title"`
+	Description   *string      `json:"description"`
+	Where         *string      `json:"where"`
+	Start         *time.Time   `json:"start"`
+	End           *time.Time   `json:"end"`
+	AllDay        *bool        `json:"all_day"`
+	Project       *string      `json:"project"` // a project's key ("" — personal)
+	Company       *bool        `json:"company"`
+	Attendees     *[]string    `json:"attendees"`
+	Repeat        *string      `json:"repeat"`
+	Every         *int         `json:"every"`
+	Until         *string      `json:"until"`         // 2006-01-02, "" — no end
+	RepeatDays    *[]int       `json:"repeat_days"`   // weekly: 1 — Monday … 7 — Sunday; [] — the day of the start
+	RepeatCount   *int         `json:"repeat_count"`  // ends after so many meetings; 0 — by until or never
+	RemindBefore  *int         `json:"remind_before"` // minutes, one reminder; -1 — no reminder
+	Reminds       *[]int       `json:"reminds"`       // minutes, all reminders; [] — none
+	Accessibility *string      `json:"accessibility"`
+	Private       *bool        `json:"private"`
+	Room          *string      `json:"room"` // a meeting room's id ("" — none)
+	Video         *bool        `json:"video"`
+	Color         *string      `json:"color"` // #rrggbb, "" — the colour of its calendar
+	Important     *bool        `json:"important"`
+	Calendar      *string      `json:"calendar"` // one of one's own calendars ("" — the main one)
+	CRM           *[]apiCRMRef `json:"crm"`      // the CRM cards, all of them; [] — none
+	TimeZone      *string      `json:"timezone"` // an IANA zone, "" — the portal's
+	Category      *string      `json:"category"` // an open event's category ("" — an ordinary meeting)
+	AllowInvite   *bool        `json:"allow_invite"`
+	QuietAnswers  *bool        `json:"quiet_answers"`
+	HideGuests    *bool        `json:"hide_guests"`
+}
+
+// calSave creates (id "") or changes the meeting (at — an occurrence of a repeated one, for scope) as the user p.
+func (s *Server) calSave(r *http.Request, p apikeys.Principal, id string, at *time.Time, scope string, in apiEventIn) (apiEvent, error) {
+	var e calendar.Event
+	var invite []string
+	var err error
 	if id != "" {
 		if e, err = s.Calendar.Get(r.Context(), p.UserID, id); err != nil {
-			return err
+			return apiEvent{}, err
 		}
 		if at != nil { // the fields not given are those of the occurrence
 			o := e.Occurrence(*at)
 			if o == nil {
-				return i18n.E("err.not_found")
+				return apiEvent{}, i18n.E("err.not_found")
 			}
 			e = *o
 		}
@@ -334,7 +360,7 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		}
 	} else {
 		if in.Start == nil {
-			return i18n.E("err.event_time")
+			return apiEvent{}, i18n.E("err.event_time")
 		}
 		if in.End == nil {
 			end := in.Start.Add(time.Hour)
@@ -380,6 +406,14 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	if in.Important != nil {
 		e.Important = *in.Important
 	}
+	for _, o := range []struct {
+		dst *bool
+		v   *bool
+	}{{&e.AllowInvite, in.AllowInvite}, {&e.QuietAnswers, in.QuietAnswers}, {&e.HideGuests, in.HideGuests}} {
+		if o.v != nil {
+			*o.dst = *o.v
+		}
+	}
 	if in.Every != nil {
 		e.Every = *in.Every
 	}
@@ -394,7 +428,7 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		if *in.Until != "" {
 			u, err := time.ParseInLocation("2006-01-02", *in.Until, time.Local)
 			if err != nil {
-				return i18n.E("err.event_time")
+				return apiEvent{}, i18n.E("err.event_time")
 			}
 			e.Until = &u
 		}
@@ -410,7 +444,7 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		if *in.Project != "" {
 			proj, err := s.Tasks.ProjectByKey(r.Context(), p.UserID, *in.Project)
 			if err != nil {
-				return err
+				return apiEvent{}, err
 			}
 			e.ProjectID = proj.ID
 		}
@@ -423,17 +457,17 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		var had []calendar.CRMRef
 		if id != "" {
 			if had, err = s.Calendar.CRM(r.Context(), id); err != nil {
-				return err
+				return apiEvent{}, err
 			}
 		}
 		for _, c := range *in.CRM {
 			ref := calendar.CRMRef{Entity: c.Entity, ID: c.ID}
 			if !ref.Valid() {
-				return i18n.E("err.bad_form")
+				return apiEvent{}, i18n.E("err.bad_form")
 			}
 			if !slices.ContainsFunc(had, func(h calendar.CRMRef) bool { return h.Entity == ref.Entity && h.ID == ref.ID }) {
 				if _, err := s.crmRefCard(r, auth.Session{UserID: p.UserID}, ref); err != nil {
-					return err
+					return apiEvent{}, err
 				}
 			}
 			crmRefs = append(crmRefs, ref)
@@ -445,30 +479,21 @@ func (s *Server) apiCalSave(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		id, err = s.Calendar.Save(r.Context(), p.UserID, e, invite)
 	}
 	if err != nil {
-		return err
+		return apiEvent{}, err
 	}
 	if at == nil || scope == calendar.ScopeAll {
 		s.feedMeeting(r.Context(), p.UserID, id)
 	}
 	if in.CRM != nil && s.CRM != nil {
 		if err := s.Calendar.SetCRM(r.Context(), p.UserID, id, crmRefs); err != nil {
-			return err
+			return apiEvent{}, err
 		}
 	}
 	s.meetingChatSync(r.Context(), p.UserID, id)
 	if e, err = s.Calendar.Get(r.Context(), p.UserID, id); err != nil {
-		return err
+		return apiEvent{}, err
 	}
-	a, err := s.apiEventCRM(r, e)
-	if err != nil {
-		return err
-	}
-	status := http.StatusOK
-	if r.Method == http.MethodPost {
-		status = http.StatusCreated
-	}
-	writeJSON(w, status, a)
-	return nil
+	return s.apiEventCRM(r, e)
 }
 
 func (s *Server) apiCalDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
@@ -509,6 +534,31 @@ func (s *Server) apiCalRespond(w http.ResponseWriter, r *http.Request, p apikeys
 	}
 	id := r.PathValue("id")
 	if err := s.Calendar.Respond(r.Context(), p.UserID, id, in.Status); err != nil {
+		return err
+	}
+	e, err := s.Calendar.Get(r.Context(), p.UserID, id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, toAPIEvent(e))
+	return nil
+}
+
+// apiCalInvite adds people to the meeting, its organizer or one of its invited when it lets them (see
+// calendar.Invite): {"attendees": [ids]}; it answers the meeting.
+func (s *Server) apiCalInvite(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	p, r, err := s.apiCalActor(r, p)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		Attendees []string `json:"attendees"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	id := r.PathValue("id")
+	if _, err := s.Calendar.Invite(r.Context(), p.UserID, id, in.Attendees); err != nil {
 		return err
 	}
 	e, err := s.Calendar.Get(r.Context(), p.UserID, id)

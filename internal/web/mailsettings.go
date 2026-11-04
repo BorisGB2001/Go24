@@ -22,10 +22,12 @@ import (
 // «CRM»: each mailbox's «Привязывать письма к CRM» and «Создавать лид для новых адресов».
 // «Быстрые действия»: the user's quick steps (mailquick.go). «Списки контактов»: the user's lists (maillists.go).
 // «Макет»: the density of the list, the text size, what a row shows (mail.Layout).
+// «Перевод»: translate letters always, on asking or never, into what language, which not (mailtranslate.go).
+// «Условное форматирование»: the user's rules setting off letters of the list (mailformats.go).
 // «Безопасность»: the user's S/MIME certificates, signing and encrypting by default (mailsmime.go).
-// /mail/settings?tab=signatures|templates|compose|handling|layout|lists|focused|rules|quick|sweep|ooo|forwarding|senders|crm|security.
+// /mail/settings?tab=signatures|templates|compose|handling|translate|layout|formats|lists|focused|rules|quick|sweep|ooo|forwarding|senders|crm|security.
 
-var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "layout", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm", "security", "storage"}
+var mailSettingTabs = []string{"signatures", "templates", "compose", "handling", "translate", "layout", "formats", "lists", "focused", "rules", "quick", "sweep", "ooo", "forwarding", "senders", "crm", "security", "storage"}
 
 type mailSettingsData struct {
 	Tab                          string
@@ -40,18 +42,27 @@ type mailSettingsData struct {
 	Signatures                   []mail.Snippet
 	Templates                    []mail.Snippet
 	Prefs                        mail.Prefs
-	Handling                     mail.Handling // «Обработка сообщений»
-	Layout                       mail.Layout   // «Макет»
+	Handling                     mail.Handling       // «Обработка сообщений»
+	Cleanup                      mail.Cleanup        // its «Очистка беседы»
+	Layout                       mail.Layout         // «Макет»
+	Translate                    mail.TranslatePrefs // «Перевод» (mailtranslate.go)
+	TranslateModes, Languages    []string
+	LangNames                    map[string]string
+	TranslateTo                  string // the language letters go into when «Перевод» does not say
 	Densities, TextSizes         []string
 	ReadAfters                   []int
 	ReceiptModes, AfterMoveModes []string
+	CleanupTargets               []string
 	Fonts                        []string
 	FontSizes                    []string
 	Undo                         []int
 	Edit                         string // the signature or template being edited ("new" — a new one)
 	Rules                        []mail.FocusRule
 	MailRules                    []mail.Rule
-	Rule                         *ruleForm // the rule being edited
+	Rule                         *ruleForm     // the rule being edited
+	Formats                      []mail.Format // «Условное форматирование»
+	Format                       *mail.Format  // the rule of it being edited
+	Colors                       []string
 	QuickSteps                   []mail.QuickStep
 	QuickStep                    *mail.QuickStep // the quick step being edited
 	StepActions                  []string
@@ -69,6 +80,7 @@ type mailSettingsData struct {
 	NotifyModes                  []string
 	Blocked                      []mail.Sender
 	Safe                         []mail.Sender
+	Reporting                    *mailReporting // «Сообщения о фишинге» of the junk tab, for administrators (mailsafety.go)
 	Lists                        []mail.ContactList
 	List                         *mail.ContactList // the contact list being edited
 	Certs                        []mail.Cert       // «Безопасность»
@@ -83,7 +95,7 @@ func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess a
 	d := &mailSettingsData{Tab: "signatures", Tabs: mailSettingTabs, SigOf: map[string]mail.Signatures{}, CRMOf: map[string]mail.BoxCRM{}, FwdOf: map[string]mail.BoxForward{}, FromOf: map[string]mail.BoxSenders{}, UserName: sess.Name, Fonts: mail.Fonts,
 		FontSizes: mail.FontSizes, Undo: []int{0, 5, 10}, Edit: r.URL.Query().Get("edit"),
 		ReadAfters: mail.ReadAfters, ReceiptModes: mail.ReceiptModes, AfterMoveModes: mail.AfterMoveModes,
-		Densities: mail.Densities, TextSizes: mail.TextSizes}
+		CleanupTargets: mail.CleanupTargets, Densities: mail.Densities, TextSizes: mail.TextSizes}
 	for _, t := range mailSettingTabs {
 		if r.URL.Query().Get("tab") == t {
 			d.Tab = t
@@ -122,7 +134,16 @@ func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess a
 		d.Handling, err = s.Mail.Handling(ctx, sess.UserID)
 	}
 	if err == nil {
+		d.Cleanup, err = s.Mail.Cleanup(ctx, sess.UserID)
+	}
+	if err == nil {
 		d.Layout, err = s.Mail.Layout(ctx, sess.UserID)
+	}
+	if err == nil && d.Tab == "translate" {
+		d.TranslateModes, d.Languages, d.LangNames = mail.TranslateModes, mail.Languages, s.mailTrNames(r)
+		if d.Translate, err = s.Mail.TranslatePrefs(ctx, sess.UserID); err == nil {
+			d.TranslateTo = s.mailTrTarget(r, mail.TranslatePrefs{})
+		}
 	}
 	if err == nil {
 		d.Rules, err = s.Mail.FocusRules(ctx, sess.UserID)
@@ -132,6 +153,12 @@ func (s *Server) mailSettingsPage(w http.ResponseWriter, r *http.Request, sess a
 	}
 	if err == nil {
 		err = s.mailSendersData(r, sess.UserID, d)
+	}
+	if err == nil && d.Tab == "junk" && sess.AdminActive() {
+		d.Reporting, err = s.mailReportingData(r)
+	}
+	if err == nil && d.Tab == "formats" {
+		err = s.mailFormatsData(r, sess.UserID, d)
 	}
 	if err == nil && d.Tab == "lists" {
 		err = s.mailListsData(r, sess.UserID, d)
@@ -157,11 +184,13 @@ func settingsURL(tab string, extra ...string) string {
 	return "/mail/settings?" + v.Encode()
 }
 
-// mailPrefsSave keeps the seconds of «Отменить» and the font.
+// mailPrefsSave keeps the seconds of «Отменить», the font, «Показывать предлагаемые ответы» and «Проверять читаемость
+// перед отправкой».
 func (s *Server) mailPrefsSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	undo, err := strconv.Atoi(r.FormValue("undo_seconds"))
 	if err == nil {
-		err = s.Mail.SavePrefs(r.Context(), sess.UserID, mail.Prefs{UndoSeconds: undo, Font: r.FormValue("font"), FontSize: r.FormValue("font_size")})
+		err = s.Mail.SavePrefs(r.Context(), sess.UserID, mail.Prefs{UndoSeconds: undo, Font: r.FormValue("font"), FontSize: r.FormValue("font_size"),
+			Suggest: r.FormValue("suggest") != "", A11yCheck: r.FormValue("a11y_check") != ""})
 	} else {
 		err = i18n.E("err.bad_form")
 	}
@@ -176,9 +205,14 @@ func (s *Server) mailPrefsSave(w http.ResponseWriter, r *http.Request, sess auth
 func (s *Server) mailHandlingSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	read, err := strconv.Atoi(r.FormValue("read_after"))
 	if err == nil {
-		err = s.Mail.SaveHandling(r.Context(), sess.UserID, mail.Handling{ReadAfter: read, Receipts: r.FormValue("receipts"), AfterMove: r.FormValue("after_move")})
+		err = s.Mail.SaveHandling(r.Context(), sess.UserID, mail.Handling{ReadAfter: read, Receipts: r.FormValue("receipts"), AfterMove: r.FormValue("after_move"),
+			Nudges: r.FormValue("nudges") != ""})
 	} else {
 		err = i18n.E("err.bad_form")
+	}
+	if err == nil && r.FormValue("cleanup_target") != "" { // its «Очистка беседы»
+		err = s.Mail.SaveCleanup(r.Context(), sess.UserID, mail.Cleanup{Target: r.FormValue("cleanup_target"), KeepUnread: r.FormValue("cleanup_unread") != "",
+			KeepCategorized: r.FormValue("cleanup_categorized") != "", KeepFlagged: r.FormValue("cleanup_flagged") != "", KeepSigned: r.FormValue("cleanup_signed") != ""})
 	}
 	if err != nil {
 		s.mailErr(w, r, err, settingsURL("handling"))

@@ -122,6 +122,55 @@ func TestStats(t *testing.T) {
 		t.Fatalf("last month: %+v", st.Total)
 	}
 
+	// «Детальная статистика»: the dialogues started today, newest first; the filters and the sorting
+	detail := func(f DetailFilter) []DetailRow {
+		t.Helper()
+		if f.From.IsZero() {
+			f.From, f.To = today, today
+		}
+		list, more, err := s.Detail(ctx, f)
+		must(err)
+		if more {
+			t.Fatal("more than the limit")
+		}
+		return list
+	}
+	all := detail(DetailFilter{})
+	if len(all) != 4 || all[3].ID != d1 || all[0].ID != d4 {
+		t.Fatalf("detail: %+v", all)
+	}
+	x := all[3]
+	if x.Line != "Сайт" || x.Operator != "a" || x.Status != "closed" || x.Messages != 2 || x.Vote != 1 || x.Channel != "widget" ||
+		x.FirstAnswer() != 2*time.Minute || x.ToClose() != 10*time.Minute || x.Num == 0 || x.Client() != "#"+d1[:6] {
+		t.Fatalf("the closed one: %+v", x)
+	}
+	ids := func(list []DetailRow) (out []string) {
+		for _, x := range list {
+			out = append(out, x.ID)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		f    DetailFilter
+		want int
+	}{
+		{DetailFilter{Status: "closed"}, 1}, {DetailFilter{Status: "open"}, 2}, {DetailFilter{Status: "noanswer"}, 1},
+		{DetailFilter{Status: "spam"}, 1}, {DetailFilter{Vote: "up"}, 1}, {DetailFilter{Vote: "none"}, 3},
+		{DetailFilter{Channel: "telegram"}, 0}, {DetailFilter{StatsFilter: StatsFilter{From: today, To: today, Widget: w2}}, 2},
+		{DetailFilter{StatsFilter: StatsFilter{From: today, To: today, OperatorID: a}}, 1},
+		{DetailFilter{StatsFilter: StatsFilter{From: today.AddDate(0, 0, -45), To: today.AddDate(0, 0, -35)}}, 1},
+	} {
+		if got := detail(c.f); len(got) != c.want {
+			t.Fatalf("%+v: %v", c.f, ids(got))
+		}
+	}
+	if got := detail(DetailFilter{Sort: "answer"}); got[0].ID != d3 || got[1].ID != d1 { // 30 s, 2 min, then no answer
+		t.Fatalf("by the first answer: %v", ids(got))
+	}
+	if got := detail(DetailFilter{Sort: "-num"}); got[0].ID != d4 {
+		t.Fatalf("by number: %v", ids(got))
+	}
+
 	// reopening clears the closing time
 	must(s.SetStatus(ctx, a, d1, true))
 	st, err = s.Stats(ctx, StatsFilter{From: today, To: today})

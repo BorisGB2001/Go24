@@ -3,9 +3,12 @@ package web
 import (
 	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -13,15 +16,17 @@ import (
 	"go24/internal/auth"
 	"go24/internal/feed"
 	"go24/internal/i18n"
+	"go24/internal/kb"
 	"go24/internal/mail"
 	"go24/internal/matrixsync"
 	"go24/internal/storages"
 )
 
 // «Поделиться» of a letter «Создать → Сообщение в Ленте / Чат» of a letter (and Outlook's «Поделиться
-// в Teams»): a post of the feed (to all, a project or the people of the correspondence) or a message in a chat (a new
-// group chat of the people of the correspondence or a chat of the user's) — the subject, who wrote it and when, the
-// text, the letter's files and the user's word above it. The letter shows where it went.
+// в Teams» and «Отправить в OneNote»): a post of the feed (to all, a project or the people of the correspondence), a
+// message in a chat (a new group chat of the people of the correspondence or a chat of the user's) or a page of a
+// knowledge base — the subject, who wrote it and when, the text, the letter's files and the user's word above it. The
+// letter shows where it went.
 
 // sharePerson is an employee of the letter's correspondence.
 type sharePerson struct{ ID, Name string }
@@ -53,14 +58,15 @@ func (s *Server) mailPeople(ctx context.Context, sess auth.Session, thread []mai
 }
 
 // mailShareExtras: what the menu «Поделиться» offers and where the conversation went already.
-func (s *Server) mailShareExtras(r *http.Request, sess auth.Session, ids []string, thread []mail.Message, data map[string]any) error {
+// A letter «Не пересылать» is not shared.
+func (s *Server) mailShareExtras(r *http.Request, sess auth.Session, ids []string, thread []mail.Message, locked bool, data map[string]any) error {
 	ctx := r.Context()
 	shares, err := s.Mail.LetterShares(ctx, sess.UserID, ids)
 	if err != nil {
 		return err
 	}
 	data["LetterShares"] = shares
-	if s.Feed == nil {
+	if s.Feed == nil || locked {
 		return nil
 	}
 	if data["SharePeople"], err = s.mailPeople(ctx, sess, thread); err != nil {
@@ -78,6 +84,19 @@ func (s *Server) mailShareExtras(r *http.Request, sess auth.Session, ids []strin
 	}
 	data["ShareProjects"] = mine
 	data["Share"], data["ShareChat"] = true, s.Matrix != nil
+	if s.KB != nil {
+		spaces, err := s.KB.Spaces(ctx, sess.UserID)
+		if err != nil {
+			return err
+		}
+		var kbs []kb.Space // the bases the user writes in
+		for _, sp := range spaces {
+			if sp.CanEdit {
+				kbs = append(kbs, sp)
+			}
+		}
+		data["ShareKB"] = kbs
+	}
 	return nil
 }
 
@@ -106,6 +125,10 @@ func (s *Server) mailShare(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	back := mailURL(r.FormValue("folder"), m.ID)
+	if m.Locked() {
+		s.mailErr(w, r, mail.ErrNoForward, back)
+		return
+	}
 	_ = r.ParseForm()
 	var files []mail.Attachment
 	if r.FormValue("files") == "1" {
@@ -158,10 +181,111 @@ func (s *Server) mailShare(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 		s.Log.Info("letter to a chat", "user_id", sess.UserID, "letter", m.ID, "room", room)
 		http.Redirect(w, r, imRoomURL(room), http.StatusSeeOther)
+	case "kb":
+		if s.KB == nil {
+			http.NotFound(w, r)
+			return
+		}
+		target, title, err := s.mailToKB(r, sess, m, note, files)
+		if err == nil {
+			err = s.Mail.LinkShare(ctx, sess.UserID, m.ID, "kb", target, title)
+		}
+		if err != nil {
+			s.mailErr(w, r, err, back)
+			return
+		}
+		s.Log.Info("letter to the knowledge base", "user_id", sess.UserID, "letter", m.ID, "page", target)
+		http.Redirect(w, r, "/kb/"+target, http.StatusSeeOther)
 	default:
 		s.mailErr(w, r, i18n.E("err.bad_form"), back)
 	}
 }
+
+// mailToKB makes a page of the knowledge base of the letter, as Outlook's «Отправить в OneNote»: the user's word, who
+// wrote it, to whom and when, its text, its files stored in the base (pictures shown on the page); «space/page» and
+// the page's title.
+func (s *Server) mailToKB(r *http.Request, sess auth.Session, m mail.Message, note string, files []mail.Attachment) (target, title string, err error) {
+	ctx := r.Context()
+	sp, err := s.KB.Space(ctx, sess.UserID, r.FormValue("space"))
+	if err == nil && !sp.CanEdit {
+		err = kb.ErrForbidden
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if title = clipText(strings.TrimSpace(r.FormValue("title")), 300); title == "" {
+		if title = clipText(strings.TrimSpace(reSubjectPrefix.ReplaceAllString(m.Subject, "")), 300); title == "" {
+			title = s.tr(r, "mail.no_subject")
+		}
+	}
+	var md []string // the files first: a failed one leaves no page
+	for _, a := range files {
+		hdr := &multipart.FileHeader{Filename: a.Name, Size: int64(len(a.Data)), Header: textproto.MIMEHeader{"Content-Type": {a.ContentType}}}
+		up, err := s.kbStoreFile(ctx, sess.UserID, sp.ID, bytes.NewReader(a.Data), hdr)
+		if err != nil {
+			return "", "", err
+		}
+		md = append(md, up.MD)
+	}
+	page, err := s.KB.CreatePage(ctx, sess.UserID, sp.ID, "", title, s.mailKBText(r, m, note, md))
+	if err != nil {
+		return "", "", err
+	}
+	return sp.ID + "/" + page, title, nil
+}
+
+// mailKBText is the page's Markdown: the user's word, the letter's head (from, to, copy, date, files) and its text.
+func (s *Server) mailKBText(r *http.Request, m mail.Message, note string, files []string) string {
+	var b strings.Builder
+	if note = strings.TrimSpace(note); note != "" {
+		b.WriteString(note + "\n\n---\n\n")
+	}
+	field := func(name, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			b.WriteString("**" + s.tr(r, name) + "** " + value + "\n")
+		}
+	}
+	from := m.FromAddr
+	if m.FromName != "" && m.FromName != m.FromAddr {
+		from = m.FromName + " <" + m.FromAddr + ">"
+	}
+	field("mail.share.kb_from", from)
+	field("mail.share.kb_sent", m.SentAt.Local().Format(s.tr(r, "format.datetime")))
+	field("mail.share.kb_to_addr", m.To)
+	field("mail.share.kb_cc", m.CC)
+	if subject := strings.TrimSpace(m.Subject); subject != "" {
+		field("mail.share.kb_subject", subject)
+	}
+	var pics, links []string
+	for _, f := range files {
+		if strings.HasPrefix(f, "!") {
+			pics = append(pics, f)
+		} else {
+			links = append(links, f)
+		}
+	}
+	field("mail.share.kb_files", strings.Join(links, ", "))
+	b.WriteString("\n---\n\n" + kbPlain(m.Body) + "\n")
+	for _, p := range pics {
+		b.WriteString("\n" + p + "\n")
+	}
+	return clipText(b.String(), 190000)
+}
+
+// kbPlain keeps a letter's plain text as it reads in the knowledge base's Markdown: a line that would turn into a
+// heading, a table, a code block or a rule starts with a zero-width space.
+func kbPlain(text string) string {
+	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(text), "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "#") || strings.HasPrefix(t, "|") || strings.HasPrefix(t, "```") || reKBRule.MatchString(t) {
+			lines[i] = "\u200b" + t
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+var reKBRule = regexp.MustCompile(`^(-{3,}|\*{3,}|_{3,})$`)
 
 // mailToFeed publishes the letter as a post with its files; the post is gone again if any of it fails.
 func (s *Server) mailToFeed(r *http.Request, sess auth.Session, m mail.Message, note string, files []mail.Attachment) (string, error) {

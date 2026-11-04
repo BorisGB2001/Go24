@@ -57,7 +57,7 @@ func (s *Store) InstallStandard(ctx context.Context, userID, accountant string, 
 	}
 	n := 0
 	for _, t := range Standard(tr, accountant) {
-		if err := checkTemplate(&t); err != nil {
+		if err := checkTemplate(&t, nil); err != nil {
 			return n, err
 		}
 		f, _ := json.Marshal(t.Fields)

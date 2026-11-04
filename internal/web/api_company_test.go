@@ -21,6 +21,7 @@ import (
 	"go24/internal/i18n"
 	"go24/internal/notify"
 	"go24/internal/tasks"
+	"go24/internal/worktime"
 )
 
 // TestCompanyAPI: «Компания» through REST API v1 — employees found and read, the structure read and changed by an
@@ -200,8 +201,11 @@ func TestCompanyAPI(t *testing.T) {
 		Workday struct {
 			State  string
 			Report string
-			Start  struct{ IP string }
-			End    *struct{ IP string }
+			Start  struct {
+				IP  string
+				Geo *struct{ Lat, Lon float64 }
+			}
+			End *struct{ IP string }
 		}
 	}
 	decode(do(annaKey, "GET", "/api/v1/worktime/status", "", 200), &st)
@@ -209,8 +213,13 @@ func TestCompanyAPI(t *testing.T) {
 		t.Fatalf("before the start: %+v", st)
 	}
 	do(readOnly, "POST", "/api/v1/worktime/start", "", 403)
-	decode(do(annaKey, "POST", "/api/v1/worktime/start", "", 200), &st)
-	if st.State != "running" {
+	sched := worktime.Default() // «Местоположение»: the position sent is kept
+	sched.Geo = true
+	if err := srv.Tasks.SetSchedule(ctx, admin, sched); err != nil {
+		t.Fatal(err)
+	}
+	decode(do(annaKey, "POST", "/api/v1/worktime/start", `{"lat":52.370216,"lon":4.895168,"acc":12}`, 200), &st)
+	if st.State != "running" || st.Workday.Start.Geo == nil || st.Workday.Start.Geo.Lat != 52.370216 || st.Workday.Start.Geo.Lon != 4.895168 {
 		t.Fatalf("started: %+v", st)
 	}
 	do(annaKey, "POST", "/api/v1/worktime/resume", "", 422) // not paused
@@ -240,7 +249,7 @@ func TestCompanyAPI(t *testing.T) {
 
 	// schedules: a fixed one for the department; Anna's days by it
 	ws := company.WorkSchedule{Name: "Пятидневка", Kind: "fixed", Times: []company.ScheduleTime{{Days: []int{1, 2, 3, 4, 5}, Start: "08:00",
-		End: "17:00", Break: 60}}, Members: []string{"dept:" + dept}}
+		End: "17:00", Break: 60}}, Members: []string{"dept:" + dept}, ReportReq: "required", Devices: []string{"browser", "terminal"}}
 	must(srv.Company.SaveWorkSchedule(ctx, admin, &ws))
 	var list []struct {
 		ID          int64
@@ -252,12 +261,19 @@ func TestCompanyAPI(t *testing.T) {
 		t.Fatalf("schedules: %+v", list)
 	}
 	var one struct {
-		Kind   string
-		People []struct{ ID string }
+		Kind      string
+		People    []struct{ ID string }
+		ReportReq string `json:"report_req"`
+		Devices   []string
 	}
 	decode(do(annaKey, "GET", "/api/v1/worktime/schedules/"+jsonID(list[0].ID), "", 200), &one)
-	if one.Kind != "fixed" || len(one.People) != 1 || one.People[0].ID != anna {
+	if one.Kind != "fixed" || len(one.People) != 1 || one.People[0].ID != anna || one.ReportReq != "required" ||
+		strings.Join(one.Devices, ",") != "browser,terminal" {
 		t.Fatalf("schedule: %+v", one)
+	}
+	// «Устройства для отметки» without apps: Anna's day is not marked by REST
+	if body := do(annaKey, "POST", "/api/v1/worktime/reopen", "", 422); !strings.Contains(string(body), "устройства") {
+		t.Fatalf("reopened by an app: %s", body)
 	}
 	do(annaKey, "GET", "/api/v1/worktime/schedules/999999", "", 404)
 	var us struct {

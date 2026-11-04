@@ -95,3 +95,15 @@ func TestTree(t *testing.T) {
 		t.Errorf("Tree = %q, want %q", got, want)
 	}
 }
+
+func TestGroupByProject(t *testing.T) {
+	mk := func(p string, n int) []TreeRow { return []TreeRow{{Task: Task{ProjectID: p, ProjectKey: p, Number: n}}} }
+	groups := GroupByProject([][]TreeRow{mk("B", 1), mk("A", 2), mk("B", 3), mk("C", 4), mk("A", 5)})
+	var got []string
+	for _, g := range groups {
+		got = append(got, g[0].Key())
+	}
+	if want := []string{"B-1", "B-3", "A-2", "A-5", "C-4"}; !slices.Equal(got, want) {
+		t.Errorf("GroupByProject = %q, want %q", got, want)
+	}
+}

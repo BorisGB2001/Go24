@@ -31,7 +31,13 @@ func (s *Server) absencesPage(w http.ResponseWriter, r *http.Request, sess auth.
 		s.taskErr(w, r, err, "/company")
 		return
 	}
-	data := map[string]any{"Report": report, "Users": users, "Kinds": company.AbsenceKinds, "Rights": company.ActingRights, "Me": sess.UserID,
+	canKinds, err := s.canAbsenceKinds(r.Context(), sess.UserID, tasks.IsAdmin(r.Context()))
+	if err != nil {
+		s.taskErr(w, r, err, "/company")
+		return
+	}
+	keys := s.absenceKeys(r.Context())
+	data := map[string]any{"Report": report, "Users": users, "Kinds": keys, "CanKinds": canKinds, "Rights": company.ActingRights, "Me": sess.UserID,
 		"Today": now, "View": q.Get("view"), "Dept": q.Get("dept"), "OnlyAbsent": q.Get("absent") == "1", "Back": r.URL.RequestURI(),
 		"Close": closeAbsenceForm(r.URL.RequestURI())}
 	// the form: an absence to change, or a new one for a person and a day picked on the chart
@@ -43,6 +49,9 @@ func (s *Server) absencesPage(w http.ResponseWriter, r *http.Request, sess auth.
 			return
 		}
 		form, data["Editing"] = *a, true
+		if !slices.Contains(keys, a.Kind) { // a reason turned off stays the absence's
+			data["Kinds"] = append(keys, a.Kind)
+		}
 	} else if d, err := time.ParseInLocation(time.DateOnly, q.Get("day"), time.Local); err == nil {
 		form.From, form.To, data["Picked"] = d, d, true
 		if u := q.Get("user"); u != "" {
@@ -134,7 +143,7 @@ func (s *Server) absencesPage(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	for k, v := range map[string]any{"Rows": rows, "Keep": keep.Encode(), "Dates": dates, "Off": off, "From": from, "Last": last, "Week": week,
 		"Prev": prev.Format(time.DateOnly), "Next": next.Format(time.DateOnly), "TodayKey": today.Format(time.DateOnly),
-		"Mine": mine, "Admin": tasks.IsAdmin(r.Context()) || hr.Can("absences"), "Depts": depts, "Kinds": company.AbsenceKinds} {
+		"Mine": mine, "Admin": tasks.IsAdmin(r.Context()) || hr.Can("absences"), "Depts": depts} {
 		data[k] = v
 	}
 	s.render(w, r, "absences", page{TitleKey: "absence.title", Nav: "absences", Data: data})

@@ -45,6 +45,40 @@ func TestRenderCallbacks(t *testing.T) {
 	}
 }
 
+// TestRenderRecordNotice: with recording on, a line telling about it plays its notice to an incoming call (in the
+// working hours, before anyone rings) and to the client answering an outgoing call or a call back; recording off or
+// no notice — nothing.
+func TestRenderRecordNotice(t *testing.T) {
+	tr := Trunk{ID: "abcdefab-1234-5678-9abc-def012345678", Number: "+74951234567", Ring: []string{"u1"}, OutAll: true,
+		WorkOn: true, WorkDays: []int{1, 2, 3, 4, 5}, WorkFrom: "09:00", WorkTo: "18:00", NoAnswer: ActHangup, OffHours: ActHangup,
+		RecNoteOn: true, RecNoteSum: "n1"}
+	note := GreetingFile("n1")
+	numbers := map[string]string{"u1": "101"}
+	_, d := RenderTrunks([]Trunk{tr}, numbers, nil, nil, nil, true, "")
+	for _, want := range []string{
+		" same => n(work),NoOp()\n same => n,Answer()\n same => n,Playback(" + note + ")\n same => n,Dial(Local/101@go24-ring,45)\n",
+		"exten => _X./101,1,Set(GO24_RECNOTE=" + note + ")\n same => n,Gosub(go24-dial-out,s,1(" + tr.Key() + ",+74951234567,${EXTEN}))\n",
+	} {
+		if !strings.Contains(d, want) {
+			t.Fatalf("no %q in\n%s", want, d)
+		}
+	}
+	cb := Callback{ID: "11111111-2222-3333-4444-555555555555", Name: "Сайт", Trunk: tr.ID, Ring: []string{"u1"}}
+	if got := RenderCallbacks([]Callback{cb}, map[string]Trunk{tr.ID: tr}, numbers, true); !strings.Contains(got, ",60,A("+note+"))\n") {
+		t.Fatalf("the call back without the notice:\n%s", got)
+	}
+	for _, x := range []struct {
+		tr     Trunk
+		record bool
+	}{{tr, false}, {func() Trunk { y := tr; y.RecNoteOn = false; return y }(), true}, {func() Trunk { y := tr; y.RecNoteSum = ""; return y }(), true}} {
+		_, d := RenderTrunks([]Trunk{x.tr}, numbers, nil, nil, nil, x.record, "")
+		cbs := RenderCallbacks([]Callback{cb}, map[string]Trunk{tr.ID: x.tr}, numbers, x.record)
+		if strings.Contains(d, "Playback(") || strings.Contains(d, "GO24_RECNOTE") || strings.Contains(cbs, ",A(") {
+			t.Fatalf("a notice while it should not be played (%+v, %v):\n%s\n%s", x.tr, x.record, d, cbs)
+		}
+	}
+}
+
 // TestWorking: a line takes calls in its working hours (the portal's time zone) or always.
 func TestWorking(t *testing.T) {
 	tr := Trunk{WorkOn: true, WorkDays: []int{1, 2, 3, 4, 5}, WorkFrom: "09:00", WorkTo: "18:00"}
@@ -147,6 +181,21 @@ func TestCallbacks(t *testing.T) {
 	if g, err := s.TrunkRatePrompt(ctx, tid); err != nil || len(g) < 44 {
 		t.Fatalf("the invitation: %d %v", len(g), err)
 	}
+	// «Предупреждать о записи разговора»: the same — only with a notice, dropped with it
+	if err := s.SetTrunkRecordNotice(ctx, tid, true, nil, false); !errors.As(err, &ie) {
+		t.Fatalf("a notice of recording without its file: %v", err)
+	}
+	must(s.SetTrunkRecordNotice(ctx, tid, true, testWAV(8000, 1, 8000), false))
+	if trunks, _ := s.Trunks(ctx); !trunks[0].RecNoteOn || trunks[0].RecNoteSum == "" {
+		t.Fatalf("the notice of recording on: %+v", trunks[0])
+	}
+	if g, err := s.TrunkRecordNotice(ctx, tid); err != nil || len(g) < 44 {
+		t.Fatalf("the notice of recording: %d %v", len(g), err)
+	}
+	must(s.SetTrunkRecordNotice(ctx, tid, false, nil, true))
+	if trunks, _ := s.Trunks(ctx); trunks[0].RecNoteOn || trunks[0].RecNoteSum != "" || !trunks[0].RateOn {
+		t.Fatalf("the notice of recording dropped: %+v", trunks[0])
+	}
 	must(s.SetNumber(ctx, ann, "101"))
 	t0 := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
 	for i, c := range []CDR{
@@ -181,5 +230,54 @@ func TestCallbacks(t *testing.T) {
 	}
 	if err := s.DeleteCallback(ctx, id); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted twice: %v", err)
+	}
+}
+
+// TestWorkingHolidays: a holiday of the line («31.12» every year, «2027-01-07» once) is out of its working hours; the hours
+// are the line's own time zone's.
+func TestWorkingHolidays(t *testing.T) {
+	tr := Trunk{WorkOn: true, WorkDays: []int{1, 2, 3, 4, 5}, WorkFrom: "09:00", WorkTo: "18:00", WorkTZ: "Asia/Tokyo",
+		Holidays: []string{"12-31", "2027-01-07"}}
+	tokyo, _ := time.LoadLocation("Asia/Tokyo")
+	for at, want := range map[time.Time]bool{
+		time.Date(2026, 12, 30, 10, 0, 0, 0, tokyo):    true,  // Wednesday
+		time.Date(2026, 12, 31, 10, 0, 0, 0, tokyo):    false, // Thursday, every year
+		time.Date(2027, 1, 7, 10, 0, 0, 0, tokyo):      false, // Thursday, once
+		time.Date(2028, 1, 7, 10, 0, 0, 0, tokyo):      true,  // Friday
+		time.Date(2026, 12, 30, 1, 0, 0, 0, time.UTC):  true,  // 10:00 in Tokyo
+		time.Date(2026, 12, 30, 10, 0, 0, 0, time.UTC): false, // 19:00 in Tokyo
+	} {
+		if tr.Working(at) != want {
+			t.Errorf("working at %s: %v", at, !want)
+		}
+	}
+	if s := tr.HolidaysText(); s != "31.12\n07.01.2027" {
+		t.Errorf("holidays as written: %q", s)
+	}
+}
+
+// TestRenderHolidays: the line's holidays (go24-hol-K) go as out of its working hours, checked in its time zone.
+func TestRenderHolidays(t *testing.T) {
+	tr := Trunk{ID: "11112222-3333-4444-5555-666677778888", Name: "Офис", Host: "sip.example.ru", Username: "u", Number: "+74951234567", WorkOn: true,
+		WorkDays: []int{1, 2, 3, 4, 5}, WorkFrom: "09:00", WorkTo: "18:00", Holidays: []string{"01-01", "2026-12-31"}}
+	k := tr.Key()
+	_, d := RenderTrunks([]Trunk{tr}, nil, nil, nil, nil, false, "Europe/Amsterdam")
+	for _, want := range []string{
+		" same => n,GotoIf($[${DIALPLAN_EXISTS(go24-hol-" + k + ",${STRFTIME(${EPOCH},Europe/Amsterdam,%m%d)},1)} | " +
+			"${DIALPLAN_EXISTS(go24-hol-" + k + ",${STRFTIME(${EPOCH},Europe/Amsterdam,%Y%m%d)},1)}]?off)\n same => n,GotoIfTime(09:00-18:00,mon&tue&wed&thu&fri,*,*,Europe/Amsterdam?work:off)",
+		"\n[go24-hol-" + k + "]\nexten => 0101,1,NoOp()\nexten => 20261231,1,NoOp()\n",
+	} {
+		if !strings.Contains(d, want) {
+			t.Fatalf("no %q in\n%s", want, d)
+		}
+	}
+	tr.WorkTZ = "Asia/Tokyo"
+	if _, d = RenderTrunks([]Trunk{tr}, nil, nil, nil, nil, false, ""); !strings.Contains(d, "${STRFTIME(${EPOCH},Asia/Tokyo,%m%d)}") ||
+		!strings.Contains(d, "*,*,Asia/Tokyo?work:off") {
+		t.Fatalf("the line's time zone:\n%s", d)
+	}
+	tr.Holidays = nil
+	if _, d = RenderTrunks([]Trunk{tr}, nil, nil, nil, nil, false, ""); strings.Contains(d, "go24-hol-") {
+		t.Fatalf("holidays without any:\n%s", d)
 	}
 }

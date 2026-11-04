@@ -26,6 +26,17 @@ func TestReplyAddrs(t *testing.T) {
 	sent := mail.Message{MailboxEmail: "anna@x.ru", FolderRole: "sent", FromAddr: "anna@x.ru", To: "p@c.ru", CC: "cc@c.ru", Subject: "RE: Заказ"}
 	if to, cc, subject := replyAddrs(sent, "all"); to != "p@c.ru" || cc != "cc@c.ru" || subject != "RE: Заказ" {
 		t.Errorf("reply all to an own letter: %q %q %q", to, cc, subject)
+	}	// «Направлять ответы на» (Reply-To): the answer goes there, not to the sender; the mailbox itself is not answered
+	in.RepliesTo = `Продажи <sales@c.ru>, "Иванов, Пётр" <P@c.ru>, anna@x.ru`
+	if to, _, _ := replyAddrs(in, "reply"); to != `Продажи <sales@c.ru>, "Иванов, Пётр" <P@c.ru>` {
+		t.Errorf("reply to Reply-To: %q", to)
+	}
+	if to, cc, _ := replyAddrs(in, "all"); to != `Продажи <sales@c.ru>, "Иванов, Пётр" <P@c.ru>, bob@x.ru` || cc != "cc@c.ru" {
+		t.Errorf("reply all with Reply-To: %q | %q", to, cc)
+	}
+	sent.RepliesTo = "sales@x.ru" // an own letter is answered to whom it went
+	if to, _, _ := replyAddrs(sent, "reply"); to != "p@c.ru" {
+		t.Errorf("an own letter with Reply-To: %q", to)
 	}
 }
 

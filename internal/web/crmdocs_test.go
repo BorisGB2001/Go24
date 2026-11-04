@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"html"
 	"image"
 	"image/png"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +29,7 @@ import (
 	"go24/internal/calendar"
 	"go24/internal/crm"
 	"go24/internal/db"
+	"go24/internal/i18n"
 	"go24/internal/inwords"
 	"go24/internal/office"
 	"go24/internal/payqr"
@@ -232,6 +235,44 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	if code, _ := do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/access", url.Values{}); code != http.StatusSeeOther {
 		t.Fatalf("access to everybody: %d", code)
 	}
+	// «Настройки» of the template: inactive — not offered in the card and makes no documents; then active again,
+	// with no stamps by default
+	set := url.Values{"name": {tpls[0].Name}, "sort": {"20"}, "with_stamps": {"1"}}
+	if code, _ := do(eve, "POST", "/crm/documents/"+tpls[0].ID+"/settings", set); code != http.StatusForbidden {
+		t.Fatalf("a non-administrator changed the template's settings: %d", code)
+	}
+	if code, _ := do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/settings", set); code != http.StatusSeeOther {
+		t.Fatalf("settings: %d", code)
+	}
+	if _, page := do(anna, "GET", "/crm/documents", nil); !strings.Contains(page, `action="/crm/documents/`+tpls[0].ID+`/settings"`) ||
+		!strings.Contains(page, "неактивен") {
+		t.Fatal("the inactive template on the templates page")
+	}
+	if _, page := do(anna, "GET", card, nil); strings.Contains(page, "template="+tpls[0].ID) {
+		t.Fatal("an inactive template is offered in the card")
+	}
+	known, _ := srv.CRM.Documents(ctx, "deal", deal)
+	do(anna, "POST", card+"/document", url.Values{"template": {tpls[0].ID}})
+	if docs, _ := srv.CRM.Documents(ctx, "deal", deal); len(docs) != len(known) {
+		t.Fatal("a document by an inactive template")
+	}
+	set["active"], set["sort"] = []string{"1"}, []string{"x"}
+	if code, _ := do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/settings", set); code == http.StatusSeeOther {
+		if got, _ := srv.CRM.DocTemplate(ctx, tpls[0].ID); got.Active {
+			t.Fatal("settings with a wrong sort saved")
+		}
+	}
+	set["sort"] = []string{"20"}
+	delete(set, "with_stamps")
+	do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/settings", set)
+	if got, _ := srv.CRM.DocTemplate(ctx, tpls[0].ID); !got.Active || got.Sort != 20 || got.WithStamps || got.UpdatedBy != anna {
+		t.Fatalf("settings saved: %+v", got)
+	}
+	if _, page := do(anna, "GET", card+"/document?template="+tpls[0].ID, nil); strings.Contains(page, `name="stamps" value="1" checked`) {
+		t.Fatal("«С печатями и подписями» ticked for a template without them")
+	}
+	set["with_stamps"] = []string{"1"}
+	do(anna, "POST", "/crm/documents/"+tpls[0].ID+"/settings", set)
 	if access, _ := srv.CRM.DocTemplateAccess(ctx); len(access) != 0 {
 		t.Fatalf("access left: %v", access)
 	}
@@ -314,6 +355,12 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 		raw, _ := io.ReadAll(res.Body)
 		return res.StatusCode, string(raw)
 	}
+	if do(anna, "GET", "/d/"+pub.PublicToken, nil); pub.ViewedAt != nil {
+		t.Fatal("viewed before the link was opened")
+	}
+	if d, _ := srv.CRM.Document(ctx, "deal", deal, first.ID); d.ViewedAt != nil {
+		t.Fatal("the portal's own opening is noted as the client's")
+	}
 	if code, page := get("/d/" + pub.PublicToken); code != http.StatusOK || !strings.Contains(page, "Договор № Д-1") || !strings.Contains(page, "/d/"+pub.PublicToken+"/pdf") {
 		t.Fatalf("public page %d: %s", code, page)
 	}
@@ -322,6 +369,13 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	}
 	if code, got := get("/d/" + pub.PublicToken + "/pdf?inline=1"); code != http.StatusOK || !strings.HasPrefix(got, "%PDF") {
 		t.Fatalf("public pdf %d", code)
+	}
+	// the client's opening is «Клиент просмотрел документ» in the card; the portal's own checking the link is not
+	if d, _ := srv.CRM.Document(ctx, "deal", deal, first.ID); d.ViewedAt == nil {
+		t.Fatal("the client's view is not noted")
+	}
+	if _, page := do(anna, "GET", card, nil); !strings.Contains(page, "Клиент просмотрел документ") || !strings.Contains(page, "клиент просмотрел") {
+		t.Fatal("the card does not say the client viewed the document")
 	}
 	do(anna, "POST", card+"/documents/"+first.ID+"/public", url.Values{})
 	if code, _ := get("/d/" + pub.PublicToken); code != http.StatusNotFound {
@@ -560,6 +614,29 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	if x := text(got); strings.Count(x, "<w:drawing>") != 2 || strings.Contains(x, "{") {
 		t.Fatalf("the act with the stamp: %s", x)
 	}
+	// «С печатями и подписями» off: the act made again with the same number, with no pictures; on — they are back
+	act := docs[0]
+	if _, page := do(anna, "GET", "/crm/deals/"+other, nil); !strings.Contains(page, `title="С печатями и подписями — выключить"`) {
+		t.Fatal("no «С печатями и подписями» at the document")
+	}
+	do(anna, "POST", "/crm/deals/"+other+"/documents/"+act.ID, url.Values{"stamps_set": {"1"}})
+	ad, _ := srv.CRM.Document(ctx, "deal", other, act.ID)
+	_, got = do(anna, "GET", "/crm/deals/"+other+"/documents/"+act.ID, nil)
+	if x := text(got); ad.Stamps || ad.Number != act.Number || ad.FileID == act.FileID || strings.Contains(x, "<w:drawing>") || strings.Contains(x, "{") {
+		t.Fatalf("the act with no stamps: %+v %s", ad, x)
+	}
+	if _, page := do(anna, "GET", "/crm/deals/"+other+"/document?doc="+act.ID, nil); !strings.Contains(page, `name="stamps" value="1">`) {
+		t.Fatal("«С печатями и подписями» is ticked in the form of a document with no stamps")
+	}
+	do(anna, "POST", "/crm/deals/"+other+"/documents/"+act.ID, url.Values{"v.Title": {"Акт"}}) // the form with no flag keeps it
+	if ad, _ = srv.CRM.Document(ctx, "deal", other, act.ID); ad.Stamps {
+		t.Fatal("«Изменить значения» turned the stamps on")
+	}
+	do(anna, "POST", "/crm/deals/"+other+"/documents/"+act.ID, url.Values{"stamps_set": {"1"}, "stamps": {"1"}})
+	_, got = do(anna, "GET", "/crm/deals/"+other+"/documents/"+act.ID, nil)
+	if ad, _ = srv.CRM.Document(ctx, "deal", other, act.ID); !ad.Stamps || strings.Count(text(got), "<w:drawing>") != 2 {
+		t.Fatalf("the stamps back: %+v", ad)
+	}
 	do(anna, "POST", "/crm/documents/image", url.Values{"kind": {"Stamp"}, "remove": {"1"}})
 	if imgs, _ := srv.CRM.DocImages(ctx); len(imgs) != 1 || imgs["Stamp"] != "" {
 		t.Fatalf("removed: %v", imgs)
@@ -662,5 +739,52 @@ func TestCRMDocumentsHTTP(t *testing.T) {
 	}
 	if _, page := do(anna, "GET", "/crm/robots", nil); !strings.Contains(page, `<option value="`+tpls[0].ID+`">Договор</option>`) || !strings.Contains(page, "📄 Договор") {
 		t.Fatal("the robots' page: the document robot")
+	}
+
+	// the robot «Отправить на подпись»: the document made, the chosen employee signs first, then the deal's contact
+	srv.Sign = sign.NewStore(pool)
+	srv.CRM.SendSign = srv.SignRobot
+	var ve *i18n.Error
+	if err := srv.CRM.AddRobot(ctx, anna, st[3].ID, "sign", crm.RobotParams{Doc: tpls[0].ID, Users: []string{"00000000-0000-0000-0000-000000000000"}}); !errors.As(err, &ve) || ve.Key != "err.robot_user" {
+		t.Fatalf("an unknown signer: %v", err)
+	}
+	must(srv.CRM.AddRobot(ctx, anna, st[3].ID, "sign", crm.RobotParams{Doc: tpls[0].ID, Users: []string{eve, "", eve}}))
+	lastRobot := func() string {
+		must(pool.QueryRow(ctx, `SELECT body FROM crm_timeline WHERE entity_id = $1 AND kind = 'robot' ORDER BY id DESC LIMIT 1`, deal).Scan(&said))
+		return said
+	}
+	_, err = srv.CRM.MoveDeal(ctx, anna, deal, st[3].ID)
+	must(err)
+	if got := lastRobot(); got != "fail:sign:err.robot_email" {
+		t.Fatalf("no client's e-mail: %q", got)
+	}
+	contact, err := srv.CRM.SaveContact(ctx, anna, crm.Contact{Name: "Пётр Клиентов", Email: "petr@client.test", Responsible: crm.Ref{ID: anna}})
+	must(err)
+	dl, err := srv.CRM.Deal(ctx, deal)
+	must(err)
+	dl.Contacts = []crm.Ref{{ID: contact}} // the deal's contacts, the first one is its client
+	_, err = srv.CRM.SaveDeal(ctx, anna, dl)
+	must(err)
+	_, err = srv.CRM.MoveDeal(ctx, anna, deal, st[1].ID)
+	must(err)
+	_, err = srv.CRM.MoveDeal(ctx, anna, deal, st[3].ID)
+	must(err)
+	sent, err := srv.Sign.List(ctx, anna, "", true)
+	must(err)
+	sent = slices.DeleteFunc(sent, func(d sign.Doc) bool { return d.Entity != "deal" }) // the invoice's is above
+	if len(sent) != 1 {
+		t.Fatalf("signings: %+v", sent)
+	}
+	sd, err := srv.Sign.Get(ctx, sent[0].ID)
+	must(err)
+	if sd.Entity != "deal" || sd.EntityID != deal || sd.AuthorID != anna || sd.CRMDocID == "" || len(sd.Parties) != 2 ||
+		sd.Parties[0].UserID != eve || sd.Parties[1].Email != "petr@client.test" || sd.Parties[1].Name != "Пётр Клиентов" {
+		t.Fatalf("the signing: %+v", sd)
+	}
+	if got := lastRobot(); got != "sign:"+sd.Title || !strings.HasPrefix(sd.Title, "Договор № ") {
+		t.Fatalf("the sign robot's line: %q (%q)", got, sd.Title)
+	}
+	if _, page := do(anna, "GET", "/crm/robots", nil); !strings.Contains(page, "✍ Договор · ") || !strings.Contains(page, `name="signers"`) {
+		t.Fatal("the robots' page: the sign robot")
 	}
 }

@@ -1,0 +1,36 @@
+{{define "content"}}{{$d := .Data}}{{$m := $d.Month.Format "2006-01"}}
+<div class="pagehead"><h1 style="flex:1">{{icon "cash"}} {{t "payslip.title"}}</h1></div>
+{{with $d.Done}}<p class="flash">{{t "payslip.done" .}}</p>{{end}}
+{{with $d.Unmatched}}<div class="flash error"><b>{{t "payslip.unmatched"}}</b> {{range $i, $f := .}}{{if $i}}, {{end}}{{$f}}{{end}}
+  <div class="muted small">{{t "payslip.unmatched_hint"}}</div></div>{{end}}
+<div class="card flush">
+  <div class="row abstools">
+    <span class="row" style="gap:4px">
+      <a class="button ghost" href="/company/payslips?month={{$d.Prev.Format "2006-01"}}" title="{{t "absence.prev"}}">{{icon "chevron-left"}}</a>
+      <b>{{monthyear $d.Month}}</b>
+      <a class="button ghost" href="/company/payslips?month={{$d.Next.Format "2006-01"}}" title="{{t "absence.next"}}">{{icon "chevron-right"}}</a>
+    </span>
+    <span class="muted" style="flex:1;text-align:right">{{t "payslip.totals" $d.Uploaded (len $d.Rows)}}</span>
+  </div>
+  <form method="post" action="/company/payslips" enctype="multipart/form-data" class="row payslipbulk">
+    <input type="hidden" name="month" value="{{$m}}">
+    <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
+    <button class="primary">{{icon "file-plus"}} {{t "payslip.upload_many"}}</button>
+    <span class="muted small">{{t "payslip.upload_many_hint"}}</span>
+  </form>
+  <table class="tlist">
+    <thead><tr><th>{{t "absence.who"}}</th><th>{{t "payslip.file"}}</th><th>{{t "payslip.status"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Rows}}<tr data-user="{{.ID}}">
+      <td><a href="/u/{{.ID}}#psalary">{{.Name}}</a>{{with .Email}}<span class="muted small"> · {{.}}</span>{{end}}</td>
+      {{with .Payslip}}<td><a href="/company/payslips/{{.ID}}/file" target="_blank">{{icon "file-text"}} {{.FileName}}</a></td>
+        <td>{{if .Seen}}<span class="pill abs-green">{{icon "eye"}} {{t "payslip.seen"}} {{day .SeenDay}}</span>{{else}}<span class="pill">{{t "payslip.not_seen"}}</span>{{end}}</td>
+        <td><form method="post" action="/company/payslips/{{.ID}}/delete" data-confirm="{{t "payslip.delete_confirm"}}">
+          <input type="hidden" name="back" value="/company/payslips?month={{$m}}"><button class="link danger small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+      {{else}}<td colspan="2" class="muted">{{t "payslip.none_month"}}</td>
+        <td><form method="post" action="/company/payslips" enctype="multipart/form-data" class="row payslipone">
+          <input type="hidden" name="month" value="{{$m}}"><input type="hidden" name="user" value="{{.ID}}">
+          <input type="file" name="files" accept="application/pdf,.pdf" required onchange="this.form.submit()" title="{{t "payslip.upload"}}"></form></td>{{end}}
+    </tr>{{end}}</tbody>
+  </table>
+</div>
+{{end}}

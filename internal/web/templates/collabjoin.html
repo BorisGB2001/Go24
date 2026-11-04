@@ -1,0 +1,10 @@
+{{define "content"}}{{$c := .Data.Collab}}
+<div class="pagehead"><h1>{{t "collab.title"}}</h1></div>
+<div class="card collab">
+  <div class="row ttitle">{{photo $c.Name $c.PhotoURL true}} <b>{{$c.Name}}</b> <span class="pill">{{icon "world"}} {{t "collab.open"}}</span></div>
+  {{with $c.Description}}<p class="small muted">{{.}}</p>{{end}}
+  <div class="small muted">{{t "collab.members_n" $c.Members}}</div>
+  <p>{{t "collab.join_hint"}}</p>
+  <form method="post" action="/c/{{$c.Key}}/join"><button class="primary">{{icon "user-plus"}} {{t "collab.join"}}</button></form>
+</div>
+{{end}}

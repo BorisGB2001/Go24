@@ -1,0 +1,31 @@
+{{/* «Нет связи»: the service worker (static/js/sw.js) keeps this page and shows it when the phone has no network;
+a page of its own with the styles inside — nothing else may be reachable then. */}}
+{{define "layout.html"}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1b2838">
+<title>{{t "pwa.offline_title"}} · {{.Portal.Title}}</title>
+<style>
+  :root { color-scheme: light dark; --bg: #eef2f6; --card: #fff; --text: #1b2838; --muted: #6b7a8c; --accent: #2e7cf6; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f151c; --card: #18212c; --text: #e6edf5; --muted: #8b9aab; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 16px; box-sizing: border-box; }
+  main { background: var(--card); border-radius: 16px; padding: 28px 24px; max-width: 360px; width: 100%; text-align: center; box-sizing: border-box; }
+  .logo { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: var(--accent); color: #fff; font-weight: 700; font-size: 24px; }
+  h1 { font-size: 20px; margin: 16px 0 6px; }
+  p { color: var(--muted); margin: 0 0 20px; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 22px; background: var(--accent); color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <span class="logo">24</span>
+  <h1>{{t "pwa.offline_title"}}</h1>
+  <p>{{t "pwa.offline_text"}}</p>
+  <button type="button" onclick="location.reload()">{{t "pwa.offline_retry"}}</button>
+</main>
+</body>
+</html>{{end}}

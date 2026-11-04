@@ -12,12 +12,74 @@
   <h2>💬 {{$w.Name}}{{if not $w.Active}} <span class="muted small">({{t "bp.inactive"}})</span>{{end}}</h2>
   <p><a class="button ghost" href="/openlines/widgets/{{$w.ID}}/preview" target="_blank">{{icon "eye"}} {{t "ol.preview"}}</a></p>
   <label>{{t "ol.code"}}</label><pre class="olcode">&lt;script src="{{$d.Base}}/w/{{$w.ID}}/widget.js" async&gt;&lt;/script&gt;</pre>
+  {{$link := printf "%s/online/%s" $d.Base $w.ID}}<label>{{t "ol.chat_link"}}</label>
+  <p class="small muted">{{t "ol.chat_link_hint"}}</p>
+  <div class="row olchatlink"><a href="{{$link}}" target="_blank" rel="noopener">{{$link}}</a>
+    <button type="button" class="ghost" data-copy="{{$link}}">{{icon "link"}} {{t "ol.chat_link_copy"}}</button></div>
+  <details class="oltg"><summary>{{t "ol.chat_qr"}}</summary>
+    <p><img src="/openlines/widgets/{{$w.ID}}/qr" alt="{{t "ol.chat_qr"}}" width="160" height="160" loading="lazy"></p>
+    <p><a class="button ghost" href="/openlines/widgets/{{$w.ID}}/qr?download=1">{{icon "download"}} {{t "ol.chat_qr_download"}}</a></p></details>
   {{$bot := index $d.Bots $w.ID}}<details class="oltg"{{if $bot.Error}} open{{end}}><summary>Telegram{{with $bot.Name}}: <a href="https://t.me/{{.}}" target="_blank" rel="noopener">@{{.}}</a>{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
     <p class="small muted">{{t "ol.tg_hint"}}</p>
     {{with $bot.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
     {{if $bot.Name}}<form method="post" action="/openlines/widgets/{{$w.ID}}/telegram" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
     {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/telegram" class="row"><input type="hidden" name="op" value="connect">
       <input type="password" name="token" required maxlength="200" autocomplete="off" placeholder="{{t "ol.tg_token"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$mx := index $d.MaxBots $w.ID}}<details class="oltg"{{if $mx.Error}} open{{end}}><summary>MAX{{with $mx.Name}}: <a href="https://max.ru/{{.}}" target="_blank" rel="noopener">{{.}}</a>{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.max_hint"}}</p>
+    {{with $mx.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $mx.Name}}<form method="post" action="/openlines/widgets/{{$w.ID}}/max" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/max" class="row"><input type="hidden" name="op" value="connect">
+      <input type="password" name="token" required maxlength="300" autocomplete="off" placeholder="{{t "ol.max_token"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$vk := index $d.VKGroups $w.ID}}<details class="oltg"{{if $vk.Error}} open{{end}}><summary>{{t "ol.vk"}}{{with $vk.Name}}: <a href="https://vk.com/{{$vk.Screen}}" target="_blank" rel="noopener">{{.}}</a>{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.vk_hint"}}</p>
+    {{with $vk.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $vk.Name}}<form method="post" action="/openlines/widgets/{{$w.ID}}/vk" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/vk" class="row"><input type="hidden" name="op" value="connect">
+      <input type="password" name="token" required maxlength="300" autocomplete="off" placeholder="{{t "ol.vk_token"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$vb := index $d.ViberBots $w.ID}}<details class="oltg"{{if $vb.Error}} open{{end}}><summary>Viber{{with $vb.URI}}: <a href="viber://pa?chatURI={{.}}">{{or $vb.Name .}}</a>{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.viber_hint"}}</p>
+    {{with $vb.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $vb.URI}}<form method="post" action="/openlines/widgets/{{$w.ID}}/viber" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/viber" class="row"><input type="hidden" name="op" value="connect">
+      <input type="password" name="token" required maxlength="200" autocomplete="off" placeholder="{{t "ol.viber_token"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$ok := index $d.OKGroups $w.ID}}<details class="oltg"{{if $ok.Error}} open{{end}}><summary>{{t "ol.ok"}}{{if $ok.ID}}: {{with $ok.Link}}<a href="{{.}}" target="_blank" rel="noopener">{{or $ok.Name .}}</a>{{else}}{{or $ok.Name $ok.ID}}{{end}}{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.ok_hint"}}</p>
+    {{with $ok.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $ok.ID}}<form method="post" action="/openlines/widgets/{{$w.ID}}/ok" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/ok" class="row"><input type="hidden" name="op" value="connect">
+      <input type="password" name="token" required maxlength="300" autocomplete="off" placeholder="{{t "ol.ok_token"}}" style="flex:1">
+      <input type="url" name="link" maxlength="300" placeholder="{{t "ol.ok_link"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$av := index $d.Avitos $w.ID}}<details class="oltg"{{if $av.Error}} open{{end}}><summary>{{t "ol.avito"}}{{if $av.ID}}: {{with $av.Link}}<a href="{{.}}" target="_blank" rel="noopener">{{$av.Name}}</a>{{else}}{{$av.Name}}{{end}}{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.avito_hint"}}</p>
+    {{with $av.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $av.ID}}<form method="post" action="/openlines/widgets/{{$w.ID}}/avito" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/avito" class="row"><input type="hidden" name="op" value="connect">
+      <input type="text" name="client_id" required maxlength="200" autocomplete="off" placeholder="Client ID" style="flex:1">
+      <input type="password" name="client_secret" required maxlength="200" autocomplete="off" placeholder="Client secret" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$wa := index $d.WhatsApps $w.ID}}<details class="oltg"{{if $wa.Error}} open{{end}}><summary>WhatsApp{{if $wa.Phone}}: {{with $wa.Number}}<a href="https://wa.me/{{waDigits .}}" target="_blank" rel="noopener">{{.}}</a>{{end}}{{with $wa.Name}} · {{.}}{{end}}{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.wa_hint"}}</p>
+    {{with $wa.Error}}<p class="small err">{{t "ol.tg_error"}}: {{.}}</p>{{end}}
+    {{if $wa.Phone}}{{if not $wa.WABA}}<p class="small">{{t "ol.wa_hook"}}<br>{{t "ol.wa_hook_url"}}: <code>{{$wa.Hook}}</code><br>{{t "ol.wa_verify"}}: <code>{{$wa.Verify}}</code></p>{{end}}
+      <form method="post" action="/openlines/widgets/{{$w.ID}}/whatsapp" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><input type="hidden" name="op" value="disconnect"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>
+    {{else}}<form method="post" action="/openlines/widgets/{{$w.ID}}/whatsapp" class="row" style="flex-wrap:wrap"><input type="hidden" name="op" value="connect">
+      <input type="text" name="phone" required maxlength="30" pattern="[0-9]+" autocomplete="off" placeholder="{{t "ol.wa_phone"}}" style="flex:1">
+      <input type="text" name="waba" maxlength="30" pattern="[0-9]*" autocomplete="off" placeholder="{{t "ol.wa_waba"}}" style="flex:1">
+      <input type="password" name="token" required maxlength="1000" autocomplete="off" placeholder="{{t "ol.wa_token"}}" style="flex:1">
+      <input type="password" name="app_secret" required maxlength="200" autocomplete="off" placeholder="{{t "ol.wa_secret"}}" style="flex:1"><button class="primary">{{t "ol.tg_connect"}}</button></form>{{end}}
+  </details>
+  {{$cl := index $d.Connectors $w.ID}}<details class="oltg"><summary>{{t "ol.app_channels"}}{{if $cl}}: {{range $i, $c := $cl}}{{if $i}}, {{end}}{{$c.Name}}{{if not $c.Active}} <span class="muted small">({{t "ol.app_off"}})</span>{{end}}{{end}}{{else}} <span class="muted small">— {{t "ol.tg_none"}}</span>{{end}}</summary>
+    <p class="small muted">{{t "ol.app_hint"}}</p>
+    {{range $cl}}<div class="row small" style="align-items:center;gap:8px;flex-wrap:wrap"><b>{{.Name}}</b> <code>{{.Code}}</code>
+      {{with index .Data "name"}}· {{.}}{{end}}{{with index .Data "url_im"}} · <a href="{{.}}" target="_blank" rel="noopener">{{t "ol.app_open"}}</a>{{else}}{{with index .Data "url"}} · <a href="{{.}}" target="_blank" rel="noopener">{{t "ol.app_open"}}</a>{{end}}{{end}}
+      · {{if .Active}}{{t "ol.app_on"}}{{else}}<span class="muted">{{t "ol.app_off"}}</span>{{end}}{{with .Error}} · <span class="err">{{.}}</span>{{end}}
+      {{if .Active}}<form method="post" action="/openlines/widgets/{{$w.ID}}/connector/{{.ID}}/off" class="inline" data-confirm="{{t "ol.tg_disconnect_confirm"}}"><button class="ghost">{{icon "unlink"}} {{t "ol.tg_disconnect"}}</button></form>{{end}}</div>{{end}}
   </details>
   <details><summary>{{icon "edit"}} {{t "crm.edit"}}</summary>
     <form method="post" action="/openlines/widgets/{{$w.ID}}">
@@ -28,7 +90,7 @@
       <label>{{t "ol.origins"}}</label><textarea name="origins" rows="2" placeholder="https://example.com">{{range $w.Origins}}{{.}}
 {{end}}</textarea>
       <label>{{t "ol.operators"}}</label>{{template "upick" (upick "operators" $w.Operators $d.Users "multi")}}
-      {{template "olline" (dict "W" $w "Days" $d.Days)}}
+      {{template "olline" (dict "W" $w "Days" $d.Days "Callbacks" $d.Callbacks "Spaces" $d.Spaces)}}
       <p class="row"><button class="primary">{{t "common.save"}}</button></p></form>
     <form method="post" action="/openlines/widgets/{{$w.ID}}/delete" data-confirm="{{t "ol.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "crm.delete"}}</button></form></details>
 </div>{{end}}
@@ -40,7 +102,7 @@
       <div><label class="check" style="margin-top:28px"><input type="checkbox" name="active" checked> {{t "ol.active"}}</label></div></div>
     <label>{{t "ol.origins"}}</label><textarea name="origins" rows="2" placeholder="https://example.com"></textarea>
     <label>{{t "ol.operators"}}</label>{{template "upick" (upick "operators" "" $d.Users "multi")}}
-    {{template "olline" (dict "W" $d.New "Days" $d.Days)}}
+    {{template "olline" (dict "W" $d.New "Days" $d.Days "Callbacks" $d.Callbacks "Spaces" $d.Spaces)}}
     <p><button class="primary">{{t "common.create"}}</button></p></form></details>
 <script src="{{asset "js/olbot.js"}}"></script>
 {{end}}
@@ -61,6 +123,11 @@
   <label>{{t "ol.hello_delay"}}</label><input type="number" name="hello_delay" min="0" max="600" value="{{$w.HelloDelay}}">
   <p class="small muted">{{t "ol.hello_hint"}}</p>
 </details>
+<details class="olline"><summary>{{t "ol.callback"}}</summary>
+  <label>{{t "ol.callback_form"}}</label><select name="callback_id"><option value="">{{t "ol.callback_none"}}</option>
+    {{range .Callbacks}}<option value="{{.ID}}" {{if eq $w.CallbackID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <p class="small muted">{{t "ol.callback_hint"}} <a href="/settings/telephony#callbacks">{{t "ol.callback_forms"}}</a></p>
+</details>
 <details class="olline"><summary>{{t "ol.queue"}}</summary>
   <label>{{t "ol.queue_mode"}}</label><select name="queue_mode">
     <option value="all" {{if eq $w.QueueMode "all"}}selected{{end}}>{{t "ol.mode_all"}}</option>
@@ -79,6 +146,10 @@
   <div class="row">{{range $.Days}}<label class="check"><input type="checkbox" name="hours_days" value="{{.}}" {{if $w.Day .}}checked{{end}}> {{t (printf "weekday.%d" .)}}</label>{{end}}</div>
   <div class="grid"><div><label>{{t "ol.hours_from"}}</label><input type="time" name="hours_from" value="{{$w.HoursFrom}}"></div>
     <div><label>{{t "ol.hours_to"}}</label><input type="time" name="hours_to" value="{{$w.HoursTo}}"></div></div>
+  <label>{{t "ol.hours_tz"}}</label><select name="hours_tz"><option value="">{{t "ol.hours_tz_portal" $.PortalTZ}}</option>
+    {{range $.Zones}}<option value="{{.Name}}" {{if eq .Name $w.HoursTZ}}selected{{end}}>{{.Label}}</option>{{end}}</select>
+  <label>{{t "ol.holidays"}}</label><textarea name="holidays" rows="3" placeholder="31.12">{{$w.HolidaysText}}</textarea>
+  <p class="small muted">{{t "ol.holidays_hint"}} {{with $.CompanyHolidays}}<button type="button" class="ghost small" data-ol-holidays="{{.}}">{{t "ol.holidays_company"}}</button>{{end}}</p>
   <label>{{t "ol.offline_text"}}</label><textarea name="offline_text" rows="2" maxlength="1000" placeholder="{{t "ol.offline_hint"}}">{{$w.OfflineText}}</textarea>
 </details>
 <details class="olline"><summary>{{t "ol.auto"}}</summary>
@@ -87,6 +158,14 @@
   <label>{{t "ol.noanswer_after"}}</label><input type="number" name="noanswer_after" min="1" max="1440" value="{{$w.NoanswerAfter}}">
   <label>{{t "ol.close_text"}}</label><textarea name="close_text" rows="2" maxlength="1000" placeholder="{{t "ol.close_hint"}}">{{$w.CloseText}}</textarea>
   <label>{{t "ol.autoclose"}}</label><input type="number" name="autoclose" min="0" max="720" value="{{$w.Autoclose}}">
+</details>
+<details class="olline"><summary>{{t "ol.automsg"}}</summary>
+  <p class="small muted">{{t "ol.automsg_hint"}}</p>
+  {{range $i, $m := $w.AutoMsgSlots}}<div class="grid"><div><label>{{t "ol.automsg_after" (add $i 1)}}</label><div class="row">
+      <input type="number" name="automsg_count" min="1" max="90" value="{{$m.Count}}" style="width:5em">
+      <select name="automsg_unit"><option value="hours" {{if not $m.Days}}selected{{end}}>{{t "ol.automsg_hours"}}</option>
+        <option value="days" {{if $m.Days}}selected{{end}}>{{t "ol.automsg_days"}}</option></select></div></div></div>
+  <textarea name="automsg_text" rows="2" maxlength="1000" placeholder="{{if eq $i 0}}{{t "ol.automsg_ph"}}{{end}}">{{$m.Text}}</textarea>{{end}}
 </details>
 <details class="olline"><summary>{{t "ol.quality"}}</summary>
   <label class="check"><input type="checkbox" name="vote_on" {{if $w.VoteOn}}checked{{end}}> {{t "ol.vote_on"}}</label>
@@ -110,6 +189,16 @@
   <label class="check"><input type="checkbox" name="kpi_operator" {{if $w.KPIOperator}}checked{{end}}> {{t "ol.kpi_operator"}}</label>
   <label class="check"><input type="checkbox" name="kpi_heads" {{if $w.KPIHeads}}checked{{end}}> {{t "ol.kpi_heads"}}</label>
   <p class="small muted">{{t "ol.kpi_hint"}}</p>
+</details>
+<details class="olline"><summary>{{icon "sparkles"}} {{t "ol.copilot"}}</summary>
+  <label class="check"><input type="checkbox" name="ai_summary" {{if $w.AISummary}}checked{{end}}> {{t "ol.copilot_auto"}}</label>
+  <p class="small muted">{{t "ol.copilot_auto_hint"}}</p>
+</details>
+<details class="olline"><summary>{{icon "sparkles"}} {{t "ol.aibot"}}</summary>
+  <label class="check"><input type="checkbox" name="ai_bot" {{if $w.AIBot}}checked{{end}}> {{t "ol.aibot_on"}}</label>
+  <label>{{t "ol.aibot_space"}}</label><select name="ai_space"><option value="">{{t "ol.aibot_none"}}</option>
+    {{range .Spaces}}<option value="{{.ID}}" {{if eq $w.AISpace .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <p class="small muted">{{t "ol.aibot_hint"}}</p>
 </details>
 <details class="olline" data-olbot><summary>🤖 {{t "ol.bot"}}</summary>
   <label class="check"><input type="checkbox" name="bot_on" {{if $w.BotOn}}checked{{end}}> {{t "ol.bot_on"}}</label>

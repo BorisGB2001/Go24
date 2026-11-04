@@ -4,19 +4,27 @@
 {{define "content"}}
 {{$d := .Data}}{{$k := $d.Kind}}
 <div class="pagehead"><h1>{{with $d.Type}}{{.Name}}{{else}}{{t "crm.title"}}{{end}}</h1>{{if $.User.Admin}}<a class="button ghost" href="/crm/robots{{if eq $k "leads"}}?entity=lead{{else if $d.Type}}?entity=deal&type={{$d.Type.ID}}{{end}}">🤖 {{t "robots.title"}}</a>
-  <a class="button ghost" href="/crm/documents">{{icon "files"}} {{t "docs.templates"}}</a>
   <a class="button ghost" href="/crm/roles">{{icon "shield-lock"}} {{t "crmroles.title"}}</a>
+  <details class="tsettings"><summary class="button ghost" title="{{t "crm.mode_hint"}}">{{icon "settings"}} {{t "crm.mode"}}</summary>
+    <div class="pop"><form method="post" action="/crm/mode">
+      <label class="check"><input type="radio" name="mode" value="classic" {{if not $d.Simple}}checked{{end}}> <b>{{t "crm.mode_classic"}}</b></label>
+      <p class="small muted">{{t "crm.mode_classic_hint"}}</p>
+      <label class="check"><input type="radio" name="mode" value="simple" {{if $d.Simple}}checked{{end}}> <b>{{t "crm.mode_simple"}}</b></label>
+      <p class="small muted">{{t "crm.mode_simple_hint"}}</p>
+      {{if not $d.Simple}}<label class="check small"><input type="checkbox" name="convert" value="1" checked> {{t "crm.mode_convert"}}</label>{{end}}
+      <p><button class="primary">{{t "common.save"}}</button></p></form></div></details>
   {{with index (dict "deals" "deal" "leads" "lead" "contacts" "contact" "companies" "company") $k}}<a class="button ghost" href="/settings/crm-{{.}}-fields">{{icon "adjustments"}} {{t "crm.fields"}}</a>{{end}}{{end}}
+  {{if $d.DocTemplates}}<a class="button ghost" href="/crm/documents">{{icon "files"}} {{t "docs.templates"}}</a>{{end}}
   <a class="button ghost" href="/crm/mail-templates">{{icon "mail"}} {{t "crm.mailtpl.title"}}</a>
-  <a class="button ghost" href="/crm/export/{{$k}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}" title="{{t "crm.export_hint"}}">{{icon "download"}} {{t "crm.export"}}</a>
-  {{if ne $k "deals"}}<details class="tsettings"><summary class="button ghost">{{icon "cloud-upload"}} {{t "crm.import"}}</summary>
+  {{if $d.Can.export}}<a class="button ghost" href="/crm/export/{{$k}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}" title="{{t "crm.export_hint"}}">{{icon "download"}} {{t "crm.export"}}</a>{{end}}
+  {{if and (ne $k "deals") $d.Can.import}}<details class="tsettings"><summary class="button ghost">{{icon "cloud-upload"}} {{t "crm.import"}}</summary>
     <div class="pop"><form method="post" action="/crm/import/{{$k}}" enctype="multipart/form-data">
       <p class="small muted">{{t "crm.import_hint"}}</p>
       <input type="file" name="file" accept=".csv,text/csv" required>
       <label class="small"><input type="checkbox" name="skip_dup" value="1" checked> {{t "crm.import_skip_dup"}}</label>
       <p><button class="primary">{{t "crm.import"}}</button></p></form></div></details>{{end}}
-  <details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.new"}}</summary>
-    <div class="pop">{{template "crmnew" $d}}</div></details></div>
+  {{if $d.Can.add}}<details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.new"}}</summary>
+    <div class="pop">{{template "crmnew" $d}}</div></details>{{end}}</div>
 <div class="tabs">
   {{template "crmtabs" $d}}
   <span class="spacer"></span>
@@ -35,8 +43,41 @@
         <input type="text" name="name" required maxlength="100" placeholder="{{t "crm.pipeline_placeholder"}}"><button>{{icon "plus"}} {{t "common.add"}}</button></form>
     </div></details>{{end}}</div>{{end}}{{end}}
 
+{{if and (eq $k "leads") $d.Simple}}<p class="muted">{{icon "alert-triangle"}} {{t "crm.mode_leads_note"}}</p>{{end}}
 {{if or (eq $k "deals") (eq $k "leads")}}{{template "crmfilter" $}}{{end}}
 {{if and (or (eq $k "deals") (eq $k "leads")) (eq $d.View "list")}}{{template "crmlist" $}}
+{{else if and (or (eq $k "deals") (eq $k "leads")) (eq $d.View "activities")}}
+{{/* «Дела»: the cards by the deadline of their nearest open deed; a drop sets it */}}
+<div class="board crmboard" data-board="crmact" data-move="/crm/{{$k}}/" data-failed="{{t "board.move_failed"}}">
+  {{range $d.DeedCols}}
+  <div class="col"{{if and (ne .Period "overdue") (ne .Period "none")}} data-stage="{{.Period}}"{{end}}>
+    <div class="colhead"><b>{{if eq .Period "none"}}{{t "crm.period_none"}}{{else}}{{t (print "deadlines." .Period)}}{{end}}</b> <span class="colcount">{{len .Items}}</span>
+      <div class="colsum" data-sum="{{.Sum}}" data-cur="{{$d.Base}}">{{money .Sum}} {{$d.Base}}</div></div>
+    <div class="cards">{{range .Items}}{{template "crmkcard" (dict "K" $k "I" .Item "N" (index $d.Next .ID) "W" (and $d.Waits (index $d.Waits .ID)) "P" (and $d.Scores (index $d.Scores .ID)) "S" .Sum "D" $d)}}{{end}}</div>
+    <div class="empty small" {{if .Items}}hidden{{end}}>{{t "crm.empty"}}</div>
+  </div>{{end}}
+</div>
+<script src="{{asset "js/boards.js"}}"></script>
+{{else if and (or (eq $k "deals") (eq $k "leads")) (eq $d.View "calendar")}}
+{{/* «Календарь»: the cards on the days of a date field; a drop onto a day changes it */}}
+{{$base := print "/crm/" $k "?" (or (and $d.Pipeline (print "pipeline=" $d.Pipeline.ID "&")) "") $d.Query "&view=calendar&date=" $d.Date.Key}}
+<div class="row calnav">
+  <a class="button ghost" href="{{$base}}&month={{$d.Prev}}" title="{{t "calendar.prev"}}">{{icon "chevron-left"}}</a>
+  <b class="calmonth">{{t (print "month_full." (printf "%d" $d.Month.Month))}} {{$d.Month.Year}}</b>
+  <a class="button ghost" href="{{$base}}&month={{$d.NextMonth}}" title="{{t "calendar.next"}}">{{icon "chevron-right"}}</a>
+  <a class="button ghost" href="{{$base}}">{{t "calendar.today"}}</a>
+  <form method="get" action="/crm/{{$k}}" class="row">{{with $d.Pipeline}}<input type="hidden" name="pipeline" value="{{.ID}}">{{end}}<input type="hidden" name="view" value="calendar"><input type="hidden" name="month" value="{{$d.Month.Format "2006-01"}}">
+    <label class="small muted">{{t "crm.cal_by"}}</label><select name="date" onchange="this.form.submit()">{{range $d.Dates}}<option value="{{.Key}}" {{if eq .Key $d.Date.Key}}selected{{end}}>{{template "crmcaldate" .}}</option>{{end}}</select></form>
+  {{if $d.Undated}}<span class="small muted">{{t "crm.cal_undated" $d.Undated}}</span>{{end}}
+</div>
+<div class="card flush cal crmcal" data-crmcal="/crm/{{$k}}/" data-date="{{$d.Date.Key}}" data-failed="{{t "board.move_failed"}}">
+  <div class="calrow calhead">{{range list "1" "2" "3" "4" "5" "6" "7"}}<div>{{t (print "wd." .)}}</div>{{end}}</div>
+  {{range $d.Weeks}}<div class="calrow">{{range .}}
+    <div class="calday{{if .Out}} out{{end}}{{if .Today}} today{{end}}" data-day="{{.Date.Format "2006-01-02"}}"><span class="calnum">{{.Date.Day}}</span>
+      {{range .Items}}<a class="calitem" href="/crm/{{$k}}/{{.ID}}" data-key="{{.ID}}"{{if $d.Date.Movable}} draggable="true"{{end}} title="{{.Item.Title}}">{{.Item.Title}}{{if .Item.Amount}} · {{money .Item.Amount}} {{.Item.Currency}}{{end}}</a>{{end}}
+    </div>{{end}}</div>{{end}}
+</div>
+<script src="{{asset "js/crmcal.js"}}"></script>
 {{else if or (eq $k "deals") (eq $k "leads")}}
 <div class="board crmboard" data-board="crm" data-move="/crm/{{$k}}/" data-cols-board="crm-{{$k}}{{with $d.Pipeline}}-{{.ID}}{{end}}" data-failed="{{t "board.move_failed"}}">
   {{range $d.Columns}}
@@ -45,7 +86,7 @@
       {{if $.User.Admin}}{{template "crmstagemenu" (dict "D" $d "C" .)}}{{end}}
       <div class="colsum" data-sum="{{.Sum}}" data-cur="{{$d.Base}}">{{money .Sum}} {{$d.Base}}</div></div>
     {{if not .Stage.Closed}}{{template "crmquick" (dict "D" $d "S" .Stage)}}{{end}}
-    <div class="cards">{{range .Items}}{{template "crmkcard" (dict "K" $k "I" . "N" (index $d.Next .ID) "S" (index $d.Sums .ID))}}{{end}}</div>
+    <div class="cards">{{range .Items}}{{template "crmkcard" (dict "K" $k "I" . "N" (index $d.Next .ID) "W" (and $d.Waits (index $d.Waits .ID)) "P" (and $d.Scores (index $d.Scores .ID)) "S" (index $d.Sums .ID) "D" $d)}}{{end}}</div>
     <div class="empty small" {{if .Items}}hidden{{end}}>{{t "crm.empty"}}</div>
   </div>{{end}}
   {{if $.User.Admin}}<div class="col add-col">
@@ -73,17 +114,23 @@
 {{end}}
 {{end}}
 
+{{/* the name of a date field of «Календарь» */}}
+{{define "crmcaldate"}}{{if eq .Key "created"}}{{t "crm.f.created"}}{{else if eq .Key "close"}}{{t "crm.f.close_date"}}{{else}}{{.Name}}{{end}}{{end}}
+
 {{/* a kanban card; S is its amount in the base currency, for the column's sum */}}
-{{define "crmkcard"}}{{$k := .K}}{{with .I}}<div class="kcard" draggable="true" data-key="{{.ID}}" data-sum="{{$.S}}">
+{{define "crmkcard"}}{{$k := .K}}{{$d := .D}}{{$on := or $d.TileOn (dict "amount" true "activities" true "responsible" true)}}{{with .I}}{{$i := .}}<div class="kcard" draggable="true" data-key="{{.ID}}" data-sum="{{$.S}}">
   <a href="/crm/{{$k}}/{{.ID}}" class="ttitle">{{.Title}}</a>{{if eq $k "leads"}}{{if .Repeat}} <span class="pill small crmrep" title="{{t "crm.repeat_hint"}}">{{t "crm.repeat_short"}}</span>{{end}}{{end}}
-  {{with $.N}}<a href="/crm/{{$k}}/{{.EntityID}}#activities" class="small nextact {{if .Overdue}}overdue{{else}}muted{{end}}">{{icon "clock"}} {{datetime .Deadline}} · {{.Subject}}</a>{{else}}<a href="/crm/{{$k}}/{{.ID}}#activities" class="small nextact muted">{{icon "plus"}} {{t "crm.activity_plan"}}</a>{{end}}
-  <div class="foot small">{{if .Amount}}<b>{{money .Amount}} {{.Currency}}</b>{{end}}<span style="flex:1"></span><span class="muted">{{.Responsible.Name}}</span></div>
+  {{if and (index $on "amount") .Amount}}<div class="kamount"><b>{{money .Amount}} {{.Currency}}</b></div>{{end}}
+  {{range $d.TileLines}}<div class="kline small"><span class="muted">{{template "crmcolname" .}}:</span> <span class="kval">{{template "crmval" (dict "K" $k "I" $i "C" . "D" $d)}}</span></div>{{end}}
+  {{if index $on "activities"}}{{with $.N}}<a href="/crm/{{$k}}/{{.EntityID}}#activities" class="small nextact {{if .Overdue}}overdue{{else}}muted{{end}}">{{icon "clock"}} {{datetime .Deadline}} · {{.Subject}}</a>{{else}}<a href="/crm/{{$k}}/{{.ID}}#activities" class="small nextact muted">{{icon "plus"}} {{t "crm.activity_plan"}}</a>{{end}}{{end}}
+  {{with $.W}}<a href="/crm/{{$k}}/{{.EntityID}}#activities" class="small nextact muted crmwaittile">{{icon "hourglass-high"}} {{t "crm.wait.until" (datetime .Until)}}</a>{{end}}
+  {{if or $.P (index $on "responsible")}}<div class="foot small">{{with $.P}}{{template "crmscore" .}} {{end}}<span style="flex:1"></span>{{if index $on "responsible"}}<span class="muted">{{.Responsible.Name}}</span>{{end}}</div>{{end}}
 </div>{{end}}{{end}}
 
 {{/* «+» of a kanban column: a card right in this stage — title, amount, the client */}}
 {{define "crmquick"}}{{$d := .D}}{{$k := $d.Kind}}
 <details class="quick"><summary title="{{t "crm.quick_add"}}">{{icon "plus"}}</summary>
-  <form method="post" action="/crm/{{$k}}/new" class="crmquick" data-quick><input type="hidden" name="stage" value="{{.S.ID}}">
+  <form method="post" action="/crm/{{$k}}/new" class="crmquick" data-quick{{if eq $k "leads"}} data-dupcheck="lead"{{end}}><input type="hidden" name="stage" value="{{.S.ID}}">
     {{if eq $k "deals"}}<input type="hidden" name="pipeline" value="{{$d.Pipeline.ID}}">{{end}}
     <input type="text" name="title" required maxlength="300" placeholder="{{t "crm.f.title"}}">
     <input type="text" name="amount" inputmode="decimal" placeholder="{{t "crm.f.amount"}}{{with $d.Base}}, {{.}}{{end}}">
@@ -94,7 +141,7 @@
 
 {{define "crmnew"}}{{$k := .Kind}}
 <b>{{with .Type}}{{t "crm.new_item"}} · {{.Name}}{{else}}{{t (print "crm.new_" (index (dict "deals" "deal" "leads" "lead" "contacts" "contact" "companies" "company") $k))}}{{end}}</b>
-<form method="post" action="/crm/{{$k}}/new">
+<form method="post" action="/crm/{{$k}}/new"{{with index (dict "leads" "lead" "contacts" "contact" "companies" "company") $k}} data-dupcheck="{{.}}"{{end}}>
   {{if eq $k "deals"}}<input type="hidden" name="pipeline" value="{{.Pipeline.ID}}">{{end}}
   {{if eq $k "contacts"}}<input type="text" name="name" required maxlength="300" placeholder="{{t "crm.f.name"}}">
   {{else}}<input type="text" name="title" required maxlength="300" placeholder="{{t "crm.f.title"}}">{{end}}
@@ -104,7 +151,7 @@
   {{range .NewFields}}{{if eq .Kind "list"}}<select name="f_{{.ID}}" required><option value="">{{.Name}} *</option>{{range .Options}}<option>{{.}}</option>{{end}}</select>
   {{else}}<input type="{{if eq .Kind "date"}}date{{else if eq .Kind "url"}}url{{else}}text{{end}}" name="f_{{.ID}}" required maxlength="2000" placeholder="{{.Name}} *" title="{{.Name}}">{{end}}{{end}}
   <p><button class="primary">{{t "common.create"}}</button></p>
-</form>{{end}}
+</form>{{if ne $k "deals"}}<script src="{{asset "js/crmdupcheck.js"}}" defer></script>{{end}}{{end}}
 
 {{define "crmstagewhere"}}{{if eq .Kind "deals"}}<input type="hidden" name="entity" value="deal"><input type="hidden" name="pipeline" value="{{.Pipeline.ID}}">{{else}}<input type="hidden" name="entity" value="lead">{{end}}{{end}}
 
@@ -141,7 +188,7 @@
       <button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{end}}
 </div>
 <div class="row crmtools">
-  <div class="seg">{{range list "kanban" "list"}}<a class="chip{{if or (eq . $d.View) (and (eq . "kanban") (ne $d.View "list"))}} on{{end}}" href="/crm/{{$k}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}&view={{.}}">{{t (print "crm.view." .)}}</a>{{end}}</div>
+  <div class="seg">{{range list "kanban" "list" "activities" "calendar"}}<a class="chip{{if or (eq . $d.View) (and (eq . "kanban") (ne $d.View "list") (ne $d.View "activities") (ne $d.View "calendar"))}} on{{end}}" href="/crm/{{$k}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}&view={{.}}">{{t (print "crm.view." .)}}</a>{{end}}</div>
   <details class="tsettings"><summary class="chip{{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Repeat $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}} on{{end}}">{{icon "filter"}} {{t "crm.filter"}}</summary>
     <div class="pop"><form method="get" action="/crm/{{$k}}">
       {{with $d.Pipeline}}<input type="hidden" name="pipeline" value="{{.ID}}">{{end}}<input type="hidden" name="view" value="{{$d.View}}"><input type="hidden" name="q" value="{{$d.Q}}">
@@ -161,8 +208,24 @@
       <label class="check small"><input type="checkbox" name="default" value="1"> {{t "crm.preset_default"}}</label>
       <p><button>{{icon "device-floppy"}} {{t "crm.preset_save"}}</button></p></form>{{end}}
     </div></details>
+  {{if $d.TileCols}}{{template "crmtile" $}}{{end}}
   {{if or $f.Stage $f.Semantic $f.Responsible $f.Observer $f.Repeat $f.Source $f.From $f.To $f.AmountMin $f.AmountMax}}<span class="muted small">{{t "crm.found" (len $d.Items)}}</span>{{end}}
 </div>{{end}}
+
+{{/* «Настроить вид карточки» of the kanban: the fields of the tiles, their order by dragging */}}
+{{define "crmtile"}}{{$d := .Data}}
+<details class="tsettings crmtile"><summary class="chip{{if or $d.TileOwn $d.TileCommon}} on{{end}}" title="{{t "crm.tile.hint"}}">{{icon "layout-kanban"}} {{t "crm.tile.title"}}</summary>
+  <div class="pop"><form method="post" action="/crm/tile" data-crmtile><input type="hidden" name="scope" value="{{$d.TileScope}}">
+    <input type="hidden" name="back" value="/crm/{{$d.Kind}}?{{with $d.Pipeline}}pipeline={{.ID}}&{{end}}{{$d.Query}}&view={{$d.View}}">
+    <b>{{t "crm.tile.title"}}</b><p class="small muted">{{t "crm.tile.hint"}}</p>
+    <ul class="crmcols-list crmtile-list">{{range $d.TileCols}}<li draggable="true"><span class="grip">⋮⋮</span><label class="check"><input type="checkbox" name="cols" value="{{.Key}}" {{if .On}}checked{{end}}> {{template "crmcolname" .}}</label></li>{{end}}</ul>
+    {{if $d.TileOwn}}<p class="small muted">{{t "crm.tile.own"}}</p>{{else if $d.TileCommon}}<p class="small muted">{{t "crm.tile.common_on"}}</p>{{end}}
+    <p class="row"><button class="primary">{{t "common.save"}}</button>
+      {{if $.User.Admin}}<button class="ghost" name="common" value="1" title="{{t "crm.tile.make_common_hint"}}">{{t "crm.tile.make_common"}}</button>{{end}}
+      {{if $d.TileOwn}}<button class="ghost small" name="reset" value="own">{{if $d.TileCommon}}{{t "crm.tile.back_common"}}{{else}}{{t "crm.reset"}}{{end}}</button>{{end}}
+      {{if and $.User.Admin $d.TileCommon}}<button class="ghost small" name="reset" value="common" data-confirm="{{t "crm.tile.reset_common_confirm"}}">{{t "crm.tile.reset_common"}}</button>{{end}}</p>
+  </form></div></details>
+<script src="{{asset "js/crmtile.js"}}"></script>{{end}}
 
 {{/* the list of deals or leads: sortable columns, the nearest deed, group actions on the checked ones */}}
 {{define "crmlist"}}{{$d := .Data}}{{$k := $d.Kind}}{{$f := $d.F}}
@@ -171,7 +234,7 @@
 <form method="post" action="/crm/bulk/{{$k}}" class="card flush" data-crmbulk>
   <input type="hidden" name="back" value="{{$base}}">
   {{if $d.Items}}<div class="row crmbulk"><span class="muted small">{{t "crm.bulk_checked"}} <b data-bulkcount>0</b></span>
-    <select name="op" data-bulkop><option value="stage">{{t "crm.bulk_stage"}}</option><option value="responsible">{{t "crm.bulk_responsible"}}</option><option value="delete">{{t "crm.bulk_delete"}}</option></select>
+    <select name="op" data-bulkop><option value="stage">{{t "crm.bulk_stage"}}</option><option value="responsible">{{t "crm.bulk_responsible"}}</option><option value="delete">{{t "crm.bulk_delete"}}</option>{{if $.Telephony}}<option value="calllist">{{t "crm.bulk_calllist"}}</option>{{end}}</select>
     <select name="value" data-bulkfor="stage">{{range $d.Stages}}<option value="{{.ID}}">{{template "crmstage" .}}</option>{{end}}</select>
     <select name="value" data-bulkfor="responsible" disabled>{{range $d.Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
     <button class="ghost" data-confirmdel="{{t "crm.bulk_confirm"}}">{{t "crm.bulk_apply"}}</button></div>
@@ -206,6 +269,10 @@
 
 {{/* a cell of an optional column: K — the list, I — the card, C — the column, D — the page's data */}}
 {{define "crmcell"}}{{$i := .I}}{{$c := .C}}{{$d := .D}}{{$k := .K}}{{$key := $c.Key}}<td data-col="{{$key}}" {{if not $c.On}}hidden{{end}}{{if or (eq $key "amount") (eq $key "created") (eq $key "close_date") (eq $key "closed_at")}} class="nowrap{{if ne $key "amount"}} small{{end}}"{{else if not (or (eq $key "phone") (eq $key "email") (eq $key "company"))}} class="small"{{end}}>
+  {{- template "crmval" .}}</td>{{end}}
+
+{{/* the value of an optional field of a card (a list's cell, a tile's line): K, I, C, D as of crmcell */}}
+{{define "crmval"}}{{$i := .I}}{{$c := .C}}{{$d := .D}}{{$key := $c.Key}}
   {{- if $c.Field}}{{with index $d.Values $i.ID}}{{with index . $c.Field.ID}}{{if eq $c.Field.Kind "bool"}}{{t "bool.true"}}{{else if eq $c.Field.Kind "url"}}<a href="{{.}}" target="_blank" rel="noopener">{{.}}</a>{{else}}{{.}}{{end}}{{end}}{{end}}
   {{- else if eq $key "stage"}}<span class="pill" style="border-color:#{{$i.Stage.Color}}">{{template "crmstage" $i.Stage}}</span>
   {{- else if eq $key "amount"}}{{if $i.Amount}}{{money $i.Amount}} {{$i.Currency}}{{end}}
@@ -227,4 +294,4 @@
   {{- else if eq $key "website"}}{{with $i.Website}}<a href="{{.}}" target="_blank" rel="noopener">{{.}}</a>{{end}}
   {{- else if eq $key "name"}}{{$i.Name}}{{else if eq $key "company_title"}}{{$i.CompanyTitle}}{{else if eq $key "phone"}}{{$i.Phone}}
   {{- else if eq $key "email"}}{{$i.Email}}{{else if eq $key "position"}}{{$i.Position}}{{else if eq $key "address"}}{{$i.Address}}
-  {{- else if eq $key "contacts"}}{{$i.Contacts}}{{else if eq $key "deals"}}{{$i.Deals}}{{end}}</td>{{end}}
+  {{- else if eq $key "contacts"}}{{$i.Contacts}}{{else if eq $key "deals"}}{{$i.Deals}}{{end}}{{end}}

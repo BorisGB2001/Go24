@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"time"
 
@@ -14,6 +15,25 @@ import (
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
+
+// sortMigrations puts the migrations in the order of their numbers: 999_… before 1000_… (as strings 1000_… would
+// go between 100_… and 101_…).
+func sortMigrations(names []string) {
+	digits := func(n string) int {
+		b := path.Base(n)
+		i := 0
+		for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+			i++
+		}
+		return i
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		if di, dj := digits(names[i]), digits(names[j]); di != dj {
+			return di < dj
+		}
+		return names[i] < names[j]
+	})
+}
 
 // Open connects to PostgreSQL, retrying while the database container starts.
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
@@ -59,7 +79,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	sort.Strings(names)
+	sortMigrations(names)
 
 	for _, name := range names {
 		var applied bool

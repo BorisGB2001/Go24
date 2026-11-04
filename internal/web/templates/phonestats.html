@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}{{$t := $d.Stats.Total}}
-<div class="pagehead"><h1>{{icon "chart-bar"}} {{t "tel.stats"}}</h1><a class="button ghost" href="{{$d.Calls}}">{{icon "list"}} {{t "tel.calls"}}</a></div>
+<div class="pagehead"><h1>{{icon "chart-bar"}} {{t "tel.stats"}}</h1>{{if $d.Monitor}}<a class="button ghost" href="/telephony/active">{{icon "speakerphone"}} {{t "tel.active"}}</a>{{end}}<a class="button ghost" href="{{$d.Calls}}">{{icon "list"}} {{t "tel.calls"}}</a></div>
 <form method="get" action="/telephony/stats" class="row olstatsbar">
   <span class="period small"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.From}}" data-autosubmit style="width:auto"></span>
     <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}" data-autosubmit style="width:auto"></span></span>
@@ -11,15 +11,17 @@
   {{else}}<span class="small muted">{{t "tel.stats_own"}}</span>{{end}}
   <noscript><button>{{t "tel.filter.show"}}</button></noscript>
 </form>
+{{if or $d.Stats.Prev.In $d.Stats.Prev.Out}}<p class="small muted">{{t "tel.stats_vs_prev" (day $d.PrevFrom) (day $d.PrevTo)}}: {{t "tel.stats_in"}} {{$d.Stats.Prev.In}}, {{t "tel.stats_missed"}} {{$d.Stats.Prev.Missed}}, {{t "tel.stats_out"}} {{$d.Stats.Prev.Out}}</p>{{end}}
 <div class="crmkpi">
-  <div class="card"><div class="muted small">{{t "tel.stats_in"}}</div><b>{{$t.In}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_answered"}}</div><b>{{$t.Answered}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_missed"}}</div><b>{{if $t.Missed}}<a href="{{$d.Missed}}">{{$t.Missed}}</a> <span class="muted small">{{$t.MissedPct}}%</span>{{else}}0{{end}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_out"}}</div><b>{{$t.Out}}{{if $t.Out}} <span class="muted small">{{t "tel.stats_reached" $t.OutOK}}</span>{{end}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_talk"}}</div><b>{{talk $t.Seconds}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_avg"}}</div><b>{{if $t.AvgTalk}}{{talk $t.AvgTalk}}{{else}}—{{end}}</b></div>
-  <div class="card"><div class="muted small">{{t "tel.stats_wait"}}</div><b>{{if $t.AvgWait}}{{talk $t.AvgWait}}{{else}}—{{end}}</b></div>
+  <div class="card"><div class="muted small">{{t "tel.stats_in"}}</div><b>{{$t.In}}</b>{{template "tel-delta" (index $d.Delta "In")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_answered"}}</div><b>{{$t.Answered}}</b>{{template "tel-delta" (index $d.Delta "Answered")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_missed"}}</div><b>{{if $t.Missed}}<a href="{{$d.Missed}}">{{$t.Missed}}</a> <span class="muted small">{{$t.MissedPct}}%</span>{{else}}0{{end}}</b>{{template "tel-delta" (index $d.Delta "Missed")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_out"}}</div><b>{{$t.Out}}{{if $t.Out}} <span class="muted small">{{t "tel.stats_reached" $t.OutOK}}</span>{{end}}</b>{{template "tel-delta" (index $d.Delta "Out")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_talk"}}</div><b>{{talk $t.Seconds}}</b>{{template "tel-delta" (index $d.Delta "Seconds")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_avg"}}</div><b>{{if $t.AvgTalk}}{{talk $t.AvgTalk}}{{else}}—{{end}}</b>{{template "tel-delta" (index $d.Delta "AvgTalk")}}</div>
+  <div class="card"><div class="muted small">{{t "tel.stats_wait"}}</div><b>{{if $t.AvgWait}}{{talk $t.AvgWait}}{{else}}—{{end}}</b>{{template "tel-delta" (index $d.Delta "AvgWait")}}</div>
   {{if $t.Rated}}<div class="card"><div class="muted small">{{t "tel.stats_rating"}}</div><b>★ {{$t.AvgRating}} <span class="muted small">{{t "tel.stats_rated" $t.Rated}}</span></b></div>{{end}}
+  {{if $t.Scored}}<div class="card"><div class="muted small">{{t "tel.stats_score"}}</div><b>{{$t.AvgScore}}% <span class="muted small">{{t "tel.stats_scored" $t.Scored}}</span></b></div>{{end}}
 </div>
 {{if or $t.In $t.Out}}<div class="card stack">
   <div class="row wrap small telbars-legend"><span><i class="tb-in"></i>{{t "tel.stats_answered"}}</span><span><i class="tb-missed"></i>{{t "tel.stats_missed"}}</span><span><i class="tb-out"></i>{{t "tel.stats_out"}}</span></div>
@@ -28,19 +30,49 @@
       <span class="tb-in" style="height:{{pct .Answered $d.Top}}%"></span><span class="tb-missed" style="height:{{pct .Missed $d.Top}}%"></span><span class="tb-out" style="height:{{pct .Out $d.Top}}%"></span>
       <small>{{.Day.Day}}</small></div>{{end}}</div>
 </div>{{end}}
+{{with $d.Stats.Missed}}{{if .Missed}}<div class="card stack" id="missed">
+  <h2>{{icon "phone-off"}} {{t "tel.stats_recall_title"}}</h2>
+  <div class="crmkpi">
+    <div class="card"><div class="muted small">{{t "tel.stats_missed"}}</div><b>{{.Missed}}</b></div>
+    <div class="card"><div class="muted small">{{t "tel.stats_recalled"}}</div><b>{{.Recalled}} <span class="muted small">{{.RecalledPct}}%</span></b></div>
+    <div class="card"><div class="muted small">{{t "tel.stats_not_recalled"}}</div><b>{{.NotRecalled}}</b></div>
+    <div class="card"><div class="muted small">{{t "tel.stats_recall_avg"}}</div><b>{{if .AvgRecall}}{{talk .AvgRecall}}{{else}}—{{end}}</b></div>
+  </div>
+  <p class="small muted">{{t "tel.stats_recall_hint"}}</p>
+  {{if $d.Waiting}}<div class="tablewrap"><table class="tlist">
+    <thead><tr><th>{{t "tel.stats_waiting"}}</th><th class="right">{{t "tel.stats_times"}}</th><th>{{t "tel.stats_last"}}</th><th>{{t "tel.col.employee"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Waiting}}<tr>
+      <td><span class="row wrap" style="gap:6px"><a href="tel:{{.Number}}" title="{{t "tel.cl_call"}}">{{icon "phone"}} {{.Number}}</a>{{if .CRMPath}}<a href="{{.CRMPath}}" class="small">{{icon "users"}} {{.CRMName}}</a>{{end}}</span></td>
+      <td class="right">{{.Times}}</td><td class="nowrap">{{datetime .Last}}</td>
+      <td>{{if .UserID}}<a href="/u/{{.UserID}}" class="person">{{photo .Name .Photo false}}<span>{{.Name}}</span></a>{{else}}<span class="muted">{{t "tel.stats_nobody"}}</span>{{end}}</td>
+      <td class="right"><a href="{{.Calls}}" class="small">{{t "tel.stats_calls_of"}}</a></td></tr>{{end}}</tbody>
+  </table></div>{{end}}
+</div>{{end}}{{end}}
+{{with $d.Hours}}<div class="card stack" id="hours">
+  <h2>{{icon "clock"}} {{t "tel.stats_hours"}}</h2>
+  <div class="tablewrap"><table class="telheat" aria-label="{{t "tel.stats_hours"}}">
+    <thead><tr><th></th>{{range (index . 0).Hours}}<th>{{.Hour}}</th>{{end}}</tr></thead>
+    <tbody>{{range .}}{{$day := t .Day}}<tr><th>{{$day}}</th>{{range .Hours}}<td class="h{{.Level}}" title="{{$day}}, {{.Hour}}:00–{{.Hour}}:59 — {{t "tel.stats_in"}}: {{.In}}{{if .Missed}}, {{t "tel.stats_missed"}}: {{.Missed}}{{end}}">{{if .In}}{{.In}}{{end}}{{if .Missed}}<i></i>{{end}}</td>{{end}}</tr>{{end}}</tbody>
+  </table></div>
+  <p class="small muted">{{t "tel.stats_hours_hint"}}</p>
+</div>{{end}}
 <div class="card flush"><div class="tablewrap"><table class="tlist">
   <thead><tr><th>{{t "tel.col.employee"}}</th><th class="right">{{t "tel.stats_in"}}</th><th class="right">{{t "tel.stats_answered"}}</th><th class="right">{{t "tel.stats_missed"}}</th>
-    <th class="right">{{t "tel.stats_out"}}</th><th class="right">{{t "tel.stats_talk"}}</th><th class="right">{{t "tel.stats_avg"}}</th><th class="right">{{t "tel.stats_wait"}}</th><th class="right">{{t "tel.stats_rating"}}</th></tr></thead>
+    <th class="right">{{t "tel.stats_out"}}</th><th class="right">{{t "tel.stats_talk"}}</th><th class="right">{{t "tel.stats_avg"}}</th><th class="right">{{t "tel.stats_wait"}}</th><th class="right">{{t "tel.stats_rating"}}</th><th class="right">{{t "tel.stats_score"}}</th></tr></thead>
   <tbody>{{range $d.Rows}}<tr>
     <td>{{if .UserID}}<a href="{{.Calls}}" class="person">{{photo .Name .Photo false}}<span>{{.Name}}</span></a>{{else}}<span class="muted">{{t "tel.stats_nobody"}}</span>{{end}}</td>
     <td class="right"><b>{{.In}}</b></td><td class="right">{{.Answered}}</td><td class="right">{{.Missed}}{{if .Missed}} <span class="muted small">{{.MissedPct}}%</span>{{end}}</td>
     <td class="right">{{.Out}}{{if .Out}} <span class="muted small">{{t "tel.stats_reached" .OutOK}}</span>{{end}}</td>
     <td class="right nowrap">{{talk .Seconds}}</td><td class="right nowrap">{{if .AvgTalk}}{{talk .AvgTalk}}{{else}}—{{end}}</td><td class="right nowrap">{{if .AvgWait}}{{talk .AvgWait}}{{else}}—{{end}}</td>
-    <td class="right nowrap">{{with .AvgRating}}★ {{.}}{{else}}—{{end}}</td></tr>
-  {{else}}<tr><td colspan="9" class="empty">{{t "tel.calls_empty"}}</td></tr>{{end}}</tbody>
+    <td class="right nowrap">{{with .AvgRating}}★ {{.}}{{else}}—{{end}}</td>
+    <td class="right nowrap">{{if .Scored}}<span title="{{t "tel.stats_scored" .Scored}}">{{.AvgScore}}%</span>{{else}}—{{end}}</td></tr>
+  {{else}}<tr><td colspan="10" class="empty">{{t "tel.calls_empty"}}</td></tr>{{end}}</tbody>
   {{if gt (len $d.Rows) 1}}<tfoot><tr><th>{{t "stock.total"}}</th><th class="right">{{$t.In}}</th><th class="right">{{$t.Answered}}</th><th class="right">{{$t.Missed}}</th>
     <th class="right">{{$t.Out}}</th><th class="right nowrap">{{talk $t.Seconds}}</th><th class="right nowrap">{{if $t.AvgTalk}}{{talk $t.AvgTalk}}{{else}}—{{end}}</th>
-    <th class="right nowrap">{{if $t.AvgWait}}{{talk $t.AvgWait}}{{else}}—{{end}}</th><th class="right nowrap">{{with $t.AvgRating}}★ {{.}}{{else}}—{{end}}</th></tr></tfoot>{{end}}
+    <th class="right nowrap">{{if $t.AvgWait}}{{talk $t.AvgWait}}{{else}}—{{end}}</th><th class="right nowrap">{{with $t.AvgRating}}★ {{.}}{{else}}—{{end}}</th>
+    <th class="right nowrap">{{if $t.Scored}}{{$t.AvgScore}}%{{else}}—{{end}}</th></tr></tfoot>{{end}}
 </table></div></div>
 <script src="{{asset "js/stock.js"}}"></script>
 {{end}}
+
+{{define "tel-delta"}}{{with .Text}} <span class="tel-delta{{if $.Up}} up{{end}}">{{.}}</span>{{end}}{{end}}

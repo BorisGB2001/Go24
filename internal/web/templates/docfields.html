@@ -1,0 +1,20 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/crm/documents">{{t "docs.templates"}}</a> › {{$d.Template.Name}}</div>
+<h1>{{t "docfields.title"}}: {{$d.Template.Name}}</h1>
+<div class="sub">{{t "docfields.sub"}}</div>
+<div class="card flush">{{if $d.Fields}}
+  <form method="post" action="/crm/documents/{{$d.Template.ID}}/fields">
+  <table class="tlist">
+    <thead><tr><th>{{t "docfields.field"}}</th><th>{{t "docfields.field_title"}}</th><th title="{{t "docfields.value_hint"}}">{{t "docfields.value"}}</th><th title="{{t "docfields.required_hint"}}">{{t "docfields.required"}}</th><th title="{{t "docfields.hide_hint"}}">{{t "docfields.hide"}}</th></tr></thead>
+    <tbody>{{range $i, $f := $d.Fields}}<tr><td><code>{{"{"}}{{$f.Name}}{{"}"}}</code><input type="hidden" name="f.{{$i}}.name" value="{{$f.Name}}"></td>
+      <td><input type="text" name="f.{{$i}}.title" value="{{$f.Title}}" maxlength="200" aria-label="{{t "docfields.field_title"}}"></td>
+      <td><input type="text" name="f.{{$i}}.value" value="{{$f.Value}}" maxlength="2000" aria-label="{{t "docfields.value"}}"></td>
+      <td><input type="checkbox" name="f.{{$i}}.required" value="1"{{if $f.Required}} checked{{end}} aria-label="{{t "docfields.required"}}"></td>
+      <td><input type="checkbox" name="f.{{$i}}.hide_row" value="1"{{if $f.HideRow}} checked{{end}} aria-label="{{t "docfields.hide"}}"></td></tr>{{end}}</tbody>
+  </table>
+  <div style="padding:12px 16px"><button class="primary">{{t "common.save"}}</button> <a class="button ghost" href="/crm/documents">{{t "common.cancel"}}</a></div>
+  </form>
+  <p class="small muted" style="padding:0 16px 12px">{{t "docfields.value_hint"}} {{t "docfields.required_hint"}} {{t "docfields.hide_hint"}}</p>
+{{else}}<p class="muted" style="padding:12px 16px">{{t "docfields.none"}}</p>{{end}}</div>
+{{end}}

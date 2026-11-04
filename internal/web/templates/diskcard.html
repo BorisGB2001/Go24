@@ -56,7 +56,7 @@
       <tbody>{{range $d.Versions}}<tr><td>{{.No}}{{if not .ID}} · {{t "disk.version_current"}}{{end}}</td><td>{{datetime .CreatedAt}}<div class="muted">{{.Author}}</div></td><td>{{size .Size}}</td>
         <td><a class="button ghost small" href="/files/{{$c.ID}}{{with .ID}}/versions/{{.}}{{end}}">{{icon "download"}}</a></td></tr>{{end}}</tbody></table>
     {{if or $d.BPTemplates $d.BPInstances}}<h3 id="bp">⚙ {{t "bp.title"}}</h3>
-    {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>
+    {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>{{with .Label}}<span class="pill bplabel">{{.}}</span>{{end}}
       {{if and (eq .Status "running") $d.BPWrite}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="/files/{{$c.ID}}/about"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}</div>{{end}}
     {{range $d.BPTemplates}}<div><a class="button ghost small" href="/bp/start/{{.ID}}?entity_id={{$c.ID}}">{{icon "player-play"}} {{.Name}}</a></div>{{end}}{{end}}
   </div>

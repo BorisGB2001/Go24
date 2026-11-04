@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The settings and the security of a collab «Настройки коллаба»: who may invite members and who may
@@ -32,6 +33,7 @@ type CollabSettings struct {
 	// roles and the owner; guests joining; invitations; the collab's settings, name and archive
 	EventsMembers, EventsGuests, EventsInvites, EventsCollab bool
 	StartTool                                                string // «Стартовый инструмент»: one of StartTools
+	Open                                                     bool   // «Открытый коллаб»: employees join it by its link
 }
 
 // StartTools are the choices of «Стартовый инструмент»: what the collab opens with.
@@ -54,9 +56,9 @@ func (s *Store) CollabSettings(ctx context.Context, p Project) (CollabSettings, 
 func collabSettings(ctx context.Context, q querier, projectID string) (CollabSettings, error) {
 	var c CollabSettings
 	err := q.QueryRow(ctx, `SELECT invite_perm, guest_invite_perm, chat_history, guests_tasks, guests_files, edit_perm, chat_perm,
-		msg_ttl, events_members, events_guests, events_invites, events_collab, start_tool FROM projects WHERE id = $1`, projectID).Scan(
+		msg_ttl, events_members, events_guests, events_invites, events_collab, start_tool, is_open FROM projects WHERE id = $1`, projectID).Scan(
 		&c.InvitePerm, &c.GuestInvitePerm, &c.ChatHistory, &c.GuestTasks, &c.GuestFiles, &c.EditPerm, &c.ChatPerm, &c.MsgTTL,
-		&c.EventsMembers, &c.EventsGuests, &c.EventsInvites, &c.EventsCollab, &c.StartTool)
+		&c.EventsMembers, &c.EventsGuests, &c.EventsInvites, &c.EventsCollab, &c.StartTool, &c.Open)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -96,9 +98,9 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 		if _, err := tx.Exec(ctx, `UPDATE projects SET invite_perm = $2, guest_invite_perm = $3, chat_history = $4, guests_tasks = $5,
 			guests_files = $6, edit_perm = $7, chat_perm = $8, msg_ttl = $9,
 			msg_ttl_by = CASE WHEN msg_ttl = $9 THEN msg_ttl_by ELSE $10::uuid END, events_members = $11, events_guests = $12,
-			events_invites = $13, events_collab = $14, start_tool = $15, updated_at = now() WHERE id = $1`,
+			events_invites = $13, events_collab = $14, start_tool = $15, is_open = $16, updated_at = now() WHERE id = $1`,
 			p.ID, in.InvitePerm, in.GuestInvitePerm, in.ChatHistory, in.GuestTasks, in.GuestFiles, in.EditPerm, in.ChatPerm,
-			in.MsgTTL, actorID, in.EventsMembers, in.EventsGuests, in.EventsInvites, in.EventsCollab, in.StartTool); err != nil {
+			in.MsgTTL, actorID, in.EventsMembers, in.EventsGuests, in.EventsInvites, in.EventsCollab, in.StartTool, in.Open); err != nil {
 			return err
 		}
 		var diff []string // «invite_perm=members», «chat_history=off»: the log shows them in words
@@ -116,7 +118,7 @@ func (s *Store) SetCollabSettings(ctx context.Context, p Project, actorID string
 			{"msg_ttl", strconv.Itoa(old.MsgTTL), strconv.Itoa(in.MsgTTL)},
 			{"events_members", onOff(old.EventsMembers), onOff(in.EventsMembers)}, {"events_guests", onOff(old.EventsGuests), onOff(in.EventsGuests)},
 			{"events_invites", onOff(old.EventsInvites), onOff(in.EventsInvites)}, {"events_collab", onOff(old.EventsCollab), onOff(in.EventsCollab)},
-			{"start_tool", old.StartTool, in.StartTool},
+			{"start_tool", old.StartTool, in.StartTool}, {"open", onOff(old.Open), onOff(in.Open)},
 		} {
 			if d.o != d.n {
 				diff = append(diff, d.k+"="+d.n)
@@ -310,20 +312,32 @@ func (s *Store) DeleteCollab(ctx context.Context, p Project, actorID, confirm st
 	if strings.TrimSpace(confirm) != strings.TrimSpace(p.Name) {
 		return invalid("err.collab_delete_confirm")
 	}
-	return s.inTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM files WHERE (drive = 'project' AND drive_owner = $1)
-			OR task_id IN (SELECT id FROM tasks_all WHERE project_id = $1)`, p.ID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE drive_folders SET parent_id = NULL WHERE drive = 'project' AND owner_id = $1`, p.ID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM drive_folders WHERE drive = 'project' AND owner_id = $1`, p.ID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `DELETE FROM projects WHERE id = $1 AND kind = 'collab'`, p.ID)
+	return s.inTx(ctx, func(tx pgx.Tx) error { return deleteProjectTx(ctx, tx, p.ID) })
+}
+
+// deleteProjectTx deletes a project with its drive; everything else goes by the foreign keys. The messenger's
+// status log holds rows of task_history while it writes the task's thread on another connection — a wait Postgres
+// does not see as a deadlock — so the delete gives up after a while instead of hanging (GO24DEV-926).
+func deleteProjectTx(ctx context.Context, tx pgx.Tx, projectID string) error {
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '10s'`); err != nil {
 		return err
-	})
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM files WHERE (drive = 'project' AND drive_owner = $1)
+		OR task_id IN (SELECT id FROM tasks_all WHERE project_id = $1)`, projectID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE drive_folders SET parent_id = NULL WHERE drive = 'project' AND owner_id = $1`, projectID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM drive_folders WHERE drive = 'project' AND owner_id = $1`, projectID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55P03" { // lock_not_available
+		return invalid("err.project_busy")
+	}
+	return err
 }
 
 // ---------- the log ----------
@@ -387,7 +401,7 @@ func (s *Store) CanAddMembers(ctx context.Context, p Project) bool {
 // owner, a moderator the members (and guests).
 func (p Project) CanRemove(m Member) bool {
 	switch {
-	case m.Role == "owner" || !p.CanManage():
+	case m.Role == "owner" || !p.CanManage() || m.ViaDept: // one a department brought goes out with the department
 		return false
 	case p.Collab() && p.MyRole == "manager":
 		return m.Role == "member"
@@ -413,6 +427,12 @@ func (s *Store) TransferCollab(ctx context.Context, p Project, actorID, userID s
 	if p.Archived {
 		return invalid("err.collab_archived")
 	}
+	return s.transferOwner(ctx, p, actorID, userID, "collab_owner", "err.collab_owner_member", "err.collab_owner_guest")
+}
+
+// transferOwner makes the member userID the project's owner, the former owner a moderator; kind is the new owner's
+// notification.
+func (s *Store) transferOwner(ctx context.Context, p Project, actorID, userID, kind, errMember, errGuest string) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		var role string
 		var guest, active bool
@@ -420,13 +440,13 @@ func (s *Store) TransferCollab(ctx context.Context, p Project, actorID, userID s
 			WHERE m.project_id = $1 AND m.user_id::text = $2`, p.ID, userID).Scan(&role, &guest, &active)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
-			return invalid("err.collab_owner_member")
+			return invalid(errMember)
 		case err != nil:
 			return err
 		case role == "owner":
 			return nil
 		case guest:
-			return invalid("err.collab_owner_guest")
+			return invalid(errGuest)
 		case !active:
 			return ErrNotFound
 		}
@@ -440,8 +460,8 @@ func (s *Store) TransferCollab(ctx context.Context, p Project, actorID, userID s
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, project_id, url)
-			SELECT $1::uuid, $2::uuid, 'collab_owner', $3, '/p/' || $4 WHERE $1::uuid <> $2::uuid AND NOT go24_quiet()`,
-			userID, actorID, p.ID, p.Key); err != nil {
+			SELECT $1::uuid, $2::uuid, $5, $3, '/p/' || $4 WHERE $1::uuid <> $2::uuid AND NOT go24_quiet()`,
+			userID, actorID, p.ID, p.Key, kind); err != nil {
 			return err
 		}
 		return logCollab(ctx, tx, p.ID, actorID, "owner_changed", userID, "")

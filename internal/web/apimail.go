@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go24/internal/apikeys"
+	"go24/internal/i18n"
 	"go24/internal/mail"
 )
 
@@ -37,12 +38,23 @@ import (
 //   POST /api/v1/mail/rules                      a new rule (as above, without id) → {id}
 //   POST /api/v1/mail/rules/{id}                 changes a rule; {move: -1|1} — up or down in the order
 //   DELETE /api/v1/mail/rules/{id}
+//   GET  /api/v1/mail/formats                    «Условное форматирование» in its order [{id, name, enabled, pos, if, unread,
+//                                                look: {color, bold, italic, underline}}]; a list's letter it takes has look
+//   POST /api/v1/mail/formats                    a new rule (as above, without id) → {id}
+//   POST /api/v1/mail/formats/{id}               changes a rule; {move: -1|1} — up or down in the order
+//   DELETE /api/v1/mail/formats/{id}
 //   POST /api/v1/mail/rules/run                  {folder, rules: [ID]} — «Запустить сейчас» (no rules: those on) → {letters}
 //   GET  /api/v1/mail/ooo                        automatic replies {mode, from, to, internal, external, outside, absence, on, until}
 //   POST /api/v1/mail/ooo                        {mode: off|on|period, from, to, internal, external, outside: none|contacts|all, absence}
 //   POST /api/v1/mail/sweep                      {letters: [ID], mode: all|future|latest|older, target: delete|archive|folder ID, days}
 //   GET  /api/v1/mail/sweeps                     the standing «Очистка» [{id, folder_id, sender, mode, target, days}]
 //   DELETE /api/v1/mail/sweeps/{id}
+//   POST /api/v1/mail/cleanup                    «Очистить»: {letters: [ID]} — their conversations, or {folder, subfolders} → {letters}
+//   GET  /api/v1/mail/copilot                    CoPilot: the key owner's conversations with the mail agent [{id, title, status, …}]
+//   GET  /api/v1/mail/copilot/{run}              a conversation with its messages and the agent's actions
+//   POST /api/v1/mail/copilot                    {run, text, letter} — a message to the agent (run "" — a new conversation;
+//                                                letter — the letter «this letter» means) → the conversation as it stopped
+//   POST /api/v1/mail/copilot/{run}/actions/{id} {yes} — confirms or rejects an action waiting (status confirm)
 // The actions take focus / other (arg "always" — «Всегда перемещать» for the senders).
 
 func toAPIFolder(f mail.Folder) map[string]any {
@@ -55,10 +67,13 @@ func toAPILetter(m mail.Message, body bool) map[string]any {
 		"folder": m.FolderName, "from": m.FromAddr, "from_name": m.FromName, "to": m.To, "subject": m.Subject,
 		"sent_at": m.SentAt, "seen": m.Seen, "lead_id": m.LeadID, "cc": m.CC, "message_id": m.MessageID, "thread": m.Thread,
 		"flagged": m.Flagged, "flag_done": m.FlagDone, "flag_due": m.FlagDue, "pinned": m.Pinned, "categories": m.Categories,
-		"snooze_until": m.SnoozeUntil, "count": m.Count, "unread": m.Unread, "ids": m.IDs, "importance": m.Importance, "bcc": m.BCC, "draft": m.Draft, "other": m.Other,
+		"snooze_until": m.SnoozeUntil, "count": m.Count, "unread": m.Unread, "ids": m.IDs, "importance": m.Importance, "sensitivity": m.Sensitivity, "no_forward": m.NoForward, "replies_to": m.RepliesTo, "expires_at": m.ExpiresAt, "bcc": m.BCC, "draft": m.Draft, "other": m.Other,
 		"voting": m.Options(), "vote": m.Vote}
 	if out["categories"] == nil || len(m.Categories) == 0 {
 		out["categories"] = []string{}
+	}
+	if m.Look != nil {
+		out["look"] = m.Look
 	}
 	if body {
 		out["body"], out["html"] = m.Body, m.HTML
@@ -191,6 +206,9 @@ func (s *Server) apiMailMessages(w http.ResponseWriter, r *http.Request, p apike
 		o.View = v
 	}
 	list, err := s.Mail.ListBy(r.Context(), p.UserID, o)
+	if err == nil {
+		err = s.Mail.Dress(r.Context(), p.UserID, list)
+	}
 	if err != nil {
 		return err
 	}
@@ -513,6 +531,32 @@ func (s *Server) apiMailSweep(w http.ResponseWriter, r *http.Request, p apikeys.
 		in.Target = "delete"
 	}
 	n, err := s.Mail.SweepNow(r.Context(), p.UserID, in.Letters, in.Mode, in.Target, in.Days)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"letters": n})
+	return nil
+}
+
+func (s *Server) apiMailCleanUp(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Letters    []string `json:"letters"`
+		Folder     string   `json:"folder"`
+		Subfolders bool     `json:"subfolders"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	var n int
+	var err error
+	switch {
+	case in.Folder != "":
+		n, err = s.Mail.CleanUpFolder(r.Context(), p.UserID, in.Folder, in.Subfolders)
+	case len(in.Letters) > 0:
+		n, err = s.Mail.CleanUpConversations(r.Context(), p.UserID, in.Letters)
+	default:
+		err = i18n.E("err.bad_form")
+	}
 	if err != nil {
 		return err
 	}

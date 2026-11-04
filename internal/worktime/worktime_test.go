@@ -82,3 +82,44 @@ func TestOffices(t *testing.T) {
 		t.Fatal("office only without offices")
 	}
 }
+
+func TestAddWorking(t *testing.T) {
+	s := Schedule{Start: "09:00", End: "18:00", Weekend: []int{0, 6}, Holidays: []string{"2026-11-04"}}
+	at := func(v string) time.Time { x, _ := time.ParseInLocation("2006-01-02 15:04", v, time.UTC); return x }
+	for _, c := range []struct {
+		from string
+		d    time.Duration
+		want string
+	}{
+		{"2026-10-29 10:00", 2 * time.Hour, "2026-10-29 12:00"},
+		{"2026-10-29 17:00", 2 * time.Hour, "2026-10-30 10:00"},    // the evening is skipped
+		{"2026-10-30 17:30", time.Hour, "2026-11-02 09:30"},        // Friday → Monday
+		{"2026-10-31 12:00", 30 * time.Minute, "2026-11-02 09:30"}, // from a Saturday
+		{"2026-11-03 07:00", 10 * time.Hour, "2026-11-05 10:00"},   // before the start; the holiday is skipped
+		{"2026-10-29 20:00", 0, "2026-10-30 09:00"},                // nothing to wait — the next working time
+		{"2026-10-29 10:00", 72 * time.Hour, "2026-11-11 10:00"},   // 72 working hours — 8 working days
+	} {
+		if got := s.AddWorking(at(c.from), c.d); !got.Equal(at(c.want)) {
+			t.Errorf("AddWorking(%s, %v) = %s, want %s", c.from, c.d, got.Format("2006-01-02 15:04"), c.want)
+		}
+	}
+}
+
+func TestAddWorkingDays(t *testing.T) {
+	s := Schedule{Start: "09:00", End: "18:00", Weekend: []int{0, 6}, Holidays: []string{"2026-11-04"}}
+	at := func(v string) time.Time { x, _ := time.ParseInLocation("2006-01-02 15:04", v, time.UTC); return x }
+	for _, c := range []struct {
+		from string
+		n    int
+		want string
+	}{
+		{"2026-10-29 10:00", 1, "2026-10-30 10:00"},
+		{"2026-10-30 10:00", 3, "2026-11-05 10:00"}, // the weekend and the holiday are skipped
+		{"2026-10-31 12:00", 1, "2026-11-03 09:00"}, // from a Saturday: Monday's start is the first moment
+		{"2026-10-29 20:00", 1, "2026-11-02 09:00"},
+	} {
+		if got := s.AddWorkingDays(at(c.from), c.n); !got.Equal(at(c.want)) {
+			t.Errorf("AddWorkingDays(%s, %d) = %s, want %s", c.from, c.n, got.Format("2006-01-02 15:04"), c.want)
+		}
+	}
+}

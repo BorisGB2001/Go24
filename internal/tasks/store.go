@@ -69,9 +69,18 @@ type Project struct {
 	DateStart   *time.Time
 	DateFinish  *time.Time
 	Archived    bool
-	NoGuestTask bool // the viewer is a guest, and the collab does not let guests make tasks
-	OwnerEdits  bool // a collab whose settings, name and avatar only its owner changes
-	ScrumLead   bool // the viewer is the scrum project's product owner or scrum master
+	NoGuestTask bool   // the viewer is a guest, and the collab does not let guests make tasks
+	OwnerEdits  bool   // a collab whose settings, name and avatar only its owner changes
+	ScrumLead   bool   // the viewer is the scrum project's product owner or scrum master
+	Privacy     string // open | closed | secret: who sees the group and how one joins it
+	SubjectID   string // «Тематика» ("" — none)
+	Subject     string
+	Keywords    []string          // «Ключевые слова»
+	ToolsOff    []string          // «Возможности группы» switched off (see GroupTools)
+	ToolNames   map[string]string // the group's own names of its tools
+	TaskCreate  string            // «Права доступа» to the group's tasks (see TaskPerms)
+	TaskEdit    string
+	TaskDelete  string
 }
 
 func (p Project) Scrum() bool { return p.Kind == "scrum" }
@@ -97,11 +106,14 @@ func (p Project) CanWork() bool { return !p.Archived && (p.CanManage() || p.MyRo
 func (p Project) Frozen() bool { return p.Collab() && p.Archived }
 
 // CanCreate: the viewer may put new tasks into the project (a guest — where the collab lets guests).
-func (p Project) CanCreate() bool { return p.CanWork() && !p.NoGuestTask }
+func (p Project) CanCreate() bool {
+	return p.CanWork() && !p.NoGuestTask && p.ToolOn("tasks") && p.MayCreateTasks()
+}
 
 type Member struct {
 	User
-	Role string
+	Role    string
+	ViaDept bool // brought by a department of the group: goes out with it, not by hand
 }
 
 type Task struct {
@@ -155,6 +167,7 @@ type Params struct {
 	DatesFromSubtasks bool // «Сроки определяются сроками подзадач»: the deadline and plan dates follow the subtasks
 	AutoComplete      bool // «Автоматически завершать задачу при завершении подзадач»
 	ResultRequired    bool // «Не завершать задачу без результата»
+	NoTimeTracking    bool // «Учитывать время, затраченное на задачу» is off: no timer, no new time entries
 }
 
 // DatesFollow reports that the task's dates come from its subtasks now: nobody sets them by hand.
@@ -393,7 +406,8 @@ func (s *Store) listProjects(ctx context.Context, userID string, archived bool) 
 		       p.visibility, p.kind, p.photo_key, p.date_start, p.date_finish, p.archived,
 		       p.kind = 'collab' AND NOT p.guests_tasks AND `+GuestSQL("$1")+`, p.kind = 'collab' AND p.edit_perm = 'owner',
 		       p.kind = 'scrum' AND pm.role IS NOT NULL AND coalesce($1 IN (p.scrum_master_id, coalesce(p.scrum_owner_id,
-		           (SELECT o.user_id FROM project_members o WHERE o.project_id = p.id AND o.role = 'owner' LIMIT 1))), false)
+		           (SELECT o.user_id FROM project_members o WHERE o.project_id = p.id AND o.role = 'owner' LIMIT 1))), false),
+		       p.privacy, `+subjectSQL+`, p.tools_off, p.tool_names, p.task_create, p.task_edit, p.task_delete
 		FROM projects p
 		LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
 		WHERE p.archived = $3 AND (pm.user_id IS NOT NULL OR $2)
@@ -413,12 +427,14 @@ func (s *Store) ProjectByKey(ctx context.Context, userID, key string) (Project, 
 		       p.visibility, p.kind, p.photo_key, p.date_start, p.date_finish, p.archived,
 		       p.kind = 'collab' AND NOT p.guests_tasks AND `+GuestSQL("$2")+`, p.kind = 'collab' AND p.edit_perm = 'owner',
 		       p.kind = 'scrum' AND pm.role IS NOT NULL AND coalesce($2 IN (p.scrum_master_id, coalesce(p.scrum_owner_id,
-		           (SELECT o.user_id FROM project_members o WHERE o.project_id = p.id AND o.role = 'owner' LIMIT 1))), false)
+		           (SELECT o.user_id FROM project_members o WHERE o.project_id = p.id AND o.role = 'owner' LIMIT 1))), false),
+		       p.privacy, `+subjectSQL+`, p.tools_off, p.tool_names, p.task_create, p.task_edit, p.task_delete
 		FROM projects p
 		LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
 		WHERE p.key = $1`, strings.ToUpper(key), userID, IsAdmin(ctx),
 	).Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.MyRole, &p.OpenTasks, &p.Visibility, &p.Kind,
-		&p.PhotoKey, &p.DateStart, &p.DateFinish, &p.Archived, &p.NoGuestTask, &p.OwnerEdits, &p.ScrumLead)
+		&p.PhotoKey, &p.DateStart, &p.DateFinish, &p.Archived, &p.NoGuestTask, &p.OwnerEdits, &p.ScrumLead, &p.Privacy,
+		&p.SubjectID, &p.Subject, &p.Keywords, &p.ToolsOff, &p.ToolNames, &p.TaskCreate, &p.TaskEdit, &p.TaskDelete)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -439,7 +455,8 @@ func (s *Store) ProjectByKey(ctx context.Context, userID, key string) (Project, 
 
 func (s *Store) Members(ctx context.Context, projectID string) ([]Member, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, u.email, pm.role, u.guest
+		SELECT u.id, u.name, u.email, pm.role, u.guest,
+			EXISTS (SELECT 1 FROM project_department_people b WHERE b.project_id = pm.project_id AND b.user_id = pm.user_id)
 		FROM project_members pm JOIN users u ON u.id = pm.user_id
 		WHERE pm.project_id = $1
 		ORDER BY CASE pm.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 WHEN 'member' THEN 2 ELSE 3 END, u.name`, projectID)
@@ -448,7 +465,7 @@ func (s *Store) Members(ctx context.Context, projectID string) ([]Member, error)
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Member, error) {
 		var m Member
-		err := r.Scan(&m.ID, &m.Name, &m.Email, &m.Role, &m.Guest)
+		err := r.Scan(&m.ID, &m.Name, &m.Email, &m.Role, &m.Guest, &m.ViaDept)
 		return m, err
 	})
 }
@@ -512,12 +529,19 @@ type NewTask struct {
 	TemplateID          string   // the template the task was made from
 	NoEfficiency        bool     // «Не учитывать в эффективности»
 	FlowID              string   // put into this flow (the flow has chosen the responsible)
+	EstimateMinutes     *int     // «Плановые трудозатраты»
 	Params
 }
 
 // CreateTask creates a task in the project and returns its key (GO-13).
 func (s *Store) CreateTask(ctx context.Context, actorID string, p Project, in NewTask) (string, error) {
 	if !p.CanWork() {
+		return "", ErrForbidden
+	}
+	if !p.ToolOn("tasks") {
+		return "", ErrToolOff
+	}
+	if !p.MayCreateTasks() && !isRobot(ctx) && in.FlowID == "" { // a flow lets its own creators
 		return "", ErrForbidden
 	}
 	if err := guestMay(ctx, s.db, p.ID, actorID, "tasks"); err != nil {
@@ -579,11 +603,11 @@ func (s *Store) CreateTask(ctx context.Context, actorID string, p Project, in Ne
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO tasks (project_id, number, title, description, priority, creator_id, responsible_id,
 			                   parent_id, requires_control, deadline, allow_change_deadline, match_work_time, no_efficiency, flow_id,
-			                   dates_from_subtasks, auto_complete, result_required)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, nullif($14, '')::uuid, $15, $16, $17) RETURNING id`,
+			                   dates_from_subtasks, auto_complete, result_required, no_time_tracking, estimate_minutes)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, nullif($14, '')::uuid, $15, $16, $17, $18, $19) RETURNING id`,
 			p.ID, num, in.Title, strings.TrimSpace(in.Description), in.Priority, actorID, in.ResponsibleID,
 			parentID, in.RequiresControl, in.Deadline, in.AllowChangeDeadline, in.MatchWorkTime, in.NoEfficiency, in.FlowID,
-			in.DatesFromSubtasks, in.AutoComplete, in.ResultRequired,
+			in.DatesFromSubtasks, in.AutoComplete, in.ResultRequired, in.NoTimeTracking, in.EstimateMinutes,
 		).Scan(&taskID); err != nil {
 			return err
 		}
@@ -670,7 +694,7 @@ const taskSelect = `
 	       (SELECT count(*) FROM tasks c WHERE c.parent_id = t.id),
 	       (SELECT count(*) FROM tasks c WHERE c.parent_id = t.id AND c.status = 'completed'), t.rating, t.no_efficiency,
 	       coalesce(t.flow_id::text, ''), coalesce((SELECT f.name FROM task_flows f WHERE f.id = t.flow_id), ''),
-	       t.dates_from_subtasks, t.auto_complete, t.result_required
+	       t.dates_from_subtasks, t.auto_complete, t.result_required, t.no_time_tracking
 	FROM tasks t
 	JOIN projects p ON p.id = t.project_id
 	JOIN users cu ON cu.id = t.creator_id
@@ -685,7 +709,7 @@ func scanTask(row pgx.Row) (Task, error) {
 		&t.ParentKey, &t.ParentTitle,
 		&t.RequiresControl, &t.Deadline, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.ClosedAt, &t.EstimateMinutes, &t.StartPlan, &t.EndPlan, &t.StageID,
 		&t.AllowChangeDeadline, &t.MatchWorkTime, &t.SprintID, &t.EpicID, &t.StoryPoints, &t.SubTotal, &t.SubDone, &t.Rating, &t.NoEfficiency, &t.FlowID, &t.FlowName,
-		&t.DatesFromSubtasks, &t.AutoComplete, &t.ResultRequired)
+		&t.DatesFromSubtasks, &t.AutoComplete, &t.ResultRequired, &t.NoTimeTracking)
 	return t, err
 }
 
@@ -717,6 +741,9 @@ type Filter struct {
 	Period        string // a column of «Сроки» (DeadlinePeriods)
 	HighPriority  bool
 	CRMLink       string // linked to this CRM card (its URL)
+	// From, To: tasks on the days [From, To) of «Календарь» — from the planned start (or the deadline) to the deadline
+	// (or the planned end); a task with neither date is on no day.
+	From, To *time.Time
 	// Viewer limits the list to tasks this user may see (visibleSQL). Admin mode lifts the limit.
 	// Role filters ("my tasks") are visible by definition and need no Viewer.
 	Viewer string
@@ -801,6 +828,10 @@ func (s *Store) listOrdered(ctx context.Context, f Filter, order string) ([]Task
 		default:
 			where = append(where, "t.deadline >= "+arg(*from)+" AND t.deadline < "+arg(*to))
 		}
+	}
+	if f.From != nil && f.To != nil {
+		where = append(where, "COALESCE(t.start_plan, t.deadline, t.end_plan) < "+arg(*f.To)+
+			" AND COALESCE(t.deadline, t.end_plan, t.start_plan) >= "+arg(*f.From))
 	}
 	if f.HighPriority {
 		where = append(where, "t.priority = 2")
@@ -912,6 +943,8 @@ type access struct {
 	Supervisor      bool   // a participant of the task is under this user (see underSQL)
 	ViewAll         bool   // the user's role sees all tasks («Права доступа»)
 	CanDelete       bool   // to the trash: the creator, the role's right, admin mode
+	GroupEdit       string // the project's «Изменение задач» and «Удаление задач» (see TaskPerms)
+	GroupDelete     string
 }
 
 // visible mirrors visibleSQL for one task.
@@ -926,12 +959,12 @@ func (a access) visible() bool {
 func loadAccess(ctx context.Context, q querier, userID, taskID string, forUpdate bool) (access, error) {
 	a := access{TaskID: taskID}
 	sql := `SELECT t.project_id, t.status, t.requires_control, t.creator_id, t.responsible_id, p.visibility, p.kind = 'collab',
-		p.kind = 'collab' AND p.archived, t.flow_id IS NOT NULL AND ` + flowPeopleSQL("t.flow_id", "$2") + `
+		p.kind = 'collab' AND p.archived, t.flow_id IS NOT NULL AND ` + flowPeopleSQL("t.flow_id", "$2") + `, p.task_edit, p.task_delete
 		FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`
 	if forUpdate {
 		sql += " FOR UPDATE OF t"
 	}
-	err := q.QueryRow(ctx, sql, taskID, userID).Scan(&a.ProjectID, &a.Status, &a.RequiresControl, &a.CreatorID, &a.ResponsibleID, &a.Visibility, &a.Collab, &a.Frozen, &a.FlowPerson)
+	err := q.QueryRow(ctx, sql, taskID, userID).Scan(&a.ProjectID, &a.Status, &a.RequiresControl, &a.CreatorID, &a.ResponsibleID, &a.Visibility, &a.Collab, &a.Frozen, &a.FlowPerson, &a.GroupEdit, &a.GroupDelete)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -964,7 +997,8 @@ func loadAccess(ctx context.Context, q querier, userID, taskID string, forUpdate
 		return a, err
 	}
 	for _, ac := range actings {
-		x := access{TaskID: taskID, ProjectID: a.ProjectID, CreatorID: a.CreatorID, ResponsibleID: a.ResponsibleID, Visibility: a.Visibility, Collab: a.Collab}
+		x := access{TaskID: taskID, ProjectID: a.ProjectID, CreatorID: a.CreatorID, ResponsibleID: a.ResponsibleID, Visibility: a.Visibility, Collab: a.Collab,
+			GroupEdit: a.GroupEdit, GroupDelete: a.GroupDelete}
 		if err := x.rolesOf(ctx, q, ac.For); err != nil {
 			return a, err
 		}
@@ -993,7 +1027,8 @@ func loadAccess(ctx context.Context, q querier, userID, taskID string, forUpdate
 	if err != nil {
 		return a, err
 	}
-	a.CanDelete = a.Roles.Creator || (perms.Has("delete", "sub") && headOfCreator) || (perms.Has("delete", "all") && !a.Collab) || IsAdmin(ctx)
+	a.CanDelete = a.Roles.Creator || (perms.Has("delete", "sub") && headOfCreator) || (perms.Has("delete", "all") && !a.Collab) || IsAdmin(ctx) ||
+		(!a.Collab && a.Visibility == "members" && groupMay(a.MemberRole, a.GroupDelete)) // the group's «Удаление задач»
 	a.Roles.Creator = a.Roles.Creator || (perms.Has("edit", "sub") && headOfCreator)
 	a.Roles.Manager = a.Roles.Manager || (perms.Has("edit", "all") && !a.Collab)
 	a.Supervisor = (a.Supervisor || headOfCreator) && perms.Has("view", "sub")
@@ -1031,8 +1066,13 @@ func (a *access) rolesOf(ctx context.Context, q querier, userID string) error {
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	// In a "participants" project the project role manages the project, not other people's tasks.
-	a.Roles.Manager = ((a.MemberRole == "owner" || a.MemberRole == "manager") && a.Visibility == "members") || IsAdmin(ctx)
+	// In a "participants" project the project role manages the project, not other people's tasks; in a group its
+	// «Изменение задач» says whose role changes them (a collab — its moderators).
+	edit := a.GroupEdit
+	if a.Collab || edit == "" {
+		edit = DefaultTaskPerms.Edit
+	}
+	a.Roles.Manager = (groupMay(a.MemberRole, edit) && a.Visibility == "members") || IsAdmin(ctx)
 	a.Roles.Accomplice = a.Roles.Accomplice || isRobot(ctx) // robots and triggers work the task as a participant would
 	return nil
 }
@@ -1289,10 +1329,10 @@ func (s *Store) UpdateTask(ctx context.Context, userID, taskID string, u TaskUpd
 		var cur TaskUpdate
 		var subtasks bool
 		if err := tx.QueryRow(ctx, `SELECT version, title, description, responsible_id, priority, deadline, requires_control, estimate_minutes,
-			start_plan, end_plan, allow_change_deadline, match_work_time, dates_from_subtasks, auto_complete, result_required,
+			start_plan, end_plan, allow_change_deadline, match_work_time, dates_from_subtasks, auto_complete, result_required, no_time_tracking,
 			EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.id) FROM tasks t WHERE id = $1`, taskID).Scan(&cur.Version, &cur.Title, &cur.Description, &cur.ResponsibleID,
 			&cur.Priority, &cur.Deadline, &cur.RequiresControl, &cur.EstimateMinutes, &cur.StartPlan, &cur.EndPlan,
-			&cur.AllowChangeDeadline, &cur.MatchWorkTime, &cur.DatesFromSubtasks, &cur.AutoComplete, &cur.ResultRequired, &subtasks); err != nil {
+			&cur.AllowChangeDeadline, &cur.MatchWorkTime, &cur.DatesFromSubtasks, &cur.AutoComplete, &cur.ResultRequired, &cur.NoTimeTracking, &subtasks); err != nil {
 			return err
 		}
 		if cur.Version != u.Version {
@@ -1359,7 +1399,7 @@ func (s *Store) UpdateTask(ctx context.Context, userID, taskID string, u TaskUpd
 			field    string
 			old, new bool
 		}{{"dates_from_subtasks", cur.DatesFromSubtasks, u.DatesFromSubtasks}, {"auto_complete", cur.AutoComplete, u.AutoComplete},
-			{"result_required", cur.ResultRequired, u.ResultRequired}} {
+			{"result_required", cur.ResultRequired, u.ResultRequired}, {"time_tracking", !cur.NoTimeTracking, !u.NoTimeTracking}} {
 			if p.old != p.new {
 				changes = append(changes, change{p.field, strconv.FormatBool(p.old), strconv.FormatBool(p.new)})
 			}
@@ -1371,9 +1411,11 @@ func (s *Store) UpdateTask(ctx context.Context, userID, taskID string, u TaskUpd
 		if _, err := tx.Exec(ctx, `UPDATE tasks SET title = $2, description = $3, responsible_id = $4, priority = $5,
 			deadline = $6, requires_control = $7, estimate_minutes = $8, start_plan = $9, end_plan = $10, -- date columns: pgx takes the calendar date of the time value
 			allow_change_deadline = $11, match_work_time = $12, dates_from_subtasks = $13, auto_complete = $14, result_required = $15,
+			no_time_tracking = $16, time_over_at = CASE WHEN estimate_minutes IS DISTINCT FROM $8 THEN NULL ELSE time_over_at END,
 			version = version + 1, updated_at = now() WHERE id = $1`,
 			taskID, u.Title, strings.TrimSpace(u.Description), u.ResponsibleID, u.Priority, u.Deadline, u.RequiresControl, u.EstimateMinutes,
 			u.StartPlan, u.EndPlan, u.AllowChangeDeadline, u.MatchWorkTime, u.DatesFromSubtasks, u.AutoComplete, u.ResultRequired,
+			u.NoTimeTracking,
 		); err != nil {
 			return err
 		}
@@ -1414,6 +1456,16 @@ func (s *Store) SetParticipant(ctx context.Context, userID, taskID, targetID, ro
 			}
 		}
 		return setParticipant(ctx, tx, userID, taskID, targetID, role, add)
+	})
+}
+
+// Watch is «Стать наблюдателем»: anyone who sees the task becomes its auditor (or stops being one).
+func (s *Store) Watch(ctx context.Context, userID, taskID string, on bool) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := loadAccess(ctx, tx, userID, taskID, true); err != nil {
+			return err
+		}
+		return setParticipant(ctx, tx, userID, taskID, userID, "auditor", on)
 	})
 }
 

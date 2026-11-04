@@ -22,10 +22,28 @@
   {{else}}<form method="post" class="lp-fields"><input type="hidden" name="block" value="{{.ID}}"><input type="hidden" name="t" value="{{.Stamp}}">
     <input type="text" name="website" class="lp-trap" tabindex="-1" autocomplete="off" aria-hidden="true">
     {{with .Err}}<p class="lp-err">{{t .}}</p>{{end}}
-    {{range $f := sitefields}}{{$ask := $b.Asks $f}}{{if $ask}}<label><span>{{t (print "site.form." $f)}}{{if eq $ask "req"}} <b class="lp-req">*</b>{{end}}</span>
+    {{range $f := $b.AskFields}}{{$ask := $b.Asks $f}}{{if $ask}}<label><span>{{t (print "site.form." $f)}}{{if eq $ask "req"}} <b class="lp-req">*</b>{{end}}</span>
       {{if eq $f "comment"}}<textarea name="comment" rows="4" maxlength="5000"{{if eq $ask "req"}} required{{end}}></textarea>
       {{else}}<input type="{{if eq $f "email"}}email{{else if eq $f "phone"}}tel{{else}}text{{end}}" name="{{$f}}" maxlength="300"{{if eq $ask "req"}} required{{end}} autocomplete="{{if eq $f "name"}}name{{else if eq $f "phone"}}tel{{else}}email{{end}}">{{end}}</label>{{end}}{{end}}
     <button class="lp-btn"{{if eq .State "preview"}} disabled title="{{t "site.form_preview"}}"{{end}}>{{or (.Get "button") (t "site.def.form.button")}}</button></form>{{end}}</div></section>
+{{else if eq .Type "catalog"}}<section class="lp-form lp-shop"{{with $c}} style="background:{{.}}"{{end}} data-lp-shop="{{.ID}}"><div class="lp-wrap">
+  {{with .Get "title"}}<h2>{{.}}</h2>{{end}}{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
+  {{if eq .State "sent"}}<div class="lp-thanks" data-lp-sent>{{range .Paragraphs "thanks"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{else}}<p>{{t "site.def.catalog.thanks"}}</p>{{end}}</div>{{end}}
+  <div class="lp-goods">{{range .Goods}}<div class="lp-good">{{if .Photo}}<img src="{{.Photo}}" alt="" loading="lazy">{{else}}<div class="lp-noimg"></div>{{end}}
+    <h3>{{.Name}}</h3>{{with .Description}}<p class="lp-desc">{{.}}</p>{{end}}
+    {{if .Variants}}<select data-lp-variant>{{range .Variants}}<option value="{{.ID}}" data-name="{{.Name}}" data-price="{{.Price}}" data-cur="{{.Currency}}">{{.Name}} — {{money .Price}} {{.Currency}}</option>{{end}}</select>
+    {{else}}<b class="lp-price">{{money .Price}} {{.Currency}}</b>{{end}}
+    <button type="button" class="lp-btn" data-lp-add="{{.ID}}" data-name="{{.Name}}" data-price="{{.Price}}" data-cur="{{.Currency}}">{{t "site.cart_add"}}</button></div>
+  {{else}}<p class="lp-err">{{t "site.catalog_none"}}</p>{{end}}</div>
+  <form method="post" class="lp-fields lp-cart" data-lp-cart data-remove="{{t "crm.delete"}}" hidden><input type="hidden" name="block" value="{{.ID}}"><input type="hidden" name="t" value="{{.Stamp}}">
+    <input type="hidden" name="cart" data-lp-cartval><input type="text" name="website" class="lp-trap" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <h3>{{t "site.cart"}}</h3><table class="lp-lines" data-lp-lines></table><p class="lp-total">{{t "site.cart_total"}} <b data-lp-total></b></p>
+    {{with .Err}}<p class="lp-err">{{t .}}</p>{{end}}
+    {{range $f := $b.AskFields}}{{$ask := $b.Asks $f}}{{if $ask}}<label><span>{{t (print "site.form." $f)}}{{if eq $ask "req"}} <b class="lp-req">*</b>{{end}}</span>
+      {{if or (eq $f "comment") (eq $f "address")}}<textarea name="{{$f}}" rows="{{if eq $f "address"}}2{{else}}4{{end}}" maxlength="{{if eq $f "address"}}300{{else}}5000{{end}}"{{if eq $ask "req"}} required{{end}}{{if eq $f "address"}} autocomplete="street-address"{{end}}></textarea>
+      {{else}}<input type="{{if eq $f "email"}}email{{else if eq $f "phone"}}tel{{else}}text{{end}}" name="{{$f}}" maxlength="300"{{if eq $ask "req"}} required{{end}} autocomplete="{{if eq $f "name"}}name{{else if eq $f "phone"}}tel{{else}}email{{end}}">{{end}}</label>{{end}}{{end}}
+    <button class="lp-btn"{{if eq .State "preview"}} disabled title="{{t "site.form_preview"}}"{{end}}>{{or (.Get "button") (t "site.def.catalog.button")}}</button></form>
+  <script src="{{asset "js/siteshop.js"}}" defer></script></div></section>
 {{else if eq .Type "booking"}}<section class="lp-form lp-booking"{{with $c}} style="background:{{.}}"{{end}}><div class="lp-wrap">
   {{with .Get "title"}}<h2>{{.}}</h2>{{end}}{{range .Paragraphs "text"}}<p>{{range $i, $l := .}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}
   {{with .Get "booking"}}<iframe class="lp-bkframe" src="/bk/{{.}}?embed=1" title="{{t "booking.title"}}" loading="lazy" data-go24-booking></iframe>

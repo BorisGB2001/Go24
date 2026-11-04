@@ -1,5 +1,15 @@
-{{define "content"}}
+{{define "content"}}{{$d := .Data}}{{$r := $d.Result}}{{$q := $d.Q}}{{if $r.Switched}}{{$q = $r.Switched}}{{end}}
 <h1>{{t "title.search"}}</h1>
-<div class="sub">{{if .Query}}{{t "search.found" .Query (len .Data)}}{{else}}{{t "search.hint"}}{{end}}</div>
-{{if .Query}}<div class="card flush">{{template "tasklist" (tl .Data .Cols true .)}}</div>{{end}}
+<form class="row psearch" action="/search">{{with $d.In}}<input type="hidden" name="in" value="{{.}}">{{end}}
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "search.portal_placeholder"}}" autofocus><button class="primary">{{icon "search"}} {{t "search.find"}}</button></form>
+{{if $d.Q}}<div class="tabs"><a href="/search?q={{$d.Q}}" {{if not $d.In}}class="on"{{end}}>{{t "search.all"}}</a>
+  {{range $d.Sections}}<a href="/search?q={{$d.Q}}&in={{.}}" {{if eq . $d.In}}class="on"{{end}}>{{icon (index $d.Icons .)}} {{t (printf "search.in.%s" .)}}</a>{{end}}</div>
+{{with $r.Switched}}<p class="small muted">{{t "search.switched" . $d.Q}}</p>{{end}}
+{{if and (eq $d.In "tasks") $r.Tasks}}<div class="card flush">{{template "tasklist" (tl $r.Tasks .Cols true .)}}</div>
+{{else}}{{range $r.Groups}}<section class="card psgroup"><h3>{{icon (index $d.Icons .Key)}} {{t (printf "search.in.%s" .Key)}}</h3>
+  {{range .Hits}}<div class="kbhit pshit"><a href="{{.URL}}"><b>{{mark .Title $q}}</b></a>{{with .Sub}} <span class="small muted">{{.}}</span>{{end}}{{with .At}} <span class="small muted">· {{datetime .}}</span>{{end}}
+    {{with .Text}}<div class="small muted">{{mark . $q}}</div>{{end}}</div>{{end}}
+  {{if .More}}<p><a href="/search?q={{$d.Q}}&in={{.Key}}">{{t "search.show_all"}}</a></p>{{end}}</section>
+{{else}}<p class="muted">{{t "search.nothing" $d.Q}}</p>{{end}}{{end}}
+{{else}}<div class="sub">{{t "search.hint"}}</div>{{end}}
 {{end}}

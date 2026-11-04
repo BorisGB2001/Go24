@@ -27,6 +27,11 @@
   (`call_recordings.transcript = 'pending'`), go24-worker раз в минуту берёт по одной: видео — ffmpeg вырезает звук
   (16 кГц, моно, Opus, ~10 МБ в час), Whisper (`output=json`) отдаёт куски речи со временем, текст — файлом рядом с
   записью. Падение воркера посреди расшифровки — до трёх попыток (`transcript_tries`). Говорящих Whisper не различает.
+- Итоги встречи (GO24DEV-838): при «Подводить итоги встреч (CoPilot)» после расшифровки go24-worker отдаёт текст ИИ
+  начавшего запись (`ai.Store.Write`, агент `calls`; нет своего — подключение компании) и просит JSON: `summary`,
+  `agreements`, `tasks` (`title`, `who`, `due`), `next`. Итоги — в чат или задачу звонка (у задачи — ссылка
+  `/tasks/new?title=…&parent=КЛЮЧ`), файлом «… — итоги встречи.txt» рядом с записью и в `call_recordings.summary`.
+  Ответ не JSON — пересылается как есть; ошибка ИИ — «Не удалось подвести итоги встречи».
 - Внешние сервисы (GO24DEV-499): Zoom — POST /v2/users/{email|me}/meetings с токеном Server-to-Server OAuth
   (account_credentials); Яндекс Телемост — POST cloud-api.yandex.net/v1/telemost-api/conferences («OAuth <токен>»,
   telemost-api:conferences.create); VK Звонки — calls.start (токен пользователя VK ID, group_id — от сообщества) →

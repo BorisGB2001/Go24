@@ -477,6 +477,16 @@ func listField(l List, name string) (string, bool) {
 	return "", false
 }
 
+// ListReadFields are the fields «Чтение элемента списка» of the list l puts into a process: its name and fields,
+// el_<key>, labelled «list: field»; name is the label of the name.
+func ListReadFields(l List, name string) []Field {
+	out := []Field{{Key: ListReadPrefix + "name", Label: l.Name + ": " + name, Kind: "string"}}
+	for _, f := range l.Fields {
+		out = append(out, Field{Key: ListReadPrefix + f.Key, Label: l.Name + ": " + f.Label, Kind: f.Kind, Options: f.Options})
+	}
+	return out
+}
+
 // updateElement is «Изменить элемент» of a process of a list's element: the fields set ({…} filled; an employee by
 // their name or e-mail too), as the process's starter.
 func (s *Store) updateElement(ctx context.Context, x Instance, sets []Assign) error {
@@ -511,6 +521,88 @@ func (s *Store) updateElement(ctx context.Context, x Instance, sets []Assign) er
 	}
 	_, err = s.saveElement(ctx, x.StartedBy.ID, l, e, false)
 	return err
+}
+
+// listStep does a step on the elements of a list (ListKinds), as the process's starter and without the list's rights,
+// robots: says what it did for the process's log. An element added goes into the values as
+// {created_list_element} (its link) and {created_list_element_id}; one read — into the fields el_<…> (ListReadFields).
+func (s *Store) listStep(ctx context.Context, x Instance, st Step) (string, error) {
+	l, err := s.list(ctx, st.List)
+	if err != nil {
+		return "", err
+	}
+	if x.Values == nil {
+		x.Values = map[string]string{}
+	}
+	e := Element{ListID: l.ID}
+	if st.Kind != "listadd" {
+		if e, err = s.stepElement(ctx, x, st, l); err != nil {
+			return "", err
+		}
+	}
+	switch st.Kind {
+	case "listread":
+		x.Values[ListReadPrefix+"name"] = e.Name
+		for _, f := range l.Fields {
+			x.Values[ListReadPrefix+f.Key] = e.Values[f.Key]
+		}
+		return "listread:" + e.ID, s.saveValues(ctx, x)
+	case "listdelete":
+		_, err := s.db.Exec(ctx, `DELETE FROM list_elements WHERE id::text = $1`, e.ID)
+		return "listdelete:" + e.ID, err
+	}
+	e.Name, e.Values = "", map[string]string{}
+	for _, a := range st.Sets {
+		key, ok := listField(l, a.Field)
+		if !ok {
+			return "", errors.New("no field " + strconv.Quote(a.Field))
+		}
+		v := strings.TrimSpace(s.fillRaw(ctx, x, a.Value))
+		if key == "name" {
+			e.Name = v
+			continue
+		}
+		if f, _ := fieldOf(l.Fields, key); f.Kind == "user" && v != "" {
+			if v, err = s.person(ctx, x, v); err != nil {
+				return "", err
+			}
+		}
+		e.Values[key] = v
+	}
+	id, err := s.saveElement(ctx, x.StartedBy.ID, l, e, false)
+	if err != nil {
+		return "", err
+	}
+	if st.Kind == "listupdate" {
+		return "listupdate:" + id, nil
+	}
+	x.Values["created_list_element"], x.Values["created_list_element_id"] = CardPath(EntityList, id), id
+	return "listadd:" + id, s.saveValues(ctx, x)
+}
+
+// stepElement is the element of l a step works on: of its Value ({…} filled — an id or a link /bp/el/…), or else the
+// process's element, or else the one the process added last.
+func (s *Store) stepElement(ctx context.Context, x Instance, st Step, l List) (Element, error) {
+	id := strings.TrimSpace(s.fillRaw(ctx, x, st.Value))
+	if i := strings.LastIndex(id, "/bp/el/"); i >= 0 {
+		id = id[i+len("/bp/el/"):]
+	}
+	if id == "" && st.Value == "" {
+		id = x.Values["created_list_element_id"]
+		if x.Entity == EntityList {
+			if e, err := s.element(ctx, x.EntityID); err == nil && e.ListID == l.ID {
+				id = e.ID
+			}
+		}
+	}
+	if id == "" {
+		return Element{}, i18n.E("err.bp_list_element")
+	}
+	e, err := s.element(ctx, id)
+	if errors.Is(err, ErrNotFound) || err == nil && e.ListID != l.ID {
+		return Element{}, i18n.E("err.bp_list_element")
+	}
+	return e, err
 }
 
 // listValues are the element's fields for the texts of its process: {list.KEY} — a value as people read it.

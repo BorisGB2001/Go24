@@ -272,6 +272,16 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out(map[string]any{"joined_rooms": rooms})
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/_synapse/admin/v1/rooms/"):
+		room := strings.TrimPrefix(path, "/_synapse/admin/v1/rooms/")
+		if who != "@go24:t.lan" || f.rooms[room] == nil || body["purge"] != true {
+			w.WriteHeader(403)
+			out(map[string]string{"errcode": "M_FORBIDDEN"})
+			return
+		}
+		delete(f.rooms, room)
+		delete(f.names, room)
+		out(map[string]any{"kicked_users": []string{}})
 	case strings.HasPrefix(path, "/_synapse/admin/v1/rooms/") && strings.HasSuffix(path, "/state"):
 		room := strings.TrimSuffix(strings.TrimPrefix(path, "/_synapse/admin/v1/rooms/"), "/state")
 		key := ""
@@ -461,6 +471,8 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				out(map[string]string{"errcode": "M_NOT_FOUND"})
 			case typ == "m.room.avatar":
 				out(map[string]any{"url": f.avatar[room]})
+			case typ == "m.room.member": // the asker is in it (checked above)
+				out(map[string]any{"membership": "join"})
 			case typ == "m.room.name" && f.names[room] != "":
 				out(map[string]any{"name": f.names[room]})
 			case typ == "m.room.pinned_events" && f.pins[room] == nil:
@@ -1311,6 +1323,16 @@ func TestMessenger(t *testing.T) {
 	if _, err := s.Forward(ctx, ann, fchat, pic.ID, room); err == nil {
 		t.Fatal("ann forwarded from a chat she is not in")
 	}
+	// «Выбрать»: several messages go in the given order; nothing chosen is an error
+	n = len(fake.sent)
+	fws, err := s.ForwardAll(ctx, bob, fchat, []string{fm.ID, pic.ID}, room)
+	must(err)
+	if len(fws) != 2 || len(fake.sent) != n+2 || fake.sent[n].Content["url"] != nil || fake.sent[n+1].Content["url"] == nil || fws[1].File == nil {
+		t.Fatalf("forwarded several: %+v", fws)
+	}
+	if _, err := s.ForwardAll(ctx, bob, fchat, nil, room); err == nil {
+		t.Fatal("forwarded nothing")
+	}
 	// live: an edit and a deletion reach the open chat as changes
 	if c := liveChange(matrix.Event{Type: "m.room.redaction", Redacts: "$x"}, "!r"); c == nil || c.Change != "delete" || c.ID != "$x" {
 		t.Fatalf("a live deletion: %+v", c)
@@ -1346,6 +1368,16 @@ func TestMessenger(t *testing.T) {
 	}
 	if _, err := s.CreateGroup(ctx, ann, "Пусто", []string{ghost, ann}, false); err == nil {
 		t.Fatal("a group chat without anybody else")
+	}
+	// a CRM card's chat may start with its maker alone; the card's people come later (GO24DEV-923)
+	card, err := s.CreateCardGroup(ctx, ann, "Сделка: Поставка", []string{ghost, ann})
+	must(err)
+	if !fake.rooms[card][mx(ann)] || len(fake.invited[card]) != 0 || fake.names[card] != "Сделка: Поставка" {
+		t.Fatalf("the card's chat: %v %q %v", fake.rooms[card], fake.names[card], fake.invited[card])
+	}
+	must(s.AddToGroup(ctx, ann, card, []string{bob, ann}))
+	if !fake.rooms[card][mx(bob)] || len(fake.invited[card]) != 1 {
+		t.Fatalf("bob in the card's chat: %v %v", fake.rooms[card], fake.invited[card])
 	}
 	grp, err := s.CreateGroup(ctx, ann, " Запуск ", []string{bob, eve, ghost, ann}, false)
 	must(err)
@@ -1806,12 +1838,41 @@ func TestMessenger(t *testing.T) {
 	if _, err := s.Send(ctx, eve, ch, "А можно?", ""); err == nil {
 		t.Fatal("eve wrote in the channel")
 	}
-	if _, err := s.Send(ctx, eve, ch, "в треде", news.ID); err == nil {
-		t.Fatal("eve wrote in a thread of the channel")
+	sent, red := len(fake.sent), len(fake.redacted)
+	// comments on a post (GO24DEV-826): eve's goes through go24's bot, which the owner lets in once; go24 shows eve
+	cmt, err := s.Send(ctx, eve, ch, "в треде", news.ID)
+	must(err)
+	if last := fake.sent[len(fake.sent)-1]; last.Sender != "@go24:t.lan" || last.Content[commentBy] != s.M.UserID("eve") || last.Content["body"] != "eve: в треде" || last.Content[commentBody] != "в треде" || !cmt.Mine || cmt.Body != "в треде" {
+		t.Fatalf("eve's comment: %+v %+v", last, cmt)
+	}
+	if _, th, err := s.Thread(ctx, eve, ch, news.ID); err != nil || len(th) != 1 || th[0].SenderName != "eve" || th[0].Body != "в треде" || !th[0].Mine || !th[0].Editable() {
+		t.Fatalf("the comments as eve sees them: %+v %v", th, err)
+	}
+	if _, th, _ := s.Thread(ctx, bob, ch, news.ID); len(th) != 1 || th[0].Mine || th[0].SenderName != "eve" {
+		t.Fatalf("the comments as bob sees them: %+v", th)
+	}
+	_, err = s.Send(ctx, eve, ch, "ещё", news.ID) // the bot is in already
+	must(err)
+	if ed, err := s.Edit(ctx, eve, ch, cmt.ID, "в треде!"); err != nil || ed.Body != "в треде!" || fake.sent[len(fake.sent)-1].Sender != "@go24:t.lan" {
+		t.Fatalf("eve's comment changed: %+v %v", ed, err)
+	}
+	if _, err := s.Edit(ctx, bob, ch, cmt.ID, "чужой"); err == nil {
+		t.Fatal("bob changed eve's comment")
+	}
+	if err := s.Delete(ctx, bob, ch, cmt.ID); err == nil {
+		t.Fatal("bob took back eve's comment")
+	}
+	red = len(fake.redacted)
+	must(s.Delete(ctx, eve, ch, cmt.ID))
+	if len(fake.redacted) != red+1 {
+		t.Fatal("eve's comment taken back")
+	}
+	if _, err := s.Send(ctx, eve, ch, "А всё же?", ""); err == nil {
+		t.Fatal("eve wrote in the channel through go24")
 	}
 	must(s.React(ctx, eve, ch, news.ID, "👍"))
 	// the REST way: a reaction put stays put, one taken back stays away
-	sent, red := len(fake.sent), len(fake.redacted)
+	sent, red = len(fake.sent), len(fake.redacted)
 	must(s.SetReaction(ctx, eve, ch, news.ID, "👍", true))
 	if len(fake.sent) != sent {
 		t.Fatal("a reaction put twice")
@@ -1938,6 +1999,9 @@ func TestMessenger(t *testing.T) {
 	for _, m := range cm {
 		if m.Event == "owner" || m.Event == "admin" || m.Event == "unadmin" {
 			levels = append(levels, m.SenderName+" "+m.Event+" "+m.Target)
+		}
+		if m.Event != "" && m.Target == "go24" {
+			t.Errorf("a line about go24 let in for the comments: %+v", m)
 		}
 	}
 	if strings.Join(levels, "; ") != "bob admin eve; bob unadmin eve; bob admin eve; bob unadmin eve; bob owner eve; eve admin bob" {

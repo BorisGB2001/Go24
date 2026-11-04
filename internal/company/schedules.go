@@ -3,6 +3,7 @@ package company
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,12 @@ import (
 
 // ScheduleKinds are the kinds of work schedules.
 var ScheduleKinds = []string{"fixed", "shift", "flexible"}
+
+// ReportReqs are the ways of «Отчёт о рабочем дне»; WorkDevices — those a working day is marked from.
+var (
+	ReportReqs  = []string{"optional", "required", "none"}
+	WorkDevices = []string{"browser", "terminal", "app"}
+)
 
 // ScheduleTime is a set of working days of a fixed schedule with their hours.
 type ScheduleTime struct {
@@ -49,6 +56,12 @@ type WorkSchedule struct {
 	LeaveBefore string
 	MinDuration string
 	Tolerance   int // shift schedules: minutes allowed late or early
+	// «Уведомлять о нарушениях»: the person's manager and/or these people are told of a violation
+	NotifyHead bool
+	NotifyTo   []string
+	// «Отчёт о рабочем дне»: optional, required or none (not asked); «Устройства для отметки»: WorkDevices allowed
+	ReportReq   string
+	Devices     []string
 	Members     []string
 	Excluded    []string
 	MemberNames map[string]string
@@ -83,6 +96,23 @@ func (ws *WorkSchedule) clean() error {
 	if ws.Tolerance < 0 || ws.Tolerance > 720 {
 		return i18n.E("err.wschedule_time")
 	}
+	ws.NotifyTo = cleanPeople(ws.NotifyTo)
+	if ws.ReportReq == "" {
+		ws.ReportReq = "optional"
+	}
+	if !slices.Contains(ReportReqs, ws.ReportReq) {
+		return i18n.E("err.bad_form")
+	}
+	var devices []string
+	for _, d := range WorkDevices { // in their order, once each; none given — all
+		if len(ws.Devices) == 0 || slices.Contains(ws.Devices, d) {
+			devices = append(devices, d)
+		}
+	}
+	if len(devices) == 0 {
+		return i18n.E("err.wschedule_devices")
+	}
+	ws.Devices = devices
 	switch ws.Kind {
 	case "fixed":
 		ws.Shifts, ws.Tolerance = nil, 0
@@ -284,15 +314,16 @@ func (s *Store) WorkSchedule(ctx context.Context, id int64) (*WorkSchedule, erro
 }
 
 func (s *Store) workSchedules(ctx context.Context, ids []int64) ([]WorkSchedule, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, name, kind, times, late_after, leave_before, min_duration, tolerance
-		FROM work_schedules WHERE id = ANY($1)`, ids)
+	rows, err := s.db.Query(ctx, `SELECT id, name, kind, times, late_after, leave_before, min_duration, tolerance,
+		notify_head, notify_to::text[], report_req, devices FROM work_schedules WHERE id = ANY($1)`, ids)
 	if err != nil {
 		return nil, err
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (WorkSchedule, error) {
 		var ws WorkSchedule
 		var times []byte
-		if err := r.Scan(&ws.ID, &ws.Name, &ws.Kind, &times, &ws.LateAfter, &ws.LeaveBefore, &ws.MinDuration, &ws.Tolerance); err != nil {
+		if err := r.Scan(&ws.ID, &ws.Name, &ws.Kind, &times, &ws.LateAfter, &ws.LeaveBefore, &ws.MinDuration, &ws.Tolerance,
+			&ws.NotifyHead, &ws.NotifyTo, &ws.ReportReq, &ws.Devices); err != nil {
 			return ws, err
 		}
 		ws.MemberNames = map[string]string{}
@@ -361,13 +392,19 @@ func (s *Store) SaveWorkSchedule(ctx context.Context, actor string, ws *WorkSche
 	}
 	defer tx.Rollback(ctx)
 	if ws.ID == 0 {
-		err = tx.QueryRow(ctx, `INSERT INTO work_schedules (name, kind, times, late_after, leave_before, min_duration, tolerance, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-			ws.Name, ws.Kind, times, ws.LateAfter, ws.LeaveBefore, ws.MinDuration, ws.Tolerance, actor).Scan(&ws.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO work_schedules (name, kind, times, late_after, leave_before, min_duration, tolerance,
+				notify_head, notify_to, created_by, report_req, devices)
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8, coalesce(array_agg(id), '{}'), $10, $11, $12 FROM users WHERE id = ANY($9::uuid[]) RETURNING id`,
+			ws.Name, ws.Kind, times, ws.LateAfter, ws.LeaveBefore, ws.MinDuration, ws.Tolerance, ws.NotifyHead, ws.NotifyTo, actor,
+			ws.ReportReq, ws.Devices).Scan(&ws.ID)
 	} else {
 		var tag pgconn.CommandTag
 		tag, err = tx.Exec(ctx, `UPDATE work_schedules SET name = $2, kind = $3, times = $4, late_after = $5, leave_before = $6,
-			min_duration = $7, tolerance = $8 WHERE id = $1`, ws.ID, ws.Name, ws.Kind, times, ws.LateAfter, ws.LeaveBefore, ws.MinDuration, ws.Tolerance)
+			min_duration = $7, tolerance = $8, notify_head = $9,
+			notify_to = (SELECT coalesce(array_agg(id), '{}') FROM users WHERE id = ANY($10::uuid[])), report_req = $11, devices = $12
+			WHERE id = $1`,
+			ws.ID, ws.Name, ws.Kind, times, ws.LateAfter, ws.LeaveBefore, ws.MinDuration, ws.Tolerance, ws.NotifyHead, ws.NotifyTo,
+			ws.ReportReq, ws.Devices)
 		if err == nil && tag.RowsAffected() == 0 {
 			err = i18n.E("err.not_found")
 		}
@@ -430,6 +467,17 @@ func (s *Store) SaveWorkSchedule(ctx context.Context, actor string, ws *WorkSche
 	return tx.Commit(ctx)
 }
 
+// cleanPeople keeps the ids that look like ids, once each (unknown ones are dropped when saved).
+func cleanPeople(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); uuidLike(id) && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func uuidLike(s string) bool {
 	if len(s) != 36 {
 		return false
@@ -444,6 +492,32 @@ func uuidLike(s string) bool {
 		}
 	}
 	return true
+}
+
+// DayRules are how the person marks a working day by their schedule: «Отчёт о рабочем дне» and «Устройства для
+// отметки»; without a schedule the report is optional and every device is allowed.
+type DayRules struct {
+	Report  string // optional | required | none
+	Devices []string
+}
+
+// Allows: the day may be marked from the device ("" — not a device, e.g. a workflow: always).
+func (d DayRules) Allows(device string) bool {
+	return device == "" || slices.Contains(d.Devices, device)
+}
+
+// DayRulesOf are the person's rules of marking the day.
+func (s *Store) DayRulesOf(ctx context.Context, userID string) (DayRules, error) {
+	out := DayRules{Report: "optional", Devices: WorkDevices}
+	ids, err := s.ScheduleIDs(ctx, []string{userID})
+	if err != nil || ids[userID] == 0 {
+		return out, err
+	}
+	err = s.db.QueryRow(ctx, `SELECT report_req, devices FROM work_schedules WHERE id = $1`, ids[userID]).Scan(&out.Report, &out.Devices)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DayRules{Report: "optional", Devices: WorkDevices}, nil
+	}
+	return out, err
 }
 
 // DeleteWorkSchedule removes a schedule; its members go back to the company's working time.

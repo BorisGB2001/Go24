@@ -13,9 +13,7 @@ import (
 	"go24/internal/i18n"
 )
 
-// «График отсутствий» and birthdays of the «Сотрудники».
-
-var AbsenceKinds = []string{"vacation", "sick", "trip", "dayoff", "other"}
+// «График отсутствий» and birthdays of the «Сотрудники»; the reasons — absencekinds.go.
 
 type Absence struct {
 	ID, UserID, UserName, PhotoKey string
@@ -87,9 +85,12 @@ func (s *Store) canAbsence(ctx context.Context, actor, userID string, admin bool
 	return ok, false, err
 }
 
-// checkAbsence: a known reason, dates in order and the actor may manage the person's absences (hr — as an HR officer).
-func (s *Store) checkAbsence(ctx context.Context, actor, userID, kind string, from, to time.Time, admin bool) (hr bool, err error) {
-	if !slices.Contains(AbsenceKinds, kind) {
+// checkAbsence: a known reason that is on (or keep — the one the absence has), dates in order and the actor may manage
+// the person's absences (hr — as an HR officer).
+func (s *Store) checkAbsence(ctx context.Context, actor, userID, kind, keep string, from, to time.Time, admin bool) (hr bool, err error) {
+	if ok, err := s.knownKind(ctx, kind, keep); err != nil {
+		return false, err
+	} else if !ok {
 		return false, i18n.E("err.bad_form")
 	}
 	if to.Before(from) {
@@ -129,7 +130,7 @@ func (s *Store) AddAbsence(ctx context.Context, actor, userID, kind string, from
 // CreateAbsence is AddAbsence returning the new absence's id.
 func (s *Store) CreateAbsence(ctx context.Context, actor, userID, kind string, from, to time.Time, comment string, admin bool,
 	actingID string, rights []string) (string, error) {
-	hr, err := s.checkAbsence(ctx, actor, userID, kind, from, to, admin)
+	hr, err := s.checkAbsence(ctx, actor, userID, kind, "", from, to, admin)
 	if err != nil {
 		return "", err
 	}
@@ -173,7 +174,7 @@ func (s *Store) UpdateAbsence(ctx context.Context, actor, id, userID, kind strin
 	if userID == "" {
 		userID = old.UserID
 	}
-	hr, err := s.checkAbsence(ctx, actor, userID, kind, from, to, admin)
+	hr, err := s.checkAbsence(ctx, actor, userID, kind, old.Kind, from, to, admin)
 	if err != nil {
 		return err
 	}

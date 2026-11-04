@@ -122,3 +122,34 @@ func (s *Store) MoveToPeriod(ctx context.Context, userID, taskID, period string,
 	err = s.db.QueryRow(ctx, `SELECT deadline FROM tasks WHERE id = $1`, taskID).Scan(&cur)
 	return cur, err
 }
+
+// DayDeadline is the deadline of a task dropped onto a day of «Календарь»: that day at the time of its deadline, or
+// at the end of the working day when it has none.
+func DayDeadline(cur *time.Time, day time.Time, sched worktime.Schedule) time.Time {
+	h, m := 18, 0
+	if cur != nil {
+		c := cur.In(day.Location())
+		h, m = c.Hour(), c.Minute()
+	} else if end, err := time.Parse("15:04", sched.End); err == nil {
+		h, m = end.Hour(), end.Minute()
+	}
+	return time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, day.Location())
+}
+
+// MoveToDay moves the task's deadline to the day (with the rights of SetDeadline) and says the new deadline.
+func (s *Store) MoveToDay(ctx context.Context, userID, taskID string, day time.Time) (*time.Time, error) {
+	sched, err := s.Schedule(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var cur *time.Time
+	if err := s.db.QueryRow(ctx, `SELECT deadline FROM tasks WHERE id = $1`, taskID).Scan(&cur); err != nil {
+		return nil, err
+	}
+	d := DayDeadline(cur, day, sched)
+	if err := s.SetDeadline(ctx, userID, taskID, &d); err != nil {
+		return nil, err
+	}
+	err = s.db.QueryRow(ctx, `SELECT deadline FROM tasks WHERE id = $1`, taskID).Scan(&cur)
+	return cur, err
+}

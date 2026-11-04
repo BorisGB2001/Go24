@@ -149,4 +149,52 @@ func TestOpenChats(t *testing.T) {
 	if err := s.SetOpen(ctx, ann, grp, true); err == nil {
 		t.Fatal("a collab's chat opened")
 	}
+
+	// «Показывать историю новым участникам»: its owner turns it off and on; not bob, not in a collab's chat
+	hist, err := s.CreateGroup(ctx, ann, "Планёрка", []string{bob}, false)
+	must(err)
+	if g, err := s.GroupInfo(ctx, ann, hist); err != nil || !g.History || !g.CanHist {
+		t.Fatalf("a new chat's history: %+v, %v", g, err)
+	}
+	if err := s.SetHistory(ctx, bob, hist, false); err == nil {
+		t.Fatal("bob hid the history of ann's chat")
+	}
+	must(s.SetHistory(ctx, ann, hist, false))
+	if h := fake.lastState(hist, "m.room.history_visibility"); h["history_visibility"] != "joined" {
+		t.Fatalf("the hidden history: %v", h)
+	}
+	if g, _ := s.GroupInfo(ctx, bob, hist); g.History || g.CanHist {
+		t.Fatalf("bob sees: %+v", g)
+	}
+	must(s.SetHistory(ctx, ann, hist, true))
+	if g, _ := s.GroupInfo(ctx, ann, hist); !g.History {
+		t.Fatal("the history shown again is not")
+	}
+	if g, _ := s.GroupInfo(ctx, ann, grp); g.CanHist || s.SetHistory(ctx, ann, grp, false) == nil {
+		t.Fatal("a collab's chat changes its own history")
+	}
+
+	// «Удалить чат»: only its owner; the chat goes for everyone, with go24's notes about it
+	open, err := s.CreateOpenGroup(ctx, ann, "Курилка", []string{bob}, false, true)
+	must(err)
+	_, err = pool.Exec(ctx, `INSERT INTO im_saved (user_id, room_id, event_id) VALUES ($1, $2, '$x')`, bob, open)
+	must(err)
+	if err := s.DeleteGroup(ctx, bob, open); err == nil || fake.rooms[open] == nil {
+		t.Fatal("bob deleted ann's chat")
+	}
+	must(s.DeleteGroup(ctx, ann, open))
+	var left int
+	must(pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM im_open_chats WHERE room_id = $1) + (SELECT count(*) FROM im_saved WHERE room_id = $1)`, open).Scan(&left))
+	if fake.rooms[open] != nil || left != 0 {
+		t.Fatalf("the deleted chat stays: %v, %d rows", fake.rooms[open], left)
+	}
+	if l, _ := s.OpenChats(ctx, eve, ""); len(l) != 0 {
+		t.Fatalf("a deleted chat listed: %+v", l)
+	}
+	if rs, _ := s.Rooms(ctx, bob); indexRoom(rs, open) >= 0 {
+		t.Fatal("bob still has the deleted chat")
+	}
+	if err := s.DeleteGroup(ctx, ann, open); err == nil {
+		t.Fatal("a chat deleted twice")
+	}
 }

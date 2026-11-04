@@ -5,7 +5,16 @@
 (() => {
   const frames = [...document.querySelectorAll('iframe[data-app], iframe[data-tab]')];
   // the frame's name tells go24.js go24's address, and stays with the frame while the application moves between pages
-  frames.forEach((f, i) => { f.name = 'go24|' + location.origin + '|' + (i + 1); });
+  let named = 0;
+  const name = f => { f.name = 'go24|' + location.origin + '|' + (++named); };
+  frames.forEach(name);
+  // a frame the page makes later (a widget of the messenger, im.js): named, then opened; data-ctx — its chat and
+  // message (room=…&msg=…) for /apps/frame and the tab's address
+  window.go24AppFrame = f => {
+    name(f);
+    frames.push(f);
+    f.src = f.dataset.src;
+  };
   const main = document.querySelector('iframe[data-app]');
   const post = document.querySelector('form[data-app-post]');
   if (main && post) { post.target = main.name; post.submit(); }
@@ -14,6 +23,7 @@
   const load = async f => {
     const body = new URLSearchParams(f.dataset.tab ? { tab: f.dataset.tab, id: f.dataset.card || '' }
       : { app: f.dataset.app, placement: f.dataset.placement || '', options: f.dataset.options || '' });
+    new URLSearchParams(f.dataset.ctx || '').forEach((v, k) => { if (k === 'room' || k === 'msg') body.set(k, v); });
     const res = await fetch('/apps/frame', { method: 'POST', body, headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
@@ -97,7 +107,9 @@
       return true;
     },
     close: async f => {
-      if (f === main) location.assign('/apps'); else { const d = f.closest('details'); if (d) d.open = false; }
+      if (f === main) location.assign('/apps');
+      else if (f.closest('details')) f.closest('details').open = false;
+      else f.dispatchEvent(new CustomEvent('app-close', { bubbles: true })); // a widget of the messenger closes its panel
       return true;
     },
     scroll: async (f, { y = 0 } = {}) => { window.scrollTo({ top: f.getBoundingClientRect().top + scrollY + (+y || 0) }); return true; },

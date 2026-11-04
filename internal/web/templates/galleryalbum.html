@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$d := .Data}}{{$a := $d.A}}
+<p class="muted small crumbs"><a href="/company/gallery">{{t "gallery.title"}}</a>{{range $d.Path}} / <a href="/company/gallery/{{.ID}}">{{.Title}}</a>{{end}}</p>
+<div class="pagehead"><h1 style="flex:1">{{icon "photo"}} {{$a.Title}}</h1>
+  {{if $d.Photos}}<a class="button ghost" href="/company/photos/{{(index $d.Photos 0).ID}}?play=1">{{icon "player-play"}} {{t "gallery.slideshow"}}</a>{{end}}
+  {{if $d.CanAdd}}<button type="button" class="primary" data-show="photoform">{{icon "cloud-upload"}} {{t "gallery.add_photos"}}</button>{{end}}
+  {{if $d.CanChange}}<button type="button" class="ghost" data-show="subform">{{icon "folder"}} {{t "gallery.new_sub"}}</button>
+  <button type="button" class="ghost" data-show="albumset" title="{{t "gallery.settings"}}">{{icon "settings"}}</button>{{end}}</div>
+{{with $a.Description}}<p>{{nl2br .}}</p>{{end}}
+<p class="muted small">{{t "gallery.by"}} {{if $a.CreatedBy}}<a href="/u/{{$a.CreatedBy}}" data-user="{{$a.CreatedBy}}">{{$a.AuthorName}}</a> · {{end}}{{day $a.Created}}{{if $a.AnyoneAdds}} · {{t "gallery.anyone_adds_on"}}{{end}}</p>
+{{if $d.Added}}<p class="ok">{{t "gallery.added" $d.Added}}</p>{{end}}
+{{if $d.CanAdd}}<div class="card" id="photoform" style="max-width:640px" hidden>
+  <h2 class="row">{{icon "cloud-upload"}} {{t "gallery.add_photos"}}<span style="flex:1"></span><button type="button" class="link" data-hide="photoform">{{icon "x"}}</button></h2>
+  <form method="post" action="/company/gallery/{{$a.ID}}/photos" enctype="multipart/form-data" data-gdrop>
+    <label class="gdrop">{{icon "photo"}} <span>{{t "gallery.drop" $d.Batch}}</span>
+      <input type="file" name="files" accept="image/jpeg,image/png,image/gif,image/webp" multiple required></label>
+    <p class="muted small" data-gpicked></p>
+    <label>{{t "gallery.caption"}}</label>
+    <input name="caption" maxlength="1000" placeholder="{{t "gallery.caption_hint"}}">
+    <p class="row"><button class="primary">{{t "gallery.upload"}}</button><button type="button" class="ghost" data-hide="photoform">{{t "common.cancel"}}</button></p>
+  </form>
+</div>{{end}}
+{{if $d.CanChange}}
+{{template "galleryalbumform" (dict "Id" "subform" "Action" "/company/gallery" "Parent" $a.ID "TitleMax" $d.TitleMax "DescMax" $d.DescMax "Hidden" true)}}
+{{template "galleryalbumform" (dict "Id" "albumset" "Action" (printf "/company/gallery/%s" $a.ID) "A" $a "Access" $d.Access "TitleMax" $d.TitleMax "DescMax" $d.DescMax "Hidden" true)}}
+{{end}}
+{{template "galleryalbums" $d.Albums}}
+{{if $d.Photos}}<div class="gphotos">{{range $d.Photos}}
+  <a class="gphoto" href="/company/photos/{{.ID}}" title="{{.Caption}}"><img src="/company/photos/{{.ID}}/thumb" alt="{{.Caption}}" loading="lazy">
+    {{if or .Likes .Comments}}<span class="gmeta">{{if .Likes}}{{icon "thumb-up"}} {{.Likes}}{{end}}{{if .Comments}} {{icon "message-circle"}} {{.Comments}}{{end}}</span>{{end}}</a>{{end}}
+</div>{{else if not $d.Albums}}<p class="muted">{{t "gallery.album_empty"}}</p>{{end}}
+{{if $d.CanChange}}<form method="post" action="/company/gallery/{{$a.ID}}/delete" data-confirm="{{t "gallery.delete_album_confirm" $a.Title}}" style="margin-top:2em">
+  <button class="link muted small">{{icon "trash"}} {{t "gallery.delete_album"}}</button></form>{{end}}
+<script src="{{asset "js/gallery.js"}}"></script>
+{{end}}

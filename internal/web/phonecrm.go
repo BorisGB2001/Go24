@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"go24/internal/auth"
 	"go24/internal/crm"
 	"go24/internal/i18n"
+	"go24/internal/marketing"
 	"go24/internal/telephony"
 )
 
@@ -41,7 +43,9 @@ func crmCall(body string) *phoneEvent {
 }
 
 // portalTr is a text in the portal's language (for what go24 writes by itself, with nobody's request).
-func (s *Server) portalTr(key string, args ...any) string { return s.I18n.T(s.portalLang(), key, args...) }
+func (s *Server) portalTr(key string, args ...any) string {
+	return s.I18n.T(s.portalLang(), key, args...)
+}
 
 // portalLang is the portal's language ("ru-RU").
 func (s *Server) portalLang() string {
@@ -100,8 +104,9 @@ func (s *Server) phoneOwnerNumber(ctx context.Context, number string) (string, e
 	return s.Telephony.NumberOf(ctx, owner)
 }
 
-// phoneToCRM puts a call with an outside number into the client's card; an unknown number calling makes a lead (the
-// administrators' setting), its responsible the employee who was called.
+// phoneToCRM puts a call with an outside number into the client's card; an unknown number makes a lead or a deal with
+// a contact, as the line's «Создавать в CRM» says (else the administrators' «Создавать лид по неизвестному номеру» —
+// for incoming calls), its responsible the employee of the call.
 func (s *Server) phoneToCRM(ctx context.Context, callID string) error {
 	if s.CRM == nil || callID == "" {
 		return nil
@@ -118,21 +123,126 @@ func (s *Server) phoneToCRM(ctx context.Context, callID string) error {
 	if err != nil {
 		return err
 	}
-	if entity == "" && dir == "in" {
-		on, err := s.Telephony.LeadAuto(ctx)
-		if err != nil || !on {
-			return err
-		}
-		if id, err = s.CRM.SaveLead(ctx, emp, crm.Lead{Title: s.portalTr("tel.lead_title", number), Phone: number,
-			Source: s.portalTr("tel.lead_source"), Origin: crm.Dict{Code: "CALL"}, Responsible: crm.Ref{ID: emp}}); err != nil {
-			return err
-		}
-		entity = "lead"
-	}
 	if entity == "" {
+		if entity, id, err = s.phoneNewClient(ctx, c, number, dir, emp); err != nil || entity == "" {
+			return err
+		}
+	}
+	if err := s.phoneBind(ctx, c, entity, id, emp); err != nil {
+		return err
+	}
+	if err := s.phoneRecall(ctx, c, entity, id); err != nil {
+		return err
+	}
+	return s.phoneTrigger(ctx, c, entity, id)
+}
+
+// phoneNewClient makes the card of a number unknown to CRM, as the call's line says (Trunk.Creates): a lead or a deal
+// with a contact, the source «Звонок» or the line's advertising channel (with its utm_source); entity "" — none.
+func (s *Server) phoneNewClient(ctx context.Context, c telephony.Call, number, dir, emp string) (entity, id string, err error) {
+	lead, err := s.Telephony.LeadAuto(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	var t telephony.Trunk
+	if c.Line != "" {
+		trunks, err := s.Telephony.Trunks(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		t, _ = telephony.TrunkOf(trunks, c.Line)
+	}
+	what := t.Creates(dir, lead)
+	if what == "" {
+		return "", "", nil
+	}
+	ad, err := s.phoneAdSource(ctx, t)
+	if err != nil {
+		return "", "", err
+	}
+	origin := crm.Dict{}
+	if dir == "in" {
+		origin.Code = "CALL"
+	}
+	if ad.CRMSource != "" {
+		origin = crm.Dict{ID: ad.CRMSource}
+	}
+	switch what {
+	case telephony.CRMLead:
+		l := crm.Lead{Title: s.portalTr("tel.lead_title", number), Phone: number, Source: s.portalTr("tel.lead_source"),
+			Origin: origin, Responsible: crm.Ref{ID: emp}}
+		if ad.ID != "" {
+			l.Source = s.portalTr("tel.lead_source_ad", ad.Name)
+		}
+		id, err = s.CRM.SaveLead(ctx, emp, l)
+	case telephony.CRMDeal:
+		id, err = s.phoneNewDeal(ctx, emp, number, s.portalTr("tel.deal_title", number), origin)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if len(ad.UTM) > 0 {
+		if err := s.Marketing.SetUTM(ctx, what, id, marketing.UTM{Source: ad.UTM[0], Medium: "calltracking"}); err != nil {
+			return "", "", err
+		}
+	}
+	return what, id, nil
+}
+
+// phoneNewDeal is a new contact with the phone and its deal in the first pipeline, both the employee's.
+func (s *Server) phoneNewDeal(ctx context.Context, emp, number, title string, origin crm.Dict) (string, error) {
+	contact, err := s.CRM.SaveContact(ctx, emp, crm.Contact{Name: number, Phone: number, Origin: origin, Responsible: crm.Ref{ID: emp}})
+	if err != nil {
+		return "", err
+	}
+	pipes, err := s.CRM.Pipelines(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(pipes) == 0 {
+		return "", fmt.Errorf("telephony: no pipeline for a deal")
+	}
+	return s.CRM.SaveDeal(ctx, emp, crm.Deal{Title: title, PipelineID: pipes[0].ID, Origin: origin, Contact: crm.Ref{ID: contact},
+		Responsible: crm.Ref{ID: emp}})
+}
+
+// phoneAdSource is «Колл-трекинг»: the advertising channel whose number the external line is (ID "" — none).
+func (s *Server) phoneAdSource(ctx context.Context, t telephony.Trunk) (marketing.AdSource, error) {
+	if s.Marketing == nil || t.AdSource == "" {
+		return marketing.AdSource{}, nil
+	}
+	srcs, err := s.Marketing.AdSources(ctx)
+	if err != nil {
+		return marketing.AdSource{}, err
+	}
+	for _, a := range srcs {
+		if a.ID == t.AdSource {
+			return a, nil
+		}
+	}
+	return marketing.AdSource{}, nil
+}
+
+// phoneRecall is «Перезвонить»: a client's missed call plans a call deed on the card (the
+// administrators' setting); a conversation with the client, either way, closes it.
+func (s *Server) phoneRecall(ctx context.Context, c telephony.Call, entity, id string) error {
+	number, dir, emp := c.Outside()
+	if !c.Missed() {
+		_, err := s.CRM.CalledBack(ctx, entity, id, emp)
+		return err
+	}
+	if dir != "in" {
 		return nil
 	}
-	return s.phoneBind(ctx, c, entity, id, emp)
+	if on, err := s.Telephony.Recalling(ctx); err != nil || !on {
+		return err
+	}
+	at := c.Started
+	if at.IsZero() {
+		at = time.Now()
+	}
+	_, err := s.CRM.MissedCall(ctx, entity, id, number, emp, s.portalTr("tel.recall_subject", number), at)
+	return err
 }
 
 // phoneBind writes the call in the card's timeline and remembers the card in the log.
@@ -149,6 +259,14 @@ func (s *Server) phoneBind(ctx context.Context, c telephony.Call, entity, id, au
 		return err
 	}
 	return s.Telephony.SetClient(ctx, c.ID, entity, id)
+}
+
+// phoneTrigger tells the client's card of an incoming call: «Входящий звонок» or «Пропущенный звонок» triggers.
+func (s *Server) phoneTrigger(ctx context.Context, c telephony.Call, entity, id string) error {
+	if _, dir, _ := c.Outside(); dir != "in" {
+		return nil
+	}
+	return s.CRM.FireCall(ctx, entity, id, c.Missed())
 }
 
 // phoneCallCRM is «Создать лид» or «Создать сделку» (what=lead|deal) for a call of the log with an outside number
@@ -191,17 +309,8 @@ func (s *Server) phoneCallCRM(w http.ResponseWriter, r *http.Request, sess auth.
 		entity = "lead"
 		id, err = s.CRM.SaveLead(ctx, sess.UserID, l)
 	case "deal":
-		var contact string
-		if contact, err = s.CRM.SaveContact(ctx, sess.UserID, crm.Contact{Name: number, Phone: number, Responsible: crm.Ref{ID: sess.UserID}}); err == nil {
-			var pipes []crm.Pipeline
-			if pipes, err = s.CRM.Pipelines(ctx); err == nil && len(pipes) > 0 {
-				entity = "deal"
-				id, err = s.CRM.SaveDeal(ctx, sess.UserID, crm.Deal{Title: s.tr(r, "tel.deal_title", number), PipelineID: pipes[0].ID,
-					Contact: crm.Ref{ID: contact}, Responsible: crm.Ref{ID: sess.UserID}})
-			} else if err == nil {
-				err = fmt.Errorf("telephony: no pipeline for a deal")
-			}
-		}
+		entity = "deal"
+		id, err = s.phoneNewDeal(ctx, sess.UserID, number, s.tr(r, "tel.deal_title", number), crm.Dict{})
 	default:
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return

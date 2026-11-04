@@ -196,6 +196,38 @@ func TestDocsAPI(t *testing.T) {
 	}
 	call("GET", "/api/v1/document-templates", bobCRM, nil, http.StatusForbidden, nil)
 
+	// «Активен», «Сортировка» and «С печатями и подписями» of a template, as ACTIVE, SORT and WITH_STAMPS
+	call("PATCH", "/api/v1/document-templates/"+builtin.ID, annaKey, map[string]any{"sort": -1}, http.StatusUnprocessableEntity, nil)
+	call("PATCH", "/api/v1/document-templates/"+builtin.ID, bobKey, map[string]any{"active": false}, http.StatusForbidden, nil)
+	call("PATCH", "/api/v1/document-templates/"+builtin.ID, annaKey, map[string]any{"active": false, "sort": 10, "with_stamps": false,
+		"name": "Счёт на оплату"}, http.StatusOK, &builtin)
+	if builtin.Active || builtin.Sort != 10 || builtin.Stamps || builtin.Name != "Счёт на оплату" || builtin.UpdatedBy != anna || builtin.UpdatedAt == nil {
+		t.Fatalf("settings: %+v", builtin)
+	}
+	call("GET", "/api/v1/document-templates?entity=deals", eveKey, nil, http.StatusOK, &list)
+	if len(list) != 0 {
+		t.Fatalf("an inactive template is offered: %+v", list)
+	}
+	call("GET", "/api/v1/document-templates", annaKey, nil, http.StatusOK, &list)
+	if len(list) != 2 || list[0].ID != builtin.ID || list[1].ID != tpl.ID {
+		t.Fatalf("by sort: %+v", list)
+	}
+	deal2, err := srv.CRM.SaveDeal(ctx, anna, crm.Deal{Title: "Монтаж", Amount: 700, PipelineID: pipes[0].ID, Responsible: crm.Ref{ID: anna}})
+	must(err)
+	byBuiltin := map[string]any{"entity": "deals", "entity_id": deal2, "template": builtin.ID}
+	call("POST", "/api/v1/documents", annaKey, byBuiltin, http.StatusUnprocessableEntity, nil)
+	call("PATCH", "/api/v1/document-templates/"+builtin.ID, annaKey, map[string]any{"active": true}, http.StatusOK, &builtin)
+	if !builtin.Active || builtin.Sort != 10 || builtin.Stamps {
+		t.Fatalf("active again: %+v", builtin)
+	}
+	var plain, stamped apiDocument
+	call("POST", "/api/v1/documents", annaKey, byBuiltin, http.StatusCreated, &plain)
+	byBuiltin["stamps"] = true
+	call("POST", "/api/v1/documents", annaKey, byBuiltin, http.StatusCreated, &stamped)
+	if plain.Stamps || !stamped.Stamps {
+		t.Fatalf("stamps by the template: %v, asked: %v", plain.Stamps, stamped.Stamps)
+	}
+
 	// a document of the deal: bob is its responsible
 	mk := map[string]any{"entity": "deals", "entity_id": deal, "template": tpl.ID, "values": map[string]string{"Term": "10 дней"}}
 	call("POST", "/api/v1/documents", eveKey, mk, http.StatusForbidden, nil) // she does not see the deal
@@ -240,6 +272,15 @@ func TestDocsAPI(t *testing.T) {
 	call("POST", "/api/v1/sign", bobKey, map[string]string{"document": doc.ID, "signer": anna}, http.StatusCreated, &sd)
 	if sd.Status != "signing" || sd.Title != "Договор № Д-1" || sd.DocumentID != doc.ID || len(sd.Parties) != 1 || sd.Parties[0].Status != "ready" {
 		t.Fatalf("sent: %+v", sd)
+	}
+	var found []apiSignDoc
+	call("GET", "/api/v1/sign?q=%D0%94-1", bobKey, nil, http.StatusOK, &found)
+	if len(found) != 1 || found[0].ID != sd.ID {
+		t.Fatalf("search: %+v", found)
+	}
+	call("GET", "/api/v1/sign?q=nothing", bobKey, nil, http.StatusOK, &found)
+	if len(found) != 0 {
+		t.Fatalf("search, nothing: %+v", found)
 	}
 	call("GET", "/api/v1/documents/"+doc.ID, bobRead, nil, http.StatusOK, &doc)
 	if doc.Sign == nil || doc.Sign.ID != sd.ID {

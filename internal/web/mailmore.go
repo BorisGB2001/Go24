@@ -86,9 +86,13 @@ func (s *Server) mailPrint(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	pics := r.URL.Query().Get("pics") == "1"
 	for _, m := range list {
 		if m.ID == id {
+			if m.Locked() {
+				http.Error(w, s.errText(r, mail.ErrNoForward), http.StatusForbidden)
+				return
+			}
 			d.Subject = m.Subject
 		}
-		if r.URL.Query().Get("conv") != "1" && m.ID != id {
+		if r.URL.Query().Get("conv") != "1" && m.ID != id || m.Locked() { // a conversation is printed without its letters «Не пересылать»
 			continue
 		}
 		d.Letters = append(d.Letters, m)
@@ -127,6 +131,10 @@ func (s *Server) mailPrint(w http.ResponseWriter, r *http.Request, sess auth.Ses
 // («Сохранить как»).
 func (s *Server) mailSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("letter")
+	if m, err := s.Mail.Message(r.Context(), sess.UserID, id); err == nil && m.Locked() {
+		http.Error(w, s.errText(r, mail.ErrNoForward), http.StatusForbidden)
+		return
+	}
 	raw, err := s.Mail.Source(r.Context(), sess.UserID, id)
 	if err != nil {
 		var ie *i18n.Error

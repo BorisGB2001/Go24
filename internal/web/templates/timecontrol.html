@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="row"><h1 style="flex:1">{{t "tc.title"}}</h1><a href="/worktime/table?month={{$d.Month.Format "2006-01"}}&dept={{$d.Dept}}" class="button ghost">{{icon "table"}} {{t "worksheet.title"}}</a> <a href="/worktime" class="button ghost">{{icon "clock"}} {{t "workday.page"}}</a></div>
+<div class="sub">{{t "tc.subtitle"}}{{if $d.Sched.TimeControl}} {{t "tc.subtitle_on" $d.Sched.IdleAfter.Minutes}}{{else}} <b>{{t "tc.off"}}</b>{{end}}{{if .User.Admin}} <a href="/settings/worktime#timecontrol">{{t "tc.settings"}}</a>{{end}}</div>
+<div class="card flush">
+  <form method="get" action="/worktime/timecontrol" class="row" style="padding:12px 16px 0">
+    <h2 style="flex:1;margin:0">{{t (print "month_full." ($d.Month.Format "1"))}} {{$d.Month.Year}}</h2>
+    <input type="hidden" name="month" value="{{$d.Month.Format "2006-01"}}">
+    <select name="dept" onchange="this.form.submit()"><option value="">{{t "worksheet.all_depts"}}</option>
+      {{range $d.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+    <label class="check"><input type="checkbox" name="all" value="1" {{if $d.All}}checked{{end}} onchange="this.form.submit()"> {{t "tc.all"}}</label>
+    <a href="/worktime/timecontrol?month={{$d.Prev}}&dept={{$d.Dept}}{{if $d.All}}&all=1{{end}}" class="button ghost" title="{{t "worksheet.prev"}}">{{icon "chevron-left"}}</a>
+    <a href="/worktime/timecontrol?month={{$d.Next}}&dept={{$d.Dept}}{{if $d.All}}&all=1{{end}}" class="button ghost" title="{{t "worksheet.next"}}">{{icon "chevron-right"}}</a>
+  </form>
+  {{if $d.Rows}}<table class="tlist tcreport"><thead><tr><th>{{t "workday.col.who"}}</th><th>{{t "tc.count"}}</th><th>{{t "tc.total"}}</th>
+    <th>{{t "tc.kind.work"}}</th><th>{{t "tc.kind.personal"}}</th><th>{{t "tc.kind.none"}}</th></tr></thead>
+  <tbody>{{range $row := $d.Rows}}<tr><td><a href="/u/{{$row.ID}}">{{$row.Name}}</a>{{with $row.Position}}<div class="muted small">{{.}}</div>{{end}}</td>
+    <td>{{len $row.Idles}}</td><td>{{if $row.Secs}}{{dur $row.Secs}}{{else}}—{{end}}</td><td>{{if $row.Work}}{{dur $row.Work}}{{else}}—{{end}}</td>
+    <td>{{if $row.Personal}}{{dur $row.Personal}}{{else}}—{{end}}</td><td>{{if $row.No}}<span class="dl over">{{dur $row.No}}</span>{{else}}—{{end}}</td></tr>
+    {{if $row.Idles}}<tr class="tcidles"><td colspan="6"><details><summary class="small">{{t "tc.list"}}</summary>
+      <table class="tlist"><tbody>{{range $row.Idles}}<tr><td class="small"><a href="/worktime/d/{{.UserID}}/{{.Day.Format "2006-01-02"}}#idle">{{day .Day}}</a></td>
+        <td class="small">{{clock .Started}}–{{clock .Ended}}</td><td class="small">{{dur .Secs}}</td><td>{{template "tcreason" .}}</td></tr>{{end}}</tbody></table></details></td></tr>{{end}}
+  {{end}}</tbody></table>
+  {{else}}<div class="empty">{{t "tc.empty"}}</div>{{end}}
+</div>
+{{end}}

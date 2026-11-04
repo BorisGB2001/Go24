@@ -1,0 +1,19 @@
+{{define "content"}}
+{{$g := .Data}}
+<div class="crumbs"><a href="/projects?tab=all">{{t "groups.all"}}</a> {{icon "chevron-right"}} <code>{{$g.Key}}</code></div>
+<div class="pagehead"><h1 class="row">{{photo $g.Name $g.PhotoURL true}} {{$g.Name}}{{if and $g.Kind (ne $g.Kind "group")}} <span class="pill st-in_progress">{{t (print "project.kind." $g.Kind)}}</span>{{end}}</h1></div>
+<div class="card" id="join">
+  <div class="small muted">{{t (print "groups.privacy." $g.Privacy)}} · {{t "groups.members" $g.Members}}</div>
+  {{if $g.Description}}<p>{{$g.Description}}</p>{{end}}
+  {{template "groupsubject" $g}}
+  <p class="small muted">{{t (print "groups.outsider." $g.Privacy)}}</p>
+  {{if $g.Archived}}<p class="small muted">{{t "groups.archived"}}</p>
+  {{else if $g.Requested}}<p><span class="pill st-pending">{{t "groups.requested"}}</span></p>
+  <form method="post" action="/p/{{$g.Key}}/join/cancel"><button class="ghost">{{icon "x"}} {{t "groups.cancel_request"}}</button></form>
+  {{else if eq $g.Privacy "open"}}<form method="post" action="/p/{{$g.Key}}/join"><button class="primary">{{icon "user-plus"}} {{t "groups.join"}}</button></form>
+  {{else}}<form method="post" action="/p/{{$g.Key}}/join">
+    <label>{{t "groups.message"}}</label><textarea name="message" rows="3" maxlength="1000"></textarea>
+    <p><button class="primary">{{icon "send"}} {{t "groups.ask"}}</button></p>
+  </form>{{end}}
+</div>
+{{end}}

@@ -30,7 +30,8 @@ type DocFilter struct {
 }
 
 // Documents is «Документы»: the files with the extensions on the drives the user works with — their «Мой диск», the
-// company's (not for a guest), those of the projects they are in, the folders and the files shared with them, newest first.
+// company's (not for a guest), those of the projects they are in, the folders and the files shared with them, newest first;
+// no extensions — files of any kind (the portal's search).
 func (s *Store) Documents(ctx context.Context, userID string, exts []string, f DocFilter, max int) ([]Document, error) {
 	if len(f.Exts) > 0 {
 		exts = f.Exts
@@ -60,7 +61,7 @@ func (s *Store) Documents(ctx context.Context, userID string, exts []string, f D
 				SELECT up.id::text AS id FROM up JOIN drive_shares sh ON sh.folder_id = up.id WHERE `+mine+`
 				ORDER BY up.depth DESC LIMIT 1) root ON f.drive = 'user' AND f.drive_owner <> $1 AND f.folder_id IS NOT NULL
 		WHERE f.drive IS NOT NULL AND f.deleted_at IS NULL AND `+live+`
-			AND lower(substring(f.name from '\.([^.]+)$')) = ANY($2) AND (f.name ILIKE $3 OR `+contentMatch("6")+`)
+			AND (coalesce(cardinality($2::text[]), 0) = 0 OR lower(substring(f.name from '\.([^.]+)$')) = ANY($2)) AND (f.name ILIKE $3 OR `+contentMatch("6")+`)
 			AND ($4 = '' OR ($4 = 'recent' AND o.opened_at IS NOT NULL)
 				OR ($4 <> 'recent' AND ($4 = 'mine') = (f.uploaded_by IS NOT DISTINCT FROM $1)))
 			AND ((f.drive = 'user' AND (f.drive_owner = $1 OR root.id IS NOT NULL

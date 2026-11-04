@@ -139,15 +139,15 @@ func (s *Store) Under(ctx context.Context, userID string) ([]Person, error) {
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Person])
 }
 
-// Manages: the actor is an administrator or stands above the person (the person themself is not).
+// Manages: the actor may change the working time of the person — an administrator, or by «Права доступа» of working
+// time (by default the heads and deputies above the person); the person themself is not.
 func (s *Store) Manages(ctx context.Context, actor, userID string, admin bool) (bool, error) {
-	if admin {
-		return true, nil
-	}
-	if actor == userID {
-		return false, nil
-	}
-	return s.canManage(ctx, actor, userID, false)
+	return s.WorktimeCan(ctx, actor, userID, admin, "edit")
+}
+
+// Sees: the actor may see the working time of the person, as Manages.
+func (s *Store) Sees(ctx context.Context, actor, userID string, admin bool) (bool, error) {
+	return s.WorktimeCan(ctx, actor, userID, admin, "view")
 }
 
 // DayChange is a change of a working day; nil fields are not changed.

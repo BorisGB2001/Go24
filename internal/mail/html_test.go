@@ -59,6 +59,18 @@ func TestImportance(t *testing.T) {
 	}
 }
 
+func TestSensitivity(t *testing.T) {
+	for h, want := range map[string]string{"Personal": "personal", "private": "private", " Company-Confidential ": "confidential",
+		"confidential": "confidential", "": "", "Secret": ""} {
+		if got := sensitivityOf(h); got != want {
+			t.Errorf("sensitivity %q = %q, want %q", h, got, want)
+		}
+	}
+	if !ValidSensitivity("") || !ValidSensitivity("private") || ValidSensitivity("normal") || ValidSensitivity("secret") {
+		t.Error("ValidSensitivity")
+	}
+}
+
 // TestCompose: the letter as the recipients get it — the text with its HTML, the pictures of the HTML, the files;
 // the blind copy only in the sender's own copy; importance and receipts in the headers; it parses back.
 func TestCompose(t *testing.T) {
@@ -66,10 +78,10 @@ func TestCompose(t *testing.T) {
 		CC: []*mail.Address{{Address: "cc@client.test"}}, BCC: []*mail.Address{{Address: "boss2@go24.test"}}, Host: "go24.test", Now: time.Now()}
 	l := Letter{Subject: "Счёт", HTML: `<p>Готово, <b>счёт</b> во вложении</p><img src="cid:p1@go24">`, Text: "Готово, счёт во вложении",
 		Files:      []Attachment{{Name: "счёт.txt", ContentType: "text/plain", Data: []byte("100 руб")}, {Name: "logo.png", ContentType: "image/png", Data: []byte("PNG"), ContentID: "p1@go24"}},
-		Importance: 1, Receipt: true, Refs: []string{"root@x", "last@x"}}
+		Importance: 1, Sensitivity: "private", Receipt: true, Refs: []string{"root@x", "last@x"}}
 	msg, own := compose(e, l)
 	s := string(msg)
-	for _, want := range []string{"multipart/mixed", "multipart/alternative", "multipart/related", "Importance: High", "X-Priority: 1",
+	for _, want := range []string{"multipart/mixed", "multipart/alternative", "multipart/related", "Importance: High", "X-Priority: 1", "Sensitivity: Private",
 		"Disposition-Notification-To: ", "Cc: <cc@client.test>", "In-Reply-To: <last@x>", "References: <root@x> <last@x>", "Content-Id: <p1@go24>"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("no %q in\n%s", want, s)
@@ -82,7 +94,8 @@ func TestCompose(t *testing.T) {
 		t.Errorf("message id %q", own)
 	}
 	p := parseFull(bytes.NewReader(msg))
-	if p.body != "Готово, счёт во вложении" || !strings.Contains(p.html, "<b>счёт</b>") || p.importance != 1 || p.receiptTo != "anna@go24.test" {
+	if p.body != "Готово, счёт во вложении" || !strings.Contains(p.html, "<b>счёт</b>") || p.importance != 1 || p.receiptTo != "anna@go24.test" ||
+		p.sensitivity != "private" {
 		t.Fatalf("parsed back: %+v", p)
 	}
 	if len(p.files) != 2 || p.files[0].Name != "счёт.txt" && p.files[1].Name != "счёт.txt" {

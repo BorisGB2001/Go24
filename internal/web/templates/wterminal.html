@@ -1,0 +1,40 @@
+{{define "content"}}{{$d := .Data}}
+<div class="login wterm"{{if or $d.Done $d.Err $d.Person}} data-return="{{if $d.Person}}{{if $d.Done}}6{{else}}30{{end}}{{else}}6{{end}}"{{end}}>
+  <div class="card">
+    <div class="logo">{{template "portal-logo" .}}</div>
+    {{if not $d.T}}
+    <h2>{{icon "device-tablet"}} {{t "wterm.closed"}}</h2>
+    <p class="muted">{{t "wterm.closed_hint"}}</p>
+    {{else if $d.Done}}
+    <h2>{{icon "circle-check"}} {{$d.T.Name}}</h2>
+    <p class="wterm-done">{{$d.Done}}</p>
+    <a href="/worktime/terminal/{{$d.Token}}" class="button">{{t "wterm.next"}}</a>
+    {{else if $d.Person}}{{$p := $d.Person}}
+    <div class="wterm-who">{{photo $p.Name "" true}}<b>{{$p.Name}}</b>{{with $p.Position}}<span class="muted small">{{.}}</span>{{end}}</div>
+    <p class="wterm-clock">{{clock $d.Now}}</p>
+    {{with $d.Day}}<p><span class="pill wd-{{.State}}">{{t (print "workday." .State)}}</span> <span class="muted small">{{t "workday.col.start"}} {{clock .Started}} · {{t "workday.col.worked"}} {{dur (.Worked $d.Now)}}</span></p>{{else}}<p class="muted">{{t "wterm.not_started"}}</p>{{end}}
+    {{if not ($d.Rules.Allows "terminal")}}<div class="flash">{{icon "alert-triangle"}} {{t "err.workday_device"}}</div>{{else}}
+    <form method="post" action="/worktime/terminal/{{$d.Token}}" class="stack">
+      <input type="hidden" name="pin" value="{{$d.PIN}}">
+      {{if and $d.Day (ne $d.Day.State "done") (eq $d.Rules.Report "required")}}<textarea name="report" rows="3" maxlength="5000" placeholder="{{t "workday.report_required"}}"></textarea>{{end}}
+      {{if not $d.Day}}<button class="primary big" name="action" value="start">{{icon "player-play"}} {{t "workday.start"}}</button>
+      {{else if eq $d.Day.State "running"}}<button name="action" value="pause" class="big">{{icon "player-pause"}} {{t "workday.pause"}}</button>
+        <button class="primary big" name="action" value="finish">{{icon "player-stop"}} {{t "workday.finish"}}</button>
+      {{else if eq $d.Day.State "paused"}}<button class="primary big" name="action" value="resume">{{icon "player-play"}} {{t "workday.resume"}}</button>
+        <button name="action" value="finish" class="big">{{icon "player-stop"}} {{t "workday.finish"}}</button>
+      {{else}}<button name="action" value="reopen" class="big">{{icon "player-play"}} {{t "workday.reopen"}}</button>{{end}}
+    </form>{{end}}
+    <a href="/worktime/terminal/{{$d.Token}}" class="small muted">{{t "wterm.not_me"}}</a>
+    {{else}}
+    <h2>{{$d.T.Name}}</h2>
+    <p class="wterm-clock" data-clock>{{clock now}}</p>
+    {{with $d.Err}}<div class="flash">{{icon "alert-triangle"}} {{.}}</div>{{end}}
+    <form method="post" action="/worktime/terminal/{{$d.Token}}" class="stack" autocomplete="off">
+      <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" required autofocus class="wterm-pin" placeholder="{{t "wterm.type_pin"}}" aria-label="PIN">
+      <div class="wterm-pad"><button type="button" data-key="1">1</button><button type="button" data-key="2">2</button><button type="button" data-key="3">3</button><button type="button" data-key="4">4</button><button type="button" data-key="5">5</button><button type="button" data-key="6">6</button><button type="button" data-key="7">7</button><button type="button" data-key="8">8</button><button type="button" data-key="9">9</button><button type="button" data-key="C" aria-label="{{t "wterm.erase"}}">{{icon "backspace"}}</button><button type="button" data-key="0">0</button><button class="primary">{{icon "check"}}</button></div>
+    </form>
+    {{end}}
+  </div>
+</div>
+<script src="{{asset "js/wterminal.js"}}"></script>
+{{end}}

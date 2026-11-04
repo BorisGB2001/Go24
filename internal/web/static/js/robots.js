@@ -28,4 +28,11 @@ document.querySelectorAll('form[data-robot]').forEach(form => {
   })
   kind.addEventListener('change', show)
   show()
+  // an approval by a vote: its share and «wait for everyone»
+  const mode = form.querySelector('select[name=mode]'), vote = form.querySelector('[data-bpvote]')
+  if (mode && vote) {
+    const showVote = () => { vote.hidden = mode.value !== 'vote' }
+    mode.addEventListener('change', showVote)
+    showVote()
+  }
 })

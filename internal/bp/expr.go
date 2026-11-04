@@ -3,6 +3,7 @@ package bp
 import (
 	"context"
 	"math"
+	"math/rand/v2"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,7 +15,7 @@ import (
 
 // A value that begins with «=» is a formula, as «Математические операции» and {{=…}}: the fields put in
 // ({sum}), it is counted — numbers (a comma or a point), + - * /, brackets, min(), max(), round(x; digits), abs(),
-// today() (arguments by «;» or «, »); a date (2026-11-02, with T15:30 a time) plus or minus days is a date, a date minus a date — days.
+// rand(from; to) — a whole number between them, today() (arguments by «;» or «, »); a date (2026-11-02, with T15:30 a time) plus or minus days is a date, a date minus a date — days.
 
 // value is the text of a step's value as the process holds it: {…} filled, a formula counted.
 func (s *Store) value(ctx context.Context, x Instance, text string) (string, error) {
@@ -212,6 +213,13 @@ func (c *calcer) call(name string, args []num) num {
 			p = math.Pow(10, math.Round(args[1].n))
 		}
 		return num{n: math.Round(args[0].n*p) / p}
+	case name == "rand" && len(args) == 2:
+		lo, hi := math.Ceil(math.Min(args[0].n, args[1].n)), math.Floor(math.Max(args[0].n, args[1].n))
+		if hi < lo || hi-lo > 1e15 {
+			c.err = true
+			return num{}
+		}
+		return num{n: lo + float64(rand.Int64N(int64(hi-lo)+1))}
 	case (name == "min" || name == "max") && len(args) > 0:
 		v := args[0].n
 		for _, a := range args[1:] {

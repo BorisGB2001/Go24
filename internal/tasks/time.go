@@ -34,6 +34,18 @@ const maxEntrySeconds = 7 * 24 * 3600
 // canLogTime: the people who do the task and project managers.
 func (a access) canLogTime() bool { return a.Roles.Worker() || a.Roles.Manager }
 
+// timeTracked: «Учитывать время, затраченное на задачу» is on — otherwise no timer and no new entries.
+func timeTracked(ctx context.Context, q querier, taskID string) error {
+	var off bool
+	if err := q.QueryRow(ctx, `SELECT no_time_tracking FROM tasks WHERE id = $1`, taskID).Scan(&off); err != nil {
+		return err
+	}
+	if off {
+		return invalid("err.time_tracking_off")
+	}
+	return nil
+}
+
 // StartTimer starts the user's timer on a task. A timer already running on another task is stopped and logged first.
 func (s *Store) StartTimer(ctx context.Context, userID, taskID string) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
@@ -43,6 +55,9 @@ func (s *Store) StartTimer(ctx context.Context, userID, taskID string) error {
 		}
 		if !a.canLogTime() {
 			return ErrForbidden
+		}
+		if err := timeTracked(ctx, tx, taskID); err != nil {
+			return err
 		}
 		if err := stopTimer(ctx, tx, userID); err != nil {
 			return err
@@ -105,6 +120,9 @@ func (s *Store) AddTime(ctx context.Context, userID, taskID string, seconds int,
 	}
 	if !a.canLogTime() {
 		return ErrForbidden
+	}
+	if err := timeTracked(ctx, s.db, taskID); err != nil {
+		return err
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO time_entries (task_id, user_id, seconds, spent_on, comment) VALUES ($1, $2, $3, $4, $5)`,
@@ -216,4 +234,40 @@ func ParseDuration(s string) (int, error) {
 		return 0, i18n.E("err.time_bad_duration")
 	}
 	return int(d.Seconds()), nil
+}
+
+// TimeOverDue tells the responsible and the creator of an open task, once, that the time logged on it (with the
+// timers running now) has passed «Плановые трудозатраты»; a new estimate arms it again.
+func (s *Store) TimeOverDue(ctx context.Context, now time.Time) (int, error) {
+	sent := 0
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `UPDATE tasks_all t SET time_over_at = $1
+			WHERE t.deleted_at IS NULL AND t.time_over_at IS NULL AND t.estimate_minutes > 0 AND NOT t.no_time_tracking
+			  AND t.status NOT IN ('completed', 'deferred')
+			  AND (SELECT coalesce(sum(e.seconds), 0) FROM time_entries e WHERE e.task_id = t.id)
+			    + (SELECT coalesce(sum(extract(epoch FROM $1 - tt.started_at)), 0) FROM task_timers tt WHERE tt.task_id = t.id)
+			    >= t.estimate_minutes * 60
+			RETURNING t.id, t.responsible_id, t.creator_id`, now)
+		if err != nil {
+			return err
+		}
+		type over struct{ task, resp, creator string }
+		list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (over, error) {
+			var o over
+			err := r.Scan(&o.task, &o.resp, &o.creator)
+			return o, err
+		})
+		if err != nil {
+			return err
+		}
+		for _, o := range list {
+			if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, task_id)
+				SELECT DISTINCT u, $2::uuid, 'task_time_over', $1::uuid FROM unnest(ARRAY[$2::uuid, $3::uuid]) u`, o.task, o.resp, o.creator); err != nil {
+				return err
+			}
+			sent++
+		}
+		return nil
+	})
+	return sent, err
 }

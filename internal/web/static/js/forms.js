@@ -32,6 +32,43 @@ document.addEventListener('change', e => {
   hint.textContent = hint.dataset.respMany.replace('%d', n);
 });
 
+// «CoPilot» of a task's description (the task form, as the CoPilot of the editor): the AI writes, improves,
+// shortens or fixes the description; its answer shows under the field — «Вставить» puts it in place of the text,
+// «Добавить в конец» after it, «Отмена» drops it. A mistake (no AI, nothing to change) shows in the same place.
+document.addEventListener('click', async e => {
+  const b = e.target.closest?.('[data-copilot-mode], [data-copilot-put]');
+  const box = b?.closest('[data-copilot]');
+  if (!box) return;
+  const form = box.closest('form'), area = form.querySelector('textarea[name="description"]');
+  const out = box.querySelector('[data-copilot-out]'), view = box.querySelector('[data-copilot-text]');
+  if (b.hasAttribute('data-copilot-put')) {
+    const how = b.dataset.copilotPut, text = view.textContent;
+    if (how === 'replace') area.value = text;
+    if (how === 'append') area.value = area.value.trim() ? area.value.trimEnd() + '\n\n' + text : text;
+    if (how) area.dispatchEvent(new Event('input', { bubbles: true }));
+    out.hidden = true;
+    return;
+  }
+  const modes = box.querySelectorAll('[data-copilot-mode]');
+  modes.forEach(m => { m.disabled = true; });
+  out.hidden = false; out.classList.remove('error');
+  view.textContent = box.dataset.wait;
+  box.querySelectorAll('[data-copilot-put]').forEach(p => { p.hidden = p.dataset.copilotPut !== ''; });
+  try {
+    const body = new URLSearchParams({ mode: b.dataset.copilotMode, title: form.querySelector('[name="title"]')?.value || '', text: area.value });
+    const r = await fetch(box.dataset.copilot, { method: 'POST', body, headers: { Accept: 'application/json' } });
+    const j = await r.json();
+    view.textContent = j.error || j.text || '';
+    out.classList.toggle('error', !!j.error);
+    if (!j.error) box.querySelectorAll('[data-copilot-put]').forEach(p => { p.hidden = false; });
+  } catch {
+    view.textContent = document.documentElement.dataset.failed || '…';
+    out.classList.add('error');
+  } finally {
+    modes.forEach(m => { m.disabled = false; });
+  }
+});
+
 // form[data-submit-now]: sent as the page opens (an application's page gets its tokens in the frame)
 document.querySelectorAll('form[data-submit-now]').forEach(f => f.submit());
 
@@ -168,4 +205,17 @@ document.addEventListener('click', e => {
   }
   const rm = e.target.closest?.('[data-rm-row]');
   if (rm) rm.closest('[data-row]')?.remove();
+});
+
+// [data-more] in [data-multi]: one more input of a multiple field (a business process's «Множественный»), a copy
+// of the last one, empty
+document.addEventListener('click', e => {
+  const more = e.target.closest?.('[data-more]');
+  const last = more?.closest('[data-multi]')?.querySelector('input:not([type=hidden]):last-of-type');
+  if (!last) return;
+  const copy = last.cloneNode();
+  copy.value = '';
+  copy.required = false;
+  last.after(copy);
+  copy.focus();
 });

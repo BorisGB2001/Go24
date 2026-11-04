@@ -1,16 +1,27 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="crumbs"><a href="/crm/deals">{{t "crm.title"}}</a></div>
-<h1>{{t "docs.templates"}}</h1>
+<div class="pagehead"><h1>{{t "docs.templates"}}</h1>{{if $d.Perms.Can "settings"}}<a class="button ghost" href="/crm/documents/rights">{{icon "shield-lock"}} {{t "docroles.link"}}</a>{{end}}</div>
 <div class="sub">{{t "docs.subtitle"}}</div>
-<div class="card flush">{{if $d.Templates}}<table class="tlist">
+{{if $d.Perms.Can "templates"}}<div class="card flush">{{if $d.Templates}}<table class="tlist">
   <thead><tr><th>{{t "form.name"}}</th><th>{{t "docs.for"}}</th><th>{{t "docs.file"}}</th><th title="{{t "docs.numerator_hint"}}">{{t "docs.numerator"}}</th><th title="{{t "docs.access_hint"}}">{{t "docs.access"}}</th><th></th></tr></thead>
-  <tbody>{{range $d.Templates}}<tr><td>{{.Name}}</td><td>{{t (print "docs.entity." .Entity)}}</td><td><a href="/files/{{.FileID}}">{{icon "download"}} {{.FileName}}</a>{{if $d.Office}} <a class="button ghost" href="/crm/documents/{{.ID}}/edit" title="{{t "docs.edit_hint"}}">{{icon "edit"}} {{t "office.edit"}}</a>{{end}}</td>
+  <tbody>{{range $d.Templates}}<tr{{if not .Active}} class="muted"{{end}}><td><b>{{.Name}}</b>{{if not .Active}} <span class="pill">{{t "docs.inactive"}}</span>{{end}}
+      <div class="small muted">{{t "docs.sort"}}: {{.Sort}}{{if not .WithStamps}} · {{t "docs.no_stamps"}}{{end}} · {{t "docs.changed_at" (datetime .Changed) .Changer}}</div>
+      <details class="docset"><summary class="small">{{icon "settings"}} {{t "docs.settings"}}</summary>
+      <form method="post" action="/crm/documents/{{.ID}}/settings" class="stack">
+        <div><label>{{t "form.name"}}</label><input type="text" name="name" value="{{.Name}}" maxlength="200" required></div>
+        <label class="check"><input type="checkbox" name="active" value="1"{{if .Active}} checked{{end}}> {{t "docs.active"}}</label>
+        <span class="small muted">{{t "docs.active_hint"}}</span>
+        <label class="check"><input type="checkbox" name="with_stamps" value="1"{{if .WithStamps}} checked{{end}}> {{t "docs.with_stamps"}}</label>
+        <span class="small muted">{{t "docs.with_stamps_hint"}}</span>
+        <div><label>{{t "docs.sort"}}</label><input type="number" name="sort" value="{{.Sort}}" min="0" max="1000000" step="1" required style="max-width:120px"></div>
+        <span class="small muted">{{t "docs.sort_hint"}}</span>
+        <div><button>{{t "common.save"}}</button></div></form></details></td><td>{{if .TypeID}}{{index $d.TypeNames .TypeID}}{{else}}{{t (print "docs.entity." .Entity)}}{{end}}</td><td><a href="/files/{{.FileID}}">{{icon "download"}} {{.FileName}}</a>{{if $d.Office}} <a class="button ghost" href="/crm/documents/{{.ID}}/edit" title="{{t "docs.edit_hint"}}">{{icon "edit"}} {{t "office.edit"}}</a>{{end}} <a class="button ghost" href="/crm/documents/{{.ID}}/fields" title="{{t "docfields.hint"}}">{{icon "list"}} {{t "docfields.link"}}</a></td>
     <td>{{$tpl := .}}<form method="post" action="/crm/documents/{{.ID}}/numerator" class="row"><select name="numerator_id" aria-label="{{t "docs.numerator"}}" title="{{.Numerator}}">{{range $d.Numerators}}<option value="{{.ID}}"{{if eq .ID $tpl.NumeratorID}} selected{{end}}>{{.Name}} · {{.Format}}</option>{{end}}</select><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/access" class="row" style="min-width:240px"><div style="flex:1">{{template "upick" (upick "to" (index $d.Access .ID) nil "multi" "depts" "ph" (t "docs.access_all"))}}</div><button class="ghost" title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
     <td><form method="post" action="/crm/documents/{{.ID}}/delete" data-confirm="{{t "docs.delete_confirm"}}"><button class="ghost">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody>
-</table>{{else}}<div class="empty">{{t "docs.none"}}</div>{{end}}</div>
-<div class="card" style="max-width:720px" id="numerators">
+</table>{{else}}<div class="empty">{{t "docs.none"}}</div>{{end}}</div>{{end}}
+{{if $d.Perms.Can "settings"}}<div class="card" style="max-width:720px" id="numerators">
   <h2>{{icon "list"}} {{t "docs.numerators"}}</h2>
   <p class="small muted">{{t "docs.numerators_hint"}}</p>
   {{range $d.Numerators}}<details class="numerator"><summary><b>{{.Name}}</b> · <code>{{.Format}}</code> · {{t "docs.num.next"}}: <b>{{.Preview $d.Now}}</b>
@@ -21,16 +32,16 @@
   </details>{{end}}
   <details><summary>{{icon "plus"}} {{t "docs.numerator_new"}}</summary>{{template "numform" (dict "Resets" $d.Resets)}}</details>
   <p class="small muted">{{t "docs.numerator_hint"}} {{t "docs.num.save_hint"}}</p>
-</div>
-<div class="card" style="max-width:720px">
+</div>{{end}}
+{{if $d.Perms.Can "templates"}}<div class="card" style="max-width:720px">
   <h2>{{icon "files"}} {{t "docs.builtin"}}</h2>
   <form method="post" action="/crm/documents/builtin" class="row">
     <select name="kind" aria-label="{{t "docs.builtin"}}" style="flex:1">{{range $d.Builtins}}<option value="{{.}}">{{t (print "docs.builtin." .)}}</option>{{end}}</select>
     <button class="primary">{{icon "plus"}} {{t "common.add"}}</button>
   </form>
   <p class="small muted">{{t "docs.builtin_hint"}}</p>
-</div>
-<div class="card" style="max-width:720px" id="my-company">
+</div>{{end}}
+{{if $d.Perms.Can "settings"}}<div class="card" style="max-width:720px" id="my-company">
   <h2>{{t "docs.my_company"}}</h2>
   <form method="post" action="/crm/documents/my-company" class="row">
     <select name="company" aria-label="{{t "docs.my_company"}}" style="flex:1"><option value="">{{t "docs.my_company_none"}}</option>
@@ -47,13 +58,13 @@
     {{if $f}}<form method="post" action="/crm/documents/image"><input type="hidden" name="kind" value="{{.}}"><input type="hidden" name="remove" value="1"><button class="ghost small">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}
   </div>{{end}}</div>
   <p class="small muted">{{t "docs.images_hint"}}</p>
-</div>
-<div class="card" style="max-width:720px">
+</div>{{end}}
+{{if $d.Perms.Can "templates"}}<div class="card" style="max-width:720px">
   <h2>{{icon "plus"}} {{t "docs.new"}}</h2>
   <form method="post" action="/crm/documents" enctype="multipart/form-data">
     <div class="grid">
       <div><label>{{t "form.name"}}</label><input type="text" name="name" required maxlength="200" placeholder="{{t "docs.name_hint"}}"></div>
-      <div><label>{{t "docs.for"}}</label><select name="entity">{{range list "deal" "lead" "contact" "company" "invoice" "employee"}}<option value="{{.}}">{{t (print "docs.entity." .)}}</option>{{end}}</select></div>
+      <div><label>{{t "docs.for"}}</label><select name="entity">{{range list "deal" "lead" "contact" "company" "invoice" "employee"}}<option value="{{.}}">{{t (print "docs.entity." .)}}</option>{{end}}{{if $d.Types}}<optgroup label="{{t "crm.types"}}">{{range $d.Types}}<option value="type:{{.ID}}">{{.Name}}</option>{{end}}</optgroup>{{end}}</select></div>
     </div>
     <label>{{t "docs.file"}} (.docx)</label><input type="file" name="file" accept=".docx" required>
     <p><button class="primary">{{icon "cloud-upload"}} {{t "files.upload"}}</button></p>
@@ -83,7 +94,7 @@
     {{range list "Total" "TotalWords" "TaxTotal" "TotalNet" "ProductsCount" "PaymentQR"}}{{template "docfield" (list . (t (print "docs.f." .)))}}{{end}}</div>
     <p class="small muted">{{t "docs.fields_products_hint"}} {{t "docs.qr_hint"}}</p></details>
   <p class="small muted">{{t "docs.fields_custom"}}</p>
-</div>
+</div>{{end}}
 {{end}}
 
 {{define "numform"}}{{$n := .N}}<form method="post" action="/crm/documents/numerators">{{if $n}}<input type="hidden" name="id" value="{{$n.ID}}">{{end}}

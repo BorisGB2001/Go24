@@ -26,9 +26,9 @@ const hrMax = 1000
 var employeeFields = []string{"Name", "LastName", "FirstName", "SecondName", "Position", "Department", "Email", "Phone",
 	"Birthday", "Date"}
 
-// signHRAllowed: administrators and HR officers send HR documents.
+// signHRAllowed: administrators, HR officers and those with the right «hr» send HR documents.
 func (s *Server) signHRAllowed(r *http.Request, sess auth.Session) bool {
-	if sess.Admin {
+	if sess.Admin || s.signPerms(r.Context(), sess).Has("hr", "all") {
 		return true
 	}
 	if s.Company == nil {
@@ -40,7 +40,7 @@ func (s *Server) signHRAllowed(r *http.Request, sess auth.Session) bool {
 
 // signHRTemplates are the templates «Сотрудник» the user may use.
 func (s *Server) signHRTemplates(r *http.Request, sess auth.Session) ([]crm.DocTemplate, error) {
-	list, err := s.CRM.DocTemplates(r.Context(), crm.TemplateEmployee)
+	list, err := s.CRM.ActiveDocTemplates(r.Context(), crm.TemplateEmployee)
 	if err != nil {
 		return nil, err
 	}
@@ -258,9 +258,16 @@ func (s *Server) signHRSend(r *http.Request, sess auth.Session, title, tplID, si
 }
 
 // hrDocument fills the template's copy for one employee: the number and date by the template's numerator (when a
-// template of go24, tplID), then the values.
+// template of go24, tplID, with the values by default of its fields and their rows hidden when empty), then the values.
 func (s *Server) hrDocument(r *http.Request, tplID string, tpl []byte, values map[string]string, images map[string]docgen.Image) ([]byte, error) {
+	var hide map[string]bool
 	if tplID != "" {
+		fields, err := s.CRM.DocTemplateFields(r.Context(), tplID)
+		if err != nil {
+			return nil, err
+		}
+		crm.FieldDefaults(fields, values)
+		hide = crm.HiddenFields(fields)
 		now := time.Now()
 		n, err := s.CRM.NextDocNumber(r.Context(), tplID, now)
 		if err != nil {
@@ -268,7 +275,7 @@ func (s *Server) hrDocument(r *http.Request, tplID string, tpl []byte, values ma
 		}
 		values["DocumentNumber"], values["DocumentDate"] = n, now.Format(s.tr(r, "format.date"))
 	}
-	data, err := docgen.Make(tpl, values, nil, images)
+	data, err := docgen.MakeHiding(tpl, values, nil, images, hide)
 	if err != nil {
 		return nil, i18n.E("err.doc_not_docx")
 	}

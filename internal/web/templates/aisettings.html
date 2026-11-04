@@ -2,13 +2,14 @@
 <div class="card stack" id="ai-{{$c.ID}}">
   {{if $edit}}<form method="post" action="/settings/ai" class="stack">
     <input type="hidden" name="id" value="{{$c.ID}}"><input type="hidden" name="scope" value="{{.Scope}}">
-    {{template "aifields" dict "C" $c "Providers" .Providers}}
+    {{template "aifields" dict "C" $c "Providers" .Providers "Company" (eq .Scope "company")}}
     <div class="row"><button class="primary">{{t "common.save"}}</button>
       <button class="ghost" formaction="/settings/ai/{{$c.ID}}/check">{{icon "check"}} {{t "ai.check"}}</button></div>
   </form>
   <form method="post" action="/settings/ai/{{$c.ID}}/delete" data-confirm="{{t "ai.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>
   {{else}}<h3>{{$c.Name}}{{if $c.Default}} <span class="badge">{{t "ai.default"}}</span>{{end}}</h3>
-  <p class="small">{{t (printf "ai.provider.%s" $c.Provider)}}{{if $c.Model}} · {{$c.Model}}{{end}}</p>{{end}}
+  <p class="small">{{t (printf "ai.provider.%s" $c.Provider)}}{{if $c.Model}} · {{$c.Model}}{{end}}</p>
+  {{if $c.MonthlyLimit}}<p class="small muted">{{t "ai.monthly_limit"}}: {{$c.MonthlyLimit}}</p>{{end}}{{end}}
   <p class="small">{{if $c.CheckError}}<span class="danger">✗ {{$c.CheckError}}</span>{{else if $c.CheckedAt}}✓ {{t "ai.checked"}} {{date $c.CheckedAt}}{{end}}</p>
 </div>{{end}}
 
@@ -18,6 +19,11 @@
 <label class="small">{{t "ai.base_url"}} <input type="url" name="base_url" value="{{$c.BaseURL}}" placeholder="{{t "ai.base_url_ph"}}" autocomplete="off"></label>
 <label class="small">{{t "ai.model"}} <input type="text" name="model" value="{{$c.Model}}" placeholder="{{t "ai.model_ph"}}" autocomplete="off"></label>
 <label class="small">{{t "ai.key"}} <input type="password" name="key" autocomplete="new-password" placeholder="{{if $c.KeyTail}}…{{$c.KeyTail}}{{end}}"></label>
+<div class="row">
+  <label class="small">{{t "ai.price_in"}} <input type="text" inputmode="decimal" name="price_in" value="{{if $c.PriceIn}}{{$c.PriceIn}}{{end}}" placeholder="0" size="8"></label>
+  <label class="small">{{t "ai.price_out"}} <input type="text" inputmode="decimal" name="price_out" value="{{if $c.PriceOut}}{{$c.PriceOut}}{{end}}" placeholder="0" size="8"></label>
+</div>
+{{if .Company}}<label class="small">{{t "ai.monthly_limit"}} <input type="number" min="0" step="1000" name="monthly_limit" value="{{if $c.MonthlyLimit}}{{$c.MonthlyLimit}}{{end}}" placeholder="{{t "ai.no_limit"}}"></label>{{end}}
 <label class="small"><input type="checkbox" name="default" value="1" {{if $c.Default}}checked{{end}}> {{t "ai.make_default"}}</label>
 {{end}}
 
@@ -25,6 +31,7 @@
 {{$d := .Data}}
 <h1>{{icon "sparkles"}} {{t "ai.title"}}</h1>
 <p class="muted small">{{t "ai.hint"}}</p>
+{{if $d.Denied}}<div class="card" id="ai-denied">{{icon "lock"}} {{t "err.ai_denied"}}</div>{{end}}
 
 <form method="post" action="/settings/ai/choice" class="card stack">
   <h2>{{t "ai.choice"}}</h2>
@@ -34,8 +41,20 @@
     {{range $d.Mine}}<option value="{{.ID}}" {{if eq .ID $d.Chosen}}selected{{end}}>{{t "ai.mine"}}: {{.Name}}</option>{{end}}
   </select>
   <p class="small">{{if $d.Using}}{{range $d.Company}}{{if eq .ID $d.Using}}{{t "ai.using"}}: {{t "ai.company"}} — {{.Name}}{{end}}{{end}}{{range $d.Mine}}{{if eq .ID $d.Using}}{{t "ai.using"}}: {{t "ai.mine"}} — {{.Name}}{{end}}{{end}}{{else}}{{t "ai.none"}}{{end}}</p>
-  <div><button class="primary">{{t "common.save"}}</button></div>
+  {{if $d.Quota.Limit}}<p class="small">{{t "ai.quota" $d.Used $d.Limit}}{{if $d.Quota.Own}} · {{t "ai.quota_own"}}{{end}}</p>
+  <progress max="{{$d.Quota.Limit}}" value="{{$d.Quota.Used}}"></progress>{{end}}
+  <div class="row"><button class="primary">{{t "common.save"}}</button>
+    <a class="button ghost" href="/settings/ai/usage">{{icon "chart-bar"}} {{t "ai.usage.title"}}</a></div>
 </form>
+
+{{with $d.Policy}}<form method="post" action="/settings/ai/policy" class="card stack" id="ai-policy">
+  <h2>{{t "ai.policy.title"}}</h2>
+  <p class="muted small">{{t "ai.policy.hint"}}</p>
+  <div class="small muted">{{t "ai.policy.tools"}}</div>
+  <div class="row wrap">{{$off := .Off}}{{range .Tools}}<label class="check"><input type="checkbox" name="on" value="{{.}}" {{if not (has $off .)}}checked{{end}}> {{t (printf "ai.tool.%s" .)}}</label>{{end}}</div>
+  <div><div class="small muted">{{t "ai.policy.whom"}}</div>{{template "upick" (upick "who" .Sel .Users "multi" "depts" "+all" (t "ipaccess.all") "ph" (t "ipaccess.whom_ph"))}}</div>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>{{end}}
 
 <h2>{{t "ai.company_title"}}</h2>
 <p class="muted small">{{if $.User.Admin}}{{t "ai.company_hint_admin"}}{{else}}{{t "ai.company_hint"}}{{end}}</p>
@@ -43,7 +62,7 @@
 {{range $d.Company}}{{template "aiconn" dict "C" . "Edit" $.User.Admin "Scope" "company" "Providers" $d.Providers}}{{end}}
 {{if $.User.Admin}}<form method="post" action="/settings/ai" class="card stack">
   <h3>{{t "ai.add"}}</h3><input type="hidden" name="scope" value="company">
-  {{template "aifields" dict "C" $d.New "Providers" $d.Providers}}
+  {{template "aifields" dict "C" $d.New "Providers" $d.Providers "Company" true}}
   <div><button class="primary">{{t "common.add"}}</button></div>
 </form>{{end}}
 </div>

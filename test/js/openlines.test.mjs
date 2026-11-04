@@ -1,5 +1,5 @@
 // «Открытые линии»: «Быстрые ответы» after «/» in the reply and by the button; the list and the open dialogue refresh
-// when the server says a dialogue changed; a file to the reply, «печатает…» both ways, in jsdom.
+// when the server says a dialogue changed; a file to the reply, «печатает…» both ways; CoPilot «Подсказать ответ», in jsdom.
 // node test/js/openlines.test.mjs
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
@@ -12,7 +12,8 @@ const page = (list, msgs) => `<!doctype html><body><div data-ol data-current="s1
   <nav data-ol-list>${list}</nav><div data-ol-msgs>${msgs}</div>
   <div data-ol-typing hidden>Клиент печатает…</div>
   <form data-ol-typing-url="/openlines/s/s1/typing"><div data-ol-quick-list="${quick}"><textarea name="body" data-ol-reply></textarea><div data-ol-quick hidden></div></div>
-  <input type="file" name="file" data-ol-file><span data-ol-file-name></span><button type="button" data-ol-quick-btn></button></form></div>
+  <input type="file" name="file" data-ol-file><span data-ol-file-name></span><button type="button" data-ol-quick-btn></button>
+  <button type="button" data-ol-suggest="/openlines/s/s1/suggest" data-wait="CoPilot пишет…"></button></form></div>
   <template data-ol-quick-empty>Нет</template></body>`;
 const dom = new JSDOM(page('<a>Иван</a>', '<div>Привет</div>'), { runScripts: 'outside-only', url: 'http://go24.test/openlines?s=s1' });
 const w = dom.window, d = w.document;
@@ -97,5 +98,26 @@ assert.equal(d.querySelector('[data-ol-file-name]').textContent, 'bill.pdf');
 ev = new w.Event('submit', { cancelable: true });
 form.dispatchEvent(ev);
 assert.equal(ev.defaultPrevented, false, 'a file alone is a reply');
+
+// CoPilot «Подсказать ответ»: the draft replaces the field; an error is told and the field is kept
+const hint = d.querySelector('[data-ol-suggest]');
+let answer = { text: 'Возврат оформим завтра.' };
+w.fetch = async (u, o) => { posts.push(u + ' ' + o?.method); return { ok: true, json: async () => answer }; };
+const alerts = [];
+w.alert = m => alerts.push(m);
+reply.value = 'черновик';
+hint.click();
+assert.equal(hint.disabled, true);
+assert.equal(reply.placeholder, 'CoPilot пишет…');
+await new Promise(r => setTimeout(r, 10));
+assert.equal(posts.at(-1), '/openlines/s/s1/suggest POST');
+assert.equal(reply.value, 'Возврат оформим завтра.');
+assert.equal(hint.disabled, false);
+assert.equal(reply.placeholder, '');
+answer = { error: 'Нет подключения ИИ' };
+hint.click();
+await new Promise(r => setTimeout(r, 10));
+assert.deepEqual(alerts, ['Нет подключения ИИ']);
+assert.equal(reply.value, 'Возврат оформим завтра.');
 
 console.log('openlines: ok');

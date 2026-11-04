@@ -13,9 +13,11 @@ require (
 
 require rsc.io/qr v0.2.0
 
+require golang.org/x/image v0.21.0
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
+	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.2 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect

@@ -35,7 +35,8 @@ func (s *Store) Sessions(ctx context.Context, f Filter) ([]Session, error) {
 	case f.Tab == "closed":
 		where = append(where, `s.status = 'closed'`)
 	case f.Tab == "mine":
-		where = append(where, `s.status = 'open'`, `s.operator_id::text = `+arg(f.UserID))
+		me := arg(f.UserID)
+		where = append(where, `s.status = 'open'`, `(s.operator_id::text = `+me+` OR `+me+` = ANY(s.invited::text[]))`)
 	case f.Tab == "noanswer":
 		where = append(where, `s.status = 'open'`, `s.waiting_since IS NOT NULL`)
 	default:
@@ -53,7 +54,7 @@ func (s *Store) Sessions(ctx context.Context, f Filter) ([]Session, error) {
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Session])
 }
 
-// Counts are the open dialogues of the tabs «mine», «noanswer», «all» (the counters on them).
+// Counts are the open dialogues of the tabs «mine» (with those the user is invited into), «noanswer», «all» (the counters on them).
 func (s *Store) Counts(ctx context.Context, x Who) (map[string]int, error) {
 	var mine, noanswer, all int
 	args := []any{x.UserID}
@@ -61,7 +62,7 @@ func (s *Store) Counts(ctx context.Context, x Who) (map[string]int, error) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
-	err := s.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE s.operator_id::text = $1), count(*) FILTER (WHERE s.waiting_since IS NOT NULL), count(*)
+	err := s.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE s.operator_id::text = $1 OR $1 = ANY(s.invited::text[])), count(*) FILTER (WHERE s.waiting_since IS NOT NULL), count(*)
 		FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id) WHERE s.status = 'open' AND EXISTS (SELECT 1 FROM ol_messages m WHERE m.session_id = s.id)
 		AND `+x.cond(arg), args...).Scan(&mine, &noanswer, &all)
 	return map[string]int{"mine": mine, "noanswer": noanswer, "all": all}, err
@@ -100,7 +101,8 @@ func (s *Store) transfer(ctx context.Context, by, id, to string) error {
 	if !ok || status != "open" || (from != nil && *from == to) {
 		return i18n.E("err.ol_transfer")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = $2::uuid, assigned_at = now(), tried = '{}', bot_node = NULL WHERE id::text = $1`, id, to); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = $2::uuid, assigned_at = now(), tried = '{}', bot_node = NULL,
+		invited = array_remove(invited, $2::uuid) WHERE id::text = $1`, id, to); err != nil {
 		return err
 	}
 	// the earlier notifications of the dialogue are read: the new operator gets one of the transfer, the former one —
@@ -132,6 +134,27 @@ func (s *Store) transfer(ctx context.Context, by, id, to string) error {
 		return err
 	}
 	return s.follow(ctx, id)
+}
+
+// Skip: the operator turns their open dialogue down (imopenlines.operator.skip of the REST) — it goes to the
+// next one of the queue, as when they do not answer in time.
+func (s *Store) Skip(ctx context.Context, by, id string) error {
+	var line, op, status string
+	err := s.db.QueryRow(ctx, `SELECT coalesce(queue_id, widget_id)::text, coalesce(operator_id::text, ''), status FROM ol_sessions WHERE id::text = $1`,
+		id).Scan(&line, &op, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if status != "open" || op != by {
+		return i18n.E("err.ol_skip")
+	}
+	w, err := s.Widget(ctx, line)
+	if err != nil {
+		return err
+	}
+	return s.passOn(ctx, w, id, by)
 }
 
 // Spam closes the dialogue (without the closing message) and stops taking the visitor's messages; «Открыть снова»

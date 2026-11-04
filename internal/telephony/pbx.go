@@ -29,8 +29,9 @@ const Realm = "go24"
 
 // Render is the PJSIP configuration of the lines (deploy/asterisk/pjsip.conf includes it): an endpoint, its password
 // and its registrations for the SIP phone and for the softphone (WebRTC) of each employee. record: their calls are
-// recorded (the dialplan sees GO24_RECORD). A call they transfer goes to go24-transfer of the dialplan.
-func Render(lines []Line, record bool) string {
+// recorded (the dialplan sees GO24_RECORD). A call they transfer goes to go24-transfer of the dialplan. pick: the
+// groups whose calls each employee takes with *8 (pickup.go), by their ids; nil — nobody takes the colleagues' calls.
+func Render(lines []Line, record bool, pick map[string][]string) string {
 	var b strings.Builder
 	b.WriteString("; go24 writes this file (Settings → Telephony): do not edit it by hand\n")
 	for _, l := range lines {
@@ -41,6 +42,12 @@ func Render(lines []Line, record bool) string {
 		vars := "set_var = TRANSFER_CONTEXT=go24-transfer\n" // a transferred call goes there
 		if record {
 			vars += "set_var = GO24_RECORD=1\n"
+		}
+		if pick != nil {
+			vars += "set_var = GO24_PICKOK=1\n"
+			if gs := pick[l.UserID]; len(gs) > 0 {
+				vars += "named_call_group = " + strings.Join(gs, ",") + "\nnamed_pickup_group = " + strings.Join(gs, ",") + "\n"
+			}
 		}
 		for _, acc := range []struct {
 			login, password, media string
@@ -212,6 +219,7 @@ func (p *PBX) Sync(ctx context.Context) error {
 	var groups []Group
 	prefs := map[string]Prefs{}
 	record := false
+	var pick map[string][]string
 	if on {
 		if lines, err = p.Lines(ctx); err != nil {
 			return err
@@ -236,6 +244,17 @@ func (p *PBX) Sync(ctx context.Context) error {
 		}
 		if prefs, err = p.AllPrefs(ctx); err != nil {
 			return err
+		}
+		picking, err := p.Picking(ctx)
+		if err != nil {
+			return err
+		}
+		if picking {
+			deps, err := p.PickupGroups(ctx)
+			if err != nil {
+				return err
+			}
+			pick = pickupGroups(deps, groups)
 		}
 	}
 	numbers := map[string]string{}
@@ -277,7 +296,7 @@ func (p *PBX) Sync(ctx context.Context) error {
 		text   string
 		module string
 	}{
-		{&p.pjsip, "pjsip.conf", Render(lines, record) + accounts, "res_pjsip.so"},
+		{&p.pjsip, "pjsip.conf", Render(lines, record, pick) + accounts, "res_pjsip.so"},
 		{&p.queues, "queues.conf", queueConf, "app_queue.so"},
 		{&p.moh, "musiconhold.conf", mohConf, "res_musiconhold.so"},
 		{&p.dialplan, "extensions.conf", dialplan, "pbx_config.so"},
@@ -286,7 +305,14 @@ func (p *PBX) Sync(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	// whom the clients' calls pass by now (a global keeps no file: set it every time, Asterisk may have restarted)
+	off := map[string]string{}
+	if on {
+		if off, err = p.Unavailable(ctx, time.Now()); err != nil {
+			return err
+		}
+	}
+	return p.ARI.SetGlobal(ctx, "GO24_OFF", OffList(lines, off))
 }
 
 // sounds writes the beep and the greetings of the lines, the voice menus and the robots' messages the dialplan plays (files named by their
@@ -306,6 +332,7 @@ func (p *PBX) sounds(ctx context.Context, trunks []Trunk, menus []Menu, groups [
 	for _, t := range trunks {
 		all = append(all, sound{t.GreetingSum, t.ID, p.TrunkGreeting})
 		all = append(all, sound{t.RateSum, t.ID, p.TrunkRatePrompt})
+		all = append(all, sound{t.RecNoteSum, t.ID, p.TrunkRecordNotice})
 	}
 	for _, m := range menus {
 		all = append(all, sound{m.GreetingSum, m.ID, p.MenuGreeting})

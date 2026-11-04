@@ -201,4 +201,26 @@ func TestBPAPI(t *testing.T) {
 	call("DELETE", "/api/v1/bp/templates/"+made.ID, annaKey, nil, 204, nil)
 	call("DELETE", "/api/v1/bp/templates/"+made.ID, annaKey, nil, 404, nil)
 	call("GET", "/api/v1/bp/instances/"+x.ID, eveKey, nil, 404, nil) // its processes go with it, as on the page
+
+	// statuses and commands: Boris presses a button of the step, the process shows the status
+	var st struct{ ID string }
+	call("POST", "/api/v1/bp/templates", annaKey, map[string]any{"name": "Статусы", "active": true, "steps": []map[string]any{
+		{"kind": "status", "text": "Новый"},
+		{"kind": "commands", "to": boris, "commands": []map[string]any{{"title": "В работу"}, {"title": "Отказ", "goto": 4}}},
+		{"kind": "status", "text": "В работе"},
+		{"kind": "status", "text": "Отказ"}}}, 201, &st)
+	var z apiBPInstance
+	call("POST", "/api/v1/bp/templates/"+st.ID+"/start", eveKey, map[string]any{}, 201, &z)
+	call("GET", "/api/v1/bp/instances/"+z.ID, borisKey, nil, 200, &z)
+	if z.Label != "Новый" || len(z.Commands) != 2 || z.Step != 2 {
+		t.Fatalf("with statuses %+v", z)
+	}
+	call("POST", "/api/v1/bp/instances/"+z.ID+"/command", eveKey, map[string]any{"step": 2, "command": "Отказ"}, 422, nil)
+	call("POST", "/api/v1/bp/instances/"+z.ID+"/command", borisKey, map[string]any{"step": 2, "command": "Нет такой"}, 422, nil)
+	id := z.ID
+	z = apiBPInstance{}
+	call("POST", "/api/v1/bp/instances/"+id+"/command", borisKey, map[string]any{"step": 2, "command": "Отказ"}, 200, &z)
+	if z.Label != "Отказ" || z.Status != "done" || z.Commands != nil {
+		t.Fatalf("pressed %+v", z)
+	}
 }

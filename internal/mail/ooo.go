@@ -143,6 +143,18 @@ func (o OOO) text(inside, wrote bool) (string, bool) {
 	return o.External, true
 }
 
+// oooDefault is go24's own reply when the user left the text empty.
+func (s *Store) oooDefault(st OOOState) string {
+	if st.Until == nil {
+		return s.tr("mail.ooo.default")
+	}
+	layout := "02.01.2006"
+	if s.Tr != nil {
+		layout = s.tr("format.date")
+	}
+	return s.tr("mail.ooo.default_until", st.Until.In(time.Local).Format(layout))
+}
+
 // autoReply answers the new letters of a mailbox when the user's automatic replies are on.
 func (s *Store) autoReply(ctx context.Context, userID, mailboxID string, news []arrived) error {
 	o, st, err := s.OOONow(ctx, userID, time.Now())
@@ -191,13 +203,7 @@ func (s *Store) autoReply(ctx context.Context, userID, mailboxID string, news []
 			continue
 		}
 		if strings.TrimSpace(text) == "" {
-			if text = s.tr("mail.ooo.default"); st.Until != nil {
-				layout := "02.01.2006"
-				if s.Tr != nil {
-					layout = s.tr("format.date")
-				}
-				text = s.tr("mail.ooo.default_until", st.Until.In(time.Local).Format(layout))
-			}
+			text = s.oooDefault(st)
 		}
 		tag, err := s.db.Exec(ctx, `INSERT INTO mail_ooo_sent (user_id, sender, period) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, userID, from, st.period)
 		if err != nil {

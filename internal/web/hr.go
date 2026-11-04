@@ -102,8 +102,23 @@ func (s *Server) vacationReport(w http.ResponseWriter, r *http.Request, sess aut
 			}
 		}
 	}
+	balances, err := s.Company.VacationBalances(r.Context(), year, nil, time.Now()) // «Положено» and «Остаток»
+	if err != nil {
+		s.taskErr(w, r, err, "/company/absences")
+		return
+	}
 	if q.Get("format") == "csv" {
-		s.vacationCSV(w, r, year, report)
+		s.vacationCSV(w, r, year, report, balances)
+		return
+	}
+	set, err := s.Company.VacationSettings(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/company/absences")
+		return
+	}
+	canSet, err := s.Company.CanVacation(r.Context(), sess.UserID, sess.Admin)
+	if err != nil {
+		s.taskErr(w, r, err, "/company/absences")
 		return
 	}
 	_, depts, err := s.Company.Tree(r.Context())
@@ -113,7 +128,7 @@ func (s *Server) vacationReport(w http.ResponseWriter, r *http.Request, sess aut
 	}
 	s.render(w, r, "vacations", page{TitleKey: "vacation.report", Nav: "absences", Data: map[string]any{
 		"Report": report, "Year": year, "Dept": q.Get("dept"), "Depts": depts, "People": len(people), "Days": days, "NoPlan": len(noPlan),
-		"Keep": fmt.Sprintf("year=%d&dept=%s", year, q.Get("dept")),
+		"Keep": fmt.Sprintf("year=%d&dept=%s", year, q.Get("dept")), "Balances": balances, "Settings": set, "CanSet": canSet,
 	}})
 }
 
@@ -135,14 +150,15 @@ func deptBranch(report []company.VacationDept, id string) []company.VacationDept
 	return out
 }
 
-func (s *Server) vacationCSV(w http.ResponseWriter, r *http.Request, year int, report []company.VacationDept) {
+func (s *Server) vacationCSV(w http.ResponseWriter, r *http.Request, year int, report []company.VacationDept, balances map[string]company.VacationBalance) {
 	tr := func(k string) string { return s.tr(r, k) }
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=vacations-%d.csv", year))
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
 	cw := csv.NewWriter(w)
 	cw.Comma = ';'
-	_ = cw.Write([]string{tr("vacation.col.dept"), tr("absence.who"), tr("profile.position"), tr("vacation.col.dates"), tr("vacation.col.days")})
+	_ = cw.Write([]string{tr("vacation.col.dept"), tr("absence.who"), tr("profile.position"), tr("vacation.col.dates"), tr("vacation.col.days"),
+		tr("vacation.col.entitled"), tr("vacation.col.left")})
 	for _, d := range report {
 		dept := d.Name
 		if d.ID == "" {
@@ -157,7 +173,8 @@ func (s *Server) vacationCSV(w http.ResponseWriter, r *http.Request, year int, r
 			if when == "" {
 				when = tr("vacation.no_plan")
 			}
-			_ = cw.Write([]string{dept, l.Name, l.Position, when, strconv.Itoa(l.Days)})
+			b := balances[l.ID]
+			_ = cw.Write([]string{dept, l.Name, l.Position, when, strconv.Itoa(l.Days), strconv.Itoa(b.Days + b.Carried), strconv.Itoa(b.Left)})
 		}
 	}
 	cw.Flush()

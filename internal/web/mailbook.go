@@ -2,10 +2,13 @@ package web
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"go24/internal/auth"
+	"go24/internal/i18n"
 	"go24/internal/mail"
 )
 
@@ -49,11 +52,17 @@ func (s *Server) mailFind(ctx context.Context, userID, q, src string, people boo
 		}
 	}
 	if src == "" || src == "contact" {
-		if list, err := s.Mail.Contacts(ctx, userID, q, each(6)); err == nil {
+		if list, err := s.Mail.Contacts(ctx, userID, q, each(6), src == "contact" && !people); err == nil {
 			n := each(6)
 			for _, c := range list {
-				add(map[string]any{"name": c.Name, "email": c.Email, "kind": "contact", "id": c.ID, "company": c.Company,
-					"phone": c.Phone}, c.Email, &n)
+				item := map[string]any{"name": c.Name, "email": c.Email, "kind": "contact", "id": c.ID, "company": c.Company, "phone": c.Phone}
+				if c.Email == "" { // a phone's contact without an address: on its tab, to be changed, never a recipient
+					if len(out) < limit {
+						out = append(out, item)
+					}
+					continue
+				}
+				add(item, c.Email, &n)
 			}
 		} else {
 			s.Log.Warn("mail contacts", "err", err)
@@ -131,4 +140,47 @@ func (s *Server) mailContactDelete(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// mailContactsExport: «Экспорт в vCard» — the personal contacts in one .vcf, which phones, Outlook and Google import.
+func (s *Server) mailContactsExport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	list, err := s.Mail.ContactCards(r.Context(), sess.UserID)
+	if err != nil {
+		s.fail(w, "mail contacts export", err)
+		return
+	}
+	var b strings.Builder
+	for _, c := range list {
+		b.WriteString(c.VCard())
+	}
+	w.Header().Set("Content-Type", "text/vcard; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=contacts-"+time.Now().Format(time.DateOnly)+".vcf")
+	_, _ = io.WriteString(w, b.String())
+}
+
+// mailContactsImport: «Импорт» — a .vcf or .csv file (file) into the personal contacts → {added, updated, skipped}.
+func (s *Server) mailContactsImport(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	f, h, err := r.FormFile("file")
+	if err != nil {
+		s.jsonErr(w, r, i18n.E("err.mail_contacts_file"))
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		s.jsonErr(w, r, i18n.E("err.mail_contacts_file"))
+		return
+	}
+	res, err := s.Mail.ImportContacts(r.Context(), sess.UserID, h.Filename, data)
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// mailContactsPhone: «На телефоне» — the address of the CardDAV books for a phone or Outlook ("" — no API keys here).
+func (s *Server) mailContactsPhone(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	writeJSON(w, http.StatusOK, map[string]string{"url": s.carddavURL(r)})
 }

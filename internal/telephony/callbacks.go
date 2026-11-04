@@ -161,12 +161,33 @@ func (s *Store) CallbackRequests(ctx context.Context, callbackID string, limit i
 	})
 }
 
-// Working tells whether the line takes calls at t: it has no working hours, or t is in them.
+// HolidaysText is the line's holidays as people write them: «31.12» every year, «31.12.2026» once, one a line.
+func (t Trunk) HolidaysText() string {
+	var out []string
+	for _, h := range t.Holidays {
+		if d, err := time.Parse("2006-01-02", h); err == nil {
+			out = append(out, d.Format("02.01.2006"))
+		} else if d, err := time.Parse("01-02", h); err == nil {
+			out = append(out, d.Format("02.01"))
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// Working tells whether the line takes calls at t: it has no working hours, or t is in them (in the line's time zone,
+// not a holiday).
 func (t Trunk) Working(at time.Time) bool {
 	if !t.WorkOn {
 		return true
 	}
-	at = at.In(time.Local)
+	loc := time.Local
+	if l, err := time.LoadLocation(t.WorkTZ); t.WorkTZ != "" && err == nil {
+		loc = l
+	}
+	at = at.In(loc)
+	if slices.Contains(t.Holidays, at.Format("01-02")) || slices.Contains(t.Holidays, at.Format("2006-01-02")) {
+		return false
+	}
 	day := int(at.Weekday())
 	if day == 0 {
 		day = 7
@@ -227,10 +248,18 @@ func RenderCallbacks(cbs []Callback, trunks map[string]Trunk, numbers map[string
 		// the employee answered: the client is called through the line
 		fmt.Fprintf(&d, "\n[%[1]s-out]\nexten => _X.,1,Set(GO24_TO=${EXTEN})\n same => n,Goto(s,1)\nexten => _+X.,1,Set(GO24_TO=${EXTEN})\n same => n,Goto(s,1)\n"+
 			"exten => s,1,Set(GO24_LINE=%[2]s)\n same => n,Set(GO24_FROM=${SHARED(GO24_FROM)})\n%[4]s same => n,Set(CHANNEL(hangup_handler_push)=go24-cdr,s,1)\n same => n,Set(CHANNEL(hangup_handler_push)=go24-cb-end,s,1)\n"+
-			" same => n,Set(CALLERID(all)=%[2]s <%[2]s>)\n same => n,Gosub(go24-record,s,1)\n same => n,Dial(PJSIP/${GO24_TO}@%[3]s,60)\n same => n,Hangup()\n",
-			k, t.Number, t.Key(), rec)
+			" same => n,Set(CALLERID(all)=%[2]s <%[2]s>)\n same => n,Gosub(go24-record,s,1)\n same => n,Dial(PJSIP/${GO24_TO}@%[3]s,60%[5]s)\n same => n,Hangup()\n",
+			k, t.Number, t.Key(), rec, noteOpt(t.RecordNotice(record)))
 	}
 	return d.String()
+}
+
+// noteOpt is Dial's option playing the notice of recording to the one called when they answer ("" — none).
+func noteOpt(note string) string {
+	if note == "" {
+		return ""
+	}
+	return ",A(" + note + ")"
 }
 
 // Originate asks Asterisk to call Local/<number>@context (not optimized away: its hangup handlers run at the end of

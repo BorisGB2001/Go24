@@ -32,43 +32,61 @@ func (s *Server) crmExport(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	num := func(v float64) string { return strings.ReplaceAll(strconv.FormatFloat(v, 'f', -1, 64), ".", ",") }
 	when := func(t time.Time) string { return t.Local().Format(tr("format.datetime")) }
-	var err error
-	switch kind {
-	case "deals":
+	key := crmEntities[kind] // «Экспорт» of the rights: only the cards the user may export
+	if key == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if key == "deal" {
+		key = crm.PipelineKey(q.Get("pipeline"))
+	}
+	may, err := s.CRM.Exportable(r.Context(), sess.UserID, key)
+	switch {
+	case err != nil:
+	case kind == "deals":
 		var list []crm.Deal
 		if list, err = s.CRM.DealList(r.Context(), sess.UserID, q.Get("pipeline"), f); err == nil {
 			head = []string{"crm.f.title", "crm.f.stage", "crm.f.amount", "crm.f.currency", "crm.f.company", "crm.f.contact", "crm.f.deal_type", "crm.f.origin", "crm.f.responsible", "crm.f.created", "crm.f.comment"}
 			for _, d := range list {
+				if !may(d.Responsible.ID) {
+					continue
+				}
 				rows = append(rows, []string{d.Title, stage(d.Stage), num(d.Amount), d.Currency, d.Company.Name, d.Contact.Name, d.DealType.Text(tr), d.Origin.Text(tr), d.Responsible.Name, when(d.CreatedAt), d.Comment})
 			}
 		}
-	case "leads":
+	case kind == "leads":
 		var list []crm.Lead
 		if list, err = s.CRM.LeadList(r.Context(), sess.UserID, f); err == nil {
 			head = []string{"crm.f.title", "crm.f.stage", "crm.f.name", "crm.f.company_title", "crm.f.phone", "crm.f.email", "crm.f.origin", "crm.f.source_info", "crm.f.amount", "crm.f.currency", "crm.f.responsible", "crm.f.created", "crm.f.comment"}
 			for _, l := range list {
+				if !may(l.Responsible.ID) {
+					continue
+				}
 				rows = append(rows, []string{l.Title, stage(l.Stage), l.Name, l.CompanyTitle, l.Phone, l.Email, l.Origin.Text(tr), l.Source, num(l.Amount), l.Currency, l.Responsible.Name, when(l.CreatedAt), l.Comment})
 			}
 		}
-	case "contacts":
+	case kind == "contacts":
 		var list []crm.Contact
 		if list, err = s.CRM.Contacts(r.Context(), sess.UserID, q.Get("q"), ""); err == nil {
 			head = []string{"crm.f.name", "crm.f.position", "crm.f.company", "crm.f.phone", "crm.f.email", "crm.f.contact_type", "crm.f.origin", "crm.f.responsible", "crm.f.created", "crm.f.comment"}
 			for _, x := range list {
+				if !may(x.Responsible.ID) {
+					continue
+				}
 				rows = append(rows, []string{x.Name, x.Position, x.Company.Name, x.Phone, x.Email, x.ContactType.Text(tr), x.Origin.Text(tr), x.Responsible.Name, when(x.CreatedAt), x.Comment})
 			}
 		}
-	case "companies":
+	case kind == "companies":
 		var list []crm.Company
 		if list, err = s.CRM.Companies(r.Context(), sess.UserID, q.Get("q")); err == nil {
 			head = []string{"crm.f.title", "crm.f.phone", "crm.f.email", "crm.f.website", "crm.f.address", "crm.f.company_type", "crm.f.industry", "crm.f.responsible", "crm.f.created", "crm.f.comment"}
 			for _, c := range list {
+				if !may(c.Responsible.ID) {
+					continue
+				}
 				rows = append(rows, []string{c.Title, c.Phone, c.Email, c.Website, c.Address, c.CompanyType.Text(tr), c.Industry.Text(tr), c.Responsible.Name, when(c.CreatedAt), c.Comment})
 			}
 		}
-	default:
-		http.NotFound(w, r)
-		return
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
@@ -95,7 +113,7 @@ func (s *Server) crmImport(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		http.NotFound(w, r)
 		return
 	}
-	err := s.CRM.Check(r.Context(), sess.UserID, entity, "write", sess.UserID)
+	err := s.CRM.Check(r.Context(), sess.UserID, entity, "import", sess.UserID)
 	var table [][]string
 	if err == nil {
 		file, _, ferr := r.FormFile("file")

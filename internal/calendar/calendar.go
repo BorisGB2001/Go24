@@ -87,6 +87,10 @@ type Event struct {
 	ChatRoom string // «Чат встречи»: its messenger room ("" — none yet)
 	ReadOnly bool   // of a calendar connected by its link: changed there only (see SyncLink)
 	Status   string // Kind booking: the booking's status (its client is the Title, the resource — Where)
+	// options for its people, as «Ещё»: the invited may invite others (see Invite), the organizer does
+	// not hear of the answers, the invited do not see one another (Attendees has the viewer only, Others — how many more)
+	AllowInvite, QuietAnswers, HideGuests bool
+	Others                                int
 }
 
 // TimeZones offered in the meeting's form (any other IANA zone is taken too).
@@ -328,7 +332,8 @@ const selectSQL = `SELECT e.id::text, e.owner_id::text, u.name, coalesce(e.proje
 		e.repeat, e.repeat_every, e.repeat_until, e.repeat_days, e.repeat_count, e.reminds, e.accessibility, e.private,
 		coalesce(e.series_id::text, ''), e.series_at, coalesce(e.room_id::text, ''), coalesce(mr.name, ''), e.video, e.color, e.important,
 		coalesce(e.calendar_id::text, ''), coalesce(uc.name, ''), coalesce(uc.color, ''), e.timezone,
-		coalesce(e.category_id::text, ''), coalesce(ec.name, ''), e.chat_room, coalesce(uc.source_url, '') <> ''
+		coalesce(e.category_id::text, ''), coalesce(ec.name, ''), e.chat_room, coalesce(uc.source_url, '') <> '',
+		e.allow_invite, e.quiet_answers, e.hide_guests
 	FROM events e JOIN users u ON u.id = e.owner_id LEFT JOIN projects p ON p.id = e.project_id
 		LEFT JOIN meeting_rooms mr ON mr.id = e.room_id LEFT JOIN user_calendars uc ON uc.id = e.calendar_id
 		LEFT JOIN event_categories ec ON ec.id = e.category_id`
@@ -339,7 +344,8 @@ func scanEvent(r pgx.CollectableRow) (Event, error) {
 	err := r.Scan(&e.ID, &e.OwnerID, &e.OwnerName, &e.ProjectID, &e.ProjectKey, &e.ProjectName, &e.Company,
 		&e.Title, &e.Description, &e.Where, &e.Start, &e.End, &e.AllDay, &e.Repeat, &e.Every, &e.Until, &e.Days, &e.Count, &e.Reminds,
 		&e.Accessibility, &e.Private, &e.SeriesID, &e.SeriesAt, &e.RoomID, &e.RoomName, &e.Video, &e.Color, &e.Important,
-		&e.CalendarID, &e.CalendarName, &e.CalColor, &e.TZ, &e.CategoryID, &e.CategoryName, &e.ChatRoom, &e.ReadOnly)
+		&e.CalendarID, &e.CalendarName, &e.CalColor, &e.TZ, &e.CategoryID, &e.CategoryName, &e.ChatRoom, &e.ReadOnly,
+		&e.AllowInvite, &e.QuietAnswers, &e.HideGuests)
 	e.SeriesStart = e.Start
 	return e, err
 }
@@ -386,6 +392,17 @@ func (s *Store) scan(ctx context.Context, viewer string, rows pgx.Rows) ([]Event
 	for i := range list { // a private meeting: others (but admin mode) and the one who keeps the calendar see only that its people are busy
 		if e := &list[i]; e.Private && (e.OwnerID != viewer && e.MyStatus == "" || e.hiddenFrom(delegate)) && !tasks.IsAdmin(ctx) {
 			e.Hidden, e.Title, e.Description, e.Where, e.Attendees, e.ChatRoom = true, "", "", "", nil, ""
+		}
+		// «Скрыть список участников»: the invited see themselves only (the organizer, the one who keeps their calendar
+		// and admin mode see everyone)
+		if e := &list[i]; e.HideGuests && e.OwnerID != viewer && !tasks.IsAdmin(ctx) {
+			var me []Attendee
+			for _, a := range e.Attendees {
+				if a.ID == viewer {
+					me = append(me, a)
+				}
+			}
+			e.Others, e.Attendees = len(e.Attendees)-len(me), me
 		}
 		// one's own calendars are one's own: for others the meeting is in their main calendar
 		if e := &list[i]; e.OwnerID != viewer {
@@ -759,11 +776,12 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 			}
 			if err := tx.QueryRow(ctx, `INSERT INTO events (owner_id, project_id, company, title, description, location, starts_at, ends_at, all_day,
 				repeat, repeat_every, repeat_until, reminds, accessibility, private, room_id, video, color, important, calendar_id, timezone, category_id,
-				repeat_days, repeat_count)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, coalesce($23::integer[], '{}'), $24) RETURNING id`, viewer, project, e.Company, e.Title,
+				repeat_days, repeat_count, allow_invite, quiet_answers, hide_guests)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, coalesce($23::integer[], '{}'), $24,
+				$25, $26, $27) RETURNING id`, viewer, project, e.Company, e.Title,
 				strings.TrimSpace(e.Description), strings.TrimSpace(e.Where), e.Start, e.End, e.AllDay,
 				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal, e.TZ, category,
-				e.Days, e.Count).Scan(&id); err != nil {
+				e.Days, e.Count, e.AllowInvite, e.QuietAnswers, e.HideGuests).Scan(&id); err != nil {
 				return err
 			}
 			opened = category != nil
@@ -805,10 +823,11 @@ func (s *Store) Save(ctx context.Context, viewer string, e Event, invite []strin
 				starts_at = $7, ends_at = $8, all_day = $9, repeat = $10, repeat_every = $11, repeat_until = $12, reminds = $13,
 				accessibility = $14, private = $15, room_id = $16, video = $17, color = $18, important = $19,
 				calendar_id = CASE WHEN owner_id::text = $21 OR $2::uuid IS NOT NULL OR $3 THEN $20::uuid ELSE calendar_id END,
-				timezone = $22, category_id = $23, repeat_days = coalesce($24::integer[], '{}'), repeat_count = $25, updated_at = now() WHERE id = $1`, id, project, e.Company, e.Title,
+				timezone = $22, category_id = $23, repeat_days = coalesce($24::integer[], '{}'), repeat_count = $25,
+				allow_invite = $26, quiet_answers = $27, hide_guests = $28, updated_at = now() WHERE id = $1`, id, project, e.Company, e.Title,
 				strings.TrimSpace(e.Description), strings.TrimSpace(e.Where), e.Start, e.End, e.AllDay,
 				e.Repeat, e.Every, e.Until, e.Reminds, e.Accessibility, e.Private, room, e.Video, e.Color, e.Important, cal, viewer, e.TZ, category,
-				e.Days, e.Count); err != nil {
+				e.Days, e.Count, e.AllowInvite, e.QuietAnswers, e.HideGuests); err != nil {
 				return err
 			}
 		}
@@ -981,7 +1000,7 @@ func (s *Store) Delete(ctx context.Context, viewer, id string) error {
 	return err
 }
 
-// Respond is the invited person's answer (accepted | tentative | declined); the organizer is told.
+// Respond is the invited person's answer (accepted | tentative | declined); the organizer is told (but see QuietAnswers).
 func (s *Store) Respond(ctx context.Context, viewer, id, status string) error {
 	if status != "accepted" && status != "tentative" && status != "declined" {
 		return i18n.E("err.bad_form")
@@ -997,10 +1016,81 @@ func (s *Store) Respond(ctx context.Context, viewer, id, status string) error {
 			return ErrNotFound
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, event_id, body)
-			SELECT e.owner_id, $2, 'event_reply', e.id, $3 FROM events e WHERE e.id::text = $1 AND e.owner_id <> $2 AND NOT go24_quiet()`,
+			SELECT e.owner_id, $2, 'event_reply', e.id, $3 FROM events e WHERE e.id::text = $1 AND e.owner_id <> $2 AND NOT e.quiet_answers AND NOT go24_quiet()`,
 			id, viewer, status)
 		return err
 	})
+}
+
+// Invite adds people to the meeting from its page, as «Участники могут приглашать других»: its organizer
+// or, when the meeting lets them, one of its invited who has not declined. A collab's meeting takes its members only,
+// a guest is invited to a collab's meeting only. The newly invited are notified, and so is the organizer, when it is
+// someone else who invites. It returns the people added.
+func (s *Store) Invite(ctx context.Context, viewer, id string, people []string) ([]string, error) {
+	var added []string
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var owner, title, status string
+		var allow, collab, archived bool
+		err := tx.QueryRow(ctx, `SELECT e.owner_id::text, e.title, e.allow_invite, coalesce(a.status, ''),
+			coalesce(p.kind = 'collab', false), coalesce(p.archived, false)
+			FROM events e LEFT JOIN event_attendees a ON a.event_id = e.id AND a.user_id::text = $2
+			LEFT JOIN projects p ON p.id = e.project_id WHERE e.id::text = $1 AND e.category_id IS NULL
+				AND (e.calendar_id IS NULL OR NOT EXISTS (SELECT 1 FROM user_calendars c WHERE c.id = e.calendar_id AND c.source_url <> ''))
+			FOR UPDATE OF e`, id, viewer).Scan(&owner, &title, &allow, &status, &collab, &archived)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if owner != viewer && (!allow || status == "" || status == "declined") {
+			return ErrForbidden
+		}
+		if archived {
+			return i18n.E("err.collab_archived")
+		}
+		var want []string
+		for _, u := range people {
+			if u != "" && u != owner && !slices.Contains(want, u) {
+				want = append(want, u)
+			}
+		}
+		var strangers, guests bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events e, unnest($2::text[]) AS i(id)
+				WHERE e.id::text = $1 AND NOT EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = e.project_id AND m.user_id::text = i.id)),
+			EXISTS (SELECT 1 FROM users WHERE id::text = ANY($2::text[]) AND guest)`, id, want).Scan(&strangers, &guests); err != nil {
+			return err
+		}
+		if collab && strangers {
+			return i18n.E("err.collab_invite_members")
+		}
+		if !collab && guests {
+			return i18n.E("err.guest_collab_only")
+		}
+		rows, err := tx.Query(ctx, `INSERT INTO event_attendees (event_id, user_id)
+			SELECT $1::uuid, u.id FROM users u WHERE u.id::text = ANY($2::text[]) AND u.active ON CONFLICT DO NOTHING RETURNING user_id::text`, id, want)
+		if err != nil {
+			return err
+		}
+		if added, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil || len(added) == 0 {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, event_id, body)
+			SELECT u, $2, 'event', $1::uuid, $4 FROM unnest($3::uuid[]) u WHERE NOT go24_quiet()`, id, viewer, added, title); err != nil {
+			return err
+		}
+		if owner == viewer {
+			return nil
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO notifications (user_id, actor_id, kind, event_id, body)
+			SELECT $3::uuid, $2::uuid, 'event_invited', $1::uuid, string_agg(name, ', ' ORDER BY name)
+			FROM users WHERE id = ANY($4::uuid[]) AND NOT go24_quiet() HAVING count(*) > 0`, id, viewer, owner, added)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return added, nil
 }
 
 // RemindDue sends the reminders whose time has come: to the organizer and everyone invited who has not declined.

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -147,6 +148,38 @@ func TestTriggers(t *testing.T) {
 	must(s.MarkRead(ctx, watcher, 0))
 	if n, _ = s.Unread(ctx, watcher); n != 0 {
 		t.Errorf("after read all unread = %d", n)
+	}
+	// the search of «Уведомления»: section, words, author, period, unread; ✕ deletes one
+	count := func(f Filter) int {
+		t.Helper()
+		l, err := s.Search(ctx, watcher, f, 0, 50)
+		must(err)
+		return len(l)
+	}
+	all := count(Filter{})
+	today := time.Now()
+	day := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.Local)
+	if all < 2 || count(Filter{Group: "tasks"})+count(Filter{Group: "feed"}) != all || count(Filter{Group: "nope"}) != 0 {
+		t.Errorf("sections: all %d, tasks %d, feed %d", all, count(Filter{Group: "tasks"}), count(Filter{Group: "feed"}))
+	}
+	if count(Filter{Q: "всем"}) != 1 || count(Filter{Q: "Отчёт"}) == 0 || count(Filter{Q: "go-1"}) == 0 || count(Filter{Q: "%"}) != 0 {
+		t.Errorf("words: всем %d, Отчёт %d, %% %d", count(Filter{Q: "всем"}), count(Filter{Q: "Отчёт"}), count(Filter{Q: "%"}))
+	}
+	if count(Filter{ActorID: boss})+count(Filter{ActorID: worker}) != all || count(Filter{ActorID: watcher}) != 0 || count(Filter{Unread: true}) != 0 {
+		t.Errorf("author or unread filter is wrong")
+	}
+	if count(Filter{From: day, To: day}) != all || count(Filter{From: day.AddDate(0, 0, 1)}) != 0 || count(Filter{To: day.AddDate(0, 0, -1)}) != 0 {
+		t.Errorf("period filter is wrong")
+	}
+	if a, err := s.Actors(ctx, watcher); err != nil || len(a) != 2 || a[0].ID != boss || a[1].ID != worker {
+		t.Errorf("actors = %v, %v", a, err)
+	}
+	if err := s.Delete(ctx, worker, it.ID); err != ErrNotFound {
+		t.Errorf("deleting someone else's notification: %v", err)
+	}
+	must(s.Delete(ctx, watcher, it.ID))
+	if _, err := s.Get(ctx, watcher, strconv.FormatInt(it.ID, 10)); err != ErrNotFound || count(Filter{}) != all-1 {
+		t.Errorf("deleted notification is still there: %v", err)
 	}
 	// settings: a kind turned off is not written; the messenger choice is kept
 	must(s.SaveSettings(ctx, worker, map[string]bool{"comment": true}, true))

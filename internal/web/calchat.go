@@ -9,16 +9,19 @@ import (
 	"go24/internal/auth"
 	"go24/internal/calendar"
 	"go24/internal/i18n"
+	"go24/internal/matrixsync"
 )
 
 // «Чат встречи»: the messenger's group chat of the meeting's organizer and people, made by the
 // organizer on first use; those invited later and those who join an open event come into it too.
 
-// groupChats are the group chats of the messenger (s.Matrix; Chats in tests).
+// groupChats are the group chats of the messenger (s.Matrix; Chats in tests), of meetings and departments.
 type groupChats interface {
 	CreateGroup(ctx context.Context, userID, name string, ids []string, channel bool) (string, error)
 	AddToGroup(ctx context.Context, userID, room string, ids []string) error
 	SetGroupTopic(ctx context.Context, userID, room, topic string) error
+	RemoveFromGroup(ctx context.Context, userID, room, otherID string) error
+	Rooms(ctx context.Context, userID string) ([]matrixsync.Room, error)
 }
 
 func (s *Server) groupChats() groupChats {

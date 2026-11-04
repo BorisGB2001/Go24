@@ -26,7 +26,7 @@ import (
 )
 
 // TestChecklistRoutes: the card shows every checklist with its name; lists are added, renamed and deleted, items
-// pasted as a list, edited, marked important and dragged; «Сделать задачей» opens the subtask form with the text.
+// pasted as a list, edited, marked important, nested and dragged; «Сделать задачей» opens the subtask form with the text.
 func TestChecklistRoutes(t *testing.T) {
 	dbURL := os.Getenv("GO24_TEST_DATABASE_URL")
 	if dbURL == "" {
@@ -130,6 +130,14 @@ func TestChecklistRoutes(t *testing.T) {
 	}
 	if page, _ := do(anna, "GET", "/t/"+key, nil); !strings.Contains(page, `ck-item important`) {
 		t.Fatal("an important item is not marked on the card")
+	}
+	// «Сдвинуть вправо»: nested under the item above, which counts it
+	_, _ = do(anna, "POST", "/t/"+key+"/checklist/"+item, url.Values{"op": {"indent"}})
+	if c = card(); c.Checklists[1].Items[1].Level != 1 || c.Checklists[1].Items[0].Sub != 1 {
+		t.Fatalf("indent: %+v", c.Checklists[1].Items)
+	}
+	if page, _ := do(anna, "GET", "/t/"+key, nil); !strings.Contains(page, `data-level="1" style="--lvl:1"`) || !strings.Contains(page, "ck-sub") {
+		t.Fatal("a nested item is not shown nested")
 	}
 	if _, loc := do(anna, "POST", "/t/"+key+"/checklist/"+item, url.Values{"op": {"task"}, "title": {"Выводы"}}); loc !=
 		"/tasks/new?parent="+key+"&title=%D0%92%D1%8B%D0%B2%D0%BE%D0%B4%D1%8B" {

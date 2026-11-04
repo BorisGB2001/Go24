@@ -1,6 +1,7 @@
 package bp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -128,6 +129,11 @@ type File struct {
 	Stages      map[string]string `json:"stages,omitempty"`    // the stages of the steps: id → «code:…» or «name:…»
 	Templates   map[string]string `json:"templates,omitempty"` // the templates «Запуск бизнес-процесса» starts: id → name
 	Docs        map[string]string `json:"docs,omitempty"`      // the templates of documents «Создание документа» makes: id → name
+	Lists       map[string]string `json:"lists,omitempty"`     // the lists of the steps on their elements: id → name
+	Products    map[string]string `json:"products,omitempty"`  // the products «Добавление товара» adds: id → «sku:…» or «name:…»
+	Senders     map[string]string `json:"senders,omitempty"`   // the SMS providers of «Отправка SMS»: id → name
+	Apps        map[string]string `json:"apps,omitempty"`      // the actions of applications: id → the action's code
+	Types       map[string]string `json:"types,omitempty"`     // the smart processes «Создать» makes elements of: id → name
 }
 
 // person: who of a step is an employee, not «the starter», «the manager», a user field and the like.
@@ -179,7 +185,7 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 	}
 	f := File{Format: FileFormat, Version: 1, Name: t.Name, Description: t.Description, Entity: t.Entity, AutoCreate: t.AutoCreate,
 		AutoChange: t.AutoChange, Fields: t.Fields, Steps: t.Steps, People: map[string]string{}, Stages: map[string]string{},
-		Templates: map[string]string{}, Docs: map[string]string{}}
+		Templates: map[string]string{}, Docs: map[string]string{}, Lists: map[string]string{}, Products: map[string]string{}, Senders: map[string]string{}, Apps: map[string]string{}, Types: map[string]string{}}
 	if f.Fields == nil {
 		f.Fields = []Field{}
 	}
@@ -208,6 +214,37 @@ func (s *Store) Export(ctx context.Context, id string) (File, error) {
 		if doc := t.Steps[i].Doc; doc != "" {
 			if d, err := s.CRM.DocTemplate(ctx, doc); err == nil {
 				f.Docs[doc] = d.Name
+			}
+		}
+		if list := t.Steps[i].List; list != "" {
+			if l, err := s.list(ctx, list); err == nil {
+				f.Lists[list] = l.Name
+			}
+		}
+		if id := t.Steps[i].Product; id != "" {
+			if p, err := s.CRM.Product(ctx, id); err == nil {
+				f.Products[id] = "name:" + p.Name
+				if p.SKU != "" {
+					f.Products[id] = "sku:" + p.SKU
+				}
+			}
+		}
+		if id := t.Steps[i].Type; id != "" {
+			var name string
+			if s.db.QueryRow(ctx, `SELECT name FROM crm_types WHERE id::text = $1`, id).Scan(&name) == nil {
+				f.Types[id] = name
+			}
+		}
+		if id := t.Steps[i].Sender; id != "" {
+			var name string
+			if s.db.QueryRow(ctx, `SELECT name FROM sms_senders WHERE id::text = $1`, id).Scan(&name) == nil {
+				f.Senders[id] = name
+			}
+		}
+		if id := t.Steps[i].App; id != "" {
+			var code string
+			if s.db.QueryRow(ctx, `SELECT code FROM app_bp_activities WHERE id::text = $1`, id).Scan(&code) == nil {
+				f.Apps[id] = code
 			}
 		}
 	}
@@ -289,8 +326,23 @@ func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (new
 			}
 			return ""
 		})
+		if st.Type != "" { // the smart process of the same id, or else of the name
+			if err := s.db.QueryRow(ctx, `SELECT id::text FROM crm_types WHERE id::text = $1 OR lower(name) = lower($2) AND $2 <> ''
+				ORDER BY id::text = $1 DESC, created_at LIMIT 1`, st.Type, f.Types[st.Type]).Scan(&st.Type); errors.Is(err, pgx.ErrNoRows) {
+				return "", 0, i18n.E("err.bp_import_type", cmp.Or(f.Types[st.Type], st.Type))
+			} else if err != nil {
+				return "", 0, err
+			}
+		}
 		if st.Stage != "" {
-			if st.Stage, err = s.importStage(ctx, t, st.Stage, f.Stages[st.Stage]); err != nil {
+			entity, typeID := t.Entity, t.TypeID
+			if st.Kind == "crmmove" || st.Kind == "crmcopy" { // a deal's stage whatever the template's cards (of deals when not of deals)
+				entity, typeID = "deal", map[bool]string{true: t.TypeID}[t.Entity == "deal"]
+			}
+			if st.Kind == "create" { // of the pipelines of the smart process (of deals)
+				entity, typeID = "deal", st.Type
+			}
+			if st.Stage, err = s.importStage(ctx, entity, typeID, st.Stage, f.Stages[st.Stage]); err != nil {
 				return "", 0, i18n.E("err.bp_import_stage", i+1)
 			}
 		}
@@ -306,14 +358,48 @@ func (s *Store) Import(ctx context.Context, userID, id string, data []byte) (new
 				return "", 0, i18n.E("err.bp_import_doc", i+1, f.Docs[st.Doc])
 			}
 		}
+		if st.List != "" { // the same list, or one of the name
+			if err := s.db.QueryRow(ctx, `SELECT id::text FROM lists WHERE id::text = $1 OR lower(name) = lower($2) AND $2 <> ''
+				ORDER BY id::text = $1 DESC, created_at LIMIT 1`, st.List, f.Lists[st.List]).Scan(&st.List); err != nil {
+				return "", 0, i18n.E("err.bp_import_list", cmp.Or(f.Lists[st.List], st.List))
+			}
+		}
+		if st.Product != "" { // the same product, or one of the SKU or the name
+			key := f.Products[st.Product]
+			sku, _ := strings.CutPrefix(key, "sku:")
+			name, _ := strings.CutPrefix(key, "name:")
+			if sku == key {
+				sku = ""
+			}
+			if name == key {
+				name = ""
+			}
+			if err := s.db.QueryRow(ctx, `SELECT id::text FROM crm_products WHERE id::text = $1 OR $2 <> '' AND sku = $2 OR $3 <> '' AND lower(name) = lower($3)
+				ORDER BY id::text = $1 DESC, active DESC, created_at LIMIT 1`, st.Product, sku, name).Scan(&st.Product); err != nil {
+				return "", 0, i18n.E("err.bp_import_product", i+1, cmp.Or(sku, name, st.Product))
+			}
+		}
+		if st.Sender != "" { // the same provider, or one of the name, or else the default one
+			if s.db.QueryRow(ctx, `SELECT id::text FROM sms_senders WHERE id::text = $1 OR lower(name) = lower($2) AND $2 <> ''
+				ORDER BY id::text = $1 DESC, created_at LIMIT 1`, st.Sender, f.Senders[st.Sender]).Scan(&st.Sender) != nil {
+				st.Sender = ""
+			}
+		}
+		if st.App != "" { // the same action, or one of the code of an installed application
+			if err := s.db.QueryRow(ctx, `SELECT b.id::text FROM app_bp_activities b JOIN apps a ON a.id = b.app_id
+				WHERE a.installed_at IS NOT NULL AND (b.id::text = $1 OR b.code = $2 AND $2 <> '') ORDER BY b.id::text = $1 DESC, b.created_at LIMIT 1`,
+				st.App, f.Apps[st.App]).Scan(&st.App); err != nil {
+				return "", 0, i18n.E("err.bp_import_app", cmp.Or(f.Apps[st.App], st.App))
+			}
+		}
 	}
 	newID, err = s.SaveTemplate(ctx, userID, t)
 	return newID, missing, err
 }
 
-// importStage is the stage of this portal: the same id among the stages of the template's cards, or else one with
-// the code or name of key («code:…», «name:…»).
-func (s *Store) importStage(ctx context.Context, t Template, id, key string) (string, error) {
+// importStage is the stage of this portal: the same id among the stages of the cards (entity, a smart process typeID),
+// or else one with the code or name of key («code:…», «name:…»).
+func (s *Store) importStage(ctx context.Context, entity, typeID, id, key string) (string, error) {
 	code, _ := strings.CutPrefix(key, "code:")
 	name, _ := strings.CutPrefix(key, "name:")
 	if code == key {
@@ -326,6 +412,6 @@ func (s *Store) importStage(ctx context.Context, t Template, id, key string) (st
 	err := s.db.QueryRow(ctx, `SELECT st.id::text FROM crm_stages st LEFT JOIN crm_pipelines p ON p.id = st.pipeline_id
 		WHERE st.entity = $1 AND ($1 <> 'deal' OR coalesce(p.type_id::text, '') = $2)
 			AND (st.id::text = $3 OR $4 <> '' AND st.code = $4 OR $5 <> '' AND lower(st.name) = lower($5))
-		ORDER BY st.id::text = $3 DESC, p.sort, st.sort LIMIT 1`, t.Entity, t.TypeID, id, code, name).Scan(&out)
+		ORDER BY st.id::text = $3 DESC, p.sort, st.sort LIMIT 1`, entity, typeID, id, code, name).Scan(&out)
 	return out, err
 }

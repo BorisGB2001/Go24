@@ -18,6 +18,15 @@
   <h2 style="padding:12px 16px 0">{{icon "list-check"}} {{t "dayplan.day_tasks"}}</h2>
   <table class="tlist"><tbody>{{range $d.Tasks}}<tr><td class="small muted">{{.Key}}</td><td><a href="/t/{{.Key}}">{{.Title}}</a></td><td class="small">{{dur .Secs}}</td></tr>{{end}}</tbody></table>
 </div>{{end}}
+{{if $d.Idles}}<div class="card flush" style="max-width:720px" id="idle">
+  <h2 style="padding:12px 16px 0">{{icon "clock"}} {{t "tc.title"}}</h2>
+  <table class="tlist"><tbody>{{range $d.Idles}}<tr><td class="small">{{clock .Started}}–{{clock .Ended}}</td><td class="small">{{dur .Secs}}</td>
+    <td>{{template "tcreason" .}}{{if and $d.Own (not .Kind)}}
+      <form method="post" action="/worktime/idle/{{.ID}}" class="row"><input type="hidden" name="back" value="{{$d.Path}}#idle">
+        <input name="reason" maxlength="1000" placeholder="{{t "tc.reason"}}">
+        <button class="primary" name="kind" value="work">{{t "tc.kind.work"}}</button>
+        <button name="kind" value="personal">{{t "tc.kind.personal"}}</button></form>{{end}}</td></tr>{{end}}</tbody></table>
+</div>{{end}}
 {{with $d.Pending}}<div class="card" style="max-width:720px">
   <h2>{{icon "hourglass-high"}} {{t "workday.pending_title"}}</h2>
   <p>{{template "wdchange" .}}</p>

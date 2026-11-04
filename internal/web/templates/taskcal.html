@@ -1,0 +1,33 @@
+{{define "content"}}
+{{$d := .Data}}
+{{/* «Календарь» of tasks: the tasks on their days; a drop onto a day moves the deadline (static/js/crmcal.js) */}}
+{{$q := print "&view=" $d.View (or (and $d.Role (print "&role=" $d.Role)) "")}}
+<div class="pagehead"><h1>{{t "taskcal.title"}}</h1><a href="/tasks/new" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
+<div class="sub">{{t "taskcal.subtitle"}}</div>
+<div class="tabs">
+  <a href="/tasks/calendar?view={{$d.View}}&date={{$d.Day.Format "2006-01-02"}}" {{if not $d.Role}}class="on"{{end}}>{{t "taskcal.all_roles"}}</a>
+  {{range $d.Roles}}<a href="/tasks/calendar?view={{$d.View}}&role={{.}}&date={{$d.Day.Format "2006-01-02"}}" {{if eq . $d.Role}}class="on"{{end}}>{{t (print "role." .)}}</a>{{end}}
+</div>
+<div class="row calnav">
+  <a class="button ghost" href="/tasks/calendar?date={{$d.Prev}}{{$q}}" title="{{t "taskcal.prev"}}">{{icon "chevron-left"}}</a>
+  <b class="calmonth">{{if eq $d.View "month"}}{{t (print "month_full." (printf "%d" $d.Day.Month))}} {{$d.Day.Year}}{{else if eq $d.View "week"}}{{day $d.Start}} — {{day $d.End}}{{else}}{{day $d.Day}}{{end}}</b>
+  <a class="button ghost" href="/tasks/calendar?date={{$d.Next}}{{$q}}" title="{{t "taskcal.next"}}">{{icon "chevron-right"}}</a>
+  <a class="button ghost" href="/tasks/calendar?{{slice $q 1}}">{{t "calendar.today"}}</a>
+  <span class="spacer"></span>
+  <div class="tabs calviews">{{range $d.Views}}<a href="/tasks/calendar?view={{.}}&date={{$d.Day.Format "2006-01-02"}}{{with $d.Role}}&role={{.}}{{end}}" {{if eq . $d.View}}class="on"{{end}}>{{t (print "calendar.view." .)}}</a>{{end}}</div>
+</div>
+<div class="card flush cal crmcal taskcal tc-{{$d.View}}" data-crmcal="/t/" data-date="deadline" data-reload data-failed="{{t "board.move_failed"}}">
+  {{if eq $d.View "month"}}<div class="calrow calhead">{{range $d.WeekDays}}<div>{{t (print "wd." .)}}</div>{{end}}</div>{{end}}
+  {{range $d.Weeks}}<div class="calrow">{{range .}}
+    <div class="calday{{if .Out}} out{{end}}{{if .Today}} today{{end}}{{if .Off}} off{{end}}" data-day="{{.Date.Format "2006-01-02"}}">
+      <div class="row tc-head">{{if ne $d.View "month"}}<a class="muted small" href="/tasks/calendar?view=day&date={{.Date.Format "2006-01-02"}}{{with $d.Role}}&role={{.}}{{end}}">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</a>{{end}}
+        {{if .Holiday}}<span class="calhol">{{t "calendar.holiday"}}</span>{{end}}<span class="spacer"></span>
+        <a class="calnum" href="/tasks/new?day={{.Date.Format "2006-01-02"}}" title="{{t "taskcal.add"}}">{{.Date.Day}}</a></div>
+      {{range .Items}}{{$t := .T}}<a class="calitem task{{if $t.Overdue}} over{{end}}{{if eq $t.Status "completed"}} done{{end}}{{if not .Due}} span{{end}}" href="/t/{{$t.Key}}" data-key="{{$t.Key}}"{{if and .Due (ne $t.Status "completed")}} draggable="true"{{end}}
+        title="{{$t.Key}} {{$t.Title}} · {{if .Due}}{{t "taskcal.due"}} {{date $t.Deadline}}{{else}}{{t "taskcal.span"}}{{end}}{{if eq $t.Status "completed"}} · {{t "taskcal.done"}}{{end}}">{{if eq $t.Priority 2}}{{icon "flame"}} {{end}}{{if .Due}}{{clock (deref $t.Deadline)}} {{end}}{{$t.Title}}</a>{{end}}
+    </div>{{end}}</div>{{end}}
+</div>
+<p class="muted small calleg"><span class="calitem task">{{t "taskcal.due"}}</span> <span class="calitem task span">{{t "taskcal.span"}}</span>
+  <span class="calitem task over">{{t "deadlines.overdue"}}</span> <span class="calitem task done">{{t "taskcal.done"}}</span></p>
+<script src="{{asset "js/crmcal.js"}}"></script>
+{{end}}

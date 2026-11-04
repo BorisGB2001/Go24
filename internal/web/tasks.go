@@ -123,7 +123,7 @@ func (s *Server) myTasks(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	}
 	pg := page{TitleKey: "title.my_tasks", Nav: nav, Data: map[string]any{
 		"Role": role, "Tabs": tabs, "Tasks": list, "ShowAll": showAll, "View": view, "As": uid, "AsName": asName,
-		"Bulk": newBulkBar(r, users), "Subordinates": subs, "TitleKey": titleKey, "Project": proj,
+		"Bulk": newBulkBar(r, users), "Subordinates": subs, "TitleKey": titleKey, "Project": proj, "TaskAI": s.taskAIOn(r, sess.UserID),
 	}}
 	if asName != "" {
 		pg.TitleKey, pg.Title, pg.Nav = "", s.tr(r, titleKey, asName), "as:"+uid
@@ -192,7 +192,7 @@ func (s *Server) allTasks(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		"Q": q, "Query": query.Encode(), "Filtered": filtered, "Users": users, "Presets": presets, "BuiltIn": builtInPresets,
 		"Statuses": []tasks.Status{tasks.StatusPending, tasks.StatusInProgress, tasks.StatusAwaitingControl, tasks.StatusDeferred, tasks.StatusCompleted},
 		"Periods":  tasks.DeadlinePeriods, "Bulk": newBulkBar(r, users),
-		"CanExport": s.taskPerm(r, sess, "export"), "CanImport": s.taskPerm(r, sess, "import"),
+		"CanExport": s.taskPerm(r, sess, "export"), "CanImport": s.taskPerm(r, sess, "import"), "TaskAI": s.taskAIOn(r, sess.UserID),
 	}})
 }
 
@@ -279,35 +279,37 @@ func (s *Server) projectSettings(w http.ResponseWriter, r *http.Request, sess au
 	if err == nil && r.FormValue("visibility") != "" {
 		err = s.Tasks.SetVisibility(r.Context(), p, r.FormValue("visibility"))
 	}
+	if err == nil && r.FormValue("privacy") != "" {
+		err = s.Tasks.SetPrivacy(r.Context(), p, r.FormValue("privacy"))
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	s.Log.Info("project settings", "user_id", sess.UserID, "project", p.Key, "visibility", r.FormValue("visibility"), "kind", r.FormValue("kind"))
+	s.Log.Info("project settings", "user_id", sess.UserID, "project", p.Key, "visibility", r.FormValue("visibility"), "kind", r.FormValue("kind"),
+		"privacy", r.FormValue("privacy"))
 	s.Matrix.Wake()
 	http.Redirect(w, r, back+"#members", http.StatusSeeOther)
 }
 
-// search jumps straight to a task by key (GO-12) or lists tasks matching the text.
-func (s *Server) search(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if _, _, err := tasks.ParseKey(q); err == nil {
-		// only a task one may see: a key of someone else's collab or project does not even say it exists
-		if id, err := s.Tasks.TaskIDByKey(r.Context(), q); err == nil && s.Tasks.CheckVisible(r.Context(), sess.UserID, id) == nil {
-			http.Redirect(w, r, "/t/"+strings.ToUpper(q), http.StatusFound)
-			return
-		}
-	}
-	list, err := s.Tasks.Search(r.Context(), sess.UserID, q)
+// projects: the user's projects, (?archived=1) those in the archive, or (?tab=all) «Все группы».
+func (s *Server) projects(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	subjects, err := s.Tasks.Subjects(r.Context())
 	if err != nil {
-		s.taskErr(w, r, err, "/my")
+		s.taskErr(w, r, err, "/projects")
 		return
 	}
-	s.render(w, r, "search", page{TitleKey: "title.search", Query: q, Data: list})
-}
-
-// projects: the user's projects, or (?archived=1) those in the archive.
-func (s *Server) projects(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if r.URL.Query().Get("tab") == "all" {
+		f := tasks.GroupFilter{Q: r.URL.Query().Get("q"), SubjectID: r.URL.Query().Get("subject"), Keyword: r.URL.Query().Get("kw")}
+		all, err := s.Tasks.AllGroups(r.Context(), sess.UserID, f)
+		if err != nil {
+			s.taskErr(w, r, err, "/projects")
+			return
+		}
+		s.render(w, r, "projects", page{TitleKey: "title.projects", Nav: "projects", Query: f.Q, Data: map[string]any{
+			"All": all, "Filter": f, "Subjects": subjects}})
+		return
+	}
 	archived := r.URL.Query().Get("archived") == "1"
 	list, err := s.Tasks.ListProjects(r.Context(), sess.UserID)
 	if archived {
@@ -323,17 +325,40 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/projects")
 		return
 	}
+	ids := make([]string, len(list))
+	for i, p := range list {
+		ids[i] = p.ID
+	}
+	stats, err := s.Tasks.ProjectStatsOf(r.Context(), sess.UserID, ids, time.Now())
+	if err != nil {
+		s.taskErr(w, r, err, "/projects")
+		return
+	}
+	//, the latest activity first by default
+	by, desc := r.URL.Query().Get("sort"), r.URL.Query().Get("desc") == "1"
+	if !slices.Contains(tasks.ProjectSorts, by) {
+		by, desc = "activity", true
+	}
+	tasks.SortProjects(list, stats, by, desc)
 	s.render(w, r, "projects", page{TitleKey: "title.projects", Nav: "projects", Data: map[string]any{
-		"List": list, "Archived": archived, "Invites": invites}})
+		"List": list, "Stats": stats, "Sort": by, "Desc": desc, "Archived": archived, "Invites": invites, "Subjects": subjects}})
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	key, err := s.Tasks.CreateProject(r.Context(), sess.UserID,
 		r.FormValue("key"), r.FormValue("name"), r.FormValue("description"))
-	if kind := r.FormValue("kind"); err == nil && kind != "" && kind != "group" {
+	kind, privacy := r.FormValue("kind"), r.FormValue("privacy")
+	subject, keywords := r.FormValue("subject"), tasks.ParseKeywords(r.FormValue("keywords"))
+	if err == nil && ((kind != "" && kind != "group") || (privacy != "" && privacy != "secret") || subject != "" || len(keywords) > 0) {
 		var p tasks.Project
-		if p, err = s.Tasks.ProjectByKey(r.Context(), sess.UserID, key); err == nil {
+		if p, err = s.Tasks.ProjectByKey(r.Context(), sess.UserID, key); err == nil && kind != "" && kind != "group" {
 			err = s.Tasks.SetProjectKind(r.Context(), p, kind)
+		}
+		if err == nil && privacy != "" && privacy != "secret" {
+			err = s.Tasks.SetPrivacy(r.Context(), p, privacy)
+		}
+		if err == nil && (subject != "" || len(keywords) > 0) {
+			err = s.Tasks.SetGroupSubject(r.Context(), p, subject, keywords)
 		}
 	}
 	if err != nil {
@@ -347,7 +372,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, sess auth
 func (s *Server) project(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, r.PathValue("key"))
 	if err != nil {
-		s.taskErr(w, r, err, "/projects")
+		if !s.groupOutsider(w, r, sess, p, err) {
+			s.taskErr(w, r, err, "/projects")
+		}
 		return
 	}
 	showAll := r.URL.Query().Get("all") == "1"
@@ -386,12 +413,37 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.taskErr(w, r, err, "/projects")
 		return
 	}
+	requests, err := s.Tasks.JoinRequests(r.Context(), p)
+	if err != nil {
+		s.taskErr(w, r, err, "/projects")
+		return
+	}
+	subjects, err := s.Tasks.Subjects(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/projects")
+		return
+	}
+	depts, err := s.Tasks.GroupDepts(r.Context(), p.ID)
+	if err != nil {
+		s.taskErr(w, r, err, "/projects")
+		return
+	}
 	data := map[string]any{
-		"CanInvite": canInvite, "Invites": invites, "InvitePerm": invitePerm,
+		"Depts": depts, "Subjects": subjects, "CanInvite": canInvite, "Invites": invites, "InvitePerm": invitePerm, "Requests": requests,
 		"Project": p, "Tasks": list, "Members": members, "Users": users, "ShowAll": showAll, "Me": sess.UserID,
 		"DefaultDeadline": sched.DefaultDeadline(time.Now()),
+		"CanDelete":       p.MyRole == "owner" || p.MyRole == "admin",
 	}
 	s.collabData(r, p, data)
+	if !p.Collab() {
+		data["ToolTabs"], data["ToolForm"] = s.groupTabs(r, p), toolForm(p)
+		if p.CanEdit() {
+			if data["CopyKey"], err = s.Tasks.CopyKey(r.Context(), p.Key); err != nil {
+				s.taskErr(w, r, err, "/projects")
+				return
+			}
+		}
+	}
 	s.render(w, r, "project", page{Title: p.Name, Nav: projectNav(p), Data: data})
 }
 
@@ -407,6 +459,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	deadline, err := parseDeadline(r.FormValue("deadline"))
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	estimate, err := formEstimate(r)
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
@@ -429,6 +486,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, sess auth.Se
 			AllowChangeDeadline: r.FormValue("allow_change_deadline") == "on",
 			MatchWorkTime:       r.FormValue("match_work_time") == "on",
 			NoEfficiency:        r.FormValue("no_efficiency") == "on",
+			EstimateMinutes:     estimate,
 			Params:              formParams(r),
 			ParentKey:           strings.TrimSpace(r.FormValue("parent")),
 			Accomplices:         r.Form["accomplices"],
@@ -508,7 +566,7 @@ func (s *Server) newTaskDone(r *http.Request, sess auth.Session, key string) {
 	if letter := r.FormValue("mail"); letter != "" { // made of a letter: its files and a link back
 		s.taskLetterDone(r, sess, letter, key)
 	}
-	if room, ev := r.FormValue("im_room"), r.FormValue("im_event"); room != "" && ev != "" && s.Matrix != nil { // of a chat message
+	if room, ev := r.FormValue("im_room"), r.FormValue("im_event"); room != "" && s.Matrix != nil { // of a chat message (or of the chat)
 		s.taskMessageDone(r, sess, room, ev, key)
 	}
 	if id := r.FormValue("ol"); id != "" { // of an open line's dialogue
@@ -597,6 +655,11 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request, sess auth.Session)
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	itemFiles, err := s.Storages.ChecklistFiles(r.Context(), id)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
 	stores, err := s.Storages.List(r.Context(), sess.UserID, tasks.IsAdmin(r.Context()))
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
@@ -671,14 +734,17 @@ func (s *Server) task(w http.ResponseWriter, r *http.Request, sess auth.Session)
 	if card.Collab {
 		nav = "collabs"
 	}
+	copilot := !card.Frozen && s.taskCopilotOn(r.Context(), sess.UserID)
+	form := editTaskForm(card, users)
+	form.CoPilot = copilot
 	s.render(w, r, "task", page{Title: card.Key() + " " + card.Title, Nav: nav, Data: map[string]any{
 		"Letters": letters, "Me": sess.UserID, "Viewers": viewers, "Dod": dod, "DodComplete": slices.Contains(card.Actions, tasks.ActionComplete),
-		"Card": card, "Users": users, "Files": files, "Storages": stores, "Pred": pred, "Succ": succ, "LinkTypes": tasks.LinkTypes,
+		"Card": card, "Users": users, "Files": files, "ItemFiles": itemFiles, "Storages": stores, "Pred": pred, "Succ": succ, "LinkTypes": tasks.LinkTypes,
 		"Chat": chatFeed(card, sess.UserID, resultIDs), "People": peopleCount(card), "BaseURL": s.BaseURL,
-		"Messenger": s.Matrix != nil, "Form": editTaskForm(card, users),
+		"Messenger": s.Matrix != nil, "Form": form,
 		"Ancestors": ancestors, "SubDone": subDone, "SubTotal": subTotal, "Marks": marks, "Tags": one[0].Tags, "AllTags": allTags,
 		"Results": results, "ResultIDs": resultIDs, "Reminders": reminders, "ReminderBefore": reminderBefore,
-		"Fields": fields, "CRM": crm, "Calls": s.Calls != nil, "AppTabs": s.appTabs(r, sess.UserID, "TASK_VIEW_TAB"), "CanTake": s.Tasks.CanTake(r.Context(), sess.UserID, card.Task),
+		"Fields": fields, "CRM": crm, "Calls": s.Calls != nil, "CoPilot": copilot, "TaskAI": s.taskAIOn(r, sess.UserID), "AppTabs": s.appTabs(r, sess.UserID, "TASK_VIEW_TAB"), "CanTake": s.Tasks.CanTake(r.Context(), sess.UserID, card.Task),
 		// a collab in the archive takes nothing; a guest adds files and subtasks only where the collab lets guests
 		"CanAttach": s.Tasks.CanAttach(r.Context(), sess.UserID, id) == nil,
 		"CanSub":    !card.Frozen && s.Tasks.GuestMay(r.Context(), card.ProjectID, sess.UserID, "tasks") == nil,
@@ -699,6 +765,7 @@ type taskForm struct {
 	Priority                              tasks.Priority
 	Control, AllowDeadline, MatchWorkTime bool
 	NoEfficiency                          bool // «Не учитывать в эффективности» (not in templates)
+	Estimate                              *int // new, template: «Плановые трудозатраты», minutes
 	Params                                tasks.Params
 	Accomplices, Auditors                 []tasks.User
 	Users                                 []tasks.User
@@ -709,9 +776,9 @@ type taskForm struct {
 	Copy                                  string          // new: «Копировать» — the task the form is a copy of (its tags and CRM links go along)
 	Mail                                  *mail.Message   // new: the letter the task is made of (its files go along)
 	MailFiles                             int
-	IM                                    *imSource // new: the chat message the task is made of
+	IM                                    *imSource          // new: the chat message the task is made of
 	OL                                    *openlines.Session // new: the open line's dialogue the task is made of
-	Checklist                             string // new, template: one item per line
+	Checklist                             string             // new, template: one item per line
 	// template mode: the deadline is an offset; the schedule of a regular template (a new task can be made regular too)
 	Template                    bool
 	TemplateID                  string
@@ -720,6 +787,7 @@ type taskForm struct {
 	DeadlineDays, DeadlineHours int
 	Repeat                      tasks.Repeat
 	ForNewUsers                 bool // «Шаблон для новых сотрудников»
+	CoPilot                     bool // the employee has an AI: «CoPilot» of the description
 }
 
 // CollabKey limits the people fields to the collab's members: the task's collab, or (a new task, a template) the
@@ -890,14 +958,9 @@ func (s *Server) taskEdit(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		if err != nil {
 			return err
 		}
-		var estimate *int
-		if v := strings.TrimSpace(r.FormValue("estimate")); v != "" {
-			secs, err := tasks.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			m := secs / 60
-			estimate = &m
+		estimate, err := formEstimate(r)
+		if err != nil {
+			return err
 		}
 		version, _ := strconv.Atoi(r.FormValue("version"))
 		prio, _ := strconv.Atoi(r.FormValue("priority"))
@@ -927,10 +990,26 @@ func (s *Server) taskEdit(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	})
 }
 
-// formParams reads the boxes of the task parameters (the template "params").
+// formParams reads the boxes of the task parameters (the template "params"). «Учитывать время» is on unless the form
+// says "off" — the template puts a hidden "off" before its box — so the quick forms without the box keep the timer.
 func formParams(r *http.Request) tasks.Params {
 	return tasks.Params{DatesFromSubtasks: r.FormValue("dates_from_subtasks") == "on",
-		AutoComplete: r.FormValue("auto_complete") == "on", ResultRequired: r.FormValue("result_required") == "on"}
+		AutoComplete: r.FormValue("auto_complete") == "on", ResultRequired: r.FormValue("result_required") == "on",
+		NoTimeTracking: slices.Contains(r.Form["time_tracking"], "off") && !slices.Contains(r.Form["time_tracking"], "on")}
+}
+
+// formEstimate reads «Плановые трудозатраты» ("1:30", "90m"…) in minutes; nil when empty.
+func formEstimate(r *http.Request) (*int, error) {
+	v := strings.TrimSpace(r.FormValue("estimate"))
+	if v == "" {
+		return nil, nil
+	}
+	secs, err := tasks.ParseDuration(v)
+	if err != nil {
+		return nil, err
+	}
+	m := secs / 60
+	return &m, nil
 }
 
 // parseDate reads an <input type="date"> value as a calendar date ("" = not set).
@@ -1092,6 +1171,8 @@ func (s *Server) checklistChange(w http.ResponseWriter, r *http.Request, sess au
 			return s.Tasks.MarkChecklistItem(r.Context(), sess.UserID, id, item, r.FormValue("on") == "1")
 		case "move":
 			return s.Tasks.MoveChecklistItem(r.Context(), sess.UserID, id, item, r.FormValue("list"), r.FormValue("before"))
+		case "indent", "outdent":
+			return s.Tasks.IndentChecklistItem(r.Context(), sess.UserID, id, item, r.FormValue("op") == "indent")
 		}
 		return s.Tasks.ChangeChecklistItem(r.Context(), sess.UserID, id, item, false)
 	})
@@ -1285,7 +1366,7 @@ func (s *Server) taskDeadline(w http.ResponseWriter, r *http.Request, sess auth.
 // ---------- company settings (administrators) ----------
 
 func (s *Server) worktimePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.worktimeSettings(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -1315,7 +1396,7 @@ func (s *Server) worktimePage(w http.ResponseWriter, r *http.Request, sess auth.
 }
 
 func (s *Server) saveWorktime(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.worktimeSettings(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -1324,15 +1405,23 @@ func (s *Server) saveWorktime(w http.ResponseWriter, r *http.Request, sess auth.
 		return
 	}
 	sched := worktime.Schedule{Start: r.FormValue("start"), End: r.FormValue("end"), Weekend: []int{},
-		Holidays: strings.Fields(strings.NewReplacer(",", " ", ";", " ").Replace(r.FormValue("holidays"))),
+		Holidays:  strings.Fields(strings.NewReplacer(",", " ", ";", " ").Replace(r.FormValue("holidays"))),
 		LateAfter: r.FormValue("late_after"), LeaveBefore: r.FormValue("leave_before"), MinDuration: r.FormValue("min_duration"),
-		FreeEdit: r.FormValue("free_edit") != "", OfficeOnly: r.FormValue("office_only") != ""}
+		FreeEdit: r.FormValue("free_edit") != "", OfficeOnly: r.FormValue("office_only") != "", Geo: r.FormValue("geo") != "",
+		NotifyHead: r.FormValue("notify_head") != "", NotifyTo: r.Form["notify_to"]}
 	offices, err := worktime.ParseOffices(r.FormValue("offices"))
 	if err != nil {
 		s.taskErr(w, r, i18n.E("err.worktime_offices"), "/settings/worktime")
 		return
 	}
 	sched.Offices = offices
+	old, err := s.Tasks.Schedule(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/settings/worktime")
+		return
+	}
+	idle, _ := strconv.Atoi(r.FormValue("idle_minutes"))
+	sched.SetTimeControl(old, r.FormValue("time_control") != "", r.FormValue("idle_ask") != "", idle, time.Now())
 	for _, v := range r.Form["weekend"] {
 		d, err := strconv.Atoi(v)
 		if err != nil {
@@ -1387,6 +1476,9 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	q := r.URL.Query()
 	deadline := sched.DefaultDeadline(time.Now())
+	if day, err := time.ParseInLocation("2006-01-02", q.Get("day"), time.Local); err == nil { // «+» of a day of «Календарь»
+		deadline = tasks.DayDeadline(nil, day, sched)
+	}
 	project, parent := strings.ToUpper(q.Get("project")), strings.ToUpper(q.Get("parent"))
 	if project == "" && parent != "" {
 		project, _, _ = tasks.ParseKey(parent)
@@ -1399,7 +1491,7 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		Priority: 1, Users: users, Projects: mine, Project: project, Parent: parent, CRM: q.Get("crm"), DayPlan: q.Get("dayplan") == "1",
 		Repeat: tasks.Repeat{Period: "weekly", Every: 1, WeekDays: []int{int(time.Now().Weekday()+6)%7 + 1}, MonthDay: time.Now().Day(),
 			YearMonth: int(time.Now().Month()), At: "09:00", StartsOn: time.Now()}}
-	f.Title = q.Get("title") // «Сделать задачей» of a checklist item
+	f.Title = q.Get("title")                              // «Сделать задачей» of a checklist item
 	if id := q.Get("comment"); id != "" && parent != "" { // «Создать подзадачу» of a message of the task's chat
 		s.taskFromComment(r, sess, parent, id, &f)
 	}
@@ -1422,12 +1514,13 @@ func (s *Server) newTaskPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	if id := q.Get("mail"); id != "" { // «Создать задачу» of a letter
 		s.taskFromLetter(r, sess, id, &f)
 	}
-	if room, ev := q.Get("im_room"), q.Get("im_event"); room != "" && ev != "" && s.Matrix != nil { // … of a chat message
+	if room, ev := q.Get("im_room"), q.Get("im_event"); room != "" && s.Matrix != nil { // … of a chat message (or the chat's panel)
 		s.taskFromMessage(r, sess, room, ev, &f)
 	}
 	if id := q.Get("ol"); id != "" { // «Создать задачу» of an open line's dialogue
 		s.taskFromDialogue(r, sess, id, &f)
 	}
+	f.CoPilot = s.taskCopilotOn(r.Context(), sess.UserID)
 	s.render(w, r, "newtask", page{TitleKey: "task.new", Nav: "my", Data: map[string]any{"Projects": mine, "Form": f}})
 }
 
@@ -1444,7 +1537,7 @@ func (s *Server) taskCopyForm(r *http.Request, sess auth.Session, key string, f 
 	}
 	f.Copy, f.Title, f.Description, f.Responsible, f.Priority = c.Key(), c.Title, c.Description, c.ResponsibleID, c.Priority
 	f.Control, f.AllowDeadline, f.MatchWorkTime, f.NoEfficiency = c.RequiresControl, c.AllowChangeDeadline, c.MatchWorkTime, c.NoEfficiency
-	f.Params = c.Params
+	f.Params, f.Estimate = c.Params, c.EstimateMinutes
 	f.Accomplices, f.Auditors, f.Parent = c.Accomplices, c.Auditors, c.ParentKey
 	if c.Deadline != nil && c.Deadline.After(time.Now()) {
 		f.Deadline = c.Deadline
@@ -1595,6 +1688,19 @@ func (s *Server) setListTree(w http.ResponseWriter, r *http.Request, sess auth.S
 		back = b
 	}
 	if err := s.Tasks.SetTree(r.Context(), sess.UserID, r.FormValue("on") == "1"); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// setListByProject turns «Группировать по проектам» of task lists on (on=1) or off and returns to the list.
+func (s *Server) setListByProject(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/tasks"
+	if b := r.FormValue("back"); localPath(b) {
+		back = b
+	}
+	if err := s.Tasks.SetByProject(r.Context(), sess.UserID, r.FormValue("on") == "1"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}

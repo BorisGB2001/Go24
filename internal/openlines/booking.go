@@ -126,6 +126,19 @@ func (s *Store) BookingCancelled(ctx context.Context, bookingID, what string) er
 	return s.note(ctx, s.db, id, "ol.note_booking_cancel", what)
 }
 
+// BookingMoved puts a line into the dialogue the booking was made in: the client moved it (what — to when, where).
+func (s *Store) BookingMoved(ctx context.Context, bookingID, what string) error {
+	var id string
+	err := s.db.QueryRow(ctx, `SELECT ol_session_id::text FROM bookings WHERE id::text = $1 AND ol_session_id IS NOT NULL`, bookingID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.note(ctx, s.db, id, "ol.note_booking_moved", what)
+}
+
 func nullID(id string) any {
 	if id == "" {
 		return nil

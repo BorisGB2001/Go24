@@ -71,7 +71,7 @@
   };
 
   document.querySelectorAll('[data-board]').forEach(board => {
-    const kind = board.dataset.board; // "stage" | "plan" | "deadline" | "crm"
+    const kind = board.dataset.board; // "stage" | "plan" | "deadline" | "crm" | "crmact"
     const failed = board.dataset.failed;
     let dragged = null, from = null;
 
@@ -106,6 +106,8 @@
           ? await post('/plan/move', { task: card.dataset.key, stage: col.dataset.stage })
           : kind === 'deadline'
             ? await post('/deadlines/move', { task: card.dataset.key, period: col.dataset.stage })
+            : kind === 'crmact' // «Дела»: the nearest deed gets the period's deadline
+            ? await post(board.dataset.move + encodeURIComponent(card.dataset.key) + '/deed-period', { period: col.dataset.stage })
             : kind === 'crm'
             ? await post(board.dataset.move + encodeURIComponent(card.dataset.key) + '/stage', { stage: col.dataset.stage })
             : await post('/t/' + encodeURIComponent(card.dataset.key) + '/stage', { stage: col.dataset.stage });
@@ -125,6 +127,7 @@
           const dl = card.querySelector('.dl');
           if (dl) { dl.textContent = data.deadline || ''; dl.classList.remove('over'); }
         }
+        if (kind === 'crmact' && data.card) card.replaceWith(fromHTML(data.card)); // the deed's new deadline
         if (kind === 'stage') {
           const fresh = data.card ? fromHTML(data.card) : null; // status, chips and drag rights may have changed
           let target = col;

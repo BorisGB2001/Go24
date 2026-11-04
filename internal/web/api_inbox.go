@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"go24/internal/i18n"
 	"go24/internal/matrixsync"
 	"go24/internal/notify"
+	"go24/internal/tasks"
 )
 
 // API: the person's inbox — notifications (tasks, comments, mentions) and the messenger — for someone who works
@@ -29,30 +31,65 @@ type apiNotification struct {
 	Body      string    `json:"body,omitempty"`
 	Read      bool      `json:"read"`
 	CreatedAt time.Time `json:"created_at"`
+	Answers   []string  `json:"answers,omitempty"`  // a confirming notification: what POST …/answer takes
+	Answered  string    `json:"answered,omitempty"` // the answer to a meeting
 }
 
-// apiNotifications: GET /api/v1/notifications?unread=1&limit=50
+func (s *Server) apiNotification(n notify.Item) apiNotification {
+	lang := s.I18n.Match("")
+	tr := func(key string, args ...any) string { return s.I18n.T(lang, key, args...) }
+	return apiNotification{ID: n.ID, Kind: n.Kind, Actor: n.ActorName, TaskKey: n.TaskKey, TaskTitle: n.TaskTitle,
+		PostID: n.PostID, Body: n.Body, Read: n.Read, CreatedAt: n.CreatedAt, Answers: n.Answers(), Answered: n.Answered(),
+		Text: notify.Text(n, tr, func(t time.Time) string { return t.Local().Format(tr("format.datetime")) })}
+}
+
+// apiNotifications: GET /api/v1/notifications?unread=1&q=…&group=tasks&author=ID&from=YYYY-MM-DD&to=…&before=ID&limit=50
 func (s *Server) apiNotifications(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	list, err := s.Notify.List(r.Context(), p.UserID, 0, limit)
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	list, err := s.Notify.Search(r.Context(), p.UserID, notifyFilter(r.URL.Query()), before, limit)
 	if err != nil {
 		return err
 	}
-	lang := s.I18n.Match("")
-	tr := func(key string, args ...any) string { return s.I18n.T(lang, key, args...) }
 	out := []apiNotification{}
 	for _, n := range list {
-		if r.URL.Query().Get("unread") == "1" && n.Read {
-			continue
-		}
-		out = append(out, apiNotification{ID: n.ID, Kind: n.Kind, Actor: n.ActorName, TaskKey: n.TaskKey, TaskTitle: n.TaskTitle,
-			PostID: n.PostID, Body: n.Body, Read: n.Read, CreatedAt: n.CreatedAt,
-			Text: notify.Text(n, tr, func(t time.Time) string { return t.Local().Format(tr("format.datetime")) })})
+		out = append(out, s.apiNotification(n))
 	}
 	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// apiNotificationDelete: DELETE /api/v1/notifications/{id} — the key owner's notification.
+func (s *Server) apiNotificationDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.Notify.Delete(r.Context(), p.UserID, id); errors.Is(err, notify.ErrNotFound) {
+		return tasks.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	n, _ := s.Notify.Unread(r.Context(), p.UserID)
+	writeJSON(w, http.StatusOK, map[string]int{"unread": n})
+	return nil
+}
+
+// apiNotificationAnswer: POST /api/v1/notifications/{id}/answer {"answer": "accepted"} — answers a confirming
+// notification (one of its «answers»: a meeting's accepted | tentative | declined, a project's invitation or a group's
+// request accept | decline); the key needs calendar:write or projects:write as well. Answers the notification.
+func (s *Server) apiNotificationAnswer(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	var in struct {
+		Answer string `json:"answer"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	it, err := s.answerNotify(r.Context(), p.UserID, r.PathValue("id"), in.Answer, p.Can)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, s.apiNotification(it))
 	return nil
 }
 
@@ -275,6 +312,31 @@ func (s *Server) apiMessageDelete(w http.ResponseWriter, r *http.Request, p apik
 	return nil
 }
 
+// apiForward: POST {"events": ["$…", …], "to": "!room"} — the room's messages forwarded, in this order, into another
+// chat of the key owner; the answer is the forwarded messages.
+func (s *Server) apiForward(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	var in struct {
+		Events []string `json:"events"`
+		To     string   `json:"to"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	ms, err := s.Matrix.ForwardAll(r.Context(), p.UserID, r.PathValue("room"), in.Events, in.To)
+	if err != nil {
+		return err
+	}
+	out := make([]apiMessage, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, toAPIMessage(m))
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"messages": out})
+	return nil
+}
+
 // apiReaction: PUT puts the key owner's reaction (the emoji, e.g. 👍) on a message, DELETE takes it back.
 func (s *Server) apiReaction(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.needMatrix(); err != nil {
@@ -378,6 +440,19 @@ func (s *Server) apiNotes(w http.ResponseWriter, r *http.Request, p apikeys.Prin
 	return nil
 }
 
+// apiCoPilot: POST → the person's private chat with CoPilot (made on first use).
+func (s *Server) apiCoPilot(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	room, err := s.Matrix.CoPilotChat(r.Context(), p.UserID)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"room": room})
+	return nil
+}
+
 // apiGroup makes a group chat: {"name": "…", "user_ids": […], "channel": true — a channel} → {"room": …}.
 func (s *Server) apiGroup(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.needMatrix(); err != nil {
@@ -431,7 +506,7 @@ func (s *Server) apiGroupMembers(w http.ResponseWriter, r *http.Request, p apike
 	for _, m := range g.Members {
 		out = append(out, apiMember{m.ID, m.Name, m.Owner, m.Admin, m.Guest, m.Removable})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"owner": g.Owner, "channel": g.Channel, "open": g.Open, "writer": g.Writer, "topic": g.Topic,
+	writeJSON(w, http.StatusOK, map[string]any{"owner": g.Owner, "channel": g.Channel, "open": g.Open, "history": g.History, "writer": g.Writer, "topic": g.Topic,
 		"rights": apiRights(g.Rights), "can_add": g.CanAdd, "can_edit": g.CanEdit, "members": out})
 	return nil
 }
@@ -477,6 +552,18 @@ func (s *Server) apiGroupRemove(w http.ResponseWriter, r *http.Request, p apikey
 // admin, {"topic": "…"} — its description,
 // {"rights": {"add", "edit", "write": "all"|"admins"|"owner"}} — who adds people, changes the chat and writes,
 // {"open": true|false} — any employee finds it and joins, or by invitation only.
+// apiGroupDelete deletes a group chat or channel with its history, as «Удалить чат»: its owner only.
+func (s *Server) apiGroupDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.needMatrix(); err != nil {
+		return err
+	}
+	if err := s.Matrix.DeleteGroup(r.Context(), p.UserID, r.PathValue("room")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.needMatrix(); err != nil {
 		return err
@@ -490,6 +577,7 @@ func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikey
 		Topic   *string    `json:"topic"`
 		Rights  *apiRights `json:"rights"`
 		Open    *bool      `json:"open"`
+		History *bool      `json:"history"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -503,6 +591,8 @@ func (s *Server) apiGroupRename(w http.ResponseWriter, r *http.Request, p apikey
 		err = s.Matrix.SetChannel(r.Context(), p.UserID, room, *in.Channel)
 	case in.Open != nil:
 		err = s.Matrix.SetOpen(r.Context(), p.UserID, room, *in.Open)
+	case in.History != nil:
+		err = s.Matrix.SetHistory(r.Context(), p.UserID, room, *in.History)
 	case in.Owner != "":
 		err = s.Matrix.SetOwner(r.Context(), p.UserID, room, in.Owner)
 	case in.Admin != "":

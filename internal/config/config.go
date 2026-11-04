@@ -54,6 +54,8 @@ type Config struct {
 	AsteriskURL, AsteriskSecret, TelephonyDir, SIPHost, PhoneRecords string
 	// Speech recognition (Whisper) for the text of voice messages; "" — none
 	WhisperURL string
+	// Speech synthesis (Piper) for the sounds of telephony spoken from a text; "" — none
+	TTSURL string
 	// Documents online (ONLYOFFICE Document Server): its address and JWT secret as go24 reaches it, and go24 as it
 	// reaches go24 (for the file and the callback); any of them empty — off
 	OfficeURL, OfficeSecret, OfficeSelf string
@@ -112,6 +114,7 @@ func Load() (Config, error) {
 		SIPHost:          env("GO24_SIP_HOST", ""),
 		PhoneRecords:     env("GO24_PHONE_RECORDS", ""),
 		WhisperURL:       env("GO24_WHISPER_URL", ""),
+		TTSURL:           env("GO24_TTS_URL", ""),
 		OfficeURL:        env("GO24_OFFICE_URL", ""),
 		OfficeSecret:     env("GO24_OFFICE_SECRET", ""),
 		OfficeSelf:       env("GO24_OFFICE_SELF_URL", ""),

@@ -95,6 +95,12 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 				if err == nil {
 					data["Next"], err = s.CRM.NextActivities(r.Context(), "deal", ids)
 				}
+				if err == nil { // «Ожидание» on the tiles
+					data["Waits"], err = s.CRM.WaitsOf(r.Context(), "deal", ids)
+				}
+				if err == nil { // «Скоринг сделок»: the probability on the tiles
+					data["Scores"], err = s.CRM.Scores(r.Context(), ids)
+				}
 			}
 		}
 	case "leads":
@@ -108,6 +114,9 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 					ids = append(ids, l.ID)
 				}
 				data["Next"], err = s.CRM.NextActivities(r.Context(), "lead", ids)
+				if err == nil { // «Ожидание» on the tiles
+					data["Waits"], err = s.CRM.WaitsOf(r.Context(), "lead", ids)
+				}
 			}
 		}
 	case "contacts":
@@ -127,8 +136,13 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			}
 		}
 	}
+	if v := q.Get("view"); err == nil && (v == "activities" || v == "calendar") && (kind == "deals" || kind == "leads") && data["Items"] != nil {
+		err = s.crmViewData(r, data, kind, v, ids)
+	}
 	if err == nil && (q.Get("view") == "list" || kind == "contacts" || kind == "companies") {
 		err = s.crmListCols(r, sess, data, crm.ColumnScope(crmEntities[kind], typeID(typ)), ids)
+	} else if v := q.Get("view"); err == nil && v != "calendar" && (kind == "deals" || kind == "leads") { // the tiles
+		err = s.crmTileData(r, sess, data, crm.ColumnScope(crmEntities[kind], typeID(typ)), ids)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
@@ -144,6 +158,22 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if err == nil {
 		err = s.crmTabs(r, sess, data)
 	}
+	if err == nil { // «+ Создать», «Экспорт», «Импорт» — by the rights (deals — of the pipeline shown)
+		key := crmEntities[kind]
+		if p, ok := data["Pipeline"].(crm.Pipeline); ok {
+			key = crm.PipelineKey(p.ID)
+		}
+		var perms crm.Perms
+		if perms, err = s.CRM.PermsOf(r.Context(), sess.UserID); err == nil {
+			can := map[string]bool{}
+			for _, a := range []string{"add", "export", "import"} {
+				can[a] = perms.Level(key, a) != "none"
+			}
+			data["Can"] = can
+		}
+		dp := s.docPerms(r.Context(), sess) // «Шаблоны документов»: those who change the templates or the settings
+		data["DocTemplates"] = dp.Can("templates") || dp.Can("settings")
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
@@ -157,7 +187,7 @@ func (s *Server) crmList(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 
 // crmNewFields are the own fields a new card must have filled: required always or at its first stage.
 func (s *Server) crmNewFields(r *http.Request, entity string, stages any) ([]tasks.Field, error) {
-	list, err := s.Tasks.FieldsOf(r.Context(), tasks.CRMFieldSets[entity])
+	list, err := s.crmFieldsOf(r, tasks.CRMFieldSets[entity])
 	if err != nil {
 		return nil, err
 	}
@@ -188,17 +218,9 @@ var crmSorts = map[string]bool{"title": true, "stage": true, "amount": true, "re
 // crmListCols puts the person's columns of the list (as «Настроить колонки»: the chosen ones in their
 // order, then the others hidden), the custom fields' values and, when shown, the observers of the cards into data.
 func (s *Server) crmListCols(r *http.Request, sess auth.Session, data map[string]any, scope string, ids []string) error {
-	entity := scope
-	if strings.HasPrefix(scope, "type:") {
-		entity = "deal"
-	}
-	fields, err := s.Tasks.FieldsOf(r.Context(), tasks.CRMFieldSets[entity])
+	entity, fields, fids, err := s.crmScopeFields(r, scope)
 	if err != nil {
 		return err
-	}
-	fids := make([]string, len(fields))
-	for i, f := range fields {
-		fids[i] = f.ID
 	}
 	on, err := s.CRM.Columns(r.Context(), sess.UserID, scope, fids)
 	if err != nil {
@@ -240,20 +262,9 @@ func (s *Server) crmListCols(r *http.Request, sess auth.Session, data map[string
 	}
 	data["ListCols"], data["ColScope"], data["ColOn"] = cols, scope, shown
 	if len(fields) > 0 {
-		vals, err := s.Tasks.ValuesOf(r.Context(), tasks.CRMFieldSets[entity], ids)
-		if err != nil {
+		if data["Values"], err = s.crmFieldValues(r, entity, fields, ids); err != nil {
 			return err
 		}
-		for _, f := range fields { // dates as people read them
-			if f.Kind == "date" {
-				for _, v := range vals {
-					if x, ok := v[f.ID]; ok {
-						v[f.ID] = tasks.FieldValue{Field: f, Value: x}.Text(s.tr(r, "format.date"))
-					}
-				}
-			}
-		}
-		data["Values"] = vals
 	}
 	for _, k := range on {
 		if k == "observers" {
@@ -280,7 +291,7 @@ func (s *Server) crmSetColumns(w http.ResponseWriter, r *http.Request, sess auth
 		http.NotFound(w, r)
 		return
 	}
-	fields, err := s.Tasks.FieldsOf(r.Context(), set)
+	fields, err := s.crmFieldsOf(r, set)
 	if err == nil {
 		fids := make([]string, len(fields))
 		for i, f := range fields {
@@ -571,10 +582,13 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		err = s.CRM.CheckCard(r.Context(), sess.UserID, entity, "read", id, crmResponsible(data["Item"]))
 	}
 	if err == nil {
-		resp := crmResponsible(data["Item"])
-		data["CanWrite"], err = s.CRM.Can(r.Context(), sess.UserID, entity, "write", resp)
+		resp, key := crmResponsible(data["Item"]), entity
+		if d, ok := data["Item"].(crm.Deal); ok {
+			key = crm.PipelineKey(d.PipelineID)
+		}
+		data["CanWrite"], err = s.CRM.Can(r.Context(), sess.UserID, key, "write", resp)
 		if err == nil {
-			data["CanDelete"], err = s.CRM.Can(r.Context(), sess.UserID, entity, "delete", resp)
+			data["CanDelete"], err = s.CRM.Can(r.Context(), sess.UserID, key, "delete", resp)
 		}
 	}
 	if err == nil && s.Mail != nil { // the answers in the card's conversations join it (maillinks.go)
@@ -607,7 +621,7 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		}
 	}
 	if err == nil { // the administrator's own fields of this kind of card
-		data["Fields"], err = s.Tasks.FieldValuesOf(r.Context(), tasks.CRMFieldSets[entity], id)
+		data["Fields"], err = s.crmFieldValuesOf(r, tasks.CRMFieldSets[entity], id)
 	}
 	if err == nil { // «Настроить карточку»: the fields by sections
 		d, _ := data["Item"].(crm.Deal)
@@ -617,22 +631,46 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		data["Activities"], err = s.CRM.Activities(r.Context(), entity, id)
 		data["ActKinds"], data["ActDeadline"] = crm.ActivityKinds, time.Now().Add(time.Hour).Truncate(time.Hour).Format("2006-01-02T15:04")
 	}
+	if err == nil && entity == "deal" { // «Скоринг сделок»: the probability and why
+		data["Score"], err = s.CRM.ScoreOf(r.Context(), id)
+	}
+	if err == nil { // «Ожидание»: the open wait and what the form counts from
+		data["Wait"], err = s.CRM.WaitOf(r.Context(), entity, id)
+	}
+	if err == nil { // «Запросить дополнительную информацию»: what the robots ask to fill
+		data["InfoRequests"], err = s.crmInfoRequests(r, entity, id)
+	}
 	if err == nil {
+		data["WaitAnchors"], err = s.crmWaitAnchors(r, entity)
+		data["WaitUnits"] = crm.WaitUnits
+	}
+	if err == nil { // the templates of this kind of card: a smart process's card — of its type
+		d, _ := data["Item"].(crm.Deal)
 		if sess.Admin {
-			data["Docs"], err = s.CRM.DocTemplates(r.Context(), entity)
+			data["Docs"], err = s.CRM.ActiveDocTemplates(r.Context(), crm.DocKind(entity, d.TypeID))
 		} else { // «Кому доступен»
-			data["Docs"], err = s.CRM.DocTemplatesFor(r.Context(), entity, sess.UserID)
+			data["Docs"], err = s.CRM.DocTemplatesFor(r.Context(), crm.DocKind(entity, d.TypeID), sess.UserID)
 		}
 	}
-	if err == nil { // «Документы» made for the card
+	dp := s.docPerms(r.Context(), sess) // «Генератор документов → Права доступа»
+	if data["DocModify"] = dp.Can("modify"); !dp.Can("modify") {
+		data["Docs"] = nil
+	}
+	if err == nil && dp.Can("view") { // «Документы» made for the card
 		data["Documents"], err = s.CRM.Documents(r.Context(), entity, id)
 		data["PDF"], data["Base"] = s.Office != nil, s.BaseURL
+	}
+	if docs, _ := data["Documents"].([]crm.Document); err == nil && len(docs) > 0 && data["CanWrite"] == true && s.OpenLines != nil {
+		data["DocChat"], err = s.OpenLines.ChatOf(r.Context(), entity, id) // «Отправить клиенту» into the open line's chat
 	}
 	if err == nil && s.Sign != nil { // «Подпись»: the latest sending of each document
 		data["Signs"], err = s.Sign.OfCard(r.Context(), entity, id)
 	}
 	if err == nil && data["CanWrite"] == true { // «Письмо» to the client
 		data["MailForm"], err = s.crmMailForm(r, sess, entity, id)
+	}
+	if err == nil { // «SMS» to the client
+		data["SMSForm"], err = s.crmSMSForm(r, entity, id)
 	}
 	if err == nil && s.BP != nil { // business processes of this kind of card, and those of this card
 		var tpls []bp.Template
@@ -675,6 +713,7 @@ func (s *Server) crmCard(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		data["Requisites"], err = s.CRM.Requisites(r.Context(), entity, id)
 		data["ReqPresets"], data["NewRequisite"] = crm.RequisitePresets, crm.Requisite{Preset: map[string]string{"company": "org", "contact": "person"}[entity], Name: title}
 	}
+	data["Messenger"] = s.Matrix != nil // «Чат» of the card
 	if err == nil && s.OpenLines != nil && (entity == "lead" || entity == "contact") { // «Открыть чат» of the open line's dialogue
 		data["Chat"], err = s.OpenLines.ChatOf(r.Context(), entity, id)
 	}
@@ -766,7 +805,14 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if newResp == "" {
 		newResp = sess.UserID
 	}
-	err := s.CRM.Check(r.Context(), sess.UserID, crmEntities[kind], "write", newResp)
+	key, action := crmEntities[kind], "add" // a deal — with the rights of its pipeline
+	if key == "deal" {
+		key = crm.PipelineKey(r.FormValue("pipeline"))
+	}
+	if id != "" {
+		action = "write"
+	}
+	err := s.CRM.Check(r.Context(), sess.UserID, key, action, newResp)
 	if err == nil && id != "" {
 		err = s.crmCheck(r, sess, kind, id, "write")
 	}
@@ -779,7 +825,10 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	if err == nil { // «Обязательные поля»: those required at the card's stage (or always) must be filled first
 		var stage string
 		if stage, err = s.CRM.CardStage(r.Context(), crmEntities[kind], id, f("pipeline"), f("stage")); err == nil {
-			err = s.CRM.CheckRequired(r.Context(), crmEntities[kind], id, stage, values)
+			var sight crm.FieldSight
+			if sight, err = s.crmSight(r); err == nil {
+				err = s.CRM.CheckRequired(r.Context(), crmEntities[kind], id, stage, values, sight)
+			}
 		}
 	}
 	parent := "" // «+ Создать» among the child elements of a card («Связи»): the new one is bound to it
@@ -807,6 +856,13 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		observers = []crm.Ref{}
 		for _, o := range r.Form["observers"] {
 			observers = append(observers, crm.Ref{ID: o})
+		}
+	}
+	var before map[string]string // the fields before the change, for «Изменение полей»
+	if id != "" {
+		if before, err = s.CRM.CardSnapshot(r.Context(), crmEntities[kind], id); err != nil {
+			s.crmErr(w, r, err, "/crm/"+kind+"/"+id+"?edit=1")
+			return
 		}
 	}
 	comms := crmComms(r) // nil — the form has only one phone and e-mail
@@ -877,8 +933,14 @@ func (s *Server) crmSave(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.crmErr(w, r, err, back)
 		return
 	}
+	if err := s.CRM.FireChanged(r.Context(), crmEntities[kind], id, before); err != nil { // the card is saved anyway
+		s.Log.Error("crm field trigger", "err", err, "card", id)
+	}
+	if err := s.CRM.CheckInfoRequests(r.Context(), sess.UserID, crmEntities[kind], id); err != nil {
+		s.Log.Error("crm info request", "err", err, "card", id)
+	}
 	if wantsJSON(r) && r.PathValue("id") == "new" && (kind == "deals" || kind == "leads") { // the kanban's «+»
-		card, err := s.crmCardHTML(r, kind, id)
+		card, err := s.crmCardHTML(r, sess, kind, id)
 		if err != nil {
 			s.jsonErr(w, r, err)
 			return
@@ -910,7 +972,7 @@ func (s *Server) crmClient(r *http.Request, sess auth.Session, name string) (com
 			return "", c.ID, nil
 		}
 	}
-	if err = s.CRM.Check(r.Context(), sess.UserID, "contact", "write", sess.UserID); err != nil {
+	if err = s.CRM.Check(r.Context(), sess.UserID, "contact", "add", sess.UserID); err != nil {
 		return "", "", err
 	}
 	contact, err = s.CRM.SaveContact(r.Context(), sess.UserID, crm.Contact{Name: name, Responsible: crm.Ref{ID: sess.UserID}})
@@ -918,19 +980,20 @@ func (s *Server) crmClient(r *http.Request, sess auth.Session, name string) (com
 }
 
 // crmCardHTML renders a new kanban card with the list's template, so the column's «+» puts it on the page.
-func (s *Server) crmCardHTML(r *http.Request, kind, id string) (string, error) {
+func (s *Server) crmCardHTML(r *http.Request, sess auth.Session, kind, id string) (string, error) {
 	rates, err := s.CRM.Rates(r.Context())
 	if err != nil {
 		return "", err
 	}
 	var item any
 	var sum float64
+	scope := crmEntities[kind]
 	if kind == "deals" {
 		d, err := s.CRM.Deal(r.Context(), id)
 		if err != nil {
 			return "", err
 		}
-		item, sum = d, crm.InBase(rates, d.Amount, d.Currency)
+		item, sum, scope = d, crm.InBase(rates, d.Amount, d.Currency), crm.ColumnScope("deal", d.TypeID)
 	} else {
 		l, err := s.CRM.Lead(r.Context(), id)
 		if err != nil {
@@ -942,8 +1005,22 @@ func (s *Server) crmCardHTML(r *http.Request, kind, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	waits, err := s.CRM.WaitsOf(r.Context(), crmEntities[kind], []string{id})
+	if err != nil {
+		return "", err
+	}
+	var score *crm.Score
+	if kind == "deals" {
+		if score, err = s.CRM.ScoreOf(r.Context(), id); err != nil {
+			return "", err
+		}
+	}
+	data := map[string]any{} // the person's view of the tiles
+	if err = s.crmTileData(r, sess, data, scope, []string{id}); err != nil {
+		return "", err
+	}
 	var buf bytes.Buffer
-	err = s.pages[s.lang(r)]["crm"].ExecuteTemplate(&buf, "crmkcard", map[string]any{"K": kind, "I": item, "N": next[id], "S": sum})
+	err = s.pages[s.lang(r)]["crm"].ExecuteTemplate(&buf, "crmkcard", map[string]any{"K": kind, "I": item, "N": next[id], "W": waits[id], "P": score, "S": sum, "D": data})
 	return buf.String(), err
 }
 
@@ -964,7 +1041,7 @@ func (s *Server) crmFormValues(r *http.Request, entity string) (map[string]strin
 	if !all && !some {
 		return nil, nil
 	}
-	list, err := s.Tasks.FieldsOf(r.Context(), set)
+	list, err := s.crmFieldsOf(r, set)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,6 +1117,43 @@ func (s *Server) crmDelete(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	http.Redirect(w, r, "/crm/"+kind, http.StatusSeeOther)
 }
 
+// crmCopy is «Копировать» of a card: the copy is made at once and opens for editing. Its responsible
+// is the original's when the user may give a card to them, else the user.
+func (s *Server) crmCopy(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	kind, id := r.PathValue("kind"), r.PathValue("id")
+	entity := crmEntities[kind]
+	if entity == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
+		s.crmErr(w, r, err, "/crm/"+kind)
+		return
+	}
+	resp, err := s.crmCopyResp(r, sess.UserID, entity, id)
+	if err == nil {
+		id, err = s.CRM.Copy(r.Context(), sess.UserID, entity, id, resp)
+	}
+	if err != nil {
+		s.crmErr(w, r, err, "/crm/"+kind+"/"+r.PathValue("id"))
+		return
+	}
+	http.Redirect(w, r, "/crm/"+kind+"/"+id+"?edit=1&msg="+url.QueryEscape(s.tr(r, "crm.copied")), http.StatusSeeOther)
+}
+
+// crmCopyResp: "" keeps the original's responsible when the user may create a card for them; the user otherwise.
+// The user must be able to create a card at all.
+func (s *Server) crmCopyResp(r *http.Request, userID, entity, id string) (string, error) {
+	orig, err := s.CRM.Responsible(r.Context(), entity, id)
+	if err != nil {
+		return "", err
+	}
+	if orig != "" && s.CRM.Check(r.Context(), userID, entity, "add", orig) == nil {
+		return "", nil
+	}
+	return userID, s.CRM.Check(r.Context(), userID, entity, "add", userID)
+}
+
 func (s *Server) crmComment(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	if err := s.crmCheck(r, sess, kind, id, "read"); err != nil {
@@ -1064,7 +1178,7 @@ func (s *Server) crmEvent(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		return
 	}
 	need := "read"
-	if act == "pin" || act == "unpin" {
+	if act == "pin" || act == "unpin" || act == "fill" {
 		need = "write"
 	}
 	if err = s.crmCheck(r, sess, kind, id, need); err == nil {
@@ -1076,6 +1190,8 @@ func (s *Server) crmEvent(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			err = s.CRM.EditComment(r.Context(), sess.UserID, entity, id, ev, r.FormValue("body"))
 		case "delete":
 			err = s.CRM.DeleteComment(r.Context(), sess.UserID, entity, id, ev)
+		case "fill":
+			err = s.crmFillDecide(r, sess, entity, id, ev)
 		default:
 			err = crm.ErrNotFound
 		}
@@ -1098,7 +1214,10 @@ func (s *Server) crmStage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	if err == nil { // the fields required at the stage: as the card has them, or filled in by the asking dialog
 		if values, err = s.crmFormValues(r, entity); err == nil {
-			err = s.CRM.CheckRequired(r.Context(), entity, id, stage, values)
+			var sight crm.FieldSight
+			if sight, err = s.crmSight(r); err == nil {
+				err = s.CRM.CheckRequired(r.Context(), entity, id, stage, values, sight)
+			}
 		}
 	}
 	if err == nil && len(values) > 0 {
@@ -1107,7 +1226,9 @@ func (s *Server) crmStage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	switch {
 	case err != nil:
 	case entity == "deal":
-		_, err = s.CRM.MoveDeal(r.Context(), sess.UserID, id, stage)
+		if err = s.CRM.CheckMove(r.Context(), sess.UserID, id, stage); err == nil {
+			_, err = s.CRM.MoveDeal(r.Context(), sess.UserID, id, stage)
+		}
 	default:
 		_, err = s.CRM.MoveLead(r.Context(), sess.UserID, id, stage)
 	}
@@ -1141,7 +1262,7 @@ func (s *Server) crmConvert(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	for entity, made := range map[string]bool{"deal": to.Deal, "contact": to.Contact && to.ContactID == "", "company": to.Company && to.CompanyID == ""} {
 		if err == nil && made {
-			err = s.CRM.Check(r.Context(), sess.UserID, entity, "write", sess.UserID)
+			err = s.CRM.Check(r.Context(), sess.UserID, entity, "add", sess.UserID)
 		}
 	}
 	if err == nil && to.ContactID != "" && to.Contact {
@@ -1187,16 +1308,27 @@ func (s *Server) crmBulk(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return
 	}
 	op, value := r.FormValue("op"), r.FormValue("value")
+	if op == "calllist" { // «Начать обзвон»: the cards' clients are called from the softphone
+		s.crmCallList(w, r, sess, kind, back)
+		return
+	}
+	sight, err := s.crmSight(r)
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
 	done, skipped := 0, 0
 	for _, id := range r.PostForm["id"] {
 		err := s.crmCheck(r, sess, kind, id, "write")
 		if err == nil && op == "stage" { // a card lacking a field required at the stage stays where it is
-			err = s.CRM.CheckRequired(r.Context(), entity, id, value, nil)
+			err = s.CRM.CheckRequired(r.Context(), entity, id, value, nil, sight)
 		}
 		switch {
 		case err != nil:
 		case op == "stage" && entity == "deal":
-			_, err = s.CRM.MoveDeal(r.Context(), sess.UserID, id, value)
+			if err = s.CRM.CheckMove(r.Context(), sess.UserID, id, value); err == nil {
+				_, err = s.CRM.MoveDeal(r.Context(), sess.UserID, id, value)
+			}
 		case op == "stage":
 			_, err = s.CRM.MoveLead(r.Context(), sess.UserID, id, value)
 		case op == "responsible":

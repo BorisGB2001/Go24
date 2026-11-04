@@ -113,15 +113,35 @@ func (s *Store) CreateCollab(ctx context.Context, actorID, name, description str
 // ListCollabs are the user's collabs (in admin mode — all of them, as with projects), newest activity first; archived
 // — those in the archive; q, when given, — only those with it in the name or the description.
 func (s *Store) ListCollabs(ctx context.Context, userID string, archived bool, q string) ([]Collab, error) {
-	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.TrimSpace(q)) + "%"
-	return s.collabCards(ctx, `p.archived = $3 AND (p.name ILIKE $4 OR coalesce(p.description, '') ILIKE $4)`,
-		userID, IsAdmin(ctx), archived, pattern)
+	return s.collabCards(ctx, `p.archived = $3 AND (p.name ILIKE $4 OR coalesce(p.description, '') ILIKE $4) AND `+memberOrAdminSQL,
+		userID, IsAdmin(ctx), archived, likePattern(q))
 }
 
-// CollabCard is the card of one collab (by its id) the user is a member of (an administrator in admin mode — any):
-// what the header of the collab's chat shows. ErrNotFound for another's collab or a project of another kind.
-func (s *Store) CollabCard(ctx context.Context, userID, projectID string) (Collab, error) {
-	list, err := s.collabCards(ctx, `p.id = $3::uuid`, userID, IsAdmin(ctx), projectID)
+// likePattern is q for ILIKE: anywhere in the text, its own % and _ taken literally.
+func likePattern(q string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.TrimSpace(q)) + "%"
+}
+
+// memberOrAdminSQL: the user is a member of the collab, or an administrator in admin mode ($2).
+const memberOrAdminSQL = `(pm.user_id IS NOT NULL OR $2)`
+
+// openToJoinSQL: the collab is open and active, and the user ($1) is an employee not in it yet — they may join it.
+var openToJoinSQL = `p.is_open AND NOT p.archived AND pm.user_id IS NULL AND NOT ` + GuestSQL("$1")
+
+// OpenCollabs are the open collabs an employee may join (not a member yet) with q in the name or the description —
+// what the search of «Коллабы» finds besides their own; a guest finds none.
+func (s *Store) OpenCollabs(ctx context.Context, userID, q string) ([]Collab, error) {
+	if strings.TrimSpace(q) == "" || IsGuestCtx(ctx) {
+		return nil, nil
+	}
+	return s.collabCards(ctx, `(p.name ILIKE $3 OR coalesce(p.description, '') ILIKE $3) AND `+openToJoinSQL+``,
+		userID, false, likePattern(q))
+}
+
+// OpenCollab is the card of an open collab (by its key) the employee may join — what its link shows them before
+// «Вступить»; ErrNotFound for a closed or archived one, one they are in, and for a guest.
+func (s *Store) OpenCollab(ctx context.Context, userID, key string) (Collab, error) {
+	list, err := s.collabCards(ctx, `p.key = upper($3) AND `+openToJoinSQL+``, userID, false, key)
 	if err != nil {
 		return Collab{}, err
 	}
@@ -131,10 +151,53 @@ func (s *Store) CollabCard(ctx context.Context, userID, projectID string) (Colla
 	return list[0], nil
 }
 
-// collabCards are the cards of the collabs matching where ($1 — the user, $2 — admin mode, $3 — where's own).
+// JoinCollab: an employee joins an open collab themselves («Вступить» — a member of it; the log
+// (and the chat, by «Уведомления в коллабе») tells it.
+func (s *Store) JoinCollab(ctx context.Context, userID, key string) (Project, error) {
+	c, err := s.OpenCollab(ctx, userID, key)
+	if err != nil {
+		return Project{}, err
+	}
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role)
+			SELECT p.id, u.id, 'member' FROM projects p, users u
+			WHERE p.id = $1 AND p.is_open AND NOT p.archived AND u.id = $2 AND u.active AND NOT u.guest
+			ON CONFLICT (project_id, user_id) DO NOTHING`, c.ID, userID)
+		if err != nil || tag.RowsAffected() == 0 {
+			if err == nil {
+				err = ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE projects SET updated_at = now() WHERE id = $1`, c.ID); err != nil {
+			return err
+		}
+		return logCollab(ctx, tx, c.ID, userID, "member_joined", "", "")
+	})
+	if err != nil {
+		return Project{}, err
+	}
+	return s.CollabByKey(ctx, userID, c.Key)
+}
+
+// CollabCard is the card of one collab (by its id) the user is a member of (an administrator in admin mode — any):
+// what the header of the collab's chat shows. ErrNotFound for another's collab or a project of another kind.
+func (s *Store) CollabCard(ctx context.Context, userID, projectID string) (Collab, error) {
+	list, err := s.collabCards(ctx, `p.id = $3::uuid AND `+memberOrAdminSQL, userID, IsAdmin(ctx), projectID)
+	if err != nil {
+		return Collab{}, err
+	}
+	if len(list) == 0 {
+		return Collab{}, ErrNotFound
+	}
+	return list[0], nil
+}
+
+// collabCards are the cards of the collabs matching where ($1 — the user, $2 — admin mode, $3 — where's own); where
+// says whose (memberOrAdminSQL, openToJoinSQL).
 func (s *Store) collabCards(ctx context.Context, where string, args ...any) ([]Collab, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT p.id, p.key, p.name, p.description, coalesce(pm.role, 'admin'),
+		SELECT p.id, p.key, p.name, p.description, coalesce(pm.role, CASE WHEN $2 THEN 'admin' ELSE '' END),
 		       (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.status <> 'completed' AND `+visibleSQL("$1", "$2")+`)::int,
 		       p.visibility, p.kind, p.photo_key, p.date_start, p.date_finish, p.archived,
 		       (SELECT count(*) FROM project_members m WHERE m.project_id = p.id)::int,
@@ -142,7 +205,7 @@ func (s *Store) collabCards(ctx context.Context, where string, args ...any) ([]C
 		       `+collabCountersSQL+`
 		FROM projects p
 		LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
-		WHERE p.kind = 'collab' AND `+where+` AND (pm.user_id IS NOT NULL OR $2)
+		WHERE p.kind = 'collab' AND `+where+`
 		ORDER BY p.updated_at DESC, p.name`, args...)
 	if err != nil {
 		return nil, err
@@ -203,6 +266,14 @@ func (s *Store) LeaveProject(ctx context.Context, p Project, userID string) erro
 // tasks (their open tasks go to the collab's owner), so no counter, deadline or reminder of it reaches them, and
 // lose what they had there (see revokeAccess); the log says it (action: member_removed or left).
 func removeMember(ctx context.Context, tx pgx.Tx, p Project, userID, action string) error {
+	var brought bool // one a department brought goes out with the department only
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM project_department_people WHERE project_id = $1 AND user_id::text = $2)`,
+		p.ID, userID).Scan(&brought); err != nil {
+		return err
+	}
+	if brought {
+		return invalid("err.group_dept_member")
+	}
 	tag, err := tx.Exec(ctx, `DELETE FROM project_members WHERE project_id = $1 AND user_id = $2 AND role <> 'owner'`, p.ID, userID)
 	if err != nil || tag.RowsAffected() == 0 || !p.Collab() {
 		return err

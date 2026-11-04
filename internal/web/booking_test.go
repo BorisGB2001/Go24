@@ -297,7 +297,7 @@ func TestBookingLinksHTTP(t *testing.T) {
 	day := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	page, _ := do("", "GET", "/bk/"+tok+"?date="+day, nil, 200)
 	if !strings.Contains(page, "Запись к врачу") || !strings.Contains(page, "Приём 30 минут") || strings.Contains(page, "Кабинет") ||
-		!strings.Contains(page, "&t=09%3a30") || !strings.Contains(page, "&t=10%3a30") {
+		!strings.Contains(page, "&t=09:30") || !strings.Contains(page, "&t=10:30") {
 		t.Fatalf("the public page: %s", page)
 	}
 	if page, _ := do("", "GET", "/bk/"+tok+"?date="+day+"&t=09:30", nil, 200); !strings.Contains(page, `name="phone"`) {
@@ -318,7 +318,7 @@ func TestBookingLinksHTTP(t *testing.T) {
 	if page, _ := do("", "GET", loc, nil, 200); !strings.Contains(page, "Вы записаны") || !strings.Contains(page, "09:30–10:00") || !strings.Contains(page, "Не подтверждена") {
 		t.Fatalf("the client's page: %s", page)
 	}
-	if page, _ := do("", "GET", "/bk/"+tok+"?date="+day, nil, 200); strings.Contains(page, "&t=09%3a30") {
+	if page, _ := do("", "GET", "/bk/"+tok+"?date="+day, nil, 200); strings.Contains(page, "&t=09:30") {
 		t.Fatal("the booked slot is still free")
 	}
 	_, loc = do("", "POST", "/bk/"+tok, form, 303)
@@ -372,7 +372,7 @@ func TestBookingLinksHTTP(t *testing.T) {
 	day2 := time.Now().AddDate(0, 0, 2).Format("2006-01-02")
 	page, _ = do(boss, "GET", "/bk/"+tok+"?embed=1&date="+day2, nil, 200)
 	if !strings.Contains(page, "bkembed.js") || !strings.Contains(page, "bk-embed") || strings.Contains(page, "data-bell") ||
-		!strings.Contains(page, "&t=09%3a00&amp;embed=1#form") {
+		!strings.Contains(page, "&t=09:00&amp;embed=1#form") {
 		t.Fatalf("the embedded page: %s", page)
 	}
 	if page, _ := do("", "GET", "/bk/"+tok+"?date="+day2, nil, 200); strings.Contains(page, "bkembed.js") || strings.Contains(page, "embed=1") {

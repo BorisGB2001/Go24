@@ -2,13 +2,16 @@ package mail
 
 import (
 	"context"
+	"net/mail"
 	"slices"
+	"strings"
 )
 
 // MaxFavorites bounds the user's «Избранное».
 const MaxFavorites = 50
 
-// Favorites are the refs of the user's «Избранное» (folder ids, "cat:ID", "search:ID", the virtual folders), in order.
+// Favorites are the refs of the user's «Избранное» (folder ids, "cat:ID", "search:ID", "person:e-mail", the virtual
+// folders), in order.
 // The first time, defaults are put there (Outlook's: Inbox, Sent, Drafts of the first mailbox).
 func (s *Store) Favorites(ctx context.Context, userID string, defaults ...string) ([]string, error) {
 	list, err := s.favorites(ctx, userID)
@@ -103,4 +106,52 @@ func (s *Store) MoveFavorite(ctx context.Context, userID, ref string, by int) er
 	}
 	list[i], list[j] = list[j], list[i]
 	return s.SetFavorites(ctx, userID, list)
+}
+
+// PersonFolder + an e-mail is a person's folder, as Outlook's favorite people: the letters from that address in all the
+// user's folders but «Удалённые» and «Нежелательная почта».
+const PersonFolder = "person:"
+
+// PersonRef is the ref of the person with the e-mail ("" — not an e-mail): lower case, without a name.
+func PersonRef(email string) string {
+	a, err := mail.ParseAddress(strings.TrimSpace(email))
+	if err != nil || !strings.Contains(a.Address, "@") {
+		return ""
+	}
+	return PersonFolder + strings.ToLower(a.Address)
+}
+
+// FavPerson is a favorite person of the folder pane: the name from the latest letter and the unread ones.
+type FavPerson struct {
+	Email  string
+	Name   string
+	Unseen int
+}
+
+// FavPeople are the people with the e-mails (lower case), as the user's mailboxes know them; one with no letters is
+// only the e-mail.
+func (s *Store) FavPeople(ctx context.Context, userID string, emails []string) (map[string]FavPerson, error) {
+	out := map[string]FavPerson{}
+	for _, e := range emails {
+		out[e] = FavPerson{Email: e}
+	}
+	if len(emails) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT lower(x.from_addr), coalesce((array_agg(x.from_name ORDER BY x.sent_at DESC) FILTER (WHERE x.from_name <> ''))[1], ''),
+			count(*) FILTER (WHERE NOT x.seen AND (x.snooze_until IS NULL OR x.snooze_until <= now()))
+		FROM mail_messages x JOIN mail_folders f ON f.id = x.folder_id JOIN mailboxes m ON m.id = f.mailbox_id
+		WHERE m.user_id::text = $1 AND lower(x.from_addr) = ANY($2) AND f.role NOT IN ('trash', 'junk') GROUP BY 1`, userID, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p FavPerson
+		if err := rows.Scan(&p.Email, &p.Name, &p.Unseen); err != nil {
+			return nil, err
+		}
+		out[p.Email] = p
+	}
+	return out, rows.Err()
 }

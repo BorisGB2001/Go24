@@ -41,6 +41,8 @@ type Group struct {
 	Channel bool   // only the owner and the admins write
 	Open    bool   // any employee finds it and joins (open chats)
 	CanOpen bool   // the employee makes it open or closed: its owner, not in a collab
+	History bool   // new members read what was said before them (m.room.history_visibility shared)
+	CanHist bool   // the employee changes that: its owner, not in a collab (there the collab's setting rules)
 	Writer  bool   // the employee writes in it (anyone in a group chat; in a channel — its owner and admins)
 	Topic   string // the chat's description (m.room.topic)
 	Rights  Rights
@@ -155,8 +157,8 @@ func (s *Service) peers(ctx context.Context, userID string, ids []string) (map[s
 	}
 	rows, err := s.DB.Query(ctx, `SELECT u.id::text, m.mxid FROM matrix_users m JOIN users u ON u.id = m.user_id
 		WHERE u.id::text = ANY($1) AND u.active AND `+tasks.PeerSQL("$2", "u")+`
-		UNION ALL SELECT b.id::text, b.mxid FROM im_bots b JOIN apps a ON a.id = b.app_id
-		WHERE b.id::text = ANY($1) AND a.installed_at IS NOT NULL AND NOT `+tasks.GuestSQL("$2"), ids, userID)
+		UNION ALL SELECT b.id::text, b.mxid FROM im_bots b
+		WHERE b.id::text = ANY($1) AND `+liveBotSQL+` AND NOT `+tasks.GuestSQL("$2"), ids, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +181,16 @@ func (s *Service) CreateGroup(ctx context.Context, userID, name string, ids []st
 // CreateOpenGroup is CreateGroup that may make the chat open: then it may start with no one else
 // but needs its name; others join it themselves.
 func (s *Service) CreateOpenGroup(ctx context.Context, userID, name string, ids []string, channel, open bool) (string, error) {
+	return s.createGroup(ctx, userID, name, ids, channel, open, false)
+}
+
+// CreateCardGroup makes the group chat of a CRM card: it may start with its maker alone (the card's people join it
+// later), and nobody else joins it on their own.
+func (s *Service) CreateCardGroup(ctx context.Context, userID, name string, ids []string) (string, error) {
+	return s.createGroup(ctx, userID, name, ids, false, false, true)
+}
+
+func (s *Service) createGroup(ctx context.Context, userID, name string, ids []string, channel, open, alone bool) (string, error) {
 	me, tok, err := s.token(ctx, userID)
 	if err != nil {
 		return "", err
@@ -192,7 +204,7 @@ func (s *Service) CreateOpenGroup(ctx context.Context, userID, name string, ids 
 	if open && (name == "" || s.isGuest(ctx, userID)) {
 		return "", i18n.E("err.im_open_name")
 	}
-	if len(who) == 0 && !open {
+	if len(who) == 0 && !open && !alone {
 		return "", i18n.E("err.im_group_people")
 	}
 	var invite []string
@@ -290,6 +302,13 @@ func (s *Service) GroupInfo(ctx context.Context, userID, room string) (*Group, e
 		g.Open = jr.JoinRule == "restricted"
 	}
 	g.CanOpen = g.Owner && s.CollabOf(ctx, room) == "" && !s.isGuest(ctx, userID)
+	var hv struct {
+		Visibility string `json:"history_visibility"`
+	}
+	if s.M.StateAs(ctx, tok, room, "m.room.history_visibility", "", &hv) == nil {
+		g.History = hv.Visibility == "shared" || hv.Visibility == "world_readable"
+	}
+	g.CanHist = g.Owner && s.CollabOf(ctx, room) == ""
 	if g.Members, err = s.chatPeople(ctx, me, tok, room, pl); err != nil {
 		return nil, err
 	}
@@ -314,7 +333,9 @@ func (s *Service) chatPeople(ctx context.Context, me, tok, room string, pl matri
 	}
 	var mxids []string
 	for mx := range mem {
-		mxids = append(mxids, mx)
+		if mx != s.M.UserID("go24") { // a channel's go24 sends its readers' comments, not one of its people
+			mxids = append(mxids, mx)
+		}
 	}
 	who, err := s.people(ctx, mxids)
 	if err != nil {
@@ -448,6 +469,37 @@ func (s *Service) LeaveGroup(ctx context.Context, userID, room string) error {
 		}
 	}
 	return forbidden(s.M.LeaveAs(ctx, tok, room))
+}
+
+// DeleteGroup deletes the group chat (or channel) with its history for everyone in it «Удалить чат»:
+// its owner only. go24's own notes about the chat go with it; a collab's chat leaves a line in the collab's log.
+func (s *Service) DeleteGroup(ctx context.Context, userID, room string) error {
+	me, tok, err := s.token(ctx, userID)
+	if err != nil {
+		return err
+	}
+	pl, err := s.group(ctx, me, tok, room)
+	if err != nil {
+		return err
+	}
+	if pl.Level(me) < ownerLevel {
+		return i18n.E("err.forbidden")
+	}
+	name, pid := s.roomName(ctx, tok, room), s.CollabOf(ctx, room)
+	if err := s.M.DeleteRoom(ctx, room); err != nil {
+		return err
+	}
+	for _, q := range []string{`DELETE FROM collab_chats WHERE room_id = $1`, `DELETE FROM im_open_chats WHERE room_id = $1`,
+		`DELETE FROM im_autodelete WHERE room_id = $1`, `DELETE FROM im_saved WHERE room_id = $1`, `DELETE FROM im_chat_items WHERE room_id = $1`,
+		`DELETE FROM voice_transcripts WHERE room_id = $1`, `DELETE FROM department_chats WHERE room = $1`} {
+		if _, err := s.DB.Exec(ctx, q, room); err != nil {
+			return err
+		}
+	}
+	if pid != "" {
+		return s.Tasks.LogCollabChat(ctx, pid, userID, "chat_removed", name)
+	}
+	return nil
 }
 
 // RenameGroup gives the group chat a new name, as its rights let the employee (Matrix checks it too).
@@ -598,6 +650,28 @@ func (s *Service) SetChannel(ctx context.Context, userID, room string, on bool) 
 	}
 	channelRules(pl, on)
 	return forbidden(s.M.SetStateAs(ctx, tok, room, "m.room.power_levels", "", pl))
+}
+
+// SetHistory decides whether new members of the group chat read what was said before them (on — history_visibility
+// shared, as go24 makes chats) or only from their joining (joined) «Показывать историю»: its owner
+// only, not in a collab — there the collab's «История для новых участников» rules.
+func (s *Service) SetHistory(ctx context.Context, userID, room string, on bool) error {
+	me, tok, err := s.token(ctx, userID)
+	if err != nil {
+		return err
+	}
+	pl, err := s.group(ctx, me, tok, room)
+	if err != nil {
+		return err
+	}
+	if pl.Level(me) < ownerLevel || s.CollabOf(ctx, room) != "" {
+		return i18n.E("err.forbidden")
+	}
+	vis := "joined"
+	if on {
+		vis = "shared"
+	}
+	return forbidden(s.M.SetStateAs(ctx, tok, room, "m.room.history_visibility", "", map[string]string{"history_visibility": vis}))
 }
 
 // SetRights sets the group chat's rights: its owner only.

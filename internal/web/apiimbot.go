@@ -74,14 +74,15 @@ func (s *Server) apiBotApp(r *http.Request, p apikeys.Principal) (apps.App, erro
 	return s.apiApp(r, p)
 }
 
-// bindBot subscribes the bot's handlers to its events for the employee p (the handlers are on the application's host).
-func (s *Server) bindBot(r *http.Request, a apps.App, p apikeys.Principal, b matrixsync.Bot) error {
+// bindBot subscribes the bot's handlers to its events for the employee p (the handlers are on the application's host);
+// portal — registered by the REST, the events go posts them.
+func (s *Server) bindBot(r *http.Request, a apps.App, p apikeys.Principal, b matrixsync.Bot, portal bool) error {
 	for _, h := range []struct{ event, url string }{{matrixsync.BotMessageAdd, b.MessageHandler},
 		{matrixsync.BotJoinChat, b.WelcomeHandler}, {matrixsync.BotDelete, b.DeleteHandler}} {
 		if h.url == "" {
 			continue
 		}
-		if _, err := s.Apps.BindEvent(r.Context(), a, apps.Event{Event: h.event, Handler: h.url, UserID: p.UserID}); err != nil {
+		if _, err := s.Apps.BindEvent(r.Context(), a, apps.Event{Event: h.event, Handler: h.url, UserID: p.UserID, Portal: portal}); err != nil {
 			return err
 		}
 	}
@@ -119,7 +120,7 @@ func (s *Server) apiBotRegister(w http.ResponseWriter, r *http.Request, p apikey
 	if b.Code == "" {
 		return i18n.E("err.imbot_code_empty")
 	}
-	if err := s.bindBot(r, a, p, b); err != nil {
+	if err := s.bindBot(r, a, p, b, false); err != nil {
 		return err
 	}
 	if b, err = s.Matrix.RegisterBot(r.Context(), a.ID, p.UserID, b); err != nil {
@@ -140,7 +141,7 @@ func (s *Server) apiBotUpdate(w http.ResponseWriter, r *http.Request, p apikeys.
 		return err
 	}
 	ch := q.bot()
-	if err := s.bindBot(r, a, p, ch); err != nil {
+	if err := s.bindBot(r, a, p, ch, false); err != nil {
 		return err
 	}
 	b, err := s.Matrix.UpdateBot(r.Context(), a.ID, r.PathValue("bot"), ch)
@@ -353,12 +354,12 @@ func yn(v *matrixsync.YN) *bool {
 	return &b
 }
 
-// bindCommand subscribes the command's handler to ONIMCOMMANDADD for the employee p.
-func (s *Server) bindCommand(r *http.Request, a apps.App, p apikeys.Principal, handler string) error {
+// bindCommand subscribes the command's handler to ONIMCOMMANDADD for the employee p (portal — as bindBot).
+func (s *Server) bindCommand(r *http.Request, a apps.App, p apikeys.Principal, handler string, portal bool) error {
 	if handler = strings.TrimSpace(handler); handler == "" {
 		return nil
 	}
-	_, err := s.Apps.BindEvent(r.Context(), a, apps.Event{Event: matrixsync.BotCommand, Handler: handler, UserID: p.UserID})
+	_, err := s.Apps.BindEvent(r.Context(), a, apps.Event{Event: matrixsync.BotCommand, Handler: handler, UserID: p.UserID, Portal: portal})
 	return err
 }
 
@@ -392,7 +393,7 @@ func (s *Server) apiCommandRegister(w http.ResponseWriter, r *http.Request, p ap
 	if strings.TrimSpace(q.Handler) == "" {
 		return i18n.E("err.imbot_command_handler")
 	}
-	if err := s.bindCommand(r, a, p, q.Handler); err != nil {
+	if err := s.bindCommand(r, a, p, q.Handler, false); err != nil {
 		return err
 	}
 	c := matrixsync.Command{Command: q.Command, Lang: q.lang(), Handler: q.Handler}
@@ -424,7 +425,7 @@ func (s *Server) apiCommandUpdate(w http.ResponseWriter, r *http.Request, p apik
 	if q.Fields != nil {
 		q = *q.Fields
 	}
-	if err := s.bindCommand(r, a, p, q.Handler); err != nil {
+	if err := s.bindCommand(r, a, p, q.Handler, false); err != nil {
 		return err
 	}
 	c, err := s.Matrix.UpdateCommand(r.Context(), a.ID, r.PathValue("bot"), r.PathValue("cmd"), matrixsync.CommandChange{

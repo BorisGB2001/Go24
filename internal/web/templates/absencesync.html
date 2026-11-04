@@ -1,0 +1,30 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/company/absences">{{t "absence.title"}}</a> {{icon "chevron-right"}} {{t "abssync.title"}}</div>
+<h1>{{t "abssync.title"}}</h1>
+<div class="sub">{{t "abssync.subtitle"}}</div>
+<div class="card" style="max-width:760px">
+  <form method="get" action="/company/absences/sync" class="row evwhen">
+    <label for="abssync-dept">{{t "abssync.dept"}}</label>
+    <select id="abssync-dept" name="dept" onchange="this.form.submit()" style="width:auto"><option value="">{{t "company.all_departments"}}</option>
+      {{range $d.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  </form>
+  {{if $d.Link}}
+  <label>{{t "calsync.link"}}</label>
+  <div class="row evwhen"><input type="text" readonly value="{{$d.Link}}" style="flex:1" onfocus="this.select()">
+    <button type="button" class="ghost" data-copy="{{$d.Link}}">{{icon "link"}} {{t "calsync.copy"}}</button>
+    <a class="button ghost" href="{{$d.Webcal}}">{{icon "calendar-event"}} {{t "calsync.open"}}</a></div>
+  <p class="small muted">{{t "abssync.secret"}}</p>
+  <ul class="small">
+    <li>{{t "calsync.how.outlook"}}</li>
+    <li>{{t "calsync.how.google"}}</li>
+    <li>{{t "calsync.how.apple"}}</li>
+  </ul>
+  {{end}}
+  <form method="post" action="/company/absences/sync" class="row evwhen">
+    <input type="hidden" name="dept" value="{{$d.Dept}}">
+    <span style="flex:1"></span>
+    {{if $d.Link}}<button class="ghost" data-confirm="{{t "abssync.renew_confirm"}}">{{icon "refresh"}} {{t "calsync.renew"}}</button>
+    {{else}}<button class="primary">{{icon "link"}} {{t "calsync.create"}}</button>{{end}}
+  </form>
+</div>
+{{end}}

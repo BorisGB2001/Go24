@@ -174,6 +174,18 @@ func TestOpenLinesAPI(t *testing.T) {
 	if events("openline.message") != 2 {
 		t.Fatal("the operator's message has no webhook")
 	}
+	// «Пригласить в диалог»: Анна invites Ева — she sees it and answers, Анна stays its operator; Ева leaves
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/invite", annaKey, map[string]string{"user_id": eve}, 200), &d)
+	if len(d.Invited) != 1 || d.Invited[0].ID != eve || d.Operator == nil || d.Operator.ID != anna {
+		t.Fatalf("invite %+v", d)
+	}
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/invite", annaKey, map[string]string{"user_id": eve}, 422)
+	call("POST", "/api/v1/openlines/dialogs/"+sid+"/messages", eveKey, map[string]string{"text": "Подскажу я"}, 201)
+	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/uninvite", eveKey, nil, 200), &d)
+	if len(d.Invited) != 0 || d.Operator.ID != anna {
+		t.Fatalf("uninvite %+v", d)
+	}
+	call("GET", "/api/v1/openlines/dialogs/"+sid, eveKey, nil, 404)
 
 	// transfer, the head's rating, a lead, close and reopen, spam
 	decode(call("POST", "/api/v1/openlines/dialogs/"+sid+"/transfer", annaKey, map[string]string{"to": eve}, 200), &d)
@@ -201,7 +213,7 @@ func TestOpenLinesAPI(t *testing.T) {
 	if m := all[len(all)-1]; m.From != "hidden" || m.Text != "Предложи скидку" || m.Operator == nil || m.Operator.ID != boss {
 		t.Fatalf("hidden message %+v", m)
 	}
-	if events("openline.message") != 2 {
+	if events("openline.message") != 3 { // Анна's and the invited Ева's answers
 		t.Fatal("a hidden message went to the webhook")
 	}
 	call("POST", "/api/v1/openlines/dialogs/"+sid+"/intercept", eveKey, nil, 422) // her own
@@ -271,4 +283,20 @@ func TestOpenLinesAPI(t *testing.T) {
 		t.Fatalf("Анна sees Ева's %+v", st.Total)
 	}
 	call("GET", "/api/v1/openlines/stats?from=2026-13-01", annaKey, nil, 422)
+	var det struct {
+		Dialogs []struct {
+			ID   string `json:"id"`
+			Spam bool   `json:"spam"`
+		} `json:"dialogs"`
+		More bool `json:"more"`
+	}
+	decode(call("GET", "/api/v1/openlines/stats/dialogs?status=spam", bossKey, nil, 200), &det)
+	if len(det.Dialogs) != 1 || !det.Dialogs[0].Spam || det.More {
+		t.Fatalf("detail %+v", det)
+	}
+	decode(call("GET", "/api/v1/openlines/stats/dialogs?operator="+eve+"&status=spam", annaKey, nil, 200), &det)
+	if len(det.Dialogs) != 0 {
+		t.Fatalf("Анна sees Ева's dialogues %+v", det)
+	}
+	call("GET", "/api/v1/openlines/stats/dialogs?to=x", annaKey, nil, 422)
 }

@@ -1,27 +1,29 @@
-# Установка go24 для тестовой работы
+Русская версия: [ru/install.md](ru/install.md)
 
-Инструкция разворачивает весь go24 на одном сервере в локальной сети: задачи, CRM, почту, диск, мессенджер, звонки,
-документы, телефонию. Все компоненты работают в Docker на этом сервере, облачные сервисы не нужны.
+# Installing go24 for a test deployment
 
-Для теста в локальной сети этого достаточно. Наружу в интернет такой сервер не открывайте: в тестовой схеме нет
-настоящих TLS-сертификатов и внешнего прокси.
+This guide sets up the full go24 stack on a single server in a local network: tasks, CRM, mail, drive, messenger, calls,
+documents, and telephony. Every component runs in Docker on that server; no cloud services are required.
 
-## 1. Что нужно
+This is sufficient for testing on a local network. Do **not** expose this server to the internet: the test setup has no
+real TLS certificates and no external proxy.
 
-| | Минимум | Лучше |
-|---|---|---|
-| Процессор | 4 ядра | 8 ядер |
-| Память | 12 ГБ | 16 ГБ и больше |
-| Диск | 40 ГБ свободно | 100 ГБ (файлы, копии, записи звонков) |
-| Система | Debian 12/13 или Ubuntu 24.04, 64 бит | — |
-| Сеть | постоянный IP в локальной сети, например `192.168.1.50` | — |
+## 1. Requirements
 
-Больше всего памяти берут ONLYOFFICE (документы), Whisper (расшифровка голосовых), Synapse (мессенджер) и Authentik
-(вход). С 8 ГБ стек запустится, но будет медленным.
+|                | Minimum                                              | Recommended                                    |
+|----------------|------------------------------------------------------|------------------------------------------------|
+| CPU            | 4 cores                                              | 8 cores                                        |
+| RAM            | 12 GB                                                | 16 GB or more                                  |
+| Disk           | 40 GB free                                           | 100 GB (files, backups, call recordings)       |
+| OS             | Debian 12/13 or Ubuntu 24.04, 64-bit                 | —                                              |
+| Network        | a static IP on the local network, e.g. `192.168.1.50` | —                                            |
 
-## 2. Подготовка сервера
+The biggest memory consumers are ONLYOFFICE (documents), Whisper (voice transcription), Synapse (messenger), and
+Authentik (authentication). With 8 GB the stack will start, but it will be slow.
 
-Выполняется один раз, от root или через `sudo`.
+## 2. Prepare the server
+
+Run once, as root or via `sudo`.
 
 ```bash
 apt update && apt install -y git make openssl gettext-base curl
@@ -30,33 +32,33 @@ useradd -m -s /bin/bash -G docker go24
 mkdir -p /srv/go24 && chown go24:go24 /srv/go24
 ```
 
-Дальше всё делается от пользователя `go24`:
+All subsequent steps are run as the `go24` user:
 
 ```bash
 su - go24
 ```
 
-> Команды `make` из этой инструкции работают «на месте», когда код лежит в `/srv/go24` и их запускает пользователь
-> `go24`. Поэтому путь и имя пользователя лучше не менять.
+> The `make` commands in this guide work when the code is in `/srv/go24` and are run by the `go24` user. It is best not
+> to change the path or the username.
 
-## 3. Скачать go24
+## 3. Download go24
 
 ```bash
 git clone https://github.com/BorisGB2001/Go24.git /srv/go24
 cd /srv/go24
-git checkout $(git tag --sort=-v:refname | head -1)   # последняя выпущенная версия
+git checkout $(git tag --sort=-v:refname | head -1)   # latest released version
 cat VERSION
 ```
 
-## 4. Настройки
+## 4. Configuration
 
-1. Создать файл настроек `deploy/.env` со случайными паролями:
+1. Create the configuration file `deploy/.env` with random passwords:
 
    ```bash
    make secrets
    ```
 
-2. Вписать в него IP сервера. Замените `192.168.1.50` на свой адрес:
+2. Set the server IP. Replace `192.168.1.50` with your address:
 
    ```bash
    IP=192.168.1.50
@@ -70,97 +72,98 @@ cat VERSION
      deploy/.env
    ```
 
-   Часовой пояс меняется в той же строке файла: `GO24_TZ=Europe/Moscow` и т. п.
+   The time zone is set on the corresponding line in the same file: `GO24_TZ=Europe/Moscow`, etc.
 
-3. Хранилище файлов. Для теста хватит локального диска сервера:
+3. File storage. For a test deployment the local server disk is sufficient:
 
    ```bash
    cp deploy/rclone/rclone.conf.example deploy/rclone/rclone.conf
    ```
 
-4. Собрать настройки мессенджера (Matrix) из шаблонов:
+4. Build the messenger (Matrix) configuration from templates:
 
    ```bash
    make matrix-config
    ```
 
-Файл `deploy/.env` содержит все пароли. Он доступен только владельцу и в git не попадает. Сохраните его копию в
-надёжном месте: без него не открыть базу и резервные копии.
+`deploy/.env` contains all passwords. It is readable only by its owner and is excluded from git. Keep a copy in a
+safe place: without it you cannot open the database or restore backups.
 
-## 5. Первый запуск
+## 5. First start
 
 ```bash
 make up
 ```
 
-Первый раз это долго, 15–30 минут: скачиваются образы (несколько гигабайт) и собирается go24. Проверить, что всё
-поднялось:
+The first run takes 15–30 minutes: Docker images (several gigabytes) are downloaded and go24 is built. Verify that
+everything started:
 
 ```bash
 make ps
 ```
 
-Все сервисы должны быть в состоянии `running` или `healthy`. Authentik готовится ещё 2–3 минуты после старта.
+All services should be in `running` or `healthy` state. Authentik takes an additional 2–3 minutes after start.
 
-## 6. Администратор и мессенджер
+## 6. Admin account and messenger
 
-1. **Пароль администратора.** Откройте в браузере `http://<IP>:9000/if/flow/initial-setup/` и задайте пароль
-   пользователя `akadmin`. Он сразу администратор go24.
-2. **Бот мессенджера.** Создаётся один раз, затем go24 перезапускается с его ключом:
+1. **Admin password.** Open `http://<IP>:9000/if/flow/initial-setup/` in a browser and set the password for the
+   `akadmin` user. This user is the go24 administrator.
+2. **Messenger bot.** Created once; then go24 is restarted with its key:
 
    ```bash
    make matrix-bot
    make up
    ```
 
-3. **Сертификат для https.** Мессенджер (Element), звонки и камера работают только по https. Сертификаты выпускает
-   встроенный Caddy, и его корневой сертификат нужно один раз сделать доверенным на каждом компьютере, с которого
-   открываете go24:
+3. **HTTPS certificate.** The messenger (Element), calls, and the camera work only over HTTPS. Certificates are
+   issued by the built-in Caddy, and its root certificate must be trusted once on every computer you use to access
+   go24:
 
    ```bash
-   make dev-ca          # сохранит deploy/go24-dev-ca.crt
+   make dev-ca          # saves deploy/go24-dev-ca.crt
    ```
 
-   Скопируйте этот файл на свой компьютер и добавьте в доверенные:
-   - **macOS:** двойной щелчок → «Связка ключей» → «Система» → у сертификата «Доверять: всегда»;
-   - **Windows:** двойной щелчок → «Установить сертификат» → «Локальный компьютер» → «Доверенные корневые центры»;
-   - **Linux (Chrome/Firefox):** импорт в настройках браузера → «Центры сертификации».
+   Copy that file to your computer and add it to the trust store:
+   - **macOS:** double-click → Keychain Access → System → set the certificate to *Always Trust*;
+   - **Windows:** double-click → Install Certificate → Local Machine → Trusted Root Certification Authorities;
+   - **Linux (Chrome/Firefox):** import in the browser settings → Certificate Authorities.
 
-## 7. Вход
+## 7. Access
 
-| Что | Адрес |
-|---|---|
-| **go24** | `http://<IP>:8080` (звонки и камера — `https://<IP>:8444`) |
-| Вход и пользователи (Authentik) | `http://<IP>:9000` |
-| Мессенджер в отдельном клиенте (Element) | `https://<IP>:8443` |
-| Автоматизация (n8n) | `http://<IP>:5678` |
+| What                                  | Address                                                  |
+|---------------------------------------|----------------------------------------------------------|
+| **go24**                              | `http://<IP>:8080` (calls and camera — `https://<IP>:8444`) |
+| Authentication and users (Authentik)  | `http://<IP>:9000`                                       |
+| Messenger standalone client (Element) | `https://<IP>:8443`                                      |
+| Automation (n8n)                      | `http://<IP>:5678`                                       |
 
-Войдите в go24 как `akadmin` с паролем из шага 6.
+Sign in to go24 as `akadmin` with the password you set in step 6.
 
-## 8. Первые шаги в go24
+## 8. First steps in go24
 
-1. **Режим администратора** — кнопка в верхней строке: показывает все настройки, проекты и задачи.
-2. **Настройки → Общие настройки:** название компании и другие настройки портала.
-3. **Компания → Пригласить сотрудников:** e-mail и имя, по строке на человека. Каждому создаётся ссылка для
-   регистрации; её можно скопировать со страницы, если почта для рассылки ещё не настроена.
-4. **Компания → Структура:** отделы и руководители.
-5. **Задачи:** создайте проект и пару задач, проверьте канбан, Ганта и «Мой план».
-6. **Мессенджер:** напишите приглашённому сотруднику, создайте групповой чат.
-7. **Почта:** подключите свой ящик в разделе «Почта» (IMAP и SMTP своего почтового сервера).
-8. **Звонки:** откройте go24 по `https://<IP>:8444` и позвоните из чата — браузер спросит доступ к камере и микрофону.
-9. **Настройки → Резервное копирование:** включите копии базы и файлов. По умолчанию они складываются в
-   `deploy/backups`; лучше указать другой диск переменной `GO24_BACKUP_DIR` в `deploy/.env`.
+1. **Admin mode** — button in the top bar: shows all settings, projects, and tasks.
+2. **Settings → General settings:** company name and other portal settings.
+3. **Employees → Invite employees:** e-mail and name, one per line. An invitation link is generated for each person;
+   it can be copied from the page if mail is not yet configured.
+4. **Employees → Company structure:** departments and managers.
+5. **Tasks:** create a project and a few tasks; check the Kanban board, Gantt chart, and My plan.
+6. **Messenger:** send a message to an invited employee, create a group chat.
+7. **Mail:** connect your mailbox under Mail (IMAP and SMTP of your mail server).
+8. **Calls:** open go24 at `https://<IP>:8444` and call from a chat — the browser will ask for camera and microphone
+   access.
+9. **Settings → Backup:** enable database and file backups. By default they are stored in `deploy/backups`; a
+   different disk can be specified with the `GO24_BACKUP_DIR` variable in `deploy/.env`.
 
-Обновление до новой версии — [update.md](update.md).
+Upgrading to a new version — [update.md](update.md).
 
-## Если что-то не так
+## Troubleshooting
 
-| Симптом | Что проверить |
-|---|---|
-| Страница go24 не открывается | `make ps` — работает ли `go24`; `make logs s=go24` — ошибка при старте |
-| «Ошибка входа» или бесконечный переход на вход | IP в `GO24_BASE_URL` и `GO24_OIDC_ISSUER` совпадает с адресом, по которому вы открываете go24; Authentik уже поднялся (`make logs s=authentik-server`) |
-| Мессенджер пишет, что не видит сервер | доверен ли сертификат из шага 6.3; `make logs s=synapse` |
-| Нет камеры и микрофона в звонке | go24 открыт по `https://<IP>:8444`, а не по `http://…:8080` |
-| Всё медленно, сервер «задыхается» | `free -h`: свободной памяти должно быть больше 2 ГБ; добавьте память |
+| Symptom                                           | What to check                                                                                                                 |
+|---------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| go24 page does not open                           | `make ps` — is `go24` running; `make logs s=go24` — startup error                                                            |
+| "Login error" or infinite redirect to login       | IP in `GO24_BASE_URL` and `GO24_OIDC_ISSUER` matches the address you use to open go24; Authentik is up (`make logs s=authentik-server`) |
+| Messenger reports it cannot reach the server      | Is the certificate from step 6.3 trusted; `make logs s=synapse`                                                              |
+| No camera or microphone in a call                 | go24 must be opened at `https://<IP>:8444`, not `http://…:8080`                                                              |
+| Everything is slow, server is struggling          | `free -h`: more than 2 GB of free RAM is required; add memory                                                                |
 
-Остановить всё: `make down` (данные сохраняются в томах Docker). Запустить снова: `make up`.
+Stop everything: `make down` (data is preserved in Docker volumes). Start again: `make up`.

@@ -1,7 +1,11 @@
 // «Открытые линии → Виджеты», the line's chat bot «Интерактивное меню»: the menu's items as a tree — a title, an action
 // (answer with a text, a submenu, to the operators, close the dialogue), its text and the submenu's items; on saving the
-// tree goes to the form's bot_menu as JSON.
+// tree goes to the form's bot_menu as JSON. «Из производственного календаря» fills the line's holidays with the company's.
 (() => {
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-ol-holidays]');
+    if (b) b.closest('details').querySelector('[name="holidays"]').value = b.dataset.olHolidays.split(',').join('\n');
+  });
   document.querySelectorAll('[data-olbot]').forEach(box => {
     const tpl = box.querySelector('[data-olbot-item]');
     const field = box.querySelector('[name="bot_menu"]');

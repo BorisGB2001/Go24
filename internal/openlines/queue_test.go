@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,11 +28,33 @@ func TestInHours(t *testing.T) {
 	if !night.InHours(mon("23:00")) || !night.InHours(mon("05:00")) || night.InHours(mon("12:00")) {
 		t.Fatal("overnight hours")
 	}
+	hol := Widget{HoursOn: true, HoursDays: []int32{1}, HoursFrom: "09:00", HoursTo: "18:00", Holidays: []string{mon("10:00").Format("01-02")}}
+	if hol.InHours(mon("10:00")) || hol.InHours(mon("10:00").AddDate(-6, 0, 0)) /* a Monday too */ || !hol.InHours(mon("10:00").AddDate(0, 0, 7)) {
+		t.Fatal("a holiday every year")
+	}
+	if hol.Holidays = []string{mon("10:00").Format("2006-01-02")}; hol.InHours(mon("10:00")) || !hol.InHours(mon("10:00").AddDate(0, 0, 7)) {
+		t.Fatal("a holiday of one year")
+	}
+	// 10:00 in go24's zone is another hour in Vladivostok: the line's hours are by its own clock
+	vl, _ := time.LoadLocation("Asia/Vladivostok")
+	tz := Widget{HoursOn: true, HoursDays: []int32{0, 1, 2, 3, 4, 5, 6}, HoursFrom: "09:00", HoursTo: "18:00", HoursTZ: "Asia/Vladivostok"}
+	at := time.Date(2026, 10, 26, 8, 30, 0, 0, vl)
+	if !tz.InHours(at.Add(time.Hour)) || tz.InHours(at) || tz.Loc().String() != vl.String() {
+		t.Fatal("the line's time zone")
+	}
+	if got, err := Holidays([]string{" 8.3", "31.12.2026", "01-01", "2026-05-09", "08.03", ""}); err != nil ||
+		strings.Join(got, ",") != "01-01,03-08,2026-05-09,2026-12-31" || strings.Join(HolidaysDM(got), ",") != "01.01,08.03,09.05.2026,31.12.2026" {
+		t.Fatal("holidays", got, err)
+	}
+	if _, err := Holidays([]string{"32.01"}); err == nil {
+		t.Fatal("a wrong date")
+	}
 	if !(Widget{}).InHours(mon("03:00")) {
 		t.Fatal("without a schedule the line always works")
 	}
 	for _, bad := range []Widget{{HoursFrom: "9:00", HoursTo: "18:00"}, {HoursFrom: "10:00", HoursTo: "10:00"}, {HoursOn: true, HoursDays: []int32{}},
-		{QueueMode: "random"}, {AnswerWait: 2000}, {HoursDays: []int32{7}}, {Autoclose: -1}, {KPIFirst: 2000}, {KPIFurther: -1}} {
+		{QueueMode: "random"}, {AnswerWait: 2000}, {HoursDays: []int32{7}}, {Autoclose: -1}, {KPIFirst: 2000}, {KPIFurther: -1},
+		{HoursTZ: "Mars/Olympus"}, {HoursTZ: "Local"}, {Holidays: []string{"30.02"}}} {
 		var ve *i18n.Error
 		if err := cleanLine(&bad); !errors.As(err, &ve) {
 			t.Fatalf("%+v: %v", bad, err)
@@ -209,4 +232,86 @@ func TestQueue(t *testing.T) {
 	}
 	ago(ns, "waiting_since", time.Hour)
 	due(0)
+
+	// a holiday today of a line working every day in its own time zone: closed too; the zone and holidays are kept
+	vl, _ := time.LoadLocation("Asia/Vladivostok")
+	hol, err := s.SaveWidget(ctx, boss, Widget{Name: "Праздник", Active: true, HoursOn: true, HoursDays: []int32{0, 1, 2, 3, 4, 5, 6}, HoursFrom: "00:00", HoursTo: "23:59",
+		HoursTZ: "Asia/Vladivostok", Holidays: []string{time.Now().In(vl).Format("2.1"), "31.12.2030"}, OfflineText: "Праздник"})
+	must(err)
+	hw, err := s.Widget(ctx, hol)
+	must(err)
+	if hw.HoursTZ != "Asia/Vladivostok" || len(hw.Holidays) != 2 || hw.Holidays[1] != "2030-12-31" || hw.InHours(time.Now()) {
+		t.Fatalf("holidays: %+v", hw)
+	}
+	_, ht, _ := s.Visit(ctx, hol, "", "")
+	must(s.VisitorSay(ctx, hol, ht, "Есть кто?"))
+	if msgs, _ = s.VisitorMessages(ctx, hol, ht, 0); len(msgs) != 2 || msgs[1].Body != "Праздник" {
+		t.Fatalf("on a holiday: %+v", msgs)
+	}
+
+	// «Автоматические сообщения»: an hour and a day after closing, the latest of those due; the client's answer stops them
+	if _, err := s.SaveWidget(ctx, boss, Widget{Name: "Авто", AutoMsgs: []AutoMsg{{After: 30, Text: "Рано"}}}); err == nil {
+		t.Fatal("a delay under an hour")
+	}
+	am, err := s.SaveWidget(ctx, boss, Widget{Name: "Авто", Active: true, Operators: []string{a},
+		AutoMsgs: []AutoMsg{{After: 24 * 60, Text: "Прошёл день"}, {After: 60, Text: "Прошёл час"}, {After: 120, Text: "  "}}})
+	must(err)
+	aw, _ := s.Widget(ctx, am)
+	if len(aw.AutoMsgs) != 2 || aw.AutoMsgs[0].Text != "Прошёл час" || !aw.AutoMsgs[1].Days() || aw.AutoMsgs[1].Count() != 1 || len(aw.AutoMsgSlots()) != 3 {
+		t.Fatalf("auto messages: %+v", aw.AutoMsgs)
+	}
+	autos := func(id string) []string {
+		var out []string
+		must(pool.QueryRow(ctx, `SELECT coalesce(array_agg(body ORDER BY id), '{}') FROM ol_messages WHERE session_id = $1 AND kind = 'automsg'`, id).Scan(&out))
+		return out
+	}
+	tick := func() {
+		_, err := s.Due(ctx, time.Now())
+		must(err)
+	}
+	as, at, _ := s.Visit(ctx, am, "", "")
+	must(s.VisitorSay(ctx, am, at, "Вопрос"))
+	must(s.Reply(ctx, a, as, "Ответ"))
+	must(s.SetStatus(ctx, a, as, false))
+	if tick(); len(autos(as)) != 0 {
+		t.Fatal("sent at once")
+	}
+	ago(as, "automsg_from", 61*time.Minute)
+	if tick(); strings.Join(autos(as), "|") != "Прошёл час" {
+		t.Fatalf("an hour on: %v", autos(as))
+	}
+	if tick(); len(autos(as)) != 1 {
+		t.Fatal("sent twice")
+	}
+	ago(as, "automsg_from", 25*time.Hour)
+	if tick(); strings.Join(autos(as), "|") != "Прошёл час|Прошёл день" {
+		t.Fatalf("a day on: %v", autos(as))
+	}
+	var from *time.Time
+	must(pool.QueryRow(ctx, `SELECT automsg_from FROM ol_sessions WHERE id = $1`, as).Scan(&from))
+	if from != nil {
+		t.Fatal("all sent, still counting")
+	}
+	// closed again, two days pass while the worker is off — only the latest one; the client answering first — none
+	must(s.VisitorSay(ctx, am, at, "Ещё вопрос"))
+	must(s.SetStatus(ctx, a, as, false))
+	ago(as, "automsg_from", 48*time.Hour)
+	if tick(); strings.Join(autos(as), "|") != "Прошёл час|Прошёл день|Прошёл день" {
+		t.Fatalf("the latest due: %v", autos(as))
+	}
+	must(s.VisitorSay(ctx, am, at, "И ещё"))
+	must(s.SetStatus(ctx, a, as, false))
+	must(s.VisitorSay(ctx, am, at, "Вернулся"))
+	ago(as, "automsg_from", 48*time.Hour)
+	if tick(); len(autos(as)) != 3 {
+		t.Fatal("sent to an open dialogue")
+	}
+	// spam gets none
+	must(s.SetStatus(ctx, a, as, false))
+	_, err = pool.Exec(ctx, `UPDATE ol_sessions SET spam = true WHERE id = $1`, as)
+	must(err)
+	ago(as, "automsg_from", 48*time.Hour)
+	if tick(); len(autos(as)) != 3 {
+		t.Fatal("sent to spam")
+	}
 }

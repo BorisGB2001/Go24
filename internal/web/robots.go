@@ -111,7 +111,7 @@ func (s *Server) crmRobots(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	} else {
 		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == "infocall" })
 	}
-	docs, err := s.CRM.DocTemplates(r.Context(), entity) // the document robot makes one of them
+	docs, err := s.CRM.ActiveDocTemplates(r.Context(), crm.DocKind(entity, typeID(typ))) // the document robot makes one of them
 	if err != nil {
 		s.taskErr(w, r, err, "/crm")
 		return
@@ -141,12 +141,54 @@ func (s *Server) crmRobots(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, err, "/crm")
 		return
 	}
+	based, err := s.robotBasedTargets(r, types)
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
+	if entity != "lead" {
+		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == "convert" })
+	}
 	s.render(w, r, "robots", page{TitleKey: "robots.title", Nav: "crm_deals", Data: map[string]any{
 		"Fields": fields, "Dicts": dicts, "CondOps": crm.RobotCondOps, "SetRows": []int{0, 1, 2}, "ShareModes": crm.ShareModes,
 		"Entity": entity, "Pipelines": pipes, "Pipeline": pipeline, "Stages": stages, "Robots": byStage, "Tunnels": tunnels,
-		"Kinds": kinds, "Triggers": trByStage, "TriggerKinds": crm.TriggerKinds, "Acts": crm.ActivityKinds, "Projects": projects, "Users": users, "Back": r.URL.RequestURI(),
-		"Types": types, "Type": typ, "BookingLinks": links, "Lines": lines,
-		"DocTemplates": docs, "Processes": procs, "ObserverModes": crm.ObserverModes}})
+		"Kinds": kinds, "Triggers": trByStage, "TriggerKinds": crm.TriggerKinds, "TaskStatuses": tasks.AllStatuses, "Acts": crm.ActivityKinds, "Projects": projects, "Users": users, "Back": r.URL.RequestURI(),
+		"Types": types, "Type": typ, "BookingLinks": links, "Lines": lines, "SMSReady": s.SMS != nil && s.SMS.Ready(r.Context()),
+		"DocTemplates": docs, "Processes": procs, "ObserverModes": crm.ObserverModes, "Based": based}})
+}
+
+// robotTarget is a pipeline a create robot («Создать на основании») may make a card in: of leads, of deals or of a
+// smart process (Type).
+type robotTarget struct {
+	Type     string // the smart process's name; "" — deals or leads
+	Lead     bool
+	Pipeline crm.Pipeline
+}
+
+// robotBasedTargets are where a create robot may make cards: leads, the pipelines of deals and of the smart processes.
+func (s *Server) robotBasedTargets(r *http.Request, types []crm.Type) ([]robotTarget, error) {
+	leads, err := s.CRM.LeadStages(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	out := []robotTarget{{Lead: true, Pipeline: crm.Pipeline{Stages: leads}}}
+	deals, err := s.CRM.Pipelines(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range deals {
+		out = append(out, robotTarget{Pipeline: p})
+	}
+	for _, t := range types {
+		pipes, err := s.CRM.PipelinesOf(r.Context(), t.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range pipes {
+			out = append(out, robotTarget{Type: t.Name, Pipeline: p})
+		}
+	}
+	return out, nil
 }
 
 // robotField is a field the fields robot sets or a condition compares; Pick is the control its value is chosen
@@ -250,8 +292,14 @@ func (s *Server) crmRobotAdd(w http.ResponseWriter, r *http.Request, sess auth.S
 		to, users, mode = "", r.Form["new_responsible"], r.FormValue("share")
 	case "observers":
 		to, users = "", r.Form["observers"]
+	case "sign":
+		to, users = "", r.Form["signers"]
 	case "close":
 		act = r.FormValue("close_act")
+	}
+	stage := r.FormValue("to_stage")
+	if r.FormValue("kind") == "create" {
+		stage = r.FormValue("based_stage")
 	}
 	line, sound, err := s.robotInfoSound(r)
 	if err != nil {
@@ -260,10 +308,11 @@ func (s *Server) crmRobotAdd(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	err = s.CRM.AddRobot(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"), crm.RobotParams{
 		Text: r.FormValue("text"), Details: r.FormValue("details"), Project: r.FormValue("project"), To: to, Days: days,
-		Act: act, Stage: r.FormValue("to_stage"), Link: r.FormValue("link"), Delay: delay, Unit: r.FormValue("unit"),
+		Act: act, Stage: stage, Link: r.FormValue("link"), Delay: delay, Unit: r.FormValue("unit"),
 		Min: formNumber(r.FormValue("min")), Max: formNumber(r.FormValue("max")), URL: r.FormValue("url"), Set: robotSets(r),
 		Users: users, Mode: mode, Skip: r.FormValue("skip") == "on", Line: line, Sound: sound,
-		Obs: r.FormValue("obs"), Doc: r.FormValue("doc"), BP: r.FormValue("bp"),
+		Obs: r.FormValue("obs"), Doc: r.FormValue("doc"), BP: r.FormValue("bp"), Pipe: r.FormValue("deal_pipeline"),
+		Fields: r.Form["req_fields"],
 		If: &crm.RobotCond{Field: r.FormValue("if_field"), Op: r.FormValue("if_op"), Value: r.FormValue("if_value")}})
 	if err != nil {
 		http.Redirect(w, r, back+sepFor(back)+"msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
@@ -363,7 +412,10 @@ func (s *Server) crmRobotDelete(w http.ResponseWriter, r *http.Request, sess aut
 // crmTriggerAdd sets a trigger on a stage, crmTriggerDelete removes one (administrators).
 func (s *Server) crmTriggerAdd(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	s.crmTriggerDo(w, r, sess, func() error {
-		return s.CRM.AddTrigger(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"))
+		return s.CRM.AddTrigger(r.Context(), sess.UserID, r.FormValue("stage"), r.FormValue("kind"), crm.TriggerParams{
+			If:   &crm.RobotCond{Field: r.FormValue("if_field"), Op: r.FormValue("if_op"), Value: r.FormValue("if_value")},
+			Back: r.FormValue("back_ok") == "1", Fields: r.Form["fields"], Status: r.FormValue("task_status"),
+			URL: r.FormValue("link_url")})
 	})
 }
 
@@ -394,4 +446,60 @@ func sepFor(path string) string {
 		}
 	}
 	return "?"
+}
+
+// crmLinkFollow is a tracked link of «Переход по ссылке» in a robot's letter: the card's triggers hear of the client's
+// following it (not of one of the portal, nor of a preview asking HEAD), and the client goes on to the address.
+func (s *Server) crmLinkFollow(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	var u string
+	var err error
+	if _, serr := s.Sessions.Get(r); serr == nil || r.Method != http.MethodGet {
+		u, err = s.CRM.LinkPeek(r.Context(), r.PathValue("token"))
+	} else {
+		u, err = s.CRM.FollowLink(r.Context(), r.PathValue("token"))
+	}
+	if u == "" {
+		w.WriteHeader(http.StatusNotFound)
+		s.render(w, r, "share", page{TitleKey: "share.gone", Data: map[string]any{"Gone": true}})
+		return
+	}
+	if err != nil {
+		s.Log.Warn("crm link followed", "err", err)
+	}
+	http.Redirect(w, r, u, http.StatusFound)
+}
+
+// crmInfoRequest is a request of a request robot as the card shows it: the names of the fields still empty.
+type crmInfoRequest struct {
+	crm.InfoRequest
+	Names []string
+}
+
+// crmInfoRequests are the card's open requests («Запросить дополнительную информацию»).
+func (s *Server) crmInfoRequests(r *http.Request, entity, id string) ([]crmInfoRequest, error) {
+	reqs, err := s.CRM.InfoRequests(r.Context(), entity, id)
+	if err != nil || len(reqs) == 0 {
+		return nil, err
+	}
+	fields, err := s.robotFields(r, entity)
+	if err != nil {
+		return nil, err
+	}
+	var out []crmInfoRequest
+	for _, q := range reqs {
+		x := crmInfoRequest{InfoRequest: q}
+		for _, k := range q.Missing {
+			name := s.tr(r, "crm.f."+k)
+			for _, f := range fields {
+				if f.Key == k && f.Name != "" {
+					name = f.Name
+				}
+			}
+			x.Names = append(x.Names, name)
+		}
+		out = append(out, x)
+	}
+	return out, nil
 }

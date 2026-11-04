@@ -1,8 +1,15 @@
 <!doctype html>
-<html lang="{{.Lang}}" data-failed="{{t "common.save_failed"}}" data-copied="{{t "task.copied"}}">
+<html lang="{{.Lang}}"{{with .Look.Mode}} data-theme="{{.}}"{{end}}{{with .Look.Bg}} data-bg="{{.}}"{{end}}{{with .Look.ImageURL}} style="--bg-image: url('{{.}}')"{{end}} data-failed="{{t "common.save_failed"}}" data-copied="{{t "task.copied"}}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1b2838">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="{{asset "img/pwa/icon.svg"}}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{asset "img/pwa/apple-touch-icon.png"}}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{{.Portal.Title}}">
 <title>{{if .TitleKey}}{{t .TitleKey}}{{else}}{{.Title}}{{end}} · {{.Portal.Title}}</title>
 <link rel="stylesheet" href="{{asset "css/tokens.css"}}">
 <link rel="stylesheet" href="{{asset "css/icons.css"}}">
@@ -56,6 +63,7 @@
           <a href="/settings" data-menu-act="edit"><span class="lbl">{{t "menu.edit"}}</span></a>{{end}}
           <a href="/u/me" {{if eq $n "me"}}class="on"{{end}}><span class="lbl">{{t "nav.my_profile"}}</span></a>
           <a href="/settings/notifications" {{if eq $n "notify_settings"}}class="on"{{end}}><span class="lbl">{{t "notify.title"}}</span></a>
+          <a href="#" data-pwa-install data-ios-hint="{{t "pwa.ios_hint"}}" hidden><span class="lbl">{{t "pwa.install"}}</span></a>
           {{if not .Guest}}<a href="/settings/keys" {{if eq $n "keys"}}class="on"{{end}}><span class="lbl">{{t "nav.api_keys"}}</span></a>{{end}}
           {{if .User.Admin}}<a href="/settings/portal" {{if eq $n "portal"}}class="on"{{end}}><span class="lbl">{{t "portal.title"}}</span></a>{{end}}
           {{if .User.Admin}}<a href="/settings/worktime" {{if eq $n "worktime"}}class="on"{{end}}><span class="lbl">{{t "nav.worktime"}}</span></a>{{end}}
@@ -76,6 +84,7 @@
   </aside>
   <div class="main">
     <header class="top">
+      <button type="button" class="ghost mnav-burger" data-drawer-open title="{{t "mnav.menu"}}" aria-label="{{t "mnav.menu"}}">{{icon "menu-2"}}</button>
       <form class="search" action="/search">{{icon "search"}}<input type="search" name="q" value="{{.Query}}" placeholder="{{t "search.placeholder"}}"></form>
       <div class="me">
         {{with .Timer}}
@@ -95,17 +104,18 @@
               <input name="reason" maxlength="1000" required placeholder="{{t "workday.reason"}}">
               <button>{{icon "circle-check"}} {{t "workday.forgotten_close"}}</button></form>{{end}}
             {{with $w}}<p class="small muted">{{t "workday.started"}} {{clock .Started}} · {{t "workday.worked"}} {{dur (.Worked now)}}{{if .PauseSecs}} · {{t "workday.pauses"}} {{dur .PauseSecs}}{{end}}</p>{{end}}
-            <form method="post" action="/worktime/day"><input type="hidden" name="back" value="{{.Path}}">
+            {{if not (.WorkdayRules.Allows "browser")}}<p class="small muted wd-nodevice">{{icon "device-desktop"}} {{t "workday.no_browser"}}</p>
+            {{else}}<form method="post" action="/worktime/day"{{if .WorkdayGeo}} data-geo{{end}}><input type="hidden" name="back" value="{{.Path}}">
               {{if not $w}}<button class="primary" name="action" value="start">{{icon "player-play"}} {{t "workday.start"}}</button>
               {{else if eq $w.State "running"}}<button name="action" value="pause">{{icon "player-pause"}} {{t "workday.pause"}}</button>
               {{else if eq $w.State "paused"}}<button class="primary" name="action" value="resume">{{icon "player-play"}} {{t "workday.resume"}}</button>
               {{else}}<button name="action" value="reopen">{{icon "player-play"}} {{t "workday.reopen"}}</button>{{end}}
-            </form>
+            </form>{{end}}
             <div class="dayplan"><b class="small">{{icon "list-check"}} {{t "dayplan.title"}}</b>
               {{range .DayPlan}}<div class="dp-item{{if .Status.Closed}} done{{end}}">
                 <a href="/t/{{.Key}}" title="{{.Key}}">{{.Title}}</a>{{if ge .TodaySecs 60}}<span class="muted small" title="{{t "dayplan.today"}}">{{dur .TodaySecs}}</span>{{end}}
                 {{if not .Status.Closed}}{{if .Timer}}<form method="post" action="/timer/stop"><button class="ghost" title="{{t "dayplan.timer_stop"}}">{{icon "player-stop"}}</button></form>
-                {{else}}<form method="post" action="/t/{{.Key}}/timer"><input type="hidden" name="back" value="{{$.Path}}"><button class="ghost" title="{{t "dayplan.timer_start"}}">{{icon "player-play"}}</button></form>{{end}}{{end}}
+                {{else if not .NoTimeTracking}}<form method="post" action="/t/{{.Key}}/timer"><input type="hidden" name="back" value="{{$.Path}}"><button class="ghost" title="{{t "dayplan.timer_start"}}">{{icon "player-play"}}</button></form>{{end}}{{end}}
                 <form method="post" action="/t/{{.Key}}/dayplan"><input type="hidden" name="back" value="{{$.Path}}"><input type="hidden" name="on" value="0"><button class="ghost" title="{{t "dayplan.remove"}}">{{icon "x"}}</button></form>
               </div>{{else}}<p class="small muted">{{t "dayplan.empty"}}</p>{{end}}
               {{if .DayPlanChoices}}<form method="post" action="/dayplan" class="dp-add"><input type="hidden" name="back" value="{{.Path}}">
@@ -113,8 +123,20 @@
                 <button title="{{t "dayplan.add"}}">{{icon "plus"}}</button></form>{{end}}
               <a class="small" href="/tasks/new?dayplan=1">{{icon "plus"}} {{t "dayplan.new"}}</a>
             </div>
-            {{if and $w (ne $w.State "done")}}<form method="post" action="/worktime/day"><input type="hidden" name="back" value="{{.Path}}">
-              <textarea name="report" rows="3" maxlength="5000" placeholder="{{t "workday.report"}}"></textarea>
+            <div class="dayplan dayevents"><b class="small">{{icon "calendar-event"}} {{t "dayevents.title"}}</b>
+              {{range .DayEvents}}<div class="dp-item{{if .Past}} past{{end}}{{if .Now}} now{{end}}">
+                <span class="muted small">{{if .AllDay}}{{t "dayevents.all_day"}}{{else}}{{clock .Start}}–{{clock .End}}{{end}}</span>
+                <a href="/calendar/{{.ID}}{{if .Repeat}}?at={{dtinput (ptr .Start)}}{{end}}" title="{{.Title}}">{{if .Hidden}}{{t "dayevents.busy"}}{{else}}{{.Title}}{{end}}</a>{{if .Now}}<span class="small">{{t "dayevents.now"}}</span>{{end}}
+              </div>{{else}}<p class="small muted">{{t "dayevents.empty"}}</p>{{end}}
+              <form method="post" action="/dayplan/event" class="dp-add de-add"><input type="hidden" name="back" value="{{.Path}}">
+                <input name="title" required maxlength="255" placeholder="{{t "dayevents.add"}}">
+                <input type="time" name="start" title="{{t "dayevents.start"}}"><input type="time" name="end" title="{{t "dayevents.end"}}">
+                <button title="{{t "dayevents.add"}}">{{icon "plus"}}</button></form>
+              <a class="small" href="/calendar">{{icon "calendar-event"}} {{t "dayevents.open"}}</a>
+            </div>
+            {{if and $w (ne $w.State "done") (.WorkdayRules.Allows "browser")}}<form method="post" action="/worktime/day"{{if .WorkdayGeo}} data-geo{{end}}><input type="hidden" name="back" value="{{.Path}}">
+              {{if eq .WorkdayRules.Report "required"}}<textarea name="report" rows="3" maxlength="5000" required placeholder="{{t "workday.report_required"}}"></textarea>
+              {{else if ne .WorkdayRules.Report "none"}}<textarea name="report" rows="3" maxlength="5000" placeholder="{{t "workday.report"}}"></textarea>{{end}}
               <button name="action" value="finish">{{icon "circle-check"}} {{t "workday.finish"}}</button></form>{{end}}
             {{with $.ReportDue}}<p class="small wd-report"><b>{{icon "file-text"}} {{t "wreport.due" (day .From) (day .To)}}</b> <a href="/worktime/reports/new">{{t "wreport.write"}} →</a></p>{{end}}
             <p><a href="/worktime">{{t "workday.all"}}</a> · <a href="/worktime/reports">{{t "wreport.title"}}</a></p>
@@ -135,15 +157,23 @@
       {{if .VacationRemind}}<div class="flash vacremind">{{icon "plane-departure"}} <span style="flex:1">{{t "vacation.remind"}}</span>
         <a class="button primary" href="/company/absences?user={{.User.UserID}}&day={{now.Format "2006-01-02"}}#absform">{{t "vacation.remind_add"}}</a>
         <form method="post" action="/company/vacation-remind-off"><input type="hidden" name="back" value="{{.Path}}"><button class="ghost">{{t "vacation.remind_off"}}</button></form></div>{{end}}
+      {{with .EnpsDue}}{{if ne $.Nav "enps"}}<div class="flash vacremind">{{icon "chart-bar"}} <span style="flex:1">{{t "enps.remind" (day .To)}}</span>
+        <a class="button primary" href="/company/enps/{{.ID}}">{{t "enps.remind_go"}}</a></div>{{end}}{{end}}
+      {{with .OpenIdle}}{{template "idleask" (dict "ID" .ID "From" (clock .Started) "To" (clock .Ended) "Dur" (dur .Secs) "Back" $.Path)}}{{end}}
+      {{if .TimeControl}}<template id="idle-tpl">{{template "idleask" (dict "ID" 0 "From" "{from}" "To" "{to}" "Dur" "{dur}" "Back" $.Path)}}</template>{{end}}
       {{template "content" .}}
     </main>
   </div>
 </div>
+{{template "mnav" .}}
+{{if .ThemeBgs}}{{template "themedlg" .}}{{end}}
 {{else}}
 {{template "content" .}}
 {{end}}
 {{if not .Bare}}
 <script src="{{asset "js/pop.js"}}"></script>
+<script src="{{asset "js/theme.js"}}"></script>
+<script src="{{asset "js/drawer.js"}}"></script>
 <script src="{{asset "js/list.js"}}"></script>
 <script src="{{asset "js/menu.js"}}"></script>
 <script src="{{asset "js/ring.js"}}"></script>
@@ -153,6 +183,9 @@
 <script src="{{asset "js/widths.js"}}"></script>
 <script src="{{asset "js/people.js"}}"></script>
 <script src="{{asset "js/phone.js"}}"></script>
+<script src="{{asset "js/pwa.js"}}"></script>
+{{if .TimeControl}}<script src="{{asset "js/timecontrol.js"}}"></script>{{end}}
+{{if .WorkdayGeo}}<script src="{{asset "js/workgeo.js"}}"></script>{{end}}
 <script>
 // live counters for running timers: elements with data-timer-since="<unix seconds>"
 (() => {
@@ -217,7 +250,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
 {{else if .App}}
       <div class="navitem" data-mid="{{.ID}}" draggable="true"><a href="{{.App.URL}}" {{if eq .P.Path .App.URL}}class="on"{{end}}>{{icon "layout-grid"}}<span class="lbl">{{.App.Title}}</span></a></div>
 {{else if eq .ID "tasks"}}
-      <details class="msec" data-mid="tasks" draggable="true" data-sec="tasks" {{if or (eq $n "my") (eq $n "plan") (eq $n "deadlines") (eq $n "control") (eq $n "tasks") (eq $n "templates") (eq $n "trash") (eq $n "efficiency") (eq $n "taskrobots") (eq $n "flows") (eq $n "taskbi")}}open{{end}}>
+      <details class="msec" data-mid="tasks" draggable="true" data-sec="tasks" {{if or (eq $n "my") (eq $n "plan") (eq $n "deadlines") (eq $n "taskcal") (eq $n "control") (eq $n "tasks") (eq $n "templates") (eq $n "trash") (eq $n "efficiency") (eq $n "tasktime") (eq $n "taskrobots") (eq $n "flows") (eq $n "taskbi")}}open{{end}}>
         <summary>{{icon "checkbox"}}<span class="lbl">{{t "nav.sec.tasks"}}</span>
           <span class="cnt red" data-counter="overdue" {{if not .P.Counters.Overdue}}hidden{{end}}>{{.P.Counters.Overdue}}</span><span class="cnt green" data-counter="comments" {{if or .P.Counters.Overdue (not .P.Counters.Comments)}}hidden{{end}}>{{.P.Counters.Comments}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
         <div class="msub">
@@ -225,6 +258,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
             <a href="/my?view=overdue" class="cnt red" data-counter="overdue" title="{{t "counter.overdue"}}" {{if not .P.Counters.Overdue}}hidden{{end}}>{{.P.Counters.Overdue}}</a><a href="/my?view=open" class="cnt" data-counter="open" title="{{t "counter.open"}}" {{if or .P.Counters.Overdue (not .P.Counters.Open)}}hidden{{end}}>{{.P.Counters.Open}}</a><a href="/my?view=comments" class="cnt green" data-counter="comments" title="{{t "counter.comments"}}" {{if not .P.Counters.Comments}}hidden{{end}}>{{.P.Counters.Comments}}</a></div>
           <a href="/deadlines" {{if eq $n "deadlines"}}class="on"{{end}}><span class="lbl">{{t "nav.deadlines"}}</span></a>
           <a href="/plan" {{if eq $n "plan"}}class="on"{{end}}><span class="lbl">{{t "nav.plan"}}</span></a>
+          <a href="/tasks/calendar" {{if eq $n "taskcal"}}class="on"{{end}}><span class="lbl">{{t "nav.taskcal"}}</span></a>
           <div class="navitem"><a href="/my?role=creator" {{if eq $n "control"}}class="on"{{end}}><span class="lbl">{{t "nav.assigned"}}</span></a>
             <a href="/my?view=control" class="cnt" data-counter="to_control" title="{{t "counter.to_control"}}" {{if not .P.Counters.ToControl}}hidden{{end}}>{{.P.Counters.ToControl}}</a></div>
           <a href="/tasks" {{if eq $n "tasks"}}class="on"{{end}}><span class="lbl">{{t "nav.all_tasks"}}</span></a>
@@ -233,6 +267,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
           <a href="/flows" {{if eq $n "flows"}}class="on"{{end}}><span class="lbl">{{t "flows.title"}}</span></a>
           <a href="/tasks/robots" {{if eq $n "taskrobots"}}class="on"{{end}}><span class="lbl">{{t "taskrobot.title"}}</span></a>
           <a href="/tasks/efficiency" {{if eq $n "efficiency"}}class="on"{{end}}><span class="lbl">{{t "eff.title"}}</span></a>
+          <a href="/tasks/time" {{if eq $n "tasktime"}}class="on"{{end}}><span class="lbl">{{t "ttr.title"}}</span></a>
           <a href="/tasks/bi" {{if eq $n "taskbi"}}class="on"{{end}}><span class="lbl">{{t "bi.title"}}</span></a>
           <a href="/templates" {{if eq $n "templates"}}class="on"{{end}}><span class="lbl">{{t "templates.title"}}</span></a>
           <a href="/tasks/trash" {{if eq $n "trash"}}class="on"{{end}}><span class="lbl">{{t "trash.title"}}</span></a>
@@ -247,7 +282,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
         </div>
       </details>
 {{else if eq .ID "company"}}
-      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "honor") (eq $n "learning") (eq $n "pulse") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "meetings") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi")}}open{{end}}>
+      <details class="msec" data-mid="company" draggable="true" data-sec="company" {{if or (eq $n "company") (eq $n "structure") (eq $n "staffchanges") (eq $n "thanks") (eq $n "honor") (eq $n "learning") (eq $n "pulse") (eq $n "enps") (eq $n "absences") (eq $n "birthdays") (eq $n "timeman") (eq $n "workreports") (eq $n "meetings") (eq $n "wschedules") (eq $n "invite") (eq $n "companybi") (eq $n "payslips") (eq $n "gallery")}}open{{end}}>
         <summary>{{icon "users"}}<span class="lbl">{{t "nav.sec.company"}}</span><i class="i i-chevron-right caret" aria-hidden="true"></i></summary>
         <div class="msub">
           <a href="/company" {{if eq $n "company"}}class="on"{{end}}><span class="lbl">{{t "nav.employees"}}</span></a>
@@ -255,10 +290,13 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
           <a href="/company/changes" {{if eq $n "staffchanges"}}class="on"{{end}}><span class="lbl">{{t "staff.title"}}</span></a>
           <a href="/company/thanks" {{if eq $n "thanks"}}class="on"{{end}}><span class="lbl">{{t "gratitude.page"}}</span></a>
           <a href="/company/honor" {{if eq $n "honor"}}class="on"{{end}}><span class="lbl">{{t "honor.title"}}</span></a>
+          <a href="/company/gallery" {{if eq $n "gallery"}}class="on"{{end}}><span class="lbl">{{t "gallery.title"}}</span></a>
           <a href="/company/learning" {{if eq $n "learning"}}class="on"{{end}}><span class="lbl">{{t "learn.title"}}</span></a>
+          <a href="/company/enps" {{if eq $n "enps"}}class="on"{{end}}><span class="lbl">{{t "enps.title"}}</span></a>
           {{if .P.CanPulse}}<a href="/company/pulse" {{if eq $n "pulse"}}class="on"{{end}}><span class="lbl">{{t "pulse.title"}}</span></a>{{end}}
           <a href="/company/absences" {{if eq $n "absences"}}class="on"{{end}}><span class="lbl">{{t "absence.title"}}</span></a>
           <a href="/company/birthdays" {{if eq $n "birthdays"}}class="on"{{end}}><span class="lbl">{{t "birthdays.title"}}</span></a>
+          {{if or .P.User.Admin (.P.HR.Can "salary")}}<a href="/company/payslips" {{if eq $n "payslips"}}class="on"{{end}}><span class="lbl">{{t "payslip.title"}}</span></a>{{end}}
           <a href="/worktime" {{if eq $n "timeman"}}class="on"{{end}}><span class="lbl">{{t "workday.page"}}</span></a>
           <a href="/worktime/reports" {{if eq $n "workreports"}}class="on"{{end}}><span class="lbl">{{t "wreport.title"}}</span></a>
           <a href="/worktime/meetings" {{if eq $n "meetings"}}class="on"{{end}}><span class="lbl">{{t "meeting.title"}}</span></a>
@@ -354,7 +392,9 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
         {{if .Sort}}<form method="post" action="/prefs/sort"><input type="hidden" name="back" value="{{.Back}}">
           <button class="ghost">{{icon "arrows-sort"}} {{t "list.sort_default"}}</button></form>{{end}}
         {{if .Back}}<form method="post" action="/prefs/tree"><input type="hidden" name="back" value="{{.Back}}"><input type="hidden" name="on" value="{{if .Tree}}0{{else}}1{{end}}">
-          <button class="ghost" title="{{t "list.tree_hint"}}">{{icon "hierarchy-2"}} {{t "list.tree"}}{{if .Tree}} {{icon "check"}}{{end}}</button></form>{{end}}</div></details>{{end}}</th>
+          <button class="ghost" title="{{t "list.tree_hint"}}">{{icon "hierarchy-2"}} {{t "list.tree"}}{{if .Tree}} {{icon "check"}}{{end}}</button></form>
+        <form method="post" action="/prefs/byproject"><input type="hidden" name="back" value="{{.Back}}"><input type="hidden" name="on" value="{{if .ByProject}}0{{else}}1{{end}}">
+          <button class="ghost" title="{{t "list.by_project_hint"}}">{{icon "folders"}} {{t "list.by_project"}}{{if .ByProject}} {{icon "check"}}{{end}}</button></form>{{end}}</div></details>{{end}}</th>
     {{if .Gear}}<th class="bulkcol"><input type="checkbox" data-bulk-all title="{{t "bulk.all"}}"></th>{{end}}
     <th data-col="id" {{if not (index .Cols "id")}}hidden{{end}}>{{template "tsorth" (tsorth $l "id" "ID")}}</th>
     <th data-col="title">{{template "tsorth" (tsorth $l "title" (t "col.list.title"))}}</th>
@@ -362,7 +402,8 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
   </tr></thead>
   <tbody>
   {{range .Rows}}{{$t := .}}
-  <tr{{if .Depth}} data-path="{{join .Path " "}}" class="tsub" hidden{{end}}{{if .Kids}} data-tree="{{.Key}}"{{end}}>
+  {{with index $l.Heads .Key}}<tr class="tgroup" data-group-head="{{.ID}}"><td colspan="99"><button type="button" class="tgroup-btn" data-group-toggle aria-expanded="true" title="{{t "list.group_fold"}}">{{icon "chevron-right"}}</button><a href="/p/{{.Key}}">{{.Name}}</a> <span class="muted small" title="{{t "list.group_count" .Count}}">{{.Count}}</span></td></tr>{{end}}
+  <tr{{if $l.Heads}} data-group="{{.ProjectID}}"{{end}}{{if .Depth}} data-path="{{join .Path " "}}" class="tsub" hidden{{end}}{{if .Kids}} data-tree="{{.Key}}"{{end}}>
     <td class="gearcol">{{if $l.Gear}}<details class="trowmenu" data-lazy="/t/{{.Key}}/rowmenu?back={{urlquery $l.Back}}"><summary title="{{t "task.menu"}}">{{icon "menu-2"}}</summary><div class="pop"></div></details>{{end}}</td>
     {{if $l.Gear}}<td class="bulkcol"><input type="checkbox" name="task" value="{{.Key}}" form="bulk"></td>{{end}}
     <td data-col="id" class="tkey" {{if not (index $l.Cols "id")}}hidden{{end}}>{{.Key}}</td>
@@ -436,7 +477,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
     {{template "pcontacts" (dict "P" $p "Matrix" .MatrixID "Element" .ElementURL)}}
     {{if $p.Birthday}}<span class="k">{{t "profile.birthday"}}</span><span>{{bday (deref $p.Birthday) $p.BirthdayYear}}</span>{{end}}
     {{if not .Me}}<span class="k">{{t "presence.title"}}</span><span class="pr-line" data-presence="{{$p.ID}}" data-presence-text></span>{{end}}
-    {{with .Absent}}<span class="k">{{t "absence.now"}}</span><span><span class="pill abs-{{.Kind}}">{{t (print "absence.kind." .Kind)}}</span> {{t "absence.until"}} {{day .To}}</span>{{end}}
+    {{with .Absent}}<span class="k">{{t "absence.now"}}</span><span><span class="pill abs-{{absColor .Kind}}">{{absKind .Kind}}</span> {{t "absence.until"}} {{day .To}}</span>{{end}}
   </div>
   {{if .Me}}<form method="post" action="/presence" class="row pc-presence small"><b>{{t "presence.title"}}</b>
     <button name="status" value="" class="ghost{{if eq .Presence ""}} on{{end}}"><i class="pr-dot pr-online"></i> {{t "presence.set_online"}}</button>
@@ -448,6 +489,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
     {{if and .MatrixID (not .Me) .Calls}}<a href="/call/user?user={{$p.ID}}&amp;video=0" class="button" target="_blank" rel="noopener" title="{{t "call.audio_call"}}">{{icon "phone"}}</a>
     <a href="/call/user?user={{$p.ID}}&amp;video=1" class="button" target="_blank" rel="noopener" title="{{t "call.video_call"}}">{{icon "video"}}</a>{{end}}
     {{if .Me}}<a href="/u/{{$p.ID}}#pedit" class="button">{{icon "edit"}} {{t "task.change"}}</a>
+    <button type="button" class="ghost" data-theme-open>{{icon "brush"}} {{t "theme.title"}}</button>
     <form method="post" action="/logout"><button class="ghost">{{icon "logout"}} {{t "auth.logout"}}</button></form>{{end}}
   </div>
 </div>
@@ -462,23 +504,32 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
 {{/* the task parameters about subtasks and the result (tasks.Params) */}}
 {{define "params"}}<label class="check"><input type="checkbox" name="dates_from_subtasks" {{if .DatesFromSubtasks}}checked{{end}}> {{t "form.dates_from_subtasks"}}</label>
     <label class="check"><input type="checkbox" name="auto_complete" {{if .AutoComplete}}checked{{end}}> {{t "form.auto_complete"}}</label>
-    <label class="check"><input type="checkbox" name="result_required" {{if .ResultRequired}}checked{{end}}> {{t "form.result_required"}}</label>{{end}}
+    <label class="check"><input type="checkbox" name="result_required" {{if .ResultRequired}}checked{{end}}> {{t "form.result_required"}}</label>
+    <input type="hidden" name="time_tracking" value="off"><label class="check"><input type="checkbox" name="time_tracking" {{if not .NoTimeTracking}}checked{{end}}> {{t "form.time_tracking"}}</label>{{end}}
 
 {{/* the one task form: a new task and «Изменить» in the card (web.taskForm) */}}
 {{define "taskform"}}{{$f := .}}
 <form method="post" action="{{.Action}}" class="taskform">
-  {{if not (or .New .Template)}}{{template "keep" (keepOf .Card "title" "description" "responsible" "priority" "deadline" "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required")}}
+  {{if not (or .New .Template)}}{{template "keep" (keepOf .Card "title" "description" "responsible" "priority" "deadline" "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required" "time_tracking")}}
   <input type="hidden" name="people" value="1">{{end}}
   {{if and .New .TemplateID}}<input type="hidden" name="template" value="{{.TemplateID}}">{{if .TemplateSubs}}<p class="small muted">{{icon "hierarchy-2"}} {{t "templates.with_subtasks" .TemplateSubs}}</p>{{end}}{{end}}
   {{if .TemplateParent}}<input type="hidden" name="template_parent" value="{{.TemplateParent}}">{{end}}
   {{if and .New .CRM}}<input type="hidden" name="crm" value="{{.CRM}}">{{end}}
   {{if and .New .DayPlan}}<input type="hidden" name="dayplan" value="1"><p class="small muted">{{icon "list-check"}} {{t "dayplan.new_hint"}}</p>{{end}}
   {{if and .New .Copy}}<input type="hidden" name="copy" value="{{.Copy}}"><p class="small muted">{{icon "copy"}} {{t "task.copy_of" .Copy}}</p>{{end}}
-  {{if and .New .IM}}<input type="hidden" name="im_room" value="{{.IM.Room}}"><input type="hidden" name="im_event" value="{{.IM.Event}}"><p class="small muted">{{icon "message-circle"}} {{t "task.from_message" .IM.Sender}}</p>{{end}}
+  {{if and .New .IM}}<input type="hidden" name="im_room" value="{{.IM.Room}}"><input type="hidden" name="im_event" value="{{.IM.Event}}"><p class="small muted">{{icon "message-circle"}} {{if .IM.Event}}{{t "task.from_message" .IM.Sender}}{{else}}{{t "task.from_chat" .IM.Chat}}{{end}}</p>{{end}}
   {{if and .New .OL}}<input type="hidden" name="ol" value="{{.OL.ID}}"><p class="small muted">{{icon "messages"}} {{t "task.from_dialogue" .OL.Title}}</p>{{end}}
   {{if and .New .Mail}}<input type="hidden" name="mail" value="{{.Mail.ID}}"><p class="small muted">{{icon "mail"}} {{t "task.from_letter" .Mail.From}}{{if .MailFiles}} · {{icon "paperclip"}} {{t "task.from_letter_files" .MailFiles}}{{end}}</p>{{end}}
   <input type="text" name="title" class="ntitle" required maxlength="500" value="{{.Title}}" placeholder="{{t "task.title_placeholder"}}" {{if or .New .Template}}autofocus{{end}}>
   <textarea name="description" rows="5" placeholder="{{t "form.description"}}" data-mention>{{.Description}}</textarea>
+  {{if .CoPilot}}<div class="tf-copilot" data-copilot="/tasks/copilot" data-wait="{{t "task.copilot_wait"}}">
+    <div class="row">{{icon "sparkles"}} <span class="muted">CoPilot:</span>{{range $m := list "write" "improve" "shorten" "fix"}}
+      <button type="button" class="ghost" data-copilot-mode="{{$m}}" title="{{t (print "task.copilot_" $m "_hint")}}">{{t (print "task.copilot_" $m)}}</button>{{end}}</div>
+    <div class="tf-copilot-out" data-copilot-out hidden><div class="tf-copilot-text" data-copilot-text></div>
+      <div class="row"><button type="button" data-copilot-put="replace">{{t "task.copilot_replace"}}</button>
+        <button type="button" class="ghost" data-copilot-put="append">{{t "task.copilot_append"}}</button>
+        <button type="button" class="ghost" data-copilot-put="">{{t "common.cancel"}}</button></div></div>
+  </div>{{end}}
   <div class="tf-grid">
     {{if or .New .Template}}
     <label>{{t "props.project"}}</label>
@@ -511,6 +562,7 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
     <label class="check"><input type="checkbox" name="allow_change_deadline" {{if .AllowDeadline}}checked{{end}}> {{t "form.allow_change_deadline"}}</label>
     <label class="check"><input type="checkbox" name="match_work_time" {{if .MatchWorkTime}}checked{{end}}> {{t "form.match_work_time"}}</label>
     {{template "params" .Params}}
+    {{if or .New .Template}}<label class="tf-estimate">{{t "form.estimate"}} <input type="text" name="estimate" value="{{hm .Estimate}}" placeholder="4:00" title="{{t "time.duration_hint"}}" style="width:90px"></label>{{end}}
     {{if not .Template}}<label class="check"><input type="checkbox" name="no_efficiency" {{if .NoEfficiency}}checked{{end}}> {{t "form.no_efficiency"}}</label>
     {{if not .New}}<input type="hidden" name="efficiency_form" value="1">{{end}}{{end}}
   </div>
@@ -560,3 +612,71 @@ overdue) and, added by menu.js, the unread messages of the collabs' chats */}}
 </div>
 {{end}}
 
+
+{{/* «Тема оформления» (theme.js): the mode, the background of the portal or a picture of one's own;
+   what is picked shows at once, «Отмена» puts the page back */}}
+{{define "themedlg"}}{{$l := .Look}}
+<dialog class="themedlg" data-theme-dlg data-mode="{{$l.Mode}}" data-bg="{{$l.Bg}}"{{with $l.ImageURL}} data-image="{{.}}"{{end}} data-too-big="{{t "err.theme_image"}}">
+  <form method="post" action="/appearance" enctype="multipart/form-data">
+    <input type="hidden" name="back" value="{{.Path}}">
+    <div class="row themedlg-head"><h2>{{icon "brush"}} {{t "theme.title"}}</h2><span class="spacer" style="flex:1"></span>
+      <button type="button" class="ghost" data-theme-cancel title="{{t "common.cancel"}}">{{icon "x"}}</button></div>
+    <h3 class="small muted">{{t "theme.mode"}}</h3>
+    <div class="row themedlg-modes">{{range $m := list "" "light" "dark"}}<label class="tmode tmode-{{or $m "auto"}}"><input type="radio" name="mode" value="{{$m}}"{{if eq $m $l.Mode}} checked{{end}}>
+      <span class="tmode-pic" aria-hidden="true"></span>{{t (print "theme.mode." (or $m "auto"))}}</label>{{end}}</div>
+    <h3 class="small muted">{{t "theme.bg"}}</h3>
+    <div class="themedlg-bgs">{{range .ThemeBgs}}<label class="tbg" title="{{t (print "theme.bg." (or . "none"))}}"><input type="radio" name="bg" value="{{.}}"{{if eq . $l.Bg}} checked{{end}}>
+      <span class="tbg-pic"{{with .}} data-bg="{{.}}"{{end}}></span><span class="small">{{t (print "theme.bg." (or . "none"))}}</span></label>{{end}}
+      <label class="tbg" title="{{t "theme.bg.custom_hint"}}"><input type="radio" name="bg" value="custom"{{if eq "custom" $l.Bg}} checked{{end}} data-theme-custom>
+      <span class="tbg-pic tbg-custom" data-theme-custom-pic{{with $l.ImageURL}} style="background-image: url('{{.}}')"{{end}}>{{icon "photo"}}</span><span class="small">{{t "theme.bg.custom"}}</span>
+      <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" hidden data-theme-file></label></div>
+    <p class="small muted">{{t "theme.bg.custom_hint"}}</p>
+    {{if .User.Admin}}<label class="check"><input type="checkbox" name="all" value="1"> {{t "theme.all"}}</label>
+      <p class="small muted">{{t "theme.all_hint"}}</p>{{end}}
+    <div class="row themedlg-actions">
+      <button class="primary">{{t "common.save"}}</button>
+      <button type="button" class="ghost" data-theme-cancel>{{t "common.cancel"}}</button>
+      <span class="spacer" style="flex:1"></span>
+      {{if $l.Own}}<button class="ghost" formaction="/appearance/reset" formenctype="application/x-www-form-urlencoded" title="{{t "theme.reset_hint"}}">{{icon "refresh"}} {{t "theme.reset"}}</button>{{end}}
+      {{if .User.Admin}}<button class="ghost" formaction="/appearance/reset?all=1" formenctype="application/x-www-form-urlencoded">{{t "theme.reset_all"}}</button>{{end}}
+    </div>
+  </form>
+</dialog>{{end}}
+
+{{/* the phone's navigation, as the portal app (≤ 760px, app.css; drawer.js): the bar at the bottom — «Лента»
+   («Коллабы» for a guest), «Задачи», «Чаты», «Уведомления», «Меню»; «Меню» slides the left menu out */}}
+{{define "mnav"}}{{$n := .Nav}}
+<div class="mnav-shade" data-drawer-close hidden></div>
+<nav class="mnav" aria-label="{{t "mnav.title"}}">
+  {{if .Guest}}<a href="/collabs"{{if eq $n "collabs"}} class="on"{{end}}>{{icon "users-group"}}<span>{{t "collab.title"}}</span></a>
+  {{else}}<a href="/feed"{{if eq $n "feed"}} class="on"{{end}}>{{icon "news"}}<span>{{t "nav.feed"}}</span>
+    <b class="mcnt" data-counter="feednews" {{if not .FeedNews}}hidden{{end}}>{{if gt .FeedNews 99}}99+{{else}}{{.FeedNews}}{{end}}</b></a>{{end}}
+  {{$tn := add .Counters.Overdue .Counters.Comments}}<a href="/my"{{if or (eq $n "my") (eq $n "tasks")}} class="on"{{end}}>{{icon "checkbox"}}<span>{{t "mnav.tasks"}}</span>
+    <b class="mcnt{{if .Counters.Overdue}} red{{end}}" {{if not $tn}}hidden{{end}}>{{$tn}}</b></a>
+  {{if .Messenger}}<a href="/im"{{if eq $n "im"}} class="on"{{end}}>{{icon "message-circle"}}<span>{{t "mnav.chats"}}</span>
+    <b class="mcnt" data-counter="im" hidden></b></a>{{end}}
+  <a href="/notifications"{{if eq $n "notifications"}} class="on"{{end}}>{{icon "bell"}}<span>{{t "notify.title"}}</span>
+    <b class="mcnt red" data-counter="notify" {{if not .Unread}}hidden{{end}}>{{.Unread}}</b></a>
+  <button type="button" data-drawer-open>{{icon "menu-2"}}<span>{{t "mnav.menu"}}</span></button>
+</nav>{{end}}
+{{define "idleask"}}<div class="flash vacremind idle-ask">{{icon "clock"}} <span style="flex:1">{{t "tc.ask" .From .To .Dur}}</span>
+  <form method="post" action="/worktime/idle/{{.ID}}" class="row"><input type="hidden" name="back" value="{{.Back}}">
+    <input name="reason" maxlength="1000" placeholder="{{t "tc.reason"}}">
+    <button class="primary" name="kind" value="work">{{icon "circle-check"}} {{t "tc.kind.work"}}</button>
+    <button name="kind" value="personal">{{icon "user"}} {{t "tc.kind.personal"}}</button></form></div>{{end}}
+
+{{/* «Озвучить текст» beside the file fields of sounds ([data-tts]): tts.js puts one after each field; nothing without
+     speech synthesis */}}
+{{define "tts"}}{{with ttsVoices}}<template id="tts-tpl"><div class="tts">
+  <button type="button" class="ghost small" data-tts-toggle>{{icon "speakerphone"}} {{t "tel.tts.toggle"}}</button>
+  <div class="stack" data-tts-panel hidden data-wait="{{t "tel.tts.wait"}}" data-done="{{t "tel.tts.done"}}" data-fail="{{t "tel.tts.err_down"}}">
+    <textarea rows="3" maxlength="1000" placeholder="{{t "tel.tts.text_ph"}}" aria-label="{{t "tel.tts.text"}}" data-tts-text></textarea>
+    <div class="row wrap">
+      <label>{{t "tel.tts.voice"}} <select style="width:auto" data-tts-voice>{{range .}}<option value="{{.}}">{{t (print "tel.tts.voice." .)}}</option>{{end}}</select></label>
+      <label>{{t "tel.tts.rate"}} <select style="width:auto" data-tts-rate>{{range list "0.8" "1" "1.2" "1.4"}}<option value="{{.}}" {{if eq . "1"}}selected{{end}}>{{t (print "tel.tts.rate." .)}}</option>{{end}}</select></label>
+      <button type="button" class="small" data-tts-speak>{{icon "player-play"}} {{t "tel.tts.speak"}}</button>
+    </div>
+    <audio controls preload="none" hidden data-tts-audio></audio>
+    <p class="small muted" data-tts-msg></p>
+  </div></div></template>
+<script src="{{asset "js/tts.js"}}" defer></script>{{end}}{{end}}

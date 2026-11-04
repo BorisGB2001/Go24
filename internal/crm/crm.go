@@ -32,14 +32,28 @@ type Store struct {
 	SendMail func(ctx context.Context, userID, to, subject, text string) error
 	// BookingURL is the address of a booking link that is on («Онлайн-запись»; booking robots; nil: they fail)
 	BookingURL func(ctx context.Context, linkID string) (string, error)
+	// LinkURL is the public address of a tracked link of «Переход по ссылке» (nil: robots' letters are not tracked)
+	LinkURL func(token string) string
+	// SendSMS sends an SMS to the phone from the card through the default provider (sms robots, «SMS» of the card;
+	// nil: there is none)
+	SendSMS func(ctx context.Context, userID, entity, entityID, phone, text string) error
 	// InfoCall calls the number through the external line and plays it the message sum (infocall robots; nil: they fail)
 	InfoCall func(ctx context.Context, line, number, sum string) error
 	// MakeDocument makes a document of the card by a template of the document generator, of the user, and says its id
 	// (document robots; nil: they fail)
 	MakeDocument func(ctx context.Context, userID, entity, entityID, templateID string) (string, error)
+	// SendSign sends the card's document for signing by the user: the employees sign, then the client (name, e-mail
+	// and/or phone); says the signing's title (sign robots; nil: they fail)
+	SendSign func(ctx context.Context, userID, entity, entityID, docID string, signers []string, client, email, phone string) (string, error)
+	// HasChat: the card's client has a dialogue of the open lines — the sign robot sends the link into it when the
+	// client has neither an e-mail nor a phone (nil: not)
+	HasChat func(ctx context.Context, entity, entityID string) bool
 	// StartBP starts a business process of the template on the card as an autostart does, and says its id (process
 	// robots; nil: they fail)
 	StartBP func(ctx context.Context, userID, templateID, entityID string) (string, error)
+	// ChatJoin brings the card's new responsible and observers into its «Чат», when it has one (nil: they open it
+	// themselves)
+	ChatJoin func(ctx context.Context, entity, id string)
 }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
@@ -237,21 +251,29 @@ func (s *Store) Timeline(ctx context.Context, entity, id string) ([]Event, error
 
 // Comment adds a comment to a card's timeline.
 func (s *Store) Comment(ctx context.Context, userID, entity, id, body string) error {
+	_, err := s.AddComment(ctx, userID, entity, id, body)
+	return err
+}
+
+// AddComment is Comment that gives the id of the comment's line.
+func (s *Store) AddComment(ctx context.Context, userID, entity, id, body string) (int64, error) {
 	if err := clean(&body, 10000); err != nil || body == "" {
-		return i18n.E("err.comment_empty")
+		return 0, i18n.E("err.comment_empty")
 	}
 	var title string
 	err := s.db.QueryRow(ctx, `SELECT `+map[bool]string{true: "title", false: "''"}[watched(entity)]+` FROM crm_`+table(entity)+` WHERE id::text = $1`, id).Scan(&title)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+		return 0, ErrNotFound
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := s.event(ctx, s.db, entity, id, userID, "comment", body); err != nil {
-		return err
+	var line int64
+	if err := s.db.QueryRow(ctx, `INSERT INTO crm_timeline (entity, entity_id, author_id, kind, body) VALUES ($1, $2, $3, 'comment', $4)
+		RETURNING id`, entity, id, userID, body).Scan(&line); err != nil {
+		return 0, err
 	}
-	return s.tellWatchers(ctx, userID, entity, id, "crm_comment", title, true)
+	return line, s.tellWatchers(ctx, userID, entity, id, "crm_comment", title, true)
 }
 
 // Pin pins a line of a card's timeline (entity, id) above the history or unpins it.
@@ -886,7 +908,7 @@ func (s *Store) DeleteDeal(ctx context.Context, userID, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Check(ctx, userID, "deal", "delete", d.Responsible.ID); err != nil && may(ctx, userID, d.Responsible.ID, d.CreatedBy) != nil {
+	if err := s.Check(ctx, userID, PipelineKey(d.PipelineID), "delete", d.Responsible.ID); err != nil && may(ctx, userID, d.Responsible.ID, d.CreatedBy) != nil {
 		return err
 	}
 	return s.trash(ctx, userID, "deal", id, d.Title, d.TypeID, d.Responsible.ID, `DELETE FROM crm_deals WHERE id::text = $1`)
@@ -994,8 +1016,19 @@ func (s *Store) SaveLead(ctx context.Context, userID string, l Lead) (string, er
 		if err := s.event(ctx, s.db, "lead", l.ID, userID, "created", ""); err != nil {
 			return "", err
 		}
-		if err := s.markRepeat(ctx, userID, l.ID, l.Comms); err != nil {
+		if l.ContactID != "" || l.CompanyID != "" { // a repeat sale to a known client («Генератор продаж»)
+			err = s.linkRepeat(ctx, userID, l.ID, l.ContactID, l.CompanyID)
+		} else {
+			err = s.markRepeat(ctx, userID, l.ID, l.Comms)
+		}
+		if err != nil {
 			return "", err
+		}
+		if simple, err := s.Simple(ctx); err != nil {
+			return "", err
+		} else if simple { // «Простой режим»: the lead becomes a deal at once (mode.go)
+			s.autoConvert(ctx, userID, l.ID)
+			return l.ID, nil
 		}
 		if nl, err := s.Lead(ctx, l.ID); err == nil {
 			s.runRobots(ctx, userID, nl.Stage.ID, leadCard(nl))
@@ -1058,6 +1091,11 @@ func (s *Store) markRepeat(ctx context.Context, userID, id string, comms []Comm)
 			break
 		}
 	}
+	return s.linkRepeat(ctx, userID, id, contact, company)
+}
+
+// linkRepeat makes the lead a «Повторный лид» of the contact and (or) the company; both timelines tell of it.
+func (s *Store) linkRepeat(ctx context.Context, userID, id, contact, company string) error {
 	if contact == "" && company == "" {
 		return nil
 	}

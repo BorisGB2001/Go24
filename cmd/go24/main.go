@@ -56,12 +56,15 @@ import (
 	"go24/internal/portal"
 	"go24/internal/sign"
 	"go24/internal/sites"
+	"go24/internal/paysys"
+	"go24/internal/sms"
 	"go24/internal/speech"
 	"go24/internal/storage"
 	"go24/internal/storages"
 	"go24/internal/sysinfo"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
+	"go24/internal/theme"
 	"go24/internal/web"
 )
 
@@ -153,6 +156,7 @@ func run(log *slog.Logger) error {
 		Keys:            apikeys.NewStore(pool),
 		Portal:          settings,
 		Menus:           menu.NewStore(pool),
+		Themes:          theme.NewStore(pool),
 		Links:           linkpreview.New(),
 		BaseURL:         cfg.BaseURL,
 		ThemeDir:        cfg.ThemeDir,
@@ -203,15 +207,20 @@ func run(log *slog.Logger) error {
 	srv.BP.Document = srv.BPDocument // «Создание документа» by the document generator
 	// the processes of the documents of «Общий диск»
 	srv.BP.Files = srv.Drive
+	// the steps of «Диск»
+	srv.BP.Drive, srv.BP.CopyBytes = srv.Drive, srv.Storages.Copy
 	srv.BP.Calendar = srv.Calendar                                                                       // «Событие календаря»
 	srv.BP.Tr = func(key string, args ...any) string { return bundle.T(bundle.Match(""), key, args...) } // «Да»/«Нет» of fields in texts
-	// the robots of the CRM «Создать документ» and «Запустить бизнес-процесс»
+	// the robots of the CRM «Создать документ», «Отправить на подпись» and «Запустить бизнес-процесс»
 	srv.CRM.MakeDocument = func(ctx context.Context, userID, entity, entityID, tplID string) (string, error) {
 		return srv.BPDocument(ctx, userID, entity, entityID, tplID, nil)
 	}
 	srv.CRM.StartBP = srv.BP.StartRobot
+	srv.CRM.SendSign = srv.SignRobot
+	srv.CRM.HasChat = srv.SignChatReady
 	srv.Hooks = hooks.NewStore(pool)
 	srv.Apps = apps.NewStore(pool)
+	srv.BP.Apps, srv.BP.AppCall = srv.Apps, srv.BPAppCall // the actions of applications in the designer
 	srv.Audit = audit.NewStore(pool)
 	srv.IPAccess = ipaccess.NewStore(pool)
 	if cfg.BackupDir != "" { // «Резервное копирование»: the pages ask for copies, go24-worker makes them
@@ -227,12 +236,14 @@ func run(log *slog.Logger) error {
 	}
 	srv.OpenLines = openlines.NewStore(pool, srv.CRM)
 	srv.OpenLines.Tr = func(key string, args ...any) string { return bundle.T(bundle.Match(""), key, args...) } // service lines of dialogues
-	// the lines' Telegram bots: their tokens sealed, the files in the built-in storage
+	// the lines' Telegram and MAX bots: their tokens sealed, the files in the built-in storage
 	srv.OpenLines.Key = []byte(cfg.SessionSecret)
+	srv.Company.Key = []byte(cfg.SessionSecret)
 	srv.OpenLines.PutFile = func(ctx context.Context, key string, r io.Reader, size int64, ct string) error {
 		return srv.Storages.Put(ctx, "", false, "", key, r, size, ct)
 	}
 	srv.OpenLines.OpenFile = func(ctx context.Context, key string) (io.ReadCloser, error) { return srv.Storages.Open(ctx, nil, key) }
+	srv.OpenLines.AppQueued = srv.Apps.Wake // the answers to the applications' channels go at once
 	srv.Mail = mail.NewStore(pool, cfg.SessionSecret)
 	mailApp := func(id, secret, fallbackID, fallbackSecret string) mail.OAuthApp {
 		if id == "" {
@@ -255,6 +266,15 @@ func run(log *slog.Logger) error {
 		}
 		return srv.Mail.Send(ctx, userID, boxes[0].ID, to, subject, text)
 	}
+	// SMS to clients: from a CRM card and by the robot «Отправить SMS клиенту», through the default provider
+	srv.SMS = sms.NewStore(pool, cfg.SessionSecret)
+	srv.Pay = paysys.NewStore(pool, cfg.SessionSecret) // «Платёжные системы»: the client pays an invoice online
+	srv.CRM.SendSMS = func(ctx context.Context, userID, entity, entityID, phone, text string) error {
+		_, err := srv.SMS.Send(ctx, sms.Out{Phone: phone, Text: text, AuthorID: userID, Entity: entity, EntityID: entityID})
+		return err
+	}
+	// «Отправка SMS» of business processes
+	srv.BP.SMS = srv.SMS
 	srv.CRM.BookingURL = func(ctx context.Context, linkID string) (string, error) { // booking robots: a link that is on
 		l, err := srv.Booking.Link(ctx, linkID)
 		if err == nil && !l.Active {
@@ -262,6 +282,8 @@ func run(log *slog.Logger) error {
 		}
 		return strings.TrimRight(cfg.BaseURL, "/") + "/bk/" + l.Token, err
 	}
+	// «Переход по ссылке»: the tracked links in robots' letters
+	srv.CRM.LinkURL = func(token string) string { return strings.TrimRight(cfg.BaseURL, "/") + "/cl/" + token }
 	srv.OpenLines.SendMail = srv.CRM.SendMail                                                    // the conversation a visitor asked for: from the operator's mailbox
 	srv.Mail.Keep = func(ctx context.Context, owner, letterID string, f mail.Attachment) error { // in the built-in storage
 		key := path.Join("go24", "mail", letterID, randomKey(), path.Base(strings.ReplaceAll(f.Name, "\\", "/")))
@@ -285,6 +307,7 @@ func run(log *slog.Logger) error {
 	if srv.Calls != nil {
 		srv.Calls.APIURL = cfg.LiveKitAPIURL
 		srv.Rings, srv.CallLines, srv.CallGuests = &calls.Rings{DB: pool}, &calls.Sessions{DB: pool}, &calls.Guests{DB: pool}
+		srv.Conferences = &calls.Conferences{DB: pool}
 		srv.Recordings, srv.RecordDir = &calls.Recordings{DB: pool}, cfg.RecordDir
 		if background && cfg.LiveKitAPIURL != "" && cfg.RecordDir != "" {
 			go srv.RecordingsLoop(ctx) // a finished recording goes to the Drive and the call's chat
@@ -306,10 +329,8 @@ func run(log *slog.Logger) error {
 		tr := srv.NotifyOut.Tr
 		return notify.Text(it, tr, func(t time.Time) string { return t.Local().Format(tr("format.datetime")) })
 	}
-	if background {
-		go srv.NotifyOut.Run(ctx)
-	}
 	srv.Speech = speech.New(cfg.WhisperURL)
+	srv.TTS = speech.NewSynth(cfg.TTSURL)
 	if background && srv.Recordings != nil && srv.Speech != nil {
 		go srv.TranscriptsLoop(ctx) // the text of saved recordings of calls (GO24DEV-798)
 	}
@@ -321,7 +342,8 @@ func run(log *slog.Logger) error {
 			sysinfo.HTTPProbe("livekit", cfg.LiveKitAPIURL, "/"),
 			sysinfo.HTTPProbe("office", cfg.OfficeURL, "/healthcheck"),
 			sysinfo.HTTPProbe("asterisk", cfg.AsteriskURL, "/ari/asterisk/ping"),
-			sysinfo.HTTPProbe("whisper", cfg.WhisperURL, "/"))...)
+			sysinfo.HTTPProbe("whisper", cfg.WhisperURL, "/"),
+			sysinfo.HTTPProbe("piper", cfg.TTSURL, "/voices"))...)
 	if rc != nil {
 		srv.SysProbes = append(srv.SysProbes, sysinfo.Probe{ID: "rclone", Target: cfg.RcloneRCURL, Check: rc.Ping})
 	}
@@ -353,6 +375,8 @@ func run(log *slog.Logger) error {
 		srv.Matrix = matrixsync.New(&matrixsync.Service{DB: pool, M: mc, Tasks: srv.Tasks, Feed: srv.Feed, Log: log, IDP: "oidc-authentik",
 			ElementURL: cfg.MatrixElementURL, AppURL: cfg.BaseURL, Company: company,
 			ThreadHint: bundle.T(bundle.Match(""), "matrix.thread_hint"), FeedName: bundle.T(bundle.Match(""), "matrix.feed_room"), GuestMark: bundle.T(bundle.Match(""), "collab.guest"),
+			GeneralName: bundle.T(bundle.Match(""), "matrix.general_room"), AdminGroups: cfg.AdminGroups,
+			GeneralHello: func(name string) string { return bundle.T(bundle.Match(""), "matrix.general_hello", name) },
 			Notify: srv.Notify, NotifyRoom: bundle.T(bundle.Match(""), "matrix.notify_room"),
 			HistoryText: func(actor, acting, field, old, next string, at time.Time) string {
 				lang := bundle.Match("")
@@ -380,8 +404,38 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		srv.Matrix.BotQueued = srv.Apps.Wake
+		srv.CRM.ChatJoin = srv.CRMChatJoin // «Чат» of a CRM card takes in its new responsible and observers
+		if srv.AI != nil { // CoPilot in the messenger answers through the AI connection of the one who wrote
+			lang := bundle.Match("")
+			srv.Matrix.CoPilotName, srv.Matrix.CoPilotHello = bundle.T(lang, "im.copilot"), bundle.T(lang, "im.copilot_hello")
+			srv.Matrix.CoPilotCollabHello = bundle.T(lang, "im.copilot_collab_hello")
+			srv.Matrix.CoPilotAsk = func(ctx context.Context, userID, about string, turns []matrixsync.Turn) (string, error) {
+				msgs := make([]ai.Message, 0, len(turns))
+				for _, t := range turns {
+					role := "user"
+					if t.Bot {
+						role = "assistant"
+					}
+					msgs = append(msgs, ai.Message{Role: role, Text: t.Text})
+				}
+				system := bundle.T(lang, "im.copilot_prompt", time.Now().Format("2006-01-02 15:04"))
+				if about != "" { // a «Чат с CoPilot» of a collab
+					system += "\n\n" + bundle.T(lang, "im.copilot_collab_prompt") + "\n" + about
+				}
+				return srv.AI.Chat(ctx, userID, "im", system, msgs)
+			}
+			srv.Matrix.CoPilotError = func(err error) string {
+				var ie *i18n.Error
+				if errors.As(err, &ie) {
+					return "⚠ " + bundle.Err(lang, ie)
+				}
+				log.Error("copilot", "err", err)
+				return "⚠ " + bundle.T(lang, "im.copilot_failed")
+			}
+		}
 		if background {
 			go srv.Matrix.Run(ctx)
+			go srv.DeptChatsLoop(ctx) // «Чаты и каналы» of departments follow the structure
 			go srv.Matrix.RemindLoop(ctx, func(m matrixsync.Message) string { return matrixsync.Excerpt(m, 140) }) // «Напомнить» of messages
 			if srv.CallLines != nil && cfg.LiveKitAPIURL != "" {
 				go srv.CallLinesLoop(ctx) // a call of a chat that is over: its line says so
@@ -390,6 +444,10 @@ func run(log *slog.Logger) error {
 			srv.Matrix.Remote = true
 		}
 		log.Info("matrix messenger enabled", "server", cfg.MatrixServerName)
+		srv.NotifyOut.Chats = chatSource{srv.Matrix} // chat messages in the messengers, replies from there
+	}
+	if background {
+		go srv.NotifyOut.Run(ctx)
 	}
 	if cfg.OIDCEnabled() {
 		srv.OIDC = auth.NewOIDC(cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCClientSecret, cfg.BaseURL+"/auth/callback")
@@ -422,6 +480,23 @@ func run(log *slog.Logger) error {
 }
 
 // publicOrigin is scheme://host of a URL ("" when there is none): the OIDC issuer gives Authentik's public address.
+// chatSource is the messenger as notifyout sees it.
+type chatSource struct{ m *matrixsync.Service }
+
+func (c chatSource) ChatNews(ctx context.Context, userID, since string) ([]notifyout.ChatMessage, string, error) {
+	news, next, err := c.m.ChatNews(ctx, userID, since)
+	out := make([]notifyout.ChatMessage, len(news))
+	for i, n := range news {
+		out[i] = notifyout.ChatMessage(n)
+	}
+	return out, next, err
+}
+
+func (c chatSource) ChatReply(ctx context.Context, userID, room, root, text string) error {
+	_, err := c.m.Send(ctx, userID, room, text, root)
+	return err
+}
+
 func publicOrigin(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {

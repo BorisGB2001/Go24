@@ -28,6 +28,8 @@ type Field struct {
 	// «Обязательное поле» (the CRM cards): required at the Stages of deals or leads, at every stage when none.
 	Required bool
 	Stages   []string
+	// «Видимость поля» (the CRM cards): who sees it — employees and departments «dept:<id>»; empty — everyone.
+	Visible []string
 }
 
 // RequiredAt: must the field be filled on a card at the stage? A yes/no field never must.
@@ -66,18 +68,23 @@ var (
 	}
 )
 
+// Defs, Values and Owner are the set's tables and the owner's column of its values (for the SQL of other sections).
+func (s FieldSet) Defs() string   { return s.defs }
+func (s FieldSet) Values() string { return s.values }
+func (s FieldSet) Owner() string  { return s.owner }
+
 // Fields are the defined task fields in their order.
 func (s *Store) Fields(ctx context.Context) ([]Field, error) { return s.FieldsOf(ctx, TaskFieldSet) }
 
 // FieldsOf are the fields of a set in their order.
 func (s *Store) FieldsOf(ctx context.Context, set FieldSet) ([]Field, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, name, kind, options, sort, required, required_stages FROM `+set.defs+` ORDER BY sort, name`)
+	rows, err := s.db.Query(ctx, `SELECT id, name, kind, options, sort, required, required_stages, visible_to FROM `+set.defs+` ORDER BY sort, name`)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Field, error) {
 		var f Field
-		err := r.Scan(&f.ID, &f.Name, &f.Kind, &f.Options, &f.Sort, &f.Required, &f.Stages)
+		err := r.Scan(&f.ID, &f.Name, &f.Kind, &f.Options, &f.Sort, &f.Required, &f.Stages, &f.Visible)
 		return f, err
 	})
 }
@@ -111,6 +118,24 @@ func (s *Store) AddFieldTo(ctx context.Context, set FieldSet, f Field) error {
 // SetFieldRequired makes a field of the set required (at the stages, or always) or not.
 func (s *Store) SetFieldRequired(ctx context.Context, set FieldSet, id string, required bool, stages []string) error {
 	tag, err := s.db.Exec(ctx, `UPDATE `+set.defs+` SET required = $2, required_stages = $3 WHERE id = $1`, id, required, stageList(required, stages))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetFieldVisible sets who sees a field of the set: employees and departments «dept:<id>»; none — everyone.
+func (s *Store) SetFieldVisible(ctx context.Context, set FieldSet, id string, who []string) error {
+	list := []string{}
+	for _, w := range who {
+		if w = strings.TrimSpace(w); w != "" && !slices.Contains(list, w) {
+			list = append(list, w)
+		}
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE `+set.defs+` SET visible_to = $2 WHERE id = $1`, id, list)
 	if err != nil {
 		return err
 	}
@@ -159,7 +184,7 @@ func (s *Store) FieldValuesOf(ctx context.Context, set FieldSet, ownerID string)
 }
 
 func fieldValues(ctx context.Context, q querier, set FieldSet, ownerID string) ([]FieldValue, error) {
-	rows, err := q.Query(ctx, `SELECT f.id, f.name, f.kind, f.options, f.sort, f.required, f.required_stages, coalesce(v.value, '')
+	rows, err := q.Query(ctx, `SELECT f.id, f.name, f.kind, f.options, f.sort, f.required, f.required_stages, f.visible_to, coalesce(v.value, '')
 		FROM `+set.defs+` f LEFT JOIN `+set.values+` v ON v.field_id = f.id AND v.`+set.owner+` = $1
 		ORDER BY f.sort, f.name`, ownerID)
 	if err != nil {
@@ -167,7 +192,7 @@ func fieldValues(ctx context.Context, q querier, set FieldSet, ownerID string) (
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (FieldValue, error) {
 		var v FieldValue
-		err := r.Scan(&v.ID, &v.Name, &v.Kind, &v.Options, &v.Sort, &v.Required, &v.Stages, &v.Value)
+		err := r.Scan(&v.ID, &v.Name, &v.Kind, &v.Options, &v.Sort, &v.Required, &v.Stages, &v.Visible, &v.Value)
 		return v, err
 	})
 }

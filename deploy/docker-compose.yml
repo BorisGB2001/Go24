@@ -25,7 +25,8 @@ services:
       - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
     # boris.gb 2026-10-25 15:54 - 20 потоков гоняют тесты на этой базе одновременно: при 64 блокировках на
     # транзакцию тесты падали с «out of shared memory» — поднято до 256 (решение Бориса)
-    command: ["postgres", "-c", "max_locks_per_transaction=256"]
+    # boris.gb 2026-10-29 01:58 - 256 снова не хватило (потоки + проверка публичного выпуска): «out of shared memory», поднято до 1024
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -184,6 +185,8 @@ services:
       GO24_CALL_URL: https://${BIND_IP:-127.0.0.1}:8444
       # boris.gb 2026-10-20 21:10 - голосовые сообщения мессенджера: расшифровка своим Whisper (GO24DEV-70)
       GO24_WHISPER_URL: http://whisper:9000
+      # boris.gb 2026-10-29 08:54 - «Озвучить текст» в телефонии (GO24DEV-1002): синтез речи своим Piper вместо файла WAV
+      GO24_TTS_URL: http://piper:5000
       # boris.gb 2026-10-21 23:23 - «Документы онлайн» (GO24DEV-231): сервер документов ONLYOFFICE для go24 (прокси /office/,
       # подпись JWT тем же секретом) и адрес go24 для сервера документов (откуда брать файл, куда сообщать о сохранении)
       GO24_OFFICE_URL: http://onlyoffice
@@ -285,6 +288,15 @@ services:
       - whisper-models:/data/models
     ports:
       - "${BIND_IP:-127.0.0.1}:9100:9000"
+
+  # boris.gb 2026-10-29 08:54 - синтез речи (Piper, свой сервер, GO24DEV-1002): приветствия, голосовое меню, музыка очереди и
+  # «Информационный звонок» озвучиваются из текста. Образ собирается из deploy/piper, голоса скачиваются при сборке (работает без сети)
+  piper:
+    build: ./piper
+    image: go24-piper:1.8.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9101:5000"
 
   # boris.gb 2026-10-12 07:30 - https-прокси для Synapse (:8448) и Element (:8443) со своим dev-центром сертификации
   # boris.gb 2026-10-13 10:17 - звонки go24 (GO24DEV-68/69): свой сервер LiveKit (WebRTC SFU). Сигналинг — через caddy

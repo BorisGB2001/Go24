@@ -15,6 +15,7 @@ import (
 	"go24/internal/feed"
 	"go24/internal/i18n"
 	"go24/internal/tasks"
+	"go24/internal/worktime"
 )
 
 // TestLoopStart: «Цикл» goes back while its condition holds (a request asked again), MaxLoops times at most;
@@ -111,6 +112,44 @@ func TestLoopStart(t *testing.T) {
 	must(err)
 	if x, _ := s.Instance(ctx, ann, id); x.Status != "running" || x.WakeAt == nil || x.WakeAt.In(time.Local).Format("2006-01-02T15:04") != "2099-01-01T10:00" {
 		t.Fatalf("the pause: %s %v", x.Status, x.WakeAt)
+	}
+	// «Пауза» of 90 minutes; with «Учитывать рабочее время» only tomorrow 09:00–18:00 is working time: 90 minutes are
+	// tomorrow 10:30, a day — a week later, a date before the working hours — their start
+	tpl, err = s.SaveTemplate(ctx, boss, Template{Name: "Полтора часа", Active: true, Steps: []Step{{Kind: "wait", Timeout: 90}}})
+	must(err)
+	id, err = s.Start(ctx, ann, tpl, "", nil)
+	must(err)
+	if x, _ := s.Instance(ctx, ann, id); x.WakeAt == nil || x.WakeAt.Sub(time.Now().Add(90*time.Minute)).Abs() > time.Minute {
+		t.Fatalf("90 minutes: %v", x.WakeAt)
+	}
+	_, err = s.SaveTemplate(ctx, boss, Template{Name: "Плохой", Steps: []Step{{Kind: "notify", To: "starter", Text: "x", WorkTime: true}}})
+	is(err, "err.bp_step")
+	now := time.Now()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.Local)
+	var weekend []int
+	for d := range 7 {
+		if d != int(tomorrow.Weekday()) {
+			weekend = append(weekend, d)
+		}
+	}
+	must(s.Tasks.SetSchedule(ctx, boss, worktime.Schedule{Start: "09:00", End: "18:00", Weekend: weekend}))
+	for _, c := range []struct {
+		step Step
+		at   string
+		want time.Time
+	}{
+		{Step{Kind: "wait", Timeout: 90, WorkTime: true}, "", tomorrow.Add(10*time.Hour + 30*time.Minute)},
+		{Step{Kind: "wait", Timeout: 24 * 60, WorkTime: true}, "", tomorrow.AddDate(0, 0, 7).Add(9 * time.Hour)},
+		{Step{Kind: "wait", Field: "at", WorkTime: true}, tomorrow.Add(3 * time.Hour).Format("2006-01-02 15:04"), tomorrow.Add(9 * time.Hour)},
+	} {
+		tpl, err = s.SaveTemplate(ctx, boss, Template{Name: "Рабочее время", Active: true, Fields: []Field{{Key: "at", Label: "Когда", Kind: "datetime"}},
+			Steps: []Step{c.step}})
+		must(err)
+		id, err = s.Start(ctx, ann, tpl, "", map[string]string{"at": c.at})
+		must(err)
+		if x, _ := s.Instance(ctx, ann, id); x.Status != "running" || x.WakeAt == nil || !x.WakeAt.Equal(c.want) {
+			t.Fatalf("the pause %+v: %s %v, want %v", c.step, x.Status, x.WakeAt, c.want)
+		}
 	}
 	// «Сообщение в ленту» of boss to ann, the fields filled; without the feed — an error
 	tpl, err = s.SaveTemplate(ctx, boss, Template{Name: "Новость", Active: true, Fields: []Field{{Key: "what", Label: "Что", Kind: "string"}},

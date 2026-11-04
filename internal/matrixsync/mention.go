@@ -82,8 +82,8 @@ func (s *Service) mentionedBots(ctx context.Context, text string) ([]tasks.Menti
 	if !strings.Contains(text, "@") {
 		return nil, nil
 	}
-	rows, err := s.DB.Query(ctx, `SELECT b.mxid, trim(b.name || ' ' || b.last_name) n FROM im_bots b JOIN apps a ON a.id = b.app_id
-		WHERE a.installed_at IS NOT NULL AND strpos($1, '@' || trim(b.name || ' ' || b.last_name)) > 0 ORDER BY length(trim(b.name || ' ' || b.last_name)) DESC`, text)
+	rows, err := s.DB.Query(ctx, `SELECT b.mxid, trim(b.name || ' ' || b.last_name) n FROM im_bots b
+		WHERE `+liveBotSQL+` AND strpos($1, '@' || trim(b.name || ' ' || b.last_name)) > 0 ORDER BY length(trim(b.name || ' ' || b.last_name)) DESC`, text)
 	if err != nil {
 		return nil, err
 	}

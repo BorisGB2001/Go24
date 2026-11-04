@@ -51,6 +51,7 @@ func (y *YN) UnmarshalJSON(b []byte) error {
 // Command is a «/command» of a bot.
 type Command struct {
 	ID        string                 `json:"id"`
+	Num       int64                  `json:"num"` // COMMAND_ID
 	BotID     string                 `json:"bot_id"`
 	Command   string                 `json:"command"`
 	Common    bool                   `json:"common"`
@@ -104,12 +105,12 @@ func normCommand(name string) (string, error) {
 	return name, nil
 }
 
-const commandCols = `c.id::text, c.bot_id::text, c.command, c.common, c.hidden, c.extranet, c.lang, c.handler, c.created_at`
+const commandCols = `c.id::text, c.bot_id::text, c.command, c.common, c.hidden, c.extranet, c.lang, c.handler, c.created_at, c.num`
 
 func scanCommand(r pgx.Row, extra ...any) (Command, error) {
 	var c Command
 	var lang []byte
-	err := r.Scan(append([]any{&c.ID, &c.BotID, &c.Command, &c.Common, &c.Hidden, &c.Extranet, &lang, &c.Handler, &c.CreatedAt}, extra...)...)
+	err := r.Scan(append([]any{&c.ID, &c.BotID, &c.Command, &c.Common, &c.Hidden, &c.Extranet, &lang, &c.Handler, &c.CreatedAt, &c.Num}, extra...)...)
 	if err == nil {
 		err = json.Unmarshal(lang, &c.Lang)
 	}
@@ -139,7 +140,7 @@ func (s *Service) RegisterCommand(ctx context.Context, appID, botID string, c Co
 	return out, err
 }
 
-// BotCommand is a command of a bot of the application by its ID or name.
+// BotCommand is a command of a bot of the application by its ID, number (COMMAND_ID) or name.
 func (s *Service) BotCommand(ctx context.Context, appID, botID, id string) (Command, error) {
 	b, err := s.AppBot(ctx, appID, botID)
 	if err != nil {
@@ -147,7 +148,8 @@ func (s *Service) BotCommand(ctx context.Context, appID, botID, id string) (Comm
 	}
 	id = strings.TrimPrefix(strings.TrimSpace(id), "/")
 	c, err := scanCommand(s.DB.QueryRow(ctx, `SELECT `+commandCols+` FROM im_bot_commands c WHERE c.bot_id = $1
-		AND (c.id::text = $2 OR lower(c.command) = lower($2)) ORDER BY c.id::text = $2 DESC LIMIT 1`, b.ID, id))
+		AND (c.id::text = $2 OR c.num::text = $2 OR lower(c.command) = lower($2))
+		ORDER BY c.id::text = $2 DESC, c.num::text = $2 DESC LIMIT 1`, b.ID, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, i18n.E("err.not_found")
 	}
@@ -232,8 +234,7 @@ func (s *Service) chatCommands(ctx context.Context, userID string, mem map[strin
 		var cc chatCommand
 		b := &cc.bot
 		var err error
-		cc.Command, err = scanCommand(r, &b.ID, &b.AppID, &b.Code, &b.Type, &b.Name, &b.LastName, &b.WorkPosition, &b.Color,
-			&b.MessageHandler, &b.WelcomeHandler, &b.DeleteHandler, &b.UserID, &b.CreatedAt, &b.mxid, &b.since)
+		cc.Command, err = scanCommand(r, b.dest()...)
 		return cc, err
 	})
 }

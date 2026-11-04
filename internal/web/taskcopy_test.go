@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -133,6 +134,32 @@ func TestTaskCopyDelegate(t *testing.T) {
 		if !strings.Contains(card, want) {
 			t.Fatalf("the card lacks %q", want)
 		}
+	}
+	// «Учитывать время» unticked (the form sends only its hidden "off") and «Плановые трудозатраты»: no timer in the
+	// card, the other forms of the card keep the box off; ticked again in the settings — the timer is back
+	_, loc = do(boss, "POST", "/tasks/new", url.Values{"project": {"AA"}, "title": {"Без учёта времени"}, "responsible": {anna},
+		"time_tracking": {"off"}, "estimate": {"2:00"}})
+	offID, err := ts.TaskIDByKey(ctx, strings.TrimPrefix(loc, "/t/"))
+	must(err)
+	off, err := ts.GetCard(ctx, boss, offID)
+	must(err)
+	if !off.NoTimeTracking || off.EstimateMinutes == nil || *off.EstimateMinutes != 120 {
+		t.Fatalf("time tracking off: %v, estimate %v", off.NoTimeTracking, off.EstimateMinutes)
+	}
+	card, _ = do(anna, "GET", loc, nil)
+	if strings.Contains(card, `action="`+loc+`/timer"`) {
+		t.Fatal("the card of a task without time tracking has a timer")
+	}
+	if card, _ = do(boss, "GET", loc, nil); !strings.Contains(card, `name="time_tracking" value="off"`) {
+		t.Fatal("the forms of the card lose the box")
+	}
+	do(boss, "POST", loc+"/edit", url.Values{"version": {strconv.Itoa(off.Version)}, "title": {off.Title}, "responsible": {anna},
+		"priority": {"1"}, "estimate": {"2:00"}, "time_tracking": {"off", "on"}})
+	if off, _ = ts.GetCard(ctx, boss, offID); off.NoTimeTracking {
+		t.Fatal("the box ticked again in the settings is still off")
+	}
+	if card, _ = do(anna, "GET", loc, nil); !strings.Contains(card, `action="`+loc+`/timer"`) {
+		t.Fatal("no timer after time tracking is on again")
 	}
 
 	// delegating: only the responsible; the newcomer leaves the auditors, the former responsible joins them

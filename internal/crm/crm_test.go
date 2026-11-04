@@ -192,10 +192,10 @@ func TestCRM(t *testing.T) {
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('d1', 'Договор.docx', 10, $1) RETURNING id`, anna).Scan(&docFile))
 	must(pool.QueryRow(ctx, `INSERT INTO files (object_key, name, size, uploaded_by) VALUES ('d2', 'Договор.docx', 12, $1) RETURNING id`, anna).Scan(&docFile2))
 	docID, err := s.AddDocument(ctx, Document{TemplateID: tpls[0].ID, TemplateName: "Договор", Entity: "deal", EntityID: deal,
-		Number: n1, FileID: docFile, Values: map[string]string{"Title": "Заявка"}, AuthorID: anna})
+		Number: n1, FileID: docFile, Values: map[string]string{"Title": "Заявка"}, AuthorID: anna, Stamps: true})
 	must(err)
 	docs, _ := s.Documents(ctx, "deal", deal)
-	if len(docs) != 1 || docs[0].Number != "Д-2026/1" || docs[0].Values["Title"] != "Заявка" || docs[0].Author == "" || docs[0].Size != 10 {
+	if len(docs) != 1 || docs[0].Number != "Д-2026/1" || docs[0].Values["Title"] != "Заявка" || docs[0].Author == "" || docs[0].Size != 10 || !docs[0].Stamps {
 		t.Fatalf("documents = %+v", docs)
 	}
 	if tl, _ := s.Timeline(ctx, "deal", deal); tl[0].Kind != "document" || tl[0].Body != "Договор № Д-2026/1" {
@@ -204,8 +204,8 @@ func TestCRM(t *testing.T) {
 	if _, err := s.Document(ctx, "deal", lead, docID); err != ErrNotFound {
 		t.Fatalf("a document of another card: %v", err)
 	}
-	must(s.RemakeDocument(ctx, docID, docFile2, map[string]string{"Title": "Поставка"}))
-	if d, _ := s.Document(ctx, "deal", deal, docID); d.FileID != docFile2 || d.Number != n1 || d.Values["Title"] != "Поставка" {
+	must(s.RemakeDocument(ctx, docID, docFile2, map[string]string{"Title": "Поставка"}, false))
+	if d, _ := s.Document(ctx, "deal", deal, docID); d.FileID != docFile2 || d.Number != n1 || d.Values["Title"] != "Поставка" || d.Stamps {
 		t.Fatalf("remade = %+v", d)
 	}
 	var left int

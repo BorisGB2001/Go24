@@ -7,7 +7,7 @@ import (
 
 // Who is the one looking at the dialogues, as the roles of the open lines: All — the portal's administrators
 // and the lines' heads (every dialogue); otherwise an operator — their own dialogues, the unassigned ones of the lines
-// whose queue they are in, and those of Team (the people of the departments they head).
+// whose queue they are in, those they are invited into and those of Team (the people of the departments they head).
 type Who struct {
 	UserID string
 	All    bool
@@ -23,7 +23,7 @@ func (x Who) cond(arg func(any) string) string {
 		return "false"
 	}
 	me, team := arg(x.UserID), arg(nonNil(x.Team))
-	return `(s.operator_id::text = ` + me + ` OR s.operator_id::text = ANY(` + team + `::text[])
+	return `(s.operator_id::text = ` + me + ` OR s.operator_id::text = ANY(` + team + `::text[]) OR ` + me + ` = ANY(s.invited::text[])
 		OR (s.operator_id IS NULL AND (` + me + ` = ANY(w.operators::text[]) OR (cardinality(w.operators) = 0 AND w.created_by::text = ` + me + `))))`
 }
 

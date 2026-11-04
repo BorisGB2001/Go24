@@ -28,6 +28,9 @@ import (
 func (s *Server) openDrive(r *http.Request, sess auth.Session) (drive.Drive, error) {
 	which := r.PathValue("which")
 	if key := r.PathValue("key"); key != "" {
+		if p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, key); err == nil && !p.ToolOn("drive") { // «Возможности группы»
+			return drive.Drive{}, tasks.ErrToolOff
+		}
 		which = key
 	} else if id := r.PathValue("id"); id != "" {
 		which = "sh:" + id // a folder shared with the user

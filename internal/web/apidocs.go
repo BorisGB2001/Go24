@@ -15,6 +15,7 @@ import (
 	"go24/internal/crm"
 	"go24/internal/docgen"
 	"go24/internal/i18n"
+	"go24/internal/qes"
 	"go24/internal/sign"
 	"go24/internal/storages"
 	"go24/internal/tasks"
@@ -32,6 +33,8 @@ func (s *Server) apiDocsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/document-templates/{id}", s.api("documents:read", s.apiDocTemplate))
 	mux.HandleFunc("PATCH /api/v1/document-templates/{id}", s.api("documents:write", s.apiDocTemplateChange))
 	mux.HandleFunc("PUT /api/v1/document-templates/{id}/file", s.api("documents:write", s.apiDocTemplateFile))
+	mux.HandleFunc("GET /api/v1/document-templates/{id}/fields", s.api("documents:read", s.apiDocTemplateFields))
+	mux.HandleFunc("PUT /api/v1/document-templates/{id}/fields", s.api("documents:write", s.apiDocTemplateFieldsSet))
 	mux.HandleFunc("DELETE /api/v1/document-templates/{id}", s.api("documents:write", s.apiDocTemplateDelete))
 	mux.HandleFunc("GET /api/v1/document-numerators", s.api("documents:read", s.apiNumerators))
 	mux.HandleFunc("POST /api/v1/document-numerators", s.api("documents:write", s.apiNumeratorSave))
@@ -44,11 +47,17 @@ func (s *Server) apiDocsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/documents/{id}", s.api("documents:write", s.apiDocDelete))
 	mux.HandleFunc("GET /api/v1/documents/{id}/file", s.api("documents:read", s.apiDocFile))
 	mux.HandleFunc("POST /api/v1/documents/{id}/public", s.api("documents:write", s.apiDocPublic))
+	mux.HandleFunc("POST /api/v1/documents/{id}/send", s.api("documents:write", s.apiDocSend))
 	mux.HandleFunc("GET /api/v1/sign", s.api("documents:read", s.apiSignList))
 	mux.HandleFunc("POST /api/v1/sign", s.api("documents:write", s.apiSignCreate))
+	mux.HandleFunc("GET /api/v1/sign/check", s.api("documents:read", s.apiSignCheck))
+	mux.HandleFunc("GET /api/v1/sign/safe", s.api("documents:read", s.apiSignSafe))
 	mux.HandleFunc("GET /api/v1/sign/{id}", s.api("documents:read", s.apiSignGet))
 	mux.HandleFunc("GET /api/v1/sign/{id}/file/{which}", s.api("documents:read", s.apiSignFile))
 	mux.HandleFunc("GET /api/v1/sign/{id}/signature/{party}", s.api("documents:read", s.apiSignSignature))
+	mux.HandleFunc("GET /api/v1/sign/{id}/qes/{party}", s.api("documents:read", s.apiSignQES))
+	mux.HandleFunc("GET /api/v1/sign/{id}/blocks", s.api("documents:read", s.apiSignBlocks))
+	mux.HandleFunc("PUT /api/v1/sign/{id}/blocks", s.api("documents:write", s.apiSignBlocksSet))
 	mux.HandleFunc("POST /api/v1/sign/{id}/sign", s.api("documents:write", s.apiSignSign))
 	mux.HandleFunc("POST /api/v1/sign/{id}/cancel", s.api("documents:write", s.apiSignCancel))
 	mux.HandleFunc("POST /api/v1/sign/{id}/resend", s.api("documents:write", s.apiSignResend))
@@ -63,46 +72,35 @@ func (s *Server) apiSess(r *http.Request, p apikeys.Principal) auth.Session {
 type apiDocTemplate struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Entity    string    `json:"entity"` // the kind of cards: deals, leads, contacts, companies
+	Entity    string    `json:"entity"`            // the kind of cards: deals, leads, contacts, companies
+	TypeID    string    `json:"type_id,omitempty"` // a template of a smart process's cards (entity deals)
 	FileName  string    `json:"file_name"`
 	Numerator string    `json:"numerator"`    // its numerator's format
 	NumberBy  string    `json:"numerator_id"` // its numerator (/api/v1/document-numerators)
 	CreatedAt time.Time `json:"created_at"`
+	Active    bool       `json:"active"`      // «Активен»: offered for new documents
+	Sort      int        `json:"sort"`        // «Сортировка»: the order in the lists
+	Stamps    bool       `json:"with_stamps"` // «С печатями и подписями» of a new document by it
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy string     `json:"updated_by,omitempty"`
 	Fields    []string  `json:"fields,omitempty"` // its placeholders (a single template)
 	Access    []apiUser `json:"access,omitempty"` // «Кому доступен»: people and departments («dept:ID»); none — all
 }
 
 func apiDocTemplateOf(t crm.DocTemplate) apiDocTemplate {
-	return apiDocTemplate{ID: t.ID, Name: t.Name, Entity: crmKind(t.Entity), FileName: t.FileName, Numerator: t.Numerator,
-		NumberBy: t.NumeratorID, CreatedAt: t.CreatedAt}
+	return apiDocTemplate{ID: t.ID, Name: t.Name, Entity: crmKind(t.Entity), TypeID: t.TypeID, FileName: t.FileName, Numerator: t.Numerator,
+		NumberBy: t.NumeratorID, CreatedAt: t.CreatedAt, Active: t.Active, Sort: t.Sort, Stamps: t.WithStamps, UpdatedAt: t.UpdatedAt,
+		UpdatedBy: t.UpdatedBy}
 }
 
-// apiDocTemplates are the templates the key's owner may make documents by (?entity=deals — of a kind of cards);
-// an administrator's — all.
+// apiDocTemplates are the templates the key's owner may make documents by (?entity=deals — of a kind of cards;
+// &type_id= — of a smart process's); an administrator's — all.
 func (s *Server) apiDocTemplates(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	sess, kind := s.apiSess(r, p), r.URL.Query().Get("entity")
-	if kind != "" && crmEntities[kind] == "" {
+	sess, kind, typ := s.apiSess(r, p), r.URL.Query().Get("entity"), r.URL.Query().Get("type_id")
+	if kind != "" && crmEntities[kind] == "" || typ != "" && kind != "deals" {
 		return i18n.E("err.doc_template")
 	}
-	var list []crm.DocTemplate
-	var err error
-	if sess.Admin {
-		list, err = s.CRM.DocTemplates(r.Context(), crmEntities[kind])
-	} else {
-		for k, e := range crmEntities {
-			if kind != "" && k != kind {
-				continue
-			}
-			some, err := s.CRM.DocTemplatesFor(r.Context(), e, p.UserID)
-			if err != nil {
-				return err
-			}
-			list = append(list, some...)
-		}
-		slices.SortFunc(list, func(a, b crm.DocTemplate) int {
-			return cmp.Or(cmp.Compare(a.Entity, b.Entity), cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)))
-		})
-	}
+	list, err := s.docTemplatesSeen(r, sess, kind, typ)
 	if err != nil {
 		return err
 	}
@@ -112,6 +110,45 @@ func (s *Server) apiDocTemplates(w http.ResponseWriter, r *http.Request, p apike
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// docTemplatesSeen are the templates the user may make documents by: of a kind of cards (kind "deals"…), of a smart
+// process's (typ), or all; an administrator's — all.
+func (s *Server) docTemplatesSeen(r *http.Request, sess auth.Session, kind, typ string) ([]crm.DocTemplate, error) {
+	var list []crm.DocTemplate
+	var err error
+	if s.docPerms(r.Context(), sess).Can("templates") {
+		list, err = s.CRM.DocTemplates(r.Context(), crm.DocKind(crmEntities[kind], typ))
+	} else {
+		var kinds []string // of the cards and of each smart process
+		for k, e := range crmEntities {
+			if kind == "" || k == kind && typ == "" {
+				kinds = append(kinds, e)
+			}
+		}
+		if typ != "" {
+			kinds = append(kinds, crm.TypeKind(typ))
+		} else if kind == "" {
+			types, err := s.CRM.Types(r.Context())
+			if err != nil {
+				return nil, err
+			}
+			for _, t := range types {
+				kinds = append(kinds, crm.TypeKind(t.ID))
+			}
+		}
+		for _, e := range kinds {
+			some, err := s.CRM.DocTemplatesFor(r.Context(), e, sess.UserID)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, some...)
+		}
+		slices.SortFunc(list, func(a, b crm.DocTemplate) int {
+			return cmp.Or(cmp.Compare(a.Entity, b.Entity), cmp.Compare(a.Sort, b.Sort), cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)))
+		})
+	}
+	return list, err
 }
 
 // apiDocTemplate is a template with its placeholders and «Кому доступен».
@@ -125,7 +162,7 @@ func (s *Server) apiDocTemplate(w http.ResponseWriter, r *http.Request, p apikey
 	if err != nil {
 		return err
 	}
-	_, tpl, err := s.docTemplateFile(r, crmKind(t.Entity), id)
+	_, tpl, err := s.docTemplateOf(r, t.Kind(), id)
 	if err != nil {
 		return err
 	}
@@ -144,12 +181,13 @@ func (s *Server) apiDocTemplate(w http.ResponseWriter, r *http.Request, p apikey
 	return nil
 }
 
-// apiDocTemplateAdd adds a template (administrators): multipart with the DOCX «file», «name» and «entity», or a
+// apiDocTemplateAdd adds a template (administrators): multipart with the DOCX «file», «name» and «entity» (and
+// «type_id» — of a smart process's cards), or a
 // ready-made one — «builtin»: invoice, contract, act (of deals, in the caller's language).
 func (s *Server) apiDocTemplateAdd(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	sess := s.apiSess(r, p)
-	if !sess.Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), sess, "templates"); err != nil {
+		return err
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxTemplateSize+1<<16)
 	if err := r.ParseMultipartForm(maxTemplateSize); err != nil && !errors.Is(err, http.ErrNotMultipart) {
@@ -169,7 +207,14 @@ func (s *Server) apiDocTemplateAdd(w http.ResponseWriter, r *http.Request, p api
 		if rerr != nil {
 			return rerr
 		}
-		id, err = s.addTemplate(r.Context(), p.UserID, r.FormValue("name"), crmEntities[r.FormValue("entity")], hdr.Filename, data)
+		kind := crmEntities[r.FormValue("entity")]
+		if typ := r.FormValue("type_id"); typ != "" {
+			if kind != "deal" {
+				return i18n.E("err.doc_template")
+			}
+			kind = crm.TypeKind(typ)
+		}
+		id, err = s.addTemplate(r.Context(), p.UserID, r.FormValue("name"), kind, hdr.Filename, data)
 	}
 	if err != nil {
 		return err
@@ -182,17 +227,22 @@ func (s *Server) apiDocTemplateAdd(w http.ResponseWriter, r *http.Request, p api
 	return nil
 }
 
-// apiDocTemplateChange changes the template's numerator and «Кому доступен» (administrators):
-// {"numerator_id": "…" (another numerator), "numerator": "{NUMBER}/{YEAR}" (its format), "access": ["user id",
-// "dept:ID"]} — what is given; access [] — everybody.
+// apiDocTemplateChange changes the template's name, numerator, «Кому доступен», «Активен», «Сортировка» and «С печатями
+// и подписями» (administrators): {"name": "…", "numerator_id": "…" (another numerator), "numerator": "{NUMBER}/{YEAR}"
+// (its format), "access": ["user id", "dept:ID"], "active": false, "sort": 100, "with_stamps": false} — what is given;
+// access [] — everybody.
 func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "templates"); err != nil {
+		return err
 	}
 	var in struct {
+		Name      *string   `json:"name"`
 		NumberBy  string    `json:"numerator_id"`
 		Numerator *string   `json:"numerator"`
 		Access    *[]string `json:"access"`
+		Active    *bool     `json:"active"`
+		Sort      *int      `json:"sort"`
+		Stamps    *bool     `json:"with_stamps"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -201,6 +251,26 @@ func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p 
 	t, err := s.CRM.DocTemplate(r.Context(), id)
 	if err != nil {
 		return err
+	}
+	if in.Name != nil {
+		if err := s.CRM.RenameDocTemplate(r.Context(), id, *in.Name); err != nil {
+			return err
+		}
+	}
+	if in.Active != nil || in.Sort != nil || in.Stamps != nil {
+		set := crm.DocTemplateSettings{Active: t.Active, Sort: t.Sort, WithStamps: t.WithStamps}
+		if in.Active != nil {
+			set.Active = *in.Active
+		}
+		if in.Sort != nil {
+			set.Sort = *in.Sort
+		}
+		if in.Stamps != nil {
+			set.WithStamps = *in.Stamps
+		}
+		if err := s.CRM.SetDocTemplateSettings(r.Context(), id, p.UserID, set); err != nil {
+			return err
+		}
 	}
 	if in.NumberBy != "" {
 		if err := s.CRM.SetDocTemplateNumerator(r.Context(), id, in.NumberBy); err != nil {
@@ -217,6 +287,9 @@ func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p 
 			return err
 		}
 	}
+	if err := s.CRM.DocTemplateChanged(r.Context(), id, p.UserID); err != nil {
+		return err
+	}
 	if t, err = s.CRM.DocTemplate(r.Context(), id); err != nil {
 		return err
 	}
@@ -226,8 +299,8 @@ func (s *Server) apiDocTemplateChange(w http.ResponseWriter, r *http.Request, p 
 
 // apiDocTemplateFile puts another DOCX in place of the template's (administrators): the body is the file.
 func (s *Server) apiDocTemplateFile(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "templates"); err != nil {
+		return err
 	}
 	id := r.PathValue("id")
 	t, err := s.CRM.DocTemplate(r.Context(), id)
@@ -245,6 +318,9 @@ func (s *Server) apiDocTemplateFile(w http.ResponseWriter, r *http.Request, p ap
 	if err == nil {
 		err = s.CRM.SetDocTemplateFile(r.Context(), id, fileID)
 	}
+	if err == nil {
+		err = s.CRM.DocTemplateChanged(r.Context(), id, p.UserID)
+	}
 	if err != nil {
 		return err
 	}
@@ -253,8 +329,8 @@ func (s *Server) apiDocTemplateFile(w http.ResponseWriter, r *http.Request, p ap
 }
 
 func (s *Server) apiDocTemplateDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "templates"); err != nil {
+		return err
 	}
 	if _, err := s.CRM.DocTemplate(r.Context(), r.PathValue("id")); err != nil {
 		return err
@@ -288,7 +364,7 @@ func apiNumeratorOf(n crm.Numerator) apiNumerator {
 
 // apiNumerators are all the numerators (administrators).
 func (s *Server) apiNumerators(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
+	if dp := s.docPerms(r.Context(), s.apiSess(r, p)); !dp.Can("templates") && !dp.Can("settings") {
 		return tasks.ErrForbidden
 	}
 	list, err := s.CRM.Numerators(r.Context())
@@ -306,8 +382,8 @@ func (s *Server) apiNumerators(w http.ResponseWriter, r *http.Request, p apikeys
 // apiNumeratorSave adds a numerator (POST) or changes what is given of its settings (PATCH …/{id}):
 // {"name", "format", "start", "step", "pad", "reset"}.
 func (s *Server) apiNumeratorSave(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "settings"); err != nil {
+		return err
 	}
 	n := crm.Numerator{Format: "{NUMBER}", Start: 1, Step: 1, Reset: "never"}
 	if id := r.PathValue("id"); id != "" {
@@ -344,8 +420,8 @@ func (s *Server) apiNumeratorSave(w http.ResponseWriter, r *http.Request, p apik
 
 // apiNumeratorDelete deletes a numerator no template numbers by.
 func (s *Server) apiNumeratorDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiSess(r, p).Admin {
-		return tasks.ErrForbidden
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "settings"); err != nil {
+		return err
 	}
 	if err := s.CRM.DeleteNumerator(r.Context(), r.PathValue("id")); err != nil {
 		return err
@@ -368,6 +444,7 @@ type apiDocument struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`
 	PublicURL  string            `json:"public_url,omitempty"`
+	Stamps     bool              `json:"stamps"`         // «С печатями и подписями»
 	Sign       *apiSignBrief     `json:"sign,omitempty"` // the last sending for signing
 	URL        string            `json:"url"`            // the DOCX: GET with the same key; ?format=pdf — in PDF
 }
@@ -380,7 +457,7 @@ type apiSignBrief struct {
 func (s *Server) apiDocumentOf(d crm.Document) apiDocument {
 	out := apiDocument{ID: d.ID, Entity: crmKind(d.Entity), EntityID: d.EntityID, TemplateID: d.TemplateID,
 		Template: d.TemplateName, Number: d.Number, FileName: d.FileName, Size: d.Size, Author: apiUser{d.AuthorID, d.Author},
-		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt, URL: "/api/v1/documents/" + d.ID + "/file"}
+		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt, Stamps: d.Stamps, URL: "/api/v1/documents/" + d.ID + "/file"}
 	if d.PublicToken != "" {
 		out.PublicURL = s.BaseURL + "/d/" + d.PublicToken
 	}
@@ -391,6 +468,9 @@ func (s *Server) apiDocumentOf(d crm.Document) apiDocument {
 func (s *Server) apiDocList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	q := r.URL.Query()
 	kind, id := q.Get("entity"), q.Get("entity_id")
+	if err := s.docRight(r.Context(), s.apiSess(r, p), "view"); err != nil {
+		return err
+	}
 	if err := s.crmCheck(r, s.apiSess(r, p), kind, id, "read"); err != nil {
 		return err
 	}
@@ -415,22 +495,27 @@ func (s *Server) apiDocList(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 }
 
 // apiDocMake makes a document of the card by a template: {"entity": "deals", "entity_id": "…", "template": "…",
-// "values": {"Field": "value"}} — the values go over those of the card.
+// "values": {"Field": "value"}, "stamps": false} — the values go over those of the card; "stamps" — «С печатями и
+// подписями» (as stampsEnabled), as the template's with_stamps if not given.
 func (s *Server) apiDocMake(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
 		Entity   string            `json:"entity"`
 		EntityID string            `json:"entity_id"`
 		Template string            `json:"template"`
 		Values   map[string]string `json:"values"`
+		Stamps   *bool             `json:"stamps"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
 	sess := s.apiSess(r, p)
+	if err := s.docRight(r.Context(), sess, "modify"); err != nil {
+		return err
+	}
 	if err := s.crmCheck(r, sess, in.Entity, in.EntityID, "read"); err != nil {
 		return err
 	}
-	doc, err := s.makeDocument(r, sess, in.Entity, in.EntityID, in.Template, in.Values)
+	doc, err := s.makeDocument(r, sess, in.Entity, in.EntityID, in.Template, in.Values, in.Stamps)
 	if err != nil {
 		return err
 	}
@@ -443,9 +528,14 @@ func (s *Server) apiDocMake(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	return nil
 }
 
-// apiDoc is the document of the path for those who may do the action with its card (read, write).
+// apiDoc is the document of the path for those who may do the action with its card (read, write) and have the right
+// of the generator for it (view, modify).
 func (s *Server) apiDoc(r *http.Request, p apikeys.Principal, action string) (crm.Document, error) {
-	d, err := s.CRM.DocumentByID(r.Context(), r.PathValue("id"))
+	err := s.docRight(r.Context(), s.apiSess(r, p), map[string]string{"read": "view", "write": "modify"}[action])
+	var d crm.Document
+	if err == nil {
+		d, err = s.CRM.DocumentByID(r.Context(), r.PathValue("id"))
+	}
 	if err == nil {
 		err = s.crmCheck(r, s.apiSess(r, p), crmKind(d.Entity), d.EntityID, action)
 	}
@@ -468,15 +558,20 @@ func (s *Server) apiDocGet(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 	return nil
 }
 
-// apiDocRemake is «Изменить значения»: the document made again, {"values": {"Field": "value"}}; the number stays.
+// apiDocRemake is «Изменить значения»: the document made again, {"values": {"Field": "value"}, "stamps": true}; the
+// number stays, "stamps" not given — as it was.
 func (s *Server) apiDocRemake(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
 		Values map[string]string `json:"values"`
+		Stamps *bool             `json:"stamps"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
 	d, err := s.apiDoc(r, p, "write")
+	if err == nil && in.Stamps != nil {
+		d.Stamps = *in.Stamps
+	}
 	if err == nil {
 		err = s.remakeDocument(r, s.apiSess(r, p), d, in.Values)
 	}
@@ -552,11 +647,15 @@ func (s *Server) apiDocPublic(w http.ResponseWriter, r *http.Request, p apikeys.
 type apiSignDoc struct {
 	ID         string            `json:"id"`
 	Title      string            `json:"title"`
-	Status     string            `json:"status"` // signing | done | refused | cancelled
+	Status     string            `json:"status"`             // signing | done | refused | cancelled | expired
+	Deadline   string            `json:"deadline,omitempty"` // «Подписать до», YYYY-MM-DD: not signed by its end — expired
 	Entity     string            `json:"entity,omitempty"`
 	EntityID   string            `json:"entity_id,omitempty"`
 	DocumentID string            `json:"document_id,omitempty"` // the card's document sent
 	Hash       string            `json:"sha256"`
+	ResultHash string            `json:"result_sha256,omitempty"` // of the signed document
+	VerifyCode string            `json:"verify_code"`             // «Код проверки»: GET /api/v1/sign/check?code=
+	CheckURL   string            `json:"check_url"`               // the public page checking the document
 	Author     apiUser           `json:"author"`
 	CreatedAt  time.Time         `json:"created_at"`
 	DoneAt     *time.Time        `json:"done_at,omitempty"`
@@ -576,25 +675,38 @@ type apiSignEvent struct {
 	Sent   bool      `json:"sent"`            // false — the letter was not sent
 	IP     string    `json:"ip,omitempty"`    // to the sender
 	Reason string    `json:"reason,omitempty"`
+	Via    string    `json:"via,omitempty"` // how the code went (kind code): mail | sms
 }
 
 type apiSignParty struct {
+	Ord      int        `json:"ord"`               // the signer's number, as blocks have it
 	UserID   string     `json:"user_id,omitempty"` // an employee; the client has none
 	Name     string     `json:"name"`
 	Email    string     `json:"email,omitempty"`
-	Role     string     `json:"role"`   // signer | reviewer (approves, with no signature)
-	Status   string     `json:"status"` // wait | ready | signed (a reviewer — approved) | refused (rejected)
+	Phone    string     `json:"phone,omitempty"` // the client's: the link and the code by SMS
+	Chat     string     `json:"chat,omitempty"`  // the client's dialogue of the open lines the link and the code go to
+	Role     string     `json:"role"`            // signer | reviewer (approves, with no signature)
+	Status   string     `json:"status"`          // wait | ready | signed (a reviewer — approved) | refused (rejected)
 	SignedAt *time.Time `json:"signed_at,omitempty"`
 	Reason   string     `json:"reason,omitempty"`
 	Link     string     `json:"link,omitempty"` // the client's personal link (to the sender)
 	// Signature: signed with a handwritten signature, given (PNG) by GET /api/v1/sign/{id}/signature/{party}
 	Signature string `json:"signature,omitempty"`
+	Method    string `json:"method"` // simple (go24's login, a code) | qes (КЭП, a qualified certificate)
+	// QES: signed with КЭП — what the certificate says; the detached signature (.sig) of the document's PDF is given
+	// by GET /api/v1/sign/{id}/qes/{party} (QESFile)
+	QES     *qes.Signed `json:"qes,omitempty"`
+	QESFile string      `json:"qes_file,omitempty"`
 }
 
 func (s *Server) apiSignOf(d sign.Doc, viewer string) apiSignDoc {
 	out := apiSignDoc{ID: d.ID, Title: d.Title, Status: d.Status, Entity: crmKind(d.Entity), EntityID: d.EntityID,
-		DocumentID: d.CRMDocID, Hash: d.Hash, Author: apiUser{d.AuthorID, d.Author}, CreatedAt: d.CreatedAt, DoneAt: d.DoneAt,
+		DocumentID: d.CRMDocID, Hash: d.Hash, ResultHash: d.ResultHash, VerifyCode: sign.ShowCode(d.VerifyCode),
+		CheckURL: s.signCheckURL(d), Author: apiUser{d.AuthorID, d.Author}, CreatedAt: d.CreatedAt, DoneAt: d.DoneAt,
 		Parties: []apiSignParty{}, Observers: []apiUser{}, Files: map[string]string{}}
+	if d.Deadline != nil {
+		out.Deadline = d.Deadline.Format(time.DateOnly)
+	}
 	for _, o := range d.Observers {
 		out.Observers = append(out.Observers, apiUser{o.UserID, o.Name})
 	}
@@ -605,13 +717,17 @@ func (s *Server) apiSignOf(d sign.Doc, viewer string) apiSignDoc {
 		out.Files["result"] = "/api/v1/sign/" + d.ID + "/file/result"
 	}
 	for _, p := range d.Parties {
-		a := apiSignParty{UserID: p.UserID, Name: p.Name, Email: p.Email, Role: cmp.Or(p.Role, "signer"), Status: p.Status,
-			SignedAt: p.SignedAt, Reason: p.Reason}
+		a := apiSignParty{Ord: p.Ord, UserID: p.UserID, Name: p.Name, Email: p.Email, Phone: p.Phone, Role: cmp.Or(p.Role, "signer"), Status: p.Status,
+			SignedAt: p.SignedAt, Reason: p.Reason, Chat: p.Chat}
 		if !p.Employee() && viewer == d.AuthorID && d.Status == "signing" {
 			a.Link = s.BaseURL + "/sg/" + p.Token
 		}
 		if p.HasSignature {
 			a.Signature = "/api/v1/sign/" + d.ID + "/signature/" + p.ID
+		}
+		a.Method, a.QES = cmp.Or(p.Method, "simple"), p.QES
+		if p.QES != nil {
+			a.QESFile = "/api/v1/sign/" + d.ID + "/qes/" + p.ID
 		}
 		out.Parties = append(out.Parties, a)
 	}
@@ -619,13 +735,18 @@ func (s *Server) apiSignOf(d sign.Doc, viewer string) apiSignDoc {
 }
 
 // apiSignList are the documents of «Подпись» the key's owner sent or signs: ?filter=me (waiting for my signature),
-// signing, done, closed (refused or cancelled).
+// signing, done, closed (refused, cancelled or expired); q, author, from, to (YYYY-MM-DD) — as the filter of the list.
 func (s *Server) apiSignList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	f := r.URL.Query().Get("filter")
 	if !slices.Contains(sign.Filters, f) {
 		f = ""
 	}
-	docs, err := s.Sign.List(r.Context(), p.UserID, f, s.apiSess(r, p).AdminActive())
+	lf := signListFilter(r)
+	all, err := s.signListScope(r.Context(), s.apiSess(r, p), &lf)
+	var docs []sign.Doc
+	if err == nil {
+		docs, err = s.Sign.Find(r.Context(), p.UserID, f, all, lf)
+	}
 	if err != nil {
 		return err
 	}
@@ -656,6 +777,9 @@ func (s *Server) apiSignGet(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	out := s.apiSignOf(d, p.UserID)
 	for _, e := range events {
 		a := apiSignEvent{Kind: e.Kind, At: e.At, Party: e.Party, Sent: e.OK, Reason: e.Note}
+		if e.Kind == sign.EvCode {
+			a.Reason, a.Via = "", e.Note
+		}
 		if e.ActorID != "" {
 			a.Actor = &apiUser{e.ActorID, e.Actor}
 		}
@@ -670,41 +794,49 @@ func (s *Server) apiSignGet(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 
 // apiSignCreate sends a document for signing: the card's document — JSON {"document": "…", "title": "…",
 // "signer": "user id" or "signers": ["user id", …], "reviewers": ["user id", …], "observers": ["user id", …],
-// "client_name": "…", "client_email": "…" or "clients": [{"name", "email"}, …], "remind_days": 1}, or a Word file —
-// multipart with «file» and the same fields (signer, reviewer, observer, client_name and client_email repeated). The
-// reviewers approve first in turn, the employees sign then in turn, then the clients get the link by e-mail in turn;
+// "client_name": "…", "client_email": "…", "client_phone": "…", "client_via": "chat" or "clients": [{"name", "email", "phone",
+// "via"}, …], "remind_days": 1,
+// "deadline": "YYYY-MM-DD", "qes": "company" | "all" — the employees (all: the clients too) sign with КЭП}, or a file —
+// multipart with «file» and the same fields (signer, reviewer, observer, client_name, client_email, client_phone and
+// client_via repeated). The reviewers approve first in turn, the employees sign then in turn, then the clients get the link by
+// e-mail (with no e-mail — by SMS to the phone, when a provider of SMS is set up; via "chat", or with neither — in the
+// client's latest dialogue of the open lines of the card) in turn;
 // the one whose turn it is is reminded every remind_days days (0, 1, 2, 3, 7; 0 — never; by default every day); the
-// observers see the document and are told how it ended.
+// observers see the document and are told how it ended. Not signed by the end of the deadline day, the document is
+// expired.
 func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
-		Document    string                         `json:"document"`
-		Title       string                         `json:"title"`
-		Signer      string                         `json:"signer"`
-		ClientName  string                         `json:"client_name"`
-		ClientEmail string                         `json:"client_email"`
-		Signers     []string                       `json:"signers"`
-		Reviewers   []string                       `json:"reviewers"`
-		Observers   []string                       `json:"observers"`
-		Clients     []struct{ Name, Email string } `json:"clients"`
-		RemindDays  *int                           `json:"remind_days"`
+		Document    string                                     `json:"document"`
+		Title       string                                     `json:"title"`
+		Signer      string                                     `json:"signer"`
+		ClientName  string                                     `json:"client_name"`
+		ClientEmail string                                     `json:"client_email"`
+		Signers     []string                                   `json:"signers"`
+		Reviewers   []string                                   `json:"reviewers"`
+		Observers   []string                                   `json:"observers"`
+		ClientPhone string                                     `json:"client_phone"`
+		ClientVia   string                                     `json:"client_via"` // chat — the link in the card's chat of the open lines
+		Clients     []struct{ Name, Email, Phone, Via string } `json:"clients"`
+		RemindDays  *int                                       `json:"remind_days"`
+		Deadline    string                                     `json:"deadline"`
+		QES         string                                     `json:"qes"` // company — the employees sign with КЭП, all — the clients too
 	}
 	sess := s.apiSess(r, p)
+	if !s.signPerms(r.Context(), sess).Has("send", "all") {
+		return tasks.ErrForbidden
+	}
 	var data []byte
 	var name string
 	var clients []sign.Party
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		r.Body = http.MaxBytesReader(w, r.Body, signMax+1<<16)
-		f, h, err := r.FormFile("file")
-		if err == nil {
-			defer f.Close()
-			data, err = io.ReadAll(io.LimitReader(f, signMax+1))
+		var err error
+		if data, name, err = s.signUploads(r, sess.UserID); err != nil {
+			return err
 		}
-		if err != nil || len(data) > signMax {
-			return i18n.E("sign.err.file")
-		}
-		name = h.Filename
 		in.Title, in.Signers, in.Reviewers, in.Observers = r.FormValue("title"), r.Form["signer"], r.Form["reviewer"], r.Form["observer"]
-		clients = signClients(r.Form["client_name"], r.Form["client_email"])
+		clients = signClients(r.Form["client_name"], r.Form["client_email"], r.Form["client_phone"], r.Form["client_via"]...)
+		in.Deadline, in.QES = r.FormValue("deadline"), r.FormValue("qes")
 		if v := r.FormValue("remind_days"); v != "" {
 			days := atoi(v)
 			in.RemindDays = &days
@@ -716,14 +848,18 @@ func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys
 		return err
 	} else {
 		in.Signers = append([]string{in.Signer}, in.Signers...)
-		clients = signClients([]string{in.ClientName}, []string{in.ClientEmail})
+		clients = signClients([]string{in.ClientName}, []string{in.ClientEmail}, []string{in.ClientPhone}, in.ClientVia)
 		for _, c := range in.Clients {
-			clients = append(clients, signClients([]string{c.Name}, []string{c.Email})...)
+			clients = append(clients, signClients([]string{c.Name}, []string{c.Email}, []string{c.Phone}, c.Via)...)
 		}
 	}
 	d := sign.Doc{Title: in.Title, RemindDays: 1}
 	if in.RemindDays != nil {
 		d.RemindDays = *in.RemindDays
+	}
+	var err error
+	if d.Deadline, err = sign.ParseDeadline(in.Deadline, time.Now()); err != nil {
+		return err
 	}
 	if data == nil {
 		doc, err := s.CRM.DocumentByID(r.Context(), in.Document)
@@ -743,7 +879,7 @@ func (s *Server) apiSignCreate(w http.ResponseWriter, r *http.Request, p apikeys
 		d.Entity, d.EntityID, d.CRMDocID, name = doc.Entity, doc.EntityID, doc.ID, m.Name
 		d.Title = cmp.Or(strings.TrimSpace(d.Title), signDocTitle(doc))
 	}
-	id, err := s.signStart(r, sess, d, data, name, signWho{Signers: in.Signers, Reviewers: in.Reviewers, Observers: in.Observers, Clients: clients})
+	id, err := s.signStart(r, sess, d, data, name, signWho{Signers: in.Signers, Reviewers: in.Reviewers, Observers: in.Observers, Clients: clients, QES: in.QES})
 	if err != nil {
 		return err
 	}
@@ -765,6 +901,13 @@ func (s *Server) apiSignFile(w http.ResponseWriter, r *http.Request, p apikeys.P
 	return nil
 }
 
+// apiSignQES gives a signer's КЭП: the detached signature (.sig) of the document's PDF.
+func (s *Server) apiSignQES(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	d, _, err := s.apiSignDocOf(r, p)
+	s.signQESFile(w, r, d, err)
+	return nil
+}
+
 // apiSignSignature gives a signer's handwritten signature (PNG).
 func (s *Server) apiSignSignature(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	d, _, err := s.apiSignDocOf(r, p)
@@ -782,6 +925,10 @@ func (s *Server) apiSignSign(w http.ResponseWriter, r *http.Request, p apikeys.P
 		// Signature is the handwritten signature: a PNG or JPEG in base64 (a data URL too); none — the one the
 		// employee keeps, if any
 		Signature string `json:"signature"`
+		// Fields: the values of the signer's fields on the pages, by the blocks' ids (GET …/blocks)
+		Fields map[string]string `json:"fields"`
+		// CMS: the signer signing with КЭП — the detached CAdES signature of the document's PDF (file/pdf), base64
+		CMS string `json:"cms"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -797,6 +944,12 @@ func (s *Server) apiSignSign(w http.ResponseWriter, r *http.Request, p apikeys.P
 	}
 	if err == nil && !in.Refuse && !in.Agree {
 		err = i18n.E("sign.err.agree")
+	}
+	if err == nil && !in.Refuse {
+		err = s.signFields(r, d, cur, in.Fields)
+	}
+	if err == nil && !in.Refuse && cur.Qualified() {
+		sig, err = nil, s.signQES(r, d, cur, []byte(in.CMS))
 	}
 	if err == nil {
 		_, err = s.signDo(r, d, cur, "", p.UserID, in.Refuse, in.Reason, sig)

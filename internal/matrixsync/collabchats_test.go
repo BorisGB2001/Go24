@@ -120,6 +120,16 @@ func TestCollabChats(t *testing.T) {
 	if !member(outsider) || s.CollabOf(ctx, own) != c.ID || logged("chat_added") != "Подготовка" {
 		t.Fatal("the chat's people did not join the collab")
 	}
+	// a collab's chat deleted by its owner: no more the collab's, the log tells it
+	tmp, err := s.CreateCollabChat(octx, owner, c.ID, "Временный", []string{colleague})
+	must(err)
+	if err := s.DeleteGroup(ctx, colleague, tmp); err == nil {
+		t.Fatal("a member deleted the owner's chat")
+	}
+	must(s.DeleteGroup(ctx, owner, tmp))
+	if fake.rooms[tmp] != nil || s.CollabOf(ctx, tmp) != "" || logged("chat_removed") != "Временный" {
+		t.Fatal("the collab's chat is not deleted")
+	}
 	// people added to a collab's chat join the collab
 	must(s.AddToGroup(octx, owner, chat, []string{late}))
 	if !member(late) || !fake.rooms[chat]["@late:t.lan"] {

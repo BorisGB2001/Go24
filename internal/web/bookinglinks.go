@@ -11,6 +11,8 @@ import (
 
 	"go24/internal/auth"
 	"go24/internal/booking"
+	"go24/internal/calendar"
+	"go24/internal/crm"
 	"go24/internal/openlines"
 	"go24/internal/payqr"
 )
@@ -211,48 +213,65 @@ func (s *Server) bookingPublic(w http.ResponseWriter, r *http.Request) {
 			mins = svc.Minutes
 		}
 		data["Mins"] = mins
-		now := time.Now()
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-		last := today.AddDate(0, 0, l.DaysAhead-1)
-		day := time.Time{}
-		if d, err := time.ParseInLocation("2006-01-02", q.Get("date"), time.Local); err == nil && !d.Before(today) && !d.After(last) {
-			day = d
+		base := "/bk/" + url.PathEscape(l.Token) + "?r=" + url.QueryEscape(cur.ID) + "&s="
+		if svc != nil {
+			base += url.QueryEscape(svc.ProductID)
 		}
-		for d := today; day.IsZero() && !d.After(last); d = d.AddDate(0, 0, 1) { // the first working day
-			if cur.WorksOn(d) {
-				day = d
-			}
-		}
-		if day.IsZero() {
-			day = today
-		}
-		// the week of the day, within the link's days
-		w0 := today.AddDate(0, 0, int(day.Sub(today).Hours()/24)/7*7)
-		var days []bookingDay
-		for d := w0; d.Before(w0.AddDate(0, 0, 7)) && !d.After(last); d = d.AddDate(0, 0, 1) {
-			days = append(days, bookingDay{d, d.Format("2006-01-02"), cur.WorksOn(d)})
-		}
-		free, err := s.Booking.FreeFor(r.Context(), *cur, day, time.Local, mins)
-		if err != nil {
+		data["Base"] = template.URL(base)
+		if err := bookingDays(data, *cur, l.DaysAhead, q.Get("date"), q.Get("t"), func(day time.Time) ([]time.Time, error) {
+			return s.Booking.FreeFor(r.Context(), *cur, day, time.Local, mins)
+		}); err != nil {
 			s.fail(w, "booking", err)
 			return
-		}
-		slot := ""
-		for _, f := range free {
-			if f.Format("15:04") == q.Get("t") {
-				slot = q.Get("t")
-			}
-		}
-		data["Day"], data["DayValue"], data["Days"], data["Free"], data["Slot"] = day, day.Format("2006-01-02"), days, free, slot
-		if w0.After(today) {
-			data["PrevWeek"] = w0.AddDate(0, 0, -7).Format("2006-01-02")
-		}
-		if nw := w0.AddDate(0, 0, 7); !nw.After(last) {
-			data["NextWeek"] = nw.Format("2006-01-02")
 		}
 	}
 	data["Res"] = cur
 	s.renderBookingPub(w, r, page{Title: l.Name, Data: data})
+}
+
+// bookingDays fills data with the days of a public page (Day, DayValue, Days, PrevWeek, NextWeek — the days of
+// ahead from today a week at a time, the first working one unless date is given), the free starts of the day (Free,
+// by free) and the slot chosen among them (Slot, of t as HH:MM).
+func bookingDays(data map[string]any, cur booking.Resource, ahead int, date, t string, free func(day time.Time) ([]time.Time, error)) error {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	last := today.AddDate(0, 0, ahead-1)
+	day := time.Time{}
+	if d, err := time.ParseInLocation("2006-01-02", date, time.Local); err == nil && !d.Before(today) && !d.After(last) {
+		day = d
+	}
+	for d := today; day.IsZero() && !d.After(last); d = d.AddDate(0, 0, 1) { // the first working day
+		if cur.WorksOn(d) {
+			day = d
+		}
+	}
+	if day.IsZero() {
+		day = today
+	}
+	// the week of the day, within the days ahead
+	w0 := today.AddDate(0, 0, int(day.Sub(today).Hours()/24)/7*7)
+	var days []bookingDay
+	for d := w0; d.Before(w0.AddDate(0, 0, 7)) && !d.After(last); d = d.AddDate(0, 0, 1) {
+		days = append(days, bookingDay{d, d.Format("2006-01-02"), cur.WorksOn(d)})
+	}
+	list, err := free(day)
+	if err != nil {
+		return err
+	}
+	slot := ""
+	for _, f := range list {
+		if f.Format("15:04") == t {
+			slot = t
+		}
+	}
+	data["Day"], data["DayValue"], data["Days"], data["Free"], data["Slot"] = day, day.Format("2006-01-02"), days, list, slot
+	if w0.After(today) {
+		data["PrevWeek"] = w0.AddDate(0, 0, -7).Format("2006-01-02")
+	}
+	if nw := w0.AddDate(0, 0, 7); !nw.After(last) {
+		data["NextWeek"] = nw.Format("2006-01-02")
+	}
+	return nil
 }
 
 // bookingPublicBook: the client books the slot; then the client goes to the booking's own page, and the responsible
@@ -348,8 +367,87 @@ func (s *Server) bookingClient(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "booking", err)
 		return
 	}
-	s.renderBookingPub(w, r, page{TitleKey: "booking.title", Data: map[string]any{"Booking": b, "Res": &res,
-		"Open": (b.Status == "unconfirmed" || b.Status == "confirmed") && b.Start.After(time.Now()), "Msg": r.URL.Query().Get("msg")}})
+	q := r.URL.Query()
+	data := map[string]any{"Booking": b, "Res": &res, "Open": b.Movable(), "Msg": q.Get("msg")}
+	if b.Movable() && q.Get("move") == "1" { // «Перенести запись»: the days and free times of the same resource
+		data["Move"], data["Base"] = true, template.URL("/bk/b/"+url.PathEscape(b.ClientToken)+"?move=1")
+		if err := bookingDays(data, res, s.Booking.DaysAhead(r.Context(), b), q.Get("date"), q.Get("t"), func(day time.Time) ([]time.Time, error) {
+			return s.Booking.FreeMoving(r.Context(), b, res, day, time.Local)
+		}); err != nil {
+			s.fail(w, "booking", err)
+			return
+		}
+	}
+	s.renderBookingPub(w, r, page{TitleKey: "booking.title", Data: data})
+}
+
+// bookingClientMove: the client moves the booking from its page to another free time (date=YYYY-MM-DD, t=HH:MM); the
+// one responsible is told, the deal's trigger «Клиент перенёс запись» fires, the dialogue of an open line has a line.
+func (s *Server) bookingClientMove(w http.ResponseWriter, r *http.Request) {
+	tok := r.PathValue("token")
+	back := "/bk/b/" + tok
+	// a time that is not one (zero) is no free slot
+	start, _ := time.ParseInLocation("2006-01-02 15:04", r.FormValue("date")+" "+r.FormValue("t"), time.Local)
+	old, b, err := s.Booking.Move(r.Context(), tok, start, time.Local)
+	if err != nil {
+		if b.ID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, booking.ErrSlot) {
+			back += "?move=1&date=" + url.QueryEscape(r.FormValue("date")) + "&"
+		} else {
+			back += "?"
+		}
+		http.Redirect(w, r, bookingURL(r, back+"msg="+url.QueryEscape(s.bookingErr(r, err))), http.StatusSeeOther)
+		return
+	}
+	if !b.Start.Equal(old.Start) {
+		ctx := r.Context()
+		if d, err := s.Booking.DueOf(ctx, b.ID); err == nil && d.Notify != "" {
+			d.B.ClientName += " · " + s.portalTr("booking.was") + " " + old.Start.Local().Format("02.01.2006 15:04")
+			s.bookingNotify(ctx, d, "booking_moved")
+		}
+		if s.CRM != nil && b.DealID != "" {
+			if err := s.CRM.Fire(ctx, "deal", b.DealID, "booking_moved"); err != nil && !errors.Is(err, crm.ErrNotFound) {
+				s.Log.Warn("booking crm trigger", "err", err)
+			}
+		}
+		if s.OpenLines != nil {
+			if res, err := s.Booking.Resource(ctx, b.ResourceID); err == nil {
+				if err := s.OpenLines.BookingMoved(ctx, b.ID, s.olBookingWhat(b, res)); err != nil {
+					s.Log.Warn("booking dialogue", "err", err)
+				}
+			}
+		}
+		back += "?msg=" + url.QueryEscape(s.tr(r, "booking.pub_moved"))
+	}
+	http.Redirect(w, r, bookingURL(r, back), http.StatusSeeOther)
+}
+
+// bookingClientICS: «Добавить в календарь» — the booking as a calendar file (Google, Outlook, Apple).
+func (s *Server) bookingClientICS(w http.ResponseWriter, r *http.Request) {
+	b, err := s.Booking.ByClientToken(r.Context(), r.PathValue("token"))
+	if err != nil || b.Status == "cancelled" {
+		http.NotFound(w, r)
+		return
+	}
+	res, err := s.Booking.Resource(r.Context(), b.ResourceID)
+	if err != nil {
+		s.fail(w, "booking", err)
+		return
+	}
+	title := res.Name
+	var names []string
+	for _, x := range b.Services {
+		names = append(names, x.Name)
+	}
+	if len(names) > 0 {
+		title += " · " + strings.Join(names, ", ")
+	}
+	e := calendar.Event{ID: "booking-" + b.ID, Title: title, Start: b.Start, End: b.End, Accessibility: "busy",
+		Description: s.BaseURL + "/bk/b/" + b.ClientToken}
+	writeICSFile(w, e)
 }
 
 // renderBookingPub shows a public page of «Онлайн-запись»; embedded — bare, with the address part that keeps it so.

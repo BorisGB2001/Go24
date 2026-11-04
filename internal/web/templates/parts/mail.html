@@ -22,7 +22,7 @@
   {{if $d.Share}}{{template "mshare" $d}}{{end}}
   {{range $d.LetterTasks}}<a class="tag" href="/t/{{.Key}}" title="{{t "mail.linked_task"}}">{{icon "list-check"}} {{.Key}} {{.Title}}</a>{{end}}
   {{range $d.LetterCRM}}<a class="tag" href="{{.Path}}" title="{{t "mail.linked_crm"}}">{{icon "users-group"}} {{t (print "crm." .Entity)}}: {{.Title}}</a>{{end}}
-  {{range $d.LetterShares}}<a class="tag" href="{{.Path}}" title="{{t (print "mail.share.linked_" .Kind)}}">{{icon (index (dict "post" "news" "chat" "messages") .Kind)}} {{if .Title}}{{.Title}}{{else}}{{t (print "mail.share.linked_" .Kind)}}{{end}}</a>{{end}}
+  {{range $d.LetterShares}}<a class="tag" href="{{.Path}}" title="{{t (print "mail.share.linked_" .Kind)}}">{{icon (index (dict "post" "news" "chat" "messages" "kb" "files") .Kind)}} {{if .Title}}{{.Title}}{{else}}{{t (print "mail.share.linked_" .Kind)}}{{end}}</a>{{end}}
 </div>{{end}}{{end}}
 
 {{/* «Поделиться»: the letter to the feed or to a chat (web/mailshare.go) */}}
@@ -47,6 +47,13 @@
     <textarea name="note" rows="2" maxlength="2000" placeholder="{{t "mail.share.note"}}"></textarea>
     {{if $d.Files}}<label class="check small"><input type="checkbox" name="files" value="1" checked> {{t "mail.share.files"}}</label>{{end}}
     <button class="primary small">{{t "mail.share.chat_do"}}</button></form>{{end}}
+  {{with $d.ShareKB}}<form method="post" action="/mail/letters/{{$d.Letter.ID}}/share" class="stack" title="{{t "mail.share.kb_hint"}}"><input type="hidden" name="folder" value="{{$d.FolderID}}"><input type="hidden" name="do" value="kb">
+    <b>{{icon "files"}} {{t "mail.share.kb"}}</b>
+    <label class="small">{{t "mail.share.kb_to"}} <select name="space">{{range .}}<option value="{{.ID}}">{{.Name}}{{with .ProjectName}} · {{.}}{{end}}</option>{{end}}</select></label>
+    <input name="title" maxlength="300" placeholder="{{t "mail.share.kb_title"}}" value="{{$d.Letter.Subject}}">
+    <textarea name="note" rows="2" maxlength="2000" placeholder="{{t "mail.share.note"}}"></textarea>
+    {{if $d.Files}}<label class="check small"><input type="checkbox" name="files" value="1" checked> {{t "mail.share.files"}}</label>{{end}}
+    <button class="primary small">{{t "mail.share.kb_do"}}</button></form>{{end}}
 </div></details>{{end}}
 
 {{define "msharepeople"}}<div class="small msend-people" data-share-people>{{range .SharePeople}}<label class="check"><input type="checkbox" name="users" value="{{.ID}}" checked> {{.Name}}</label>{{end}}</div>{{end}}

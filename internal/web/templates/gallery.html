@@ -1,0 +1,8 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1 style="flex:1">{{icon "photo"}} {{t "gallery.title"}}</h1>
+  {{if $d.CanNew}}<button type="button" class="primary" data-show="albumform">{{icon "plus"}} {{t "gallery.new_album"}}</button>{{end}}</div>
+{{if $d.CanNew}}{{template "galleryalbumform" (dict "Id" "albumform" "Action" "/company/gallery" "TitleMax" $d.TitleMax "DescMax" $d.DescMax "Hidden" true)}}{{end}}
+{{template "galleryalbums" $d.Albums}}
+{{if not $d.Albums}}<p class="muted">{{if $d.CanNew}}{{t "gallery.empty_keeper"}}{{else}}{{t "gallery.empty"}}{{end}}</p>{{end}}
+{{end}}

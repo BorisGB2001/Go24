@@ -1,0 +1,48 @@
+{{define "content"}}
+{{$d := .Data}}{{$e := $d.E}}{{$st := $d.Status}}
+<div class="pagehead"><h1 style="flex:1">{{icon "chart-bar"}} {{t "enps.title"}}</h1>
+  {{if $d.Can}}{{if ne $st "closed"}}<form method="post" action="/company/enps/{{$e.ID}}/close" data-confirm="{{t "enps.close_confirm"}}"><button class="ghost">{{icon "player-stop"}} {{t "enps.close"}}</button></form>{{end}}
+  <form method="post" action="/company/enps/{{$e.ID}}/delete" data-confirm="{{t "enps.delete_confirm"}}"><button class="ghost danger">{{icon "trash"}} {{t "common.delete"}}</button></form>{{end}}</div>
+<p><a href="/company/enps">← {{t "enps.all"}}</a></p>
+<div class="card enpsq">
+  <h2>{{$e.Question}}</h2>
+  <p class="muted small"><span class="pill enps-{{$st}}">{{t (print "enps.status." $st)}}</span> {{day $e.From}} — {{day $e.To}}
+    {{if $d.Can}} · {{range $i, $x := $e.Departments}}{{if $i}}, {{end}}{{$x.Name}}{{else}}{{t "enps.whole_company"}}{{end}}{{with $e.ByName}} · {{t "enps.by"}} {{.}}{{end}}{{end}}</p>
+  {{if $d.Thanks}}<p class="flash ok">{{icon "check"}} {{t "enps.thanks"}}</p>
+  {{else if $e.Asked}}{{if $e.Answered}}<p class="muted">{{icon "check"}} {{t "enps.done"}}</p>
+  {{else if eq $st "open"}}<form method="post" action="/company/enps/{{$e.ID}}/answer" class="enpsanswer">
+    <div class="enpsscale" role="radiogroup" aria-label="{{$e.Question}}">{{range $d.Scores}}
+      <label class="enpsscore s{{.}}"><input type="radio" name="score" value="{{.}}" required><span>{{.}}</span></label>{{end}}</div>
+    <div class="row muted small enpsends"><span>{{t "enps.unlikely"}}</span><span style="flex:1"></span><span>{{t "enps.likely"}}</span></div>
+    <label>{{t "enps.comment"}}</label>
+    <textarea name="comment" rows="3" maxlength="{{$d.CommentMax}}" placeholder="{{t "enps.comment_hint"}}"></textarea>
+    <p class="muted small">{{icon "lock"}} {{t "enps.anonymous"}}</p>
+    <p><button class="primary">{{t "enps.send"}}</button></p>
+  </form>
+  {{else if eq $st "coming"}}<p class="muted">{{t "enps.coming_hint" (day $e.From)}}</p>
+  {{else}}<p class="muted">{{t "enps.closed_hint"}}</p>{{end}}{{end}}
+</div>
+{{with $d.R}}{{$r := .}}
+<div class="crmkpi">
+  <div class="card" title="{{t "enps.index_hint"}}"><div class="muted small">eNPS</div><b>{{if $r.Shown}}<span class="enps-index{{if lt $r.Index 0}} neg{{end}}">{{$r.Index}}</span>
+    {{if $r.Compared}}<span class="muted small">{{t "enps.prev" $r.Before}} · {{if gt $r.Delta 0}}+{{end}}{{$r.Delta}}</span>{{end}}{{else}}—{{end}}</b></div>
+  <div class="card"><div class="muted small">{{t "enps.answered"}}</div><b>{{$e.Answers}} <span class="muted small">{{t "enps.of" $e.Audience}} · {{$e.Rate}}%</span></b></div>
+  {{if $r.Shown}}<div class="card"><div class="muted small">{{t "enps.promoters"}}</div><b>{{$r.Share $r.Promoters}}% <span class="muted small">{{$r.Promoters}}</span></b></div>
+  <div class="card"><div class="muted small">{{t "enps.passives"}}</div><b>{{$r.Share $r.Passives}}% <span class="muted small">{{$r.Passives}}</span></b></div>
+  <div class="card"><div class="muted small">{{t "enps.detractors"}}</div><b>{{$r.Share $r.Detractors}}% <span class="muted small">{{$r.Detractors}}</span></b></div>{{end}}
+</div>
+{{if not $r.Shown}}<p class="muted">{{t "enps.too_few" $d.Min}}</p>{{else}}
+<div class="card stack"><h3 class="small">{{t "enps.by_score"}}</h3>
+  <div class="telbars enpsbars" role="img" aria-label="{{t "enps.by_score"}}">{{range $i, $n := $r.Scores}}
+    <div class="telbar s{{$i}}" title="{{$i}}: {{$n}}"><span class="tb-in" style="height:{{pct $n $r.MaxScore}}%"></span><small>{{$i}}</small></div>{{end}}</div>
+</div>
+<div class="card flush"><h3 class="small pulse-h">{{t "enps.by_dept"}}</h3><div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "pulse.dept"}}</th><th class="right">{{t "enps.answers"}}</th><th class="right">{{t "enps.promoters"}}</th><th class="right">{{t "enps.detractors"}}</th><th class="right">eNPS</th></tr></thead>
+  <tbody>{{range $r.Departments}}<tr><td>{{.Name}}</td><td class="right">{{.Answers}}</td><td class="right">{{.Share .Promoters}}%</td><td class="right">{{.Share .Detractors}}%</td>
+    <td class="right"><b class="enps-index{{if lt .Index 0}} neg{{end}}">{{.Index}}</b></td></tr>
+  {{else}}<tr><td colspan="5" class="empty">{{t "enps.no_depts" $d.Min}}</td></tr>{{end}}</tbody>
+</table></div>{{if and $r.Departments $r.Hidden}}<p class="muted small" style="padding:0 14px 10px">{{t "enps.hidden" $r.Hidden $d.Min}}</p>{{end}}</div>
+<div class="card"><h3 class="small">{{t "enps.comments"}}</h3>
+  {{range $r.Comments}}<p class="enpscomment">{{nl2br .}}</p>{{else}}<p class="muted small">{{t "enps.no_comments"}}</p>{{end}}</div>
+{{end}}{{end}}
+{{end}}

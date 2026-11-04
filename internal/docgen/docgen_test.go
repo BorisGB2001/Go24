@@ -116,6 +116,27 @@ func TestFillRows(t *testing.T) {
 	}
 }
 
+// TestMakeHiding: the row (in a table) or the paragraph of an empty field to hide goes, a filled one stays.
+func TestMakeHiding(t *testing.T) {
+	body := `<w:tbl><w:tr><w:tc><w:p><w:t>ИНН</w:t></w:p></w:tc><w:tc><w:p><w:r><w:t>{I</w:t></w:r><w:r><w:t>NN}</w:t></w:r></w:p></w:tc></w:tr>` +
+		`<w:tr><w:tc><w:p><w:t>КПП {KPP}</w:t></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr/><w:t>Скидка: {Discount}</w:t></w:p>` +
+		`<w:p><w:t>Примечание: {Note}</w:t></w:p><w:p><w:t>Итого {Total}</w:t></w:p>`
+	doc := docx(t, map[string]string{"word/document.xml": body})
+	hide := map[string]bool{"INN": true, "KPP": true, "Discount": true, "Note": true}
+	out, err := MakeHiding(doc, map[string]string{"KPP": "7701", "Discount": " ", "Total": "150"}, nil, nil, hide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := part(t, out, "word/document.xml")
+	want := `<w:tbl><w:tr><w:tc><w:p><w:t>КПП 7701</w:t></w:p></w:tc></w:tr></w:tbl><w:p><w:t>Итого 150</w:t></w:p>`
+	if got != want {
+		t.Fatalf("hidden:\n%s\nwant\n%s", got, want)
+	}
+	if got := part(t, mustFill(t, doc), "word/document.xml"); !strings.Contains(got, "{INN}") && !strings.Contains(got, "ИНН") {
+		t.Fatal("nothing to hide — all stays")
+	}
+}
+
 func mustFill(t *testing.T, doc []byte) []byte {
 	out, err := Fill(doc, nil)
 	if err != nil {

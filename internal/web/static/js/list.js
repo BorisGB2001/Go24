@@ -70,16 +70,38 @@
   });
   tree();
 
+  // «Группировать по проектам»: the arrow of a project's header folds its tasks; what is folded is kept in this browser
+  const FOLD = 'go24.tasklist.folded';
+  let folded = new Set();
+  try { folded = new Set(JSON.parse(localStorage.getItem(FOLD) || '[]')); } catch { /* nothing kept */ }
+  const groups = () => {
+    document.querySelectorAll('tr[data-group]').forEach(tr => tr.classList.toggle('gfold', folded.has(tr.dataset.group)));
+    document.querySelectorAll('tr[data-group-head] [data-group-toggle]').forEach(b => {
+      b.setAttribute('aria-expanded', !folded.has(b.closest('tr').dataset.groupHead));
+    });
+  };
+  document.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-group-toggle]');
+    if (!b) return;
+    const k = b.closest('tr').dataset.groupHead;
+    if (folded.has(k)) folded.delete(k); else folded.add(k);
+    try { localStorage.setItem(FOLD, JSON.stringify([...folded].slice(-200))); } catch { /* not kept */ }
+    groups();
+  });
+  groups();
+
   // «На странице» under a task list: the choice reloads the list
   document.querySelectorAll('form.pagesize select').forEach(sel => {
     sel.addEventListener('change', () => sel.form.submit());
   });
 
-  // group actions: «all» ticks every task of its list; the panel shows when something is ticked, with the field
-  // its action needs
+  // group actions: «all» ticks every task (or the boxes data-bulk names: id — employees) of its list; the panel shows
+  // when something is ticked, with the field its action needs; an action with data-confirm asks first (the form's
+  // id is read as an attribute: its boxes named «id» shadow bulk.id)
   const bulk = document.querySelector('form[data-bulk]');
   if (bulk) {
-    const boxes = () => [...document.querySelectorAll('input[name=task][form=bulk]')];
+    const box = 'input[name=' + (bulk.dataset.bulk || 'task') + '][form=' + bulk.getAttribute('id') + ']';
+    const boxes = () => [...document.querySelectorAll(box)];
     const op = bulk.querySelector('[data-bulk-op]');
     const refresh = () => {
       const n = boxes().filter(b => b.checked).length;
@@ -93,12 +115,16 @@
     };
     document.querySelectorAll('input[data-bulk-all]').forEach(all => {
       all.addEventListener('change', () => {
-        all.closest('table').querySelectorAll('input[name=task][form=bulk]').forEach(b => { b.checked = all.checked; });
+        all.closest('table').querySelectorAll(box).forEach(b => { b.checked = all.checked; });
         refresh();
       });
     });
-    document.addEventListener('change', e => { if (e.target.matches('input[name=task][form=bulk]')) refresh(); });
+    document.addEventListener('change', e => { if (e.target.matches(box)) refresh(); });
     op.addEventListener('change', refresh);
+    bulk.addEventListener('submit', e => {
+      const ask = op.selectedOptions[0] && op.selectedOptions[0].dataset.confirm;
+      if (ask && !confirm(ask)) e.preventDefault();
+    });
     refresh();
   }
 })();

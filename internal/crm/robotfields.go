@@ -169,10 +169,19 @@ func robotCondOK(cond RobotCond, values map[string]string) bool {
 // robotFields sets the card's fields: the built-in ones as the card's form does, its own as «Поля CRM» do; the
 // history shows the changes as anyone's.
 func (s *Store) robotFields(ctx context.Context, actorID string, c card, sets []RobotSet, respName string) error {
+	filled := make([]RobotSet, len(sets))
+	for i, f := range sets {
+		filled[i] = RobotSet{Field: f.Field, Value: c.fill(f.Value, respName)}
+	}
+	return s.setFields(ctx, actorID, c, filled)
+}
+
+// setFields sets the card's fields as they are given (robotFields, CoPilot).
+func (s *Store) setFields(ctx context.Context, actorID string, c card, sets []RobotSet) error {
 	own := map[string]string{}
 	builtin := map[string]string{}
 	for _, f := range sets {
-		v := c.fill(f.Value, respName)
+		v := f.Value
 		if id, ok := strings.CutPrefix(f.Field, "uf:"); ok {
 			own[id] = v
 		} else {

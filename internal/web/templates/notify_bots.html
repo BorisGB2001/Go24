@@ -5,11 +5,13 @@
 {{range $d.Bots}}<form method="post" action="/settings/notify-bots/{{.Channel}}" class="card stack" id="bot-{{.Channel}}">
   <h3>{{t (print "notifyout.ch." .Channel)}}</h3>
   <label><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> {{t "notifyout.bot_enable"}}</label>
-  {{if .NeedsServer}}<label class="small">{{t "notifyout.bot_server"}} <input type="url" name="server" value="{{.Server}}" placeholder="https://" autocomplete="off"></label>{{end}}
-  <label class="small">{{t "notifyout.bot_token"}} <input type="password" name="token" autocomplete="new-password" placeholder="{{if .HasToken}}{{t "call.ext_secret_set"}}{{end}}"></label>
+  {{if .NeedsServer}}<label class="small">{{t "notifyout.bot_server"}} <input type="{{if eq .Channel "email"}}text{{else}}url{{end}}" name="server" value="{{.Server}}" placeholder="{{if eq .Channel "email"}}smtps://login@smtp.example.com:465{{else}}https://{{end}}" autocomplete="off"></label>{{end}}
+  {{if not .Keyed}}<label class="small">{{if eq .Channel "email"}}{{t "notifyout.bot_password"}}{{else}}{{t "notifyout.bot_token"}}{{end}} <input type="password" name="token" autocomplete="new-password" placeholder="{{if .HasToken}}{{t "call.ext_secret_set"}}{{end}}"></label>{{end}}
   <p class="muted small">{{t (print "notifyout.bot_hint." .Channel)}}</p>
+  {{if .Keyed}}{{if .HasToken}}<p class="small">{{if .Ready}}✓ {{end}}{{t "notifyout.push_keys"}}</p>{{end}}{{else}}
   {{if .HasToken}}<label class="small"><input type="checkbox" name="clear" value="1"> {{t "notifyout.bot_clear"}}</label>{{end}}
   {{if .Name}}<p class="small">{{if .Ready}}✓ {{end}}{{t "notifyout.bot_name" .Name}}</p>{{end}}
+  {{if .Verify}}<p class="small">{{t "notifyout.hook_addr"}} <code>{{.Hook}}</code><br>{{t "notifyout.hook_verify"}} <code>{{.Verify}}</code></p>{{end}}{{end}}
   <div><button class="primary">{{t "common.save"}}</button></div>
 </form>{{end}}
 </div>

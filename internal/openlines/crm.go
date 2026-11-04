@@ -117,13 +117,20 @@ func (s *Store) fill(ctx context.Context, userID, leadID, name, phone, email str
 	return err
 }
 
-// ChatOf is the latest dialogue bound to a lead or a contact ("" — none): «Открыть чат» on its card.
+// ChatOf is the latest dialogue bound to a lead or a contact ("" — none): «Открыть чат» on its card; of a deal — of its
+// contacts, of a company — of its contacts (where a card's document is sent to the client).
 func (s *Store) ChatOf(ctx context.Context, entity, id string) (string, error) {
-	col := map[string]string{"lead": "lead_id", "contact": "contact_id"}[entity]
-	if col == "" {
+	where := map[string]string{
+		"lead":    `lead_id::text = $1`,
+		"contact": `contact_id::text = $1`,
+		"deal": `contact_id IN (SELECT contact_id FROM crm_deals WHERE id::text = $1
+			UNION SELECT contact_id FROM crm_deal_contacts WHERE deal_id::text = $1)`,
+		"company": `contact_id IN (SELECT id FROM crm_contacts WHERE company_id::text = $1)`,
+	}[entity]
+	if where == "" {
 		return "", nil
 	}
 	var chat string
-	err := s.db.QueryRow(ctx, `SELECT coalesce((SELECT id::text FROM ol_sessions WHERE `+col+`::text = $1 ORDER BY last_at DESC LIMIT 1), '')`, id).Scan(&chat)
+	err := s.db.QueryRow(ctx, `SELECT coalesce((SELECT id::text FROM ol_sessions WHERE `+where+` ORDER BY last_at DESC LIMIT 1), '')`, id).Scan(&chat)
 	return chat, err
 }

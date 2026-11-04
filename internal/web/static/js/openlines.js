@@ -98,6 +98,21 @@
       text.placeholder = hidden.checked ? hidden.dataset.ph : ph;
       form.classList.toggle('hidden-msg', hidden.checked);
     });
+    const suggest = form.querySelector('[data-ol-suggest]');
+    suggest?.addEventListener('click', async () => { // CoPilot «Подсказать ответ»: its draft goes into the field
+      const ph0 = text.placeholder;
+      suggest.disabled = true; text.placeholder = suggest.dataset.wait;
+      try {
+        const r = await fetch(suggest.dataset.olSuggest, { method: 'POST', headers: { Accept: 'application/json' } });
+        const j = await r.json();
+        if (j.error) { alert(j.error); return; }
+        text.value = j.text; text.focus();
+      } catch (e) {
+        alert(e);
+      } finally {
+        suggest.disabled = false; text.placeholder = ph0;
+      }
+    });
     let typed = 0;
     text.addEventListener('input', () => { // a hidden message is not shown to the visitor as «печатает…»
       if (Date.now() - typed < 3000 || !text.value.trim() || hidden?.checked) return;
@@ -105,6 +120,22 @@
       fetch(form.dataset.olTypingUrl, { method: 'POST', headers: { Accept: 'application/json' } }).catch(() => {});
     });
   }
+
+  root.addEventListener('click', async e => { // «Текст» of a voice message: Whisper's text in its place
+    const b = e.target.closest('[data-ol-text]');
+    if (!b) return;
+    b.disabled = true; b.textContent = b.dataset.wait;
+    try {
+      const r = await fetch(b.dataset.olText, { method: 'POST', headers: { Accept: 'application/json' } });
+      const j = await r.json();
+      if (j.error) { alert(j.error); return; }
+      const t = document.createElement('div');
+      t.className = 'small oltext'; t.textContent = '🎤 ' + j.text;
+      b.replaceWith(t);
+    } catch (err) {
+      alert(err);
+    }
+  });
 
   // ---------- live ----------
   if (!window.EventSource) return;
@@ -120,6 +151,10 @@
         if (a && b) a.innerHTML = b.innerHTML;
       }
       const a = msgs(), b = doc.querySelector('[data-ol-msgs]');
+      if (current && a && [...a.querySelectorAll('audio')].some(x => !x.paused)) { // a voice message playing is not cut
+        timer = setTimeout(refresh, 2000);
+        return;
+      }
       if (current && a && b) {
         const end = a.scrollHeight - a.scrollTop - a.clientHeight < 40;
         a.innerHTML = b.innerHTML;

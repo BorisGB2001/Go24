@@ -16,7 +16,7 @@
 </div>
 </div><div>
 {{if $e.ID}}{{if or $d.BPTemplates $d.BPInstances}}<div class="card"><h3 id="bp">⚙ {{t "bp.title"}}</h3>
-  {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>
+  {{range $d.BPInstances}}<div class="row"><a href="/bp/i/{{.ID}}" style="flex:1">{{.Name}}</a><span class="muted small">{{datetime .CreatedAt}}</span><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>{{with .Label}}<span class="pill bplabel">{{.}}</span>{{end}}
     {{if and (eq .Status "running") $d.CanWrite}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="/bp/el/{{$e.ID}}"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}</div>{{end}}
   {{range $d.BPTemplates}}<div><a class="button ghost small" href="/bp/start/{{.ID}}?entity_id={{$e.ID}}">{{icon "player-play"}} {{.Name}}</a></div>{{end}}</div>{{end}}
 <div class="card"><h3>{{t "lists.history"}}</h3>

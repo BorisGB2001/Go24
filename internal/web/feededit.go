@@ -40,7 +40,7 @@ func (s *Server) feedEditForm(w http.ResponseWriter, r *http.Request, sess auth.
 	type option struct{ ID, Name string }
 	var mine []option // the projects the viewer works in, and the post's own one
 	for _, p := range projects {
-		if p.CanWork() && p.MyRole != "admin" || p.ID == d.ProjectID {
+		if p.CanWork() && p.MyRole != "admin" && p.ToolOn("feed") || p.ID == d.ProjectID {
 			mine = append(mine, option{p.ID, p.Name})
 		}
 	}

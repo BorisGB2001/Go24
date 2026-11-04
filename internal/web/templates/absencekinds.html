@@ -1,0 +1,24 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "settings"}} {{t "abskinds.title"}}</h1>
+<div class="sub"><a href="/company/absences">{{t "absence.title"}}</a> · {{t "abskinds.subtitle"}}</div>
+<form method="post" action="/company/absences/kinds" class="card stack" style="max-width:760px">
+  <div style="overflow-x:auto"><table class="list abskinds">
+    <thead><tr><th>{{t "abskinds.name"}}</th><th>{{t "abskinds.color"}}</th><th>{{t "abskinds.off"}}</th><th></th></tr></thead>
+    <tbody>{{range $i, $k := $d.Kinds}}<tr{{if $k.Off}} class="off"{{end}}>
+      <td><input type="hidden" name="key.{{$i}}" value="{{$k.Key}}">
+        <input type="text" name="name.{{$i}}" value="{{$k.Name}}" maxlength="60" {{if $k.Builtin}}placeholder="{{t (print "absence.kind." $k.Key)}}"{{else}}required{{end}} aria-label="{{t "abskinds.name"}}">
+        {{if $k.Builtin}}<div class="muted small">{{t "abskinds.builtin"}}</div>{{end}}</td>
+      <td class="nowrap"><span class="abscolor abs-{{$k.Color}}"></span>
+        <select name="color.{{$i}}" style="width:auto" aria-label="{{t "abskinds.color"}}">{{range $d.Colors}}<option value="{{.}}"{{if eq . $k.Color}} selected{{end}}>{{t (print "abskinds.color." .)}}</option>{{end}}</select></td>
+      <td><label class="check"><input type="checkbox" name="off.{{$i}}" value="1"{{if $k.Off}} checked{{end}}> {{t "abskinds.off_short"}}</label></td>
+      <td>{{if not $k.Builtin}}<label class="check" title="{{t "abskinds.delete_hint"}}"><input type="checkbox" name="del.{{$i}}" value="1"> {{t "common.delete"}}</label>{{end}}</td>
+    </tr>{{end}}
+    <tr><td><input type="text" name="new_name" maxlength="60" placeholder="{{t "abskinds.new"}}" aria-label="{{t "abskinds.new"}}"></td>
+      <td><select name="new_color" style="width:auto" aria-label="{{t "abskinds.color"}}">{{range $d.Colors}}<option value="{{.}}">{{t (print "abskinds.color." .)}}</option>{{end}}</select></td><td></td><td></td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted small">{{t "abskinds.note"}}</p>
+  <div><button class="primary">{{t "common.save"}}</button></div>
+</form>
+{{end}}

@@ -292,4 +292,101 @@
   };
   document.addEventListener('go24:drivepick', e => pick(e.detail.form));
   document.addEventListener('keydown', e => { if (picker && e.key === 'Escape') { picker.remove(); picker = null; } });
+
+  // ---------- «Перевести», as Outlook's translator (web.mailTranslateData) ----------
+  // The banner's «Перевести на …» and «Ещё → Перевести» ask the server for the translation (the AI may think a while)
+  // and show the letter again translated; «Никогда не переводить с …» and «Показать оригинал» — as it is. With
+  // «Всегда переводить» the banner asks by itself as soon as the letter opens.
+  const reread = async (letter, tr) => {
+    const folder = document.querySelector('[data-mail]')?.dataset.folder || '';
+    const q = `folder=${encodeURIComponent(folder)}&letter=${encodeURIComponent(letter)}&tr=${encodeURIComponent(tr)}`;
+    if (window.go24MailShow) {
+      const res = await fetch(`/mail/letters/${encodeURIComponent(letter)}?${q}`);
+      if (res.ok && window.go24MailShow(await res.text())) return;
+    }
+    location.href = '/mail?' + q;
+  };
+  document.addEventListener('submit', async e => {
+    const f = e.target.closest?.('form[data-mtr]');
+    if (!f) return;
+    e.preventDefault();
+    const letter = f.closest('[data-letter]')?.dataset.letter || f.action.split('/').at(-2);
+    const body = new FormData(f);
+    if (e.submitter?.name) body.set(e.submitter.name, e.submitter.value);
+    const never = body.get('do') === 'never';
+    const wait = f.querySelector('[data-mtr-wait]');
+    f.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    if (wait && !never) wait.hidden = false;
+    try {
+      await form(f.action, body);
+      await reread(letter, never ? '0' : body.get('lang'));
+    } catch (err) {
+      say(err.message);
+      f.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      if (wait) wait.hidden = true;
+    }
+  });
+  document.addEventListener('click', e => {
+    const a = e.target.closest?.('a[data-mtr-show]');
+    if (!a) return;
+    e.preventDefault();
+    reread(a.closest('[data-letter]')?.dataset.letter || '', a.dataset.mtrShow).catch(() => { location.href = a.href; });
+  });
+  const auto = () => document.querySelectorAll('form[data-mtr][data-auto]:not([data-asked])').forEach(f => {
+    f.dataset.asked = '1';
+    f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+  auto();
+  if (window.MutationObserver) new MutationObserver(auto).observe(document.body, { childList: true, subtree: true });
+  // ---------- «Предлагаемые ответы» under a letter received (web.mailSuggestData), as Outlook's ----------
+  // Not kept yet, the answers are asked for once the letter is shown (the model is not waited for by the letter); each
+  // opens the reply under the letter with its text (compose.js passes «say» on). None, or the AI failing, — no row.
+  const suggest = () => document.querySelectorAll('[data-sreply][data-ask]:not([data-asked])').forEach(async row => {
+    row.dataset.asked = '1';
+    try {
+      const d = await form(row.dataset.sreply, new FormData());
+      for (const text of d.replies || []) {
+        const a = el('a', 'button small msreply-a', text);
+        a.dataset.reply = 'reply';
+        a.href = row.dataset.href + '&say=' + encodeURIComponent(text);
+        row.append(a);
+      }
+      if (!row.querySelector('.msreply-a')) throw new Error('none');
+      row.removeAttribute('data-ask');
+    } catch { row.remove(); }
+  });
+  suggest();
+  if (window.MutationObserver) new MutationObserver(suggest).observe(document.body, { childList: true, subtree: true });
+  // ---------- reactions under a letter between colleagues (web.mailReactData), as Outlook's ----------
+  // A reaction chosen (or the user's own again — taken away) goes to the server; the reactions under the letter are
+  // drawn again from its answer, without reloading the letter.
+  document.addEventListener('submit', async e => {
+    const f = e.target.closest?.('form[data-mreact]');
+    if (!f) return;
+    e.preventDefault();
+    const body = new FormData(f);
+    if (e.submitter?.name) body.set(e.submitter.name, e.submitter.value);
+    f.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    try {
+      const rs = await form(f.action, body);
+      f.querySelectorAll('.mreact').forEach(b => b.remove());
+      const menu = f.querySelector('details');
+      (rs.list || []).forEach(r => {
+        const b = el('button', 'ghost small mreact' + (r.kind === rs.mine ? ' on' : ''), r.emoji + ' ');
+        b.name = 'kind';
+        b.value = r.kind;
+        b.title = (r.who || []).join(', ');
+        b.setAttribute('aria-pressed', String(r.kind === rs.mine));
+        b.append(el('span', '', String(r.count)));
+        f.insertBefore(b, menu);
+      });
+      f.querySelectorAll('.mreact-one').forEach(b => b.classList.toggle('on', b.value === rs.mine));
+      const label = f.querySelector('[data-mreact-label]');
+      if (label) label.hidden = !!(rs.list || []).length;
+      if (menu) menu.open = false;
+    } catch (err) {
+      say(err.message);
+    }
+    f.querySelectorAll('button').forEach(b => { b.disabled = false; });
+  });
 })();

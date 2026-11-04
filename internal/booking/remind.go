@@ -3,6 +3,7 @@ package booking
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,7 +117,7 @@ func (s *Store) ClientStatus(ctx context.Context, tok, status string) (Booking, 
 	if status != "confirmed" && status != "cancelled" {
 		return b, false, ErrNotFound
 	}
-	if (b.Status != "unconfirmed" && b.Status != "confirmed") || !b.Start.After(time.Now()) {
+	if !b.Movable() {
 		return b, false, ErrClosed
 	}
 	if b.Status == status {
@@ -125,6 +126,62 @@ func (s *Store) ClientStatus(ctx context.Context, tok, status string) (Booking, 
 	b.Status = status
 	_, err = s.SaveBooking(ctx, "", b)
 	return b, err == nil, err
+}
+
+// MoveDays is how many days ahead a client moves a booking not made by a link (or by one deleted since).
+const MoveDays = 30
+
+// Movable: the client may move the booking from its page — one yet to come and not cancelled, made by a link or not.
+func (b Booking) Movable() bool {
+	return (b.Status == "unconfirmed" || b.Status == "confirmed") && b.Start.After(time.Now())
+}
+
+// DaysAhead: the days, from today, the client may move the booking to — those of its link, else MoveDays.
+func (s *Store) DaysAhead(ctx context.Context, b Booking) int {
+	if b.LinkID != "" {
+		if l, err := s.Link(ctx, b.LinkID); err == nil {
+			return l.DaysAhead
+		}
+	}
+	return MoveDays
+}
+
+// Move is the client moving the booking from its page to another start: a free slot of the same resource (its own
+// time counts as free) within DaysAhead, for as long as it was; its other resources must be free then too, and no
+// overbooking is allowed. Its status, services and cards stay; the reminder and the asking for a confirmation go by
+// the new time. old is the booking as it was; ErrClosed — it may no longer be moved, ErrSlot — the time is not free.
+func (s *Store) Move(ctx context.Context, tok string, start time.Time, loc *time.Location) (old, b Booking, err error) {
+	if old, err = s.ByClientToken(ctx, tok); err != nil {
+		return old, old, err
+	}
+	b = old
+	if !b.Movable() {
+		return old, b, ErrClosed
+	}
+	if start.Equal(b.Start) {
+		return old, b, nil
+	}
+	r, err := s.Resource(ctx, b.ResourceID)
+	if err != nil {
+		return old, b, err
+	}
+	now := time.Now().In(loc)
+	if !start.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, s.DaysAhead(ctx, b))) {
+		return old, b, ErrSlot
+	}
+	length := b.End.Sub(b.Start)
+	free, err := s.freeFor(ctx, r, start.In(loc), loc, int(length.Minutes()), b.ID)
+	if err != nil {
+		return old, b, err
+	}
+	if !slices.ContainsFunc(free, start.Equal) {
+		return old, b, ErrSlot
+	}
+	b.Start, b.End = start, start.Add(length)
+	if _, err = s.save(ctx, "", b, true); errors.Is(err, ErrOverlap) {
+		err = ErrSlot
+	}
+	return old, b, err
 }
 
 // DueOf: a booking with its sender and who is told of it (Kind is empty).

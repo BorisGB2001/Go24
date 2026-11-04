@@ -182,20 +182,23 @@ func (s *Store) UnlinkCRM(ctx context.Context, entity, entityID, linkID string) 
 	})
 }
 
-// ShareRef is where a letter was shared: a post of the feed or a chat.
+// ShareRef is where a letter was shared: a post of the feed, a chat or a page of the knowledge base.
 type ShareRef struct {
-	Kind, Target, Title string // Kind post | chat
+	Kind, Target, Title string // Kind post | chat | kb (Target «space/page»)
 }
 
 // Path is the share's address in go24.
 func (r ShareRef) Path() string {
-	if r.Kind == "post" {
+	switch r.Kind {
+	case "post":
 		return "/feed#post-" + r.Target
+	case "kb":
+		return "/kb/" + r.Target
 	}
 	return "/im?room=" + url.QueryEscape(r.Target)
 }
 
-// LinkShare remembers that the user's letter went to a post (kind post) or a chat (kind chat).
+// LinkShare remembers that the user's letter went to a post (kind post), a chat (kind chat) or a page (kind kb).
 func (s *Store) LinkShare(ctx context.Context, userID, letterID, kind, target, title string) error {
 	tag, err := s.db.Exec(ctx, `INSERT INTO mail_letter_shares (message_id, user_id, kind, target, title)
 		SELECT x.id, $2::text::uuid, $3, $4, $5 FROM mail_messages x JOIN mailboxes m ON m.id = x.mailbox_id

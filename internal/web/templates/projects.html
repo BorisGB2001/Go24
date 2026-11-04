@@ -10,20 +10,50 @@
   </div>{{end}}
 </div>{{end}}
 <div class="tabs">
-  <a href="/projects" {{if not .Data.Archived}}class="on"{{end}}>{{icon "folders"}} {{t "projects.active"}}</a>
+  <a href="/projects" {{if not (or .Data.Archived .Data.All)}}class="on"{{end}}>{{icon "folders"}} {{t "projects.active"}}</a>
+  <a href="/projects?tab=all" {{if .Data.All}}class="on"{{end}}>{{icon "world"}} {{t "groups.all"}}</a>
   <a href="/projects?archived=1" {{if .Data.Archived}}class="on"{{end}}>{{icon "history"}} {{t "projects.archive"}}</a>
 </div>
+{{if .Data.All}}
+<form method="get" action="/projects" class="row" style="margin-bottom:12px"><input type="hidden" name="tab" value="all">
+  <input type="search" name="q" value="{{.Query}}" placeholder="{{t "groups.search"}}" style="flex:1">
+  {{if .Data.Subjects}}<select name="subject" aria-label="{{t "subjects.subject"}}" onchange="this.form.submit()"><option value="">{{t "subjects.any"}}</option>
+    {{range .Data.Subjects}}<option value="{{.ID}}" {{if eq .ID $.Data.Filter.SubjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
+  {{with .Data.Filter.Keyword}}<input type="hidden" name="kw" value="{{.}}"><span class="tag">#{{.}} <a href="/projects?tab=all&q={{$.Query}}&subject={{$.Data.Filter.SubjectID}}" title="{{t "common.remove"}}">{{icon "x"}}</a></span>{{end}}
+  <button>{{icon "search"}}</button>
+  {{if .User.AdminActive}}<a class="button ghost" href="/projects/subjects">{{icon "settings"}} {{t "subjects.title"}}</a>{{end}}</form>
+<div class="groupcards">
+  {{range .Data.All}}<div class="card groupcard">
+    <a href="/p/{{.Key}}" class="ttitle row">{{photo .Name .PhotoURL false}} {{.Name}}</a>
+    <div class="small muted">{{t (print "groups.privacy." .Privacy)}} · {{t "groups.members" .Members}}{{if and .Kind (ne .Kind "group")}} · {{t (print "project.kind." .Kind)}}{{end}}</div>
+    {{if .Description}}<div class="small">{{.Description}}</div>{{end}}
+    {{template "groupsubject" .}}
+    <div class="row" style="margin-top:8px">
+    {{if and .MyRole (ne .MyRole "admin")}}<span class="pill st-completed">{{t "groups.you_member"}}</span>
+    {{else if .Requested}}<span class="pill st-pending">{{t "groups.requested"}}</span>
+      <form method="post" action="/p/{{.Key}}/join/cancel"><button class="ghost">{{t "groups.cancel_request"}}</button></form>
+    {{else if eq .Privacy "open"}}<form method="post" action="/p/{{.Key}}/join"><button class="primary">{{icon "user-plus"}} {{t "groups.join"}}</button></form>
+    {{else if eq .Privacy "closed"}}<a class="button" href="/p/{{.Key}}">{{icon "send"}} {{t "groups.ask"}}</a>{{end}}
+    </div>
+  </div>{{else}}<div class="card"><div class="empty">{{t "groups.all_empty"}}</div></div>{{end}}
+</div>
+{{else}}
 <div class="card flush">
   {{if .Data.List}}
   <table data-cols="projects">
-    <thead><tr><th>{{t "col.project"}}</th><th>{{t "col.key"}}</th><th>{{t "col.my_role"}}</th><th>{{t "col.open_tasks"}}</th><th></th></tr></thead>
+    <thead><tr>{{template "projth" (dict "D" .Data "Key" "name" "Label" (t "col.project"))}}<th>{{t "col.key"}}</th>
+      {{template "projth" (dict "D" .Data "Key" "activity" "Label" (t "col.activity"))}}{{template "projth" (dict "D" .Data "Key" "efficiency" "Label" (t "col.efficiency"))}}
+      {{template "projth" (dict "D" .Data "Key" "members" "Label" (t "col.members"))}}<th>{{t "col.my_role"}}</th><th>{{t "col.open_tasks"}}</th><th></th></tr></thead>
     <tbody>
     {{range .Data.List}}
     <tr>
       <td><a href="/p/{{.Key}}" class="ttitle row">{{photo .Name .PhotoURL false}} {{.Name}}</a>{{if and .Kind (ne .Kind "group")}} <span class="pill st-in_progress">{{t (print "project.kind." .Kind)}}</span>{{end}}{{if .Description}}<div class="small muted">{{.Description}}</div>{{end}}</td>
       <td><code>{{.Key}}</code></td>
+      {{$st := index $.Data.Stats .ID}}<td class="small" style="white-space:nowrap">{{datetime $st.Activity}}</td>
+      <td><b class="eff-pct sm {{if lt $st.Efficiency 70}}low{{else if lt $st.Efficiency 90}}mid{{end}}" title="{{t "projects.efficiency_hint"}}">{{$st.Efficiency}}%</b></td>
+      <td><span class="faces" title="{{t "groups.members" $st.Members}}">{{range $st.Faces}}{{photo .Name (photoURL .ID .PhotoKey) false}}{{end}}{{if gt $st.Members (len $st.Faces)}}<span class="small muted">+{{sub $st.Members (len $st.Faces)}}</span>{{end}}</span></td>
       <td class="small">{{t (print "role." .MyRole)}}</td>
-      <td>{{.OpenTasks}}</td>
+      <td>{{.OpenTasks}}{{if $st.Overdue}} <a href="/my?view=overdue&amp;project={{.Key}}" class="cnt red" title="{{t "counter.overdue"}}">{{$st.Overdue}}</a>{{end}}{{if $st.Comments}} <a href="/my?view=comments&amp;project={{.Key}}" class="cnt green" title="{{t "counter.comments"}}">{{$st.Comments}}</a>{{end}}</td>
       <td><a href="/p/{{.Key}}/board" title="{{t "projects.kanban"}}">{{icon "layout-kanban"}}</a></td>
     </tr>
     {{end}}
@@ -31,6 +61,7 @@
   </table>
   {{else}}<div class="empty">{{if .Data.Archived}}{{t "projects.archive_empty"}}{{else}}{{t "projects.empty"}}{{end}}</div>{{end}}
 </div>
+{{end}}
 <div class="card">
   <h2>{{icon "plus"}} {{t "projects.new"}}</h2>
   <form method="post" action="/projects">
@@ -41,7 +72,11 @@
     <label>{{t "form.description"}}</label><textarea name="description"></textarea>
     <label>{{t "project.kind"}}</label>
     <select name="kind">{{range list "group" "project" "scrum"}}<option value="{{.}}">{{t (print "project.kind." .)}}</option>{{end}}</select>
+    <label>{{t "groups.privacy"}}</label>
+    <select name="privacy">{{range list "open" "closed" "secret"}}<option value="{{.}}" {{if eq . "secret"}}selected{{end}}>{{t (print "groups.privacy." .)}} — {{t (print "groups.privacy_hint." .)}}</option>{{end}}</select>
+    {{template "groupsubjectform" (dict "Subjects" .Data.Subjects)}}
     <p><button class="primary">{{icon "plus"}} {{t "projects.create"}}</button></p>
   </form>
 </div>
 {{end}}
+{{define "projth"}}{{$d := .D}}<th><a href="/projects?{{if $d.Archived}}archived=1&amp;{{end}}sort={{.Key}}{{if and (eq $d.Sort .Key) (not $d.Desc)}}&amp;desc=1{{end}}">{{.Label}}{{if eq $d.Sort .Key}} {{if $d.Desc}}↓{{else}}↑{{end}}{{end}}</a></th>{{end}}

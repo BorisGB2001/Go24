@@ -27,6 +27,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/projects", s.api("projects:write", s.apiCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{key}", s.api("projects:read", s.apiProject))
 	mux.HandleFunc("GET /api/v1/projects/{key}/tasks", s.api("tasks:read", s.apiProjectTasks))
+	s.apiGroupRoutes(mux)
 	mux.HandleFunc("POST /api/v1/projects/{key}/tasks", s.api("tasks:write", s.apiCreateTask))
 	mux.HandleFunc("GET /api/v1/tasks", s.api("tasks:read", s.apiMyTasks))
 	mux.HandleFunc("GET /api/v1/tasks/{key}", s.api("tasks:read", s.apiTask))
@@ -56,6 +57,8 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/mail/searches", s.api("mail:read", s.apiMailSearches))
 	mux.HandleFunc("POST /api/v1/mail/searches", s.api("mail:write", s.apiMailSearchSave))
 	mux.HandleFunc("DELETE /api/v1/mail/searches/{id}", s.api("mail:write", s.apiMailSearchDelete))
+	mux.HandleFunc("POST /api/v1/mail/mailtips", s.api("mail:read", s.apiMailTips))
+	mux.HandleFunc("POST /api/v1/mail/dictate", s.api("mail:read", s.apiMailDictate))
 	mux.HandleFunc("GET /api/v1/mail/lists", s.api("mail:read", s.apiMailLists))
 	mux.HandleFunc("POST /api/v1/mail/lists", s.api("mail:write", s.apiMailListSave))
 	mux.HandleFunc("POST /api/v1/mail/lists/{id}", s.api("mail:write", s.apiMailListSave))
@@ -65,11 +68,20 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/mail/rules/run", s.api("mail:write", s.apiMailRulesRun))
 	mux.HandleFunc("POST /api/v1/mail/rules/{id}", s.api("mail:write", s.apiMailRuleSave))
 	mux.HandleFunc("DELETE /api/v1/mail/rules/{id}", s.api("mail:write", s.apiMailRuleDelete))
+	mux.HandleFunc("GET /api/v1/mail/formats", s.api("mail:read", s.apiMailFormats))
+	mux.HandleFunc("POST /api/v1/mail/formats", s.api("mail:write", s.apiMailFormatSave))
+	mux.HandleFunc("POST /api/v1/mail/formats/{id}", s.api("mail:write", s.apiMailFormatSave))
+	mux.HandleFunc("DELETE /api/v1/mail/formats/{id}", s.api("mail:write", s.apiMailFormatDelete))
 	mux.HandleFunc("GET /api/v1/mail/ooo", s.api("mail:read", s.apiMailOOO))
 	mux.HandleFunc("POST /api/v1/mail/ooo", s.api("mail:write", s.apiMailOOO))
 	mux.HandleFunc("POST /api/v1/mail/sweep", s.api("mail:write", s.apiMailSweep))
 	mux.HandleFunc("GET /api/v1/mail/sweeps", s.api("mail:read", s.apiMailSweeps))
 	mux.HandleFunc("DELETE /api/v1/mail/sweeps/{id}", s.api("mail:write", s.apiMailSweepDelete))
+	mux.HandleFunc("POST /api/v1/mail/cleanup", s.api("mail:write", s.apiMailCleanUp))
+	mux.HandleFunc("GET /api/v1/mail/copilot", s.api("mail:read", s.apiMailCopilotRuns))
+	mux.HandleFunc("GET /api/v1/mail/copilot/{run}", s.api("mail:read", s.apiMailCopilotRun))
+	mux.HandleFunc("POST /api/v1/mail/copilot", s.api("mail:write", s.apiMailCopilotSay))
+	mux.HandleFunc("POST /api/v1/mail/copilot/{run}/actions/{action}", s.api("mail:write", s.apiMailCopilotDecide))
 	mux.HandleFunc("GET /api/v1/mail/senders", s.api("mail:read", s.apiMailSenders))
 	mux.HandleFunc("POST /api/v1/mail/senders", s.api("mail:write", s.apiMailSenderAdd))
 	mux.HandleFunc("DELETE /api/v1/mail/senders/{sender}", s.api("mail:write", s.apiMailSenderDrop))
@@ -94,6 +106,12 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/trash/{id}/restore", s.api("tasks:write", s.apiTrashRestore))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/actions/{action}", s.api("tasks:write", s.apiAction))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/comments", s.api("tasks:write", s.apiComment))
+	mux.HandleFunc("POST /api/v1/tasks/{key}/copilot/{what}", s.api("tasks:write", s.apiTaskCopilot))
+	mux.HandleFunc("POST /api/v1/tasks/copilot/text", s.api("tasks:write", s.apiTaskCopilotText))
+	mux.HandleFunc("GET /api/v1/agents/tasks", s.api("tasks:read", s.apiTaskAgentRuns))
+	mux.HandleFunc("GET /api/v1/agents/tasks/{run}", s.api("tasks:read", s.apiTaskAgentRun))
+	mux.HandleFunc("POST /api/v1/agents/tasks", s.api("tasks:write", s.apiTaskAgentSay))
+	mux.HandleFunc("POST /api/v1/agents/tasks/{run}/actions/{action}", s.api("tasks:write", s.apiTaskAgentDecide))
 	mux.HandleFunc("PATCH /api/v1/tasks/{key}/comments/{id}", s.api("tasks:write", s.apiCommentEdit))
 	mux.HandleFunc("DELETE /api/v1/tasks/{key}/comments/{id}", s.api("tasks:write", s.apiCommentDelete))
 	mux.HandleFunc("POST /api/v1/tasks/{key}/checklist", s.api("tasks:write", s.apiChecklistAdd))
@@ -111,33 +129,53 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	// the person's inbox: notifications and the messenger (an employee working through the API, e.g. an assistant)
 	mux.HandleFunc("GET /api/v1/notifications", s.api("im:read", s.apiNotifications))
 	mux.HandleFunc("POST /api/v1/notifications/read", s.api("im:read", s.apiNotificationsRead))
+	mux.HandleFunc("DELETE /api/v1/notifications/{id}", s.api("im:write", s.apiNotificationDelete))
+	mux.HandleFunc("POST /api/v1/notifications/{id}/answer", s.api("im:write", s.apiNotificationAnswer))
 	mux.HandleFunc("GET /api/v1/im/rooms", s.api("im:read", s.apiRooms))
 	mux.HandleFunc("GET /api/v1/im/rooms/{room}/messages", s.api("im:read", s.apiRoomMessages))
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/messages", s.api("im:write", s.apiRoomSend))
 	mux.HandleFunc("PATCH /api/v1/im/rooms/{room}/messages/{id}", s.api("im:write", s.apiMessageEdit))
 	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}/messages/{id}", s.api("im:write", s.apiMessageDelete))
+	mux.HandleFunc("POST /api/v1/im/rooms/{room}/forward", s.api("im:write", s.apiForward))
 	mux.HandleFunc("PUT /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}", s.api("im:write", s.apiReaction))
 	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}", s.api("im:write", s.apiReaction))
 	mux.HandleFunc("POST /api/v1/im/direct", s.api("im:write", s.apiDirect))
 	mux.HandleFunc("POST /api/v1/im/notes", s.api("im:write", s.apiNotes))
+	mux.HandleFunc("GET /api/v1/im/general", s.api("im:read", s.apiGeneral))
+	mux.HandleFunc("PATCH /api/v1/im/general", s.api("im:write", s.apiGeneralUpdate))
+	mux.HandleFunc("POST /api/v1/im/copilot", s.api("im:write", s.apiCoPilot))
+	mux.HandleFunc("GET /api/v1/im/rooms/{room}/tasks", s.api("im:read", s.apiChatTasks))
+	mux.HandleFunc("GET /api/v1/im/rooms/{room}/events", s.api("im:read", s.apiChatEvents))
+	mux.HandleFunc("POST /api/v1/im/rooms/{room}/items", s.api("im:write", s.apiChatTie))
 	s.apiIMBotRoutes(mux)
 	mux.HandleFunc("GET /api/v1/im/calls", s.api("im:read", s.apiCalls))
+	mux.HandleFunc("GET /api/v1/calls/conferences", s.api("im:read", s.apiConferences))
+	mux.HandleFunc("POST /api/v1/calls/conferences", s.api("im:write", s.apiConferences))
+	mux.HandleFunc("GET /api/v1/calls/conferences/{id}", s.api("im:read", s.apiConference))
+	mux.HandleFunc("PATCH /api/v1/calls/conferences/{id}", s.api("im:write", s.apiConference))
+	mux.HandleFunc("DELETE /api/v1/calls/conferences/{id}", s.api("im:write", s.apiConference))
+	mux.HandleFunc("POST /api/v1/calls/conferences/{id}/link", s.api("im:write", s.apiConference))
 	mux.HandleFunc("GET /api/v1/settings/portal", s.api("settings:read", s.apiPortal))
 	mux.HandleFunc("PUT /api/v1/settings/portal", s.api("settings:write", s.apiPortal))
 	mux.HandleFunc("GET /api/v1/settings/employees", s.api("settings:read", s.apiStaffSettings))
 	mux.HandleFunc("PUT /api/v1/settings/employees", s.api("settings:write", s.apiStaffSettings))
 	mux.HandleFunc("POST /api/v1/settings/employees/link", s.api("settings:write", s.apiStaffSettings))
+	mux.HandleFunc("GET /api/v1/theme", s.api("settings:read", s.apiTheme))
+	mux.HandleFunc("PUT /api/v1/theme", s.api("settings:write", s.apiTheme))
+	mux.HandleFunc("DELETE /api/v1/theme", s.api("settings:write", s.apiTheme))
 	mux.HandleFunc("GET /api/v1/settings/events", s.api("settings:read", s.apiAudit))
 	mux.HandleFunc("GET /api/v1/settings/admins", s.api("settings:read", s.apiAdmins))
 	mux.HandleFunc("POST /api/v1/settings/admins", s.api("settings:write", s.apiAdmins))
 	mux.HandleFunc("DELETE /api/v1/settings/admins/{id}", s.api("settings:write", s.apiAdmins))
 	mux.HandleFunc("GET /api/v1/settings/ip-access", s.api("settings:read", s.apiIPAccess))
+	mux.HandleFunc("GET /api/v1/settings/two-factor", s.api("settings:read", s.apiTwoFactor))
 	mux.HandleFunc("GET /api/v1/settings/sections", s.api("settings:read", s.apiSections))
 	mux.HandleFunc("PUT /api/v1/settings/sections", s.api("settings:write", s.apiSections))
 	mux.HandleFunc("GET /api/v1/settings/system", s.api("settings:read", s.apiSystem))
 	mux.HandleFunc("GET /api/v1/settings/backup", s.api("settings:read", s.apiBackup))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", s.api("settings:write", s.apiBackup))
 	mux.HandleFunc("PUT /api/v1/settings/ip-access", s.api("settings:write", s.apiIPAccess))
+	mux.HandleFunc("PUT /api/v1/settings/two-factor", s.api("settings:write", s.apiTwoFactor))
 	mux.HandleFunc("GET /api/v1/im/settings", s.api("im:read", s.apiIMSettings))
 	mux.HandleFunc("PUT /api/v1/im/settings", s.api("im:write", s.apiIMSettings))
 	mux.HandleFunc("POST /api/v1/im/groups", s.api("im:write", s.apiGroup))
@@ -145,6 +183,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/members", s.api("im:write", s.apiGroupAdd))
 	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}/members/{user}", s.api("im:write", s.apiGroupRemove))
 	mux.HandleFunc("PATCH /api/v1/im/rooms/{room}", s.api("im:write", s.apiGroupRename))
+	mux.HandleFunc("DELETE /api/v1/im/rooms/{room}", s.api("im:write", s.apiGroupDelete))
 	mux.HandleFunc("GET /api/v1/im/search", s.api("im:read", s.apiSearch))
 	mux.HandleFunc("GET /api/v1/im/open", s.api("im:read", s.apiOpenChats))
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/join", s.api("im:write", s.apiJoinOpen))
@@ -161,6 +200,11 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/im/rooms/{room}/messages/{id}/transcript", s.api("im:read", s.apiTranscript))
 	mux.HandleFunc("GET /api/v1/crm/pipelines", s.api("crm:read", s.apiCRMPipelines))
 	mux.HandleFunc("GET /api/v1/crm/currencies", s.api("crm:read", s.apiCRMCurrencies))
+	mux.HandleFunc("GET /api/v1/crm/sms/senders", s.api("crm:read", s.apiSMSSenders))
+	mux.HandleFunc("GET /api/v1/crm/paysystems", s.api("crm:read", s.apiPaySystems))
+	mux.HandleFunc("GET /api/v1/crm/contact-center", s.api("crm:read", s.apiCRMContactCenter))
+	mux.HandleFunc("GET /api/v1/crm/tile", s.api("crm:read", s.apiCRMTile))
+	mux.HandleFunc("PUT /api/v1/crm/tile", s.api("crm:write", s.apiCRMTileSet))
 	mux.HandleFunc("GET /api/v1/crm/plan", s.api("crm:read", s.apiCRMPlan))
 	mux.HandleFunc("PUT /api/v1/crm/plan", s.api("crm:write", s.apiCRMPlan))
 	mux.HandleFunc("GET /api/v1/crm/recycle", s.api("crm:read", s.apiCRMRecycle))
@@ -203,6 +247,9 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/crm/{kind}/{id}", s.api("crm:write", s.apiCRMUpdate))
 	mux.HandleFunc("DELETE /api/v1/crm/{kind}/{id}", s.api("crm:write", s.apiCRMDelete))
 	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/stage", s.api("crm:write", s.apiCRMStage))
+	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/copy", s.api("crm:write", s.apiCRMCopy))
+	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/chat", s.api("crm:read", s.apiCRMChat))
+	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/trigger", s.api("crm:write", s.apiCRMTrigger))
 	mux.HandleFunc("PUT /api/v1/crm/{kind}/{id}/observers", s.api("crm:write", s.apiCRMObservers))
 	mux.HandleFunc("PUT /api/v1/crm/deals/{id}/parents", s.api("crm:write", s.apiCRMParents))
 	mux.HandleFunc("GET /api/v1/crm/deals/{id}/children", s.api("crm:read", s.apiCRMChildren))
@@ -226,6 +273,13 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/marketing/stoplist/{email}", s.api("crm:write", s.apiMktStopRemove))
 	mux.HandleFunc("POST /api/v1/crm/leads/{id}/convert", s.api("crm:write", s.apiCRMConvert))
 	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/comments", s.api("crm:write", s.apiCRMComment))
+	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}/score", s.api("crm:read", s.apiCRMScore))
+	mux.HandleFunc("GET /api/v1/crm/scoring", s.api("crm:read", s.apiCRMScoring))
+	mux.HandleFunc("POST /api/v1/crm/scoring/{pipeline}", s.api("crm:write", s.apiCRMScoringSet))
+	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}/wait", s.api("crm:read", s.apiCRMWait))
+	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/wait", s.api("crm:write", s.apiCRMWaitSet))
+	mux.HandleFunc("DELETE /api/v1/crm/{kind}/{id}/wait", s.api("crm:write", s.apiCRMWaitSet))
+	mux.HandleFunc("POST /api/v1/crm/{kind}/{id}/sms", s.api("crm:write", s.apiCRMSMS))
 	mux.HandleFunc("GET /api/v1/crm/{kind}/{id}/timeline", s.api("crm:read", s.apiCRMTimeline))
 	mux.HandleFunc("PATCH /api/v1/crm/{kind}/{id}/timeline/{ev}", s.api("crm:write", s.apiCRMEvent))
 	mux.HandleFunc("DELETE /api/v1/crm/{kind}/{id}/timeline/{ev}", s.api("crm:write", s.apiCRMEvent))
@@ -264,58 +318,62 @@ func (s *Server) api(scope string, h apiHandler) http.HandlerFunc {
 			s.apiFail(w, r, errNoAuth)
 			return
 		}
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		token = strings.TrimSpace(token)
-		var p apikeys.Principal
-		var err error
-		if apps.IsToken(token) && s.Apps != nil { // an application acting for an employee (OAuth 2.0)
-			p, err = s.Apps.Authenticate(r.Context(), token, ip)
-		} else {
-			p, err = s.Keys.Authenticate(r.Context(), token, ip)
-		}
-		if errors.Is(err, apikeys.ErrInvalid) {
-			s.audit(r, audit.Event{Kind: "api_bad_key", Target: r.Method + " " + r.URL.Path})
-		}
+		r, p, err := s.apiEnter(r, strings.TrimSpace(token), scope)
 		if err != nil {
 			s.apiFail(w, r, err)
-			return
-		}
-		if !s.ipAllowed(r, p.UserID) { // «Ограничение доступа по IP» holds for the employee's keys too
-			s.apiFail(w, r, i18n.E("ipaccess.denied", audit.ClientIP(r)))
-			return
-		}
-		if scope != "" && !p.Can(scope) {
-			s.apiFail(w, r, i18n.E("err.api_no_scope", scope))
-			return
-		}
-		guest, err := s.Tasks.IsGuest(r.Context(), p.UserID)
-		if err != nil {
-			s.apiFail(w, r, err)
-			return
-		}
-		r = r.WithContext(tasks.WithViewer(r.Context(), p.UserID, guest))
-		if !guestPass(r, guestAPI) { // a guest's key reaches only the sections of their collabs
-			s.apiFail(w, r, tasks.ErrNotFound)
-			return
-		}
-		// X-Go24-Admin: 1 — admin mode, as the switch on the pages: an administrator's key sees and runs everything
-		// (all projects and collabs); every such request is logged
-		if r.Header.Get("X-Go24-Admin") == "1" {
-			if !s.apiAdmin(r.Context(), p.UserID) {
-				s.apiFail(w, r, tasks.ErrForbidden)
-				return
-			}
-			s.Log.Info("api admin mode", "user_id", p.UserID, "key_id", p.KeyID, "method", r.Method, "path", r.URL.Path)
-			r = r.WithContext(tasks.WithAdmin(r.Context()))
-		}
-		if s.frozen(r) { // a collab in the archive is read-only
-			s.apiFail(w, r, errCollabArchived)
 			return
 		}
 		if err := h(w, r, p); err != nil {
 			s.apiFail(w, r, err)
 		}
 	}
+}
+
+// apiEnter authenticates a REST call by its token — a key or an application's — and checks what every call checks:
+// access by IP, the scope, a guest's sections, the admin mode, an archived collab. The request it returns carries the
+// caller as the viewer.
+func (s *Server) apiEnter(r *http.Request, token, scope string) (*http.Request, apikeys.Principal, error) {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	var p apikeys.Principal
+	var err error
+	if apps.IsToken(token) && s.Apps != nil { // an application acting for an employee (OAuth 2.0)
+		p, err = s.Apps.Authenticate(r.Context(), token, ip)
+	} else {
+		p, err = s.Keys.Authenticate(r.Context(), token, ip)
+	}
+	if errors.Is(err, apikeys.ErrInvalid) {
+		s.audit(r, audit.Event{Kind: "api_bad_key", Target: r.Method + " " + r.URL.Path})
+	}
+	if err != nil {
+		return r, p, err
+	}
+	if !s.ipAllowed(r, p.UserID) { // «Ограничение доступа по IP» holds for the employee's keys too
+		return r, p, i18n.E("ipaccess.denied", audit.ClientIP(r))
+	}
+	if scope != "" && !p.Can(scope) {
+		return r, p, i18n.E("err.api_no_scope", scope)
+	}
+	guest, err := s.Tasks.IsGuest(r.Context(), p.UserID)
+	if err != nil {
+		return r, p, err
+	}
+	r = r.WithContext(tasks.WithViewer(r.Context(), p.UserID, guest))
+	if !guestPass(r, guestAPI) { // a guest's key reaches only the sections of their collabs
+		return r, p, tasks.ErrNotFound
+	}
+	// X-Go24-Admin: 1 — admin mode, as the switch on the pages: an administrator's key sees and runs everything
+	// (all projects and collabs); every such request is logged
+	if r.Header.Get("X-Go24-Admin") == "1" {
+		if !s.apiAdmin(r.Context(), p.UserID) {
+			return r, p, tasks.ErrForbidden
+		}
+		s.Log.Info("api admin mode", "user_id", p.UserID, "key_id", p.KeyID, "method", r.Method, "path", r.URL.Path)
+		r = r.WithContext(tasks.WithAdmin(r.Context()))
+	}
+	if s.frozen(r) { // a collab in the archive is read-only
+		return r, p, errCollabArchived
+	}
+	return r, p, nil
 }
 
 // apiAdmin: the user is an administrator of go24 (an employee in an administrators' group of Authentik, as their
@@ -414,6 +472,7 @@ type apiTask struct {
 	DatesFromSubtasks bool `json:"dates_from_subtasks"`
 	AutoComplete      bool `json:"auto_complete"`
 	ResultRequired    bool `json:"result_required"`
+	TimeTracking      bool `json:"time_tracking"` // «Учитывать время, затраченное на задачу» (the portal ALLOW_TIME_TRACKING)
 }
 
 func planDate(t *time.Time) string {
@@ -432,6 +491,7 @@ func toAPITask(t tasks.Task, tr func(string) string) apiTask {
 		Version: t.Version, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, ClosedAt: t.ClosedAt,
 		EstimateMinutes: t.EstimateMinutes, StartPlan: planDate(t.StartPlan), EndPlan: planDate(t.EndPlan),
 		DatesFromSubtasks: t.DatesFromSubtasks, AutoComplete: t.AutoComplete, ResultRequired: t.ResultRequired,
+		TimeTracking: !t.NoTimeTracking,
 	}
 }
 
@@ -452,11 +512,14 @@ func toAPIUsers(list []tasks.User) []apiUser {
 }
 
 type apiChecklistItem struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Done      bool   `json:"done"`
-	Important bool   `json:"important"`
-	List      string `json:"list"` // the checklist the item is in (several in a task
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Done      bool      `json:"done"`
+	Important bool      `json:"important"`
+	List      string    `json:"list"`             // the checklist the item is in (several in a task
+	Level     int       `json:"level"`            // nesting: 0 — top
+	Parent    string    `json:"parent,omitempty"` // the item it is nested in
+	Members   []apiUser `json:"members,omitempty"`
 }
 
 type apiComment struct {
@@ -509,15 +572,25 @@ type apiHistory struct {
 }
 
 type apiProject struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	MyRole      string `json:"my_role"`
-	OpenTasks   int    `json:"open_tasks"`
+	Key         string           `json:"key"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	MyRole      string           `json:"my_role"`
+	OpenTasks   int              `json:"open_tasks"`
+	Privacy     string           `json:"privacy,omitempty"` // open | closed | secret (not of a collab)
+	SubjectID   string           `json:"subject_id,omitempty"`
+	Subject     string           `json:"subject,omitempty"`
+	Keywords    []string         `json:"keywords,omitempty"`
+	Tools       []tasks.Tool     `json:"tools,omitempty"`      // «Возможности группы» (not of a collab)
+	TaskPerms   *tasks.TaskPerms `json:"task_perms,omitempty"` // «Права доступа» to the group's tasks (not of a collab)
 }
 
 func toAPIProject(p tasks.Project) apiProject {
-	return apiProject{p.Key, p.Name, p.Description, p.MyRole, p.OpenTasks}
+	privacy, tools, perms := p.Privacy, p.Tools(), p.TaskPerms()
+	if p.Collab() {
+		return apiProject{p.Key, p.Name, p.Description, p.MyRole, p.OpenTasks, "", p.SubjectID, p.Subject, p.Keywords, nil, nil}
+	}
+	return apiProject{p.Key, p.Name, p.Description, p.MyRole, p.OpenTasks, privacy, p.SubjectID, p.Subject, p.Keywords, tools, &perms}
 }
 
 // ---------- handlers ----------
@@ -546,9 +619,12 @@ func (s *Server) apiProjects(w http.ResponseWriter, r *http.Request, p apikeys.P
 
 func (s *Server) apiCreateProject(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
-		Key         string `json:"key"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Key         string   `json:"key"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Privacy     string   `json:"privacy"`
+		SubjectID   string   `json:"subject_id"`
+		Keywords    []string `json:"keywords"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -561,6 +637,20 @@ func (s *Server) apiCreateProject(w http.ResponseWriter, r *http.Request, p apik
 	pr, err := s.Tasks.ProjectByKey(r.Context(), p.UserID, key)
 	if err != nil {
 		return err
+	}
+	if in.Privacy != "" && in.Privacy != pr.Privacy {
+		if err := s.Tasks.SetPrivacy(r.Context(), pr, in.Privacy); err != nil {
+			return err
+		}
+		pr.Privacy = in.Privacy
+	}
+	if keywords := tasks.ParseKeywords(strings.Join(in.Keywords, ",")); in.SubjectID != "" || len(keywords) > 0 {
+		if err := s.Tasks.SetGroupSubject(r.Context(), pr, in.SubjectID, keywords); err != nil {
+			return err
+		}
+		if pr, err = s.Tasks.ProjectByKey(r.Context(), p.UserID, key); err != nil {
+			return err
+		}
 	}
 	writeJSON(w, http.StatusCreated, toAPIProject(pr))
 	return nil
@@ -632,12 +722,14 @@ type apiTaskInput struct {
 	DatesFromSubtasks *bool      `json:"dates_from_subtasks"`
 	AutoComplete      *bool      `json:"auto_complete"`
 	ResultRequired    *bool      `json:"result_required"`
+	TimeTracking      *bool      `json:"time_tracking"`
 }
 
 // params are the task parameters of the input, the missing ones as in cur.
 func (in apiTaskInput) params(cur tasks.Params) tasks.Params {
 	return tasks.Params{DatesFromSubtasks: deref(in.DatesFromSubtasks, cur.DatesFromSubtasks),
-		AutoComplete: deref(in.AutoComplete, cur.AutoComplete), ResultRequired: deref(in.ResultRequired, cur.ResultRequired)}
+		AutoComplete: deref(in.AutoComplete, cur.AutoComplete), ResultRequired: deref(in.ResultRequired, cur.ResultRequired),
+		NoTimeTracking: !deref(in.TimeTracking, !cur.NoTimeTracking)}
 }
 
 func deref[T any](p *T, def T) T {
@@ -666,6 +758,7 @@ func (s *Server) apiCreateTask(w http.ResponseWriter, r *http.Request, p apikeys
 		ParentKey:       in.Parent,
 		Accomplices:     in.Accomplices,
 		Auditors:        in.Auditors,
+		EstimateMinutes: in.EstimateMinutes,
 		Params:          in.params(tasks.Params{}),
 	})
 	if err != nil {
@@ -1032,7 +1125,8 @@ func (s *Server) writeCard(w http.ResponseWriter, r *http.Request, p apikeys.Pri
 		TimeSpent:   c.TimeTotal,
 	}
 	for _, i := range c.Checklist {
-		out.Checklist = append(out.Checklist, apiChecklistItem{i.ID, i.Title, i.Done, i.Important, i.ListID})
+		out.Checklist = append(out.Checklist, apiChecklistItem{i.ID, i.Title, i.Done, i.Important, i.ListID, i.Level, i.Parent,
+			toAPIUsers(i.Members)})
 	}
 	for _, m := range c.Comments {
 		out.Comments = append(out.Comments, apiComment{m.ID, m.AuthorName, m.Body, m.CreatedAt, m.ReplyTo, m.EditedAt})

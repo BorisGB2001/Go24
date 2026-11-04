@@ -524,6 +524,16 @@ func (s *Store) Free(ctx context.Context, r Resource, day time.Time, loc *time.L
 // than a slot takes the following ones) and end within its working hours of that day, not touching its break nor
 // the busy time of its employee's calendar (see CalendarBusy).
 func (s *Store) FreeFor(ctx context.Context, r Resource, day time.Time, loc *time.Location, mins int) ([]time.Time, error) {
+	return s.freeFor(ctx, r, day, loc, mins, "")
+}
+
+// FreeMoving: the starts on a day b may be moved to on its resource r — for as long as it is, its own time free.
+func (s *Store) FreeMoving(ctx context.Context, b Booking, r Resource, day time.Time, loc *time.Location) ([]time.Time, error) {
+	return s.freeFor(ctx, r, day, loc, int(b.End.Sub(b.Start).Minutes()), b.ID)
+}
+
+// freeFor is FreeFor not counting the booking except (one being moved: its own time is free for it).
+func (s *Store) freeFor(ctx context.Context, r Resource, day time.Time, loc *time.Location, mins int, except string) ([]time.Time, error) {
 	if mins <= 0 {
 		mins = r.Slot
 	}
@@ -532,8 +542,8 @@ func (s *Store) FreeFor(ctx context.Context, r Resource, day time.Time, loc *tim
 		return nil, nil
 	}
 	rows, err := s.db.Query(ctx, `SELECT starts_at, ends_at FROM bookings b WHERE status <> 'cancelled' AND starts_at < $3
-		AND ends_at > $2 AND (resource_id = $1 OR EXISTS (SELECT 1 FROM booking_extra_resources e WHERE e.booking_id = b.id
-		AND e.resource_id = $1))`, r.ID, d0, d0.AddDate(0, 0, 1))
+		AND ends_at > $2 AND id::text <> $4 AND (resource_id = $1 OR EXISTS (SELECT 1 FROM booking_extra_resources e
+		WHERE e.booking_id = b.id AND e.resource_id = $1))`, r.ID, d0, d0.AddDate(0, 0, 1), except)
 	if err != nil {
 		return nil, err
 	}

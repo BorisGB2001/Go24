@@ -20,6 +20,7 @@ const (
 	EvRejected  = "rejected"  // the reviewer rejected, Note — the reason
 	EvCancelled = "cancelled" // the sender recalled it
 	EvDone      = "done"      // signed by all
+	EvExpired   = "expired"   // not signed by the deadline
 )
 
 // Event is a line of the document's history.

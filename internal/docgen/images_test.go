@@ -111,3 +111,32 @@ func TestAppendSheetImages(t *testing.T) {
 		t.Fatalf("rels: %s", rels)
 	}
 }
+
+// TestAppendSheetCheck: the check block goes after the table — its picture (the QR code) with its own relationship,
+// then its lines.
+func TestAppendSheetCheck(t *testing.T) {
+	var pngData bytes.Buffer
+	png.Encode(&pngData, image.NewRGBA(image.Rect(0, 0, 100, 100)))
+	const w = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+	src := docx(t, map[string]string{
+		"[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`,
+		"word/document.xml":   `<w:document ` + w + `><w:body><w:p><w:r><w:t>Договор</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`,
+	})
+	out, err := AppendSheet(src, Sheet{Title: "Лист подписания", Header: []string{"Подписант"}, Rows: [][]string{{"Анна"}},
+		Check: []string{"Код проверки: ABCD-EF01-2345"}, CheckPic: &Image{Data: pngData.Bytes(), Width: Cm(2.5)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := part(t, out, "word/document.xml")
+	if strings.Count(body, "<w:drawing>") != 1 || !strings.Contains(body, `r:embed="rIdGo24Check"`) ||
+		strings.Index(body, "</w:tbl>") > strings.Index(body, "rIdGo24Check") ||
+		strings.Index(body, "rIdGo24Check") > strings.Index(body, "ABCD-EF01-2345") {
+		t.Fatalf("body: %s", body)
+	}
+	if err := xml.Unmarshal([]byte(body), new(any)); err != nil {
+		t.Fatalf("xml: %v", err)
+	}
+	if part(t, out, "word/media/rIdGo24Check.png") == "" {
+		t.Fatal("no QR picture")
+	}
+}

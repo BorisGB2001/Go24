@@ -146,6 +146,7 @@ var ErrRecording = errors.New("calls: the call is being recorded already")
 const (
 	settingRecording  = "call_recording"
 	settingTranscribe = "call_transcribe"
+	settingSummary    = "call_summary"
 )
 
 // Enabled: the administrators let calls be recorded.
@@ -166,6 +167,16 @@ func (rs *Recordings) Transcribing(ctx context.Context) (bool, error) {
 // SetTranscribing lets the recordings be turned into text or not.
 func (rs *Recordings) SetTranscribing(ctx context.Context, userID string, on bool) error {
 	return rs.setSetting(ctx, userID, settingTranscribe, on)
+}
+
+// Summarizing: the administrators let CoPilot sum up the meetings from the text of their recordings.
+func (rs *Recordings) Summarizing(ctx context.Context) (bool, error) {
+	return rs.setting(ctx, settingSummary)
+}
+
+// SetSummarizing lets CoPilot sum up the meetings or not.
+func (rs *Recordings) SetSummarizing(ctx context.Context, userID string, on bool) error {
+	return rs.setSetting(ctx, userID, settingSummary, on)
 }
 
 func (rs *Recordings) setting(ctx context.Context, key string) (bool, error) {
@@ -278,5 +289,15 @@ func (rs *Recordings) Transcribed(ctx context.Context, id, fileID string) error 
 	}
 	_, err := rs.DB.Exec(ctx, `UPDATE call_recordings SET transcript = $2, transcript_file = $3::uuid
 		WHERE id::text = $1 AND transcript = 'pending'`, id, state, file)
+	return err
+}
+
+// Summarized keeps the summary of the meeting of the recording and its file on the Drive ("" — none).
+func (rs *Recordings) Summarized(ctx context.Context, id, text, fileID string) error {
+	var file *string
+	if fileID != "" {
+		file = &fileID
+	}
+	_, err := rs.DB.Exec(ctx, `UPDATE call_recordings SET summary = $2, summary_file = $3::uuid WHERE id::text = $1`, id, text, file)
 	return err
 }

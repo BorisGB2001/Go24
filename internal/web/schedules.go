@@ -26,7 +26,7 @@ func (s *Server) workSchedules(w http.ResponseWriter, r *http.Request, sess auth
 		return
 	}
 	s.render(w, r, "wschedules", page{TitleKey: "wschedule.title", Nav: "wschedules", Data: map[string]any{
-		"List": list, "Admin": sess.Admin,
+		"List": list, "Admin": s.worktimeSettings(r, sess),
 	}})
 }
 
@@ -46,7 +46,7 @@ func memberChips(refs []string, names map[string]string) []tasks.User {
 // workSchedulePage: GET /worktime/schedules/new and /worktime/schedules/{id}.
 func (s *Server) workSchedulePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	ws := &company.WorkSchedule{Kind: "fixed", Times: []company.ScheduleTime{{Days: []int{1, 2, 3, 4, 5}, Start: "09:00", End: "18:00", Break: 60}},
-		MemberNames: map[string]string{}}
+		ReportReq: "optional", Devices: company.WorkDevices, MemberNames: map[string]string{}}
 	if id := r.PathValue("id"); id != "" {
 		n, err := strconv.ParseInt(id, 10, 64)
 		if err != nil {
@@ -57,7 +57,7 @@ func (s *Server) workSchedulePage(w http.ResponseWriter, r *http.Request, sess a
 			s.taskErr(w, r, err, "/worktime/schedules")
 			return
 		}
-	} else if !sess.Admin {
+	} else if !s.worktimeSettings(r, sess) {
 		s.taskErr(w, r, i18n.E("err.forbidden"), "/worktime/schedules")
 		return
 	}
@@ -82,7 +82,8 @@ func (s *Server) workSchedulePage(w http.ResponseWriter, r *http.Request, sess a
 	s.render(w, r, "wschedule", page{Title: title, TitleKey: titleKey, Nav: "wschedules", Data: map[string]any{
 		"WS": ws, "Times": times, "Shifts": shifts, "Kinds": company.ScheduleKinds, "Days": []int{1, 2, 3, 4, 5, 6, 0},
 		"Members": memberChips(ws.Members, ws.MemberNames), "Excluded": memberChips(ws.Excluded, ws.MemberNames),
-		"People": people, "Admin": sess.Admin, "Tolerance": tol,
+		"People": people, "Admin": s.worktimeSettings(r, sess), "Tolerance": tol,
+		"ReportReqs": company.ReportReqs, "Devices": company.WorkDevices,
 	}})
 }
 
@@ -95,7 +96,7 @@ func (s *Server) saveWorkSchedule(w http.ResponseWriter, r *http.Request, sess a
 	} else {
 		back += "/new"
 	}
-	if !sess.Admin {
+	if !s.worktimeSettings(r, sess) {
 		s.taskErr(w, r, i18n.E("err.forbidden"), back)
 		return
 	}
@@ -109,9 +110,15 @@ func (s *Server) saveWorkSchedule(w http.ResponseWriter, r *http.Request, sess a
 	}
 	ws := company.WorkSchedule{Name: r.FormValue("name"), Kind: r.FormValue("kind"), LateAfter: r.FormValue("late_after"),
 		LeaveBefore: r.FormValue("leave_before"), MinDuration: r.FormValue("min_duration"), Tolerance: num(r.FormValue("tolerance")),
+		NotifyHead: r.FormValue("notify_head") != "", NotifyTo: r.Form["notify_to"],
+		ReportReq: r.FormValue("report_req"), Devices: r.Form["devices"],
 		Members: r.Form["members"], Excluded: r.Form["excluded"]}
 	if id := r.PathValue("id"); id != "" {
 		ws.ID, _ = strconv.ParseInt(id, 10, 64)
+	}
+	if len(ws.Devices) == 0 && r.FormValue("devices_shown") != "" { // all unchecked in the form: the model would take it as all
+		s.taskErr(w, r, i18n.E("err.wschedule_devices"), back)
+		return
 	}
 	for i := 0; i < 8; i++ {
 		p := "t" + strconv.Itoa(i) + "_"
@@ -146,7 +153,7 @@ func (s *Server) saveWorkSchedule(w http.ResponseWriter, r *http.Request, sess a
 // deleteWorkSchedule: POST /worktime/schedules/{id}/delete.
 func (s *Server) deleteWorkSchedule(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || !sess.Admin {
+	if err != nil || !s.worktimeSettings(r, sess) {
 		s.taskErr(w, r, i18n.E("err.forbidden"), "/worktime/schedules")
 		return
 	}

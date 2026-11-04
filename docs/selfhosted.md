@@ -1,25 +1,27 @@
-# go24 — self-hosted
+Русская версия: [ru/selfhosted.md](ru/selfhosted.md)
 
-go24 целиком разворачивается на своих серверах. Облачные сервисы (SaaS) в стеке не используются: ни для работы продукта, ни для сборки, ни для хранения данных.
+# go24 — Self-Hosted
 
-## Компоненты и откуда они берутся
+go24 is deployed entirely on your own servers. Cloud services (SaaS) are not used in the stack: neither for operating the product, nor for building, nor for data storage.
 
-| Компонент | Что используем | Где работает |
+## Components and where they come from
+
+| Component | What we use | Where it runs |
 |---|---|---|
-| Вход, пользователи, 2FA | Authentik (open source) | свой контейнер |
-| База данных | PostgreSQL | свой контейнер |
-| Файлы | rclone `serve s3` поверх своего хранилища: локальный диск, SFTP на свой файловый сервер, Garage/SeaweedFS, Nextcloud | свой контейнер + своё хранилище |
-| Входящий трафик и TLS | Traefik (позже) | свой контейнер |
-| Оркестрация | Docker Swarm | свои серверы |
-| Git, реестр образов, CI | Forgejo (git + Container Registry + Actions) или `registry:2` | свой сервер |
-| Бэкапы | `pg_dump` + rclone в своё хранилище (другой сервер или диск) | свои серверы |
+| Authentication, users, 2FA | Authentik (open source) | own container |
+| Database | PostgreSQL | own container |
+| Files | rclone `serve s3` on top of own storage: local disk, SFTP to own file server, Garage/SeaweedFS, Nextcloud | own container + own storage |
+| Inbound traffic and TLS | Traefik (later) | own container |
+| Orchestration | Docker Swarm | own servers |
+| Git, image registry, CI | Forgejo (git + Container Registry + Actions) or `registry:2` | own server |
+| Backups | `pg_dump` + rclone to own storage (different server or disk) | own servers |
 
-## Правила
+## Rules
 
-- **Внешних SaaS-зависимостей нет.** Внешние адреса допустимы только для скачивания образов и пакетов при установке и обновлении. Позже их можно заменить своим зеркалом.
-- **Интеграции с другими продуктами** (корпоративный портал, OpenProject, Jira, Confluence) подключаются по API-ключам, только если заказчик сам их включил. Без них продукт работает.
-- **Сетевая безопасность:**
-  - наружу открыт только Traefik (80/443) и SSH;
-  - между узлами — приватная сеть или файрвол по IP плюс шифрованная overlay-сеть Swarm;
-  - NetBird исключён из стека (решение от 11.10.2026).
-- **Секреты** хранятся в `deploy/.env` (права 600, в git не попадает), в Swarm — в `docker secret`.
+- **No external SaaS dependencies.** External addresses are allowed only for downloading images and packages during installation and updates. Later they can be replaced with your own mirror.
+- **Integrations with other products** (the portal, OpenProject, Jira, Confluence) connect via API keys only if the customer enabled them. The product works without them.
+- **Network security:**
+  - externally only Traefik (80/443) and SSH are exposed;
+  - between nodes — private network or firewall by IP plus encrypted Swarm overlay network;
+  - NetBird has been removed from the stack (decision of 2026-10-11).
+- **Secrets** are stored in `deploy/.env` (mode 600, not committed to git), in Swarm — in `docker secret`.

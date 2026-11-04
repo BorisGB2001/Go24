@@ -25,7 +25,11 @@
       <div><label>{{t "crm.inv_pay_sum"}}</label><input type="text" name="amount" inputmode="decimal" required value="{{fnum $v.Due}}" size="10"></div>
       <div><label>{{t "crm.inv_pay_date"}}</label><input type="date" name="paid_on" value="{{dinput (ptr now)}}"></div>
       <div style="flex:1"><label>{{t "crm.f.comment"}}</label><input type="text" name="comment" maxlength="1000"></div>
-      <div><label>&nbsp;</label><button class="primary">{{t "crm.inv_pay_add"}}</button></div></form>{{end}}</div>{{end}}
+      <div><label>&nbsp;</label><button class="primary">{{t "crm.inv_pay_add"}}</button></div></form>{{end}}
+    {{with $d.Online}}<h3>{{t "crm.pay.online"}}</h3><table class="tlist"><tbody>{{range .}}<tr><td class="nowrap">{{datetime .Created}}</td>
+      <td class="nowrap">{{money .Amount}} {{.Currency}}</td><td>{{.System}}{{with .ExtID}} <span class="muted small">{{.}}</span>{{end}}</td>
+      <td><span class="pill pay-{{.Status}}">{{t (print "crm.pay.st." .Status)}}</span>{{with .Error}}<div class="small muted">{{.}}</div>{{end}}</td></tr>{{end}}</tbody></table>{{end}}
+    {{if and $d.PayOn $v.Due}}<p class="small muted">{{if $v.PublicToken}}{{t "crm.pay.link_hint"}}{{else}}{{t "crm.pay.link_off"}}{{end}}</p>{{end}}</div>{{end}}
 </div>
 <div>
   <div class="card">
@@ -69,8 +73,13 @@
 <style>body{font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;background:#fff;margin:24px;max-width:900px}
 h1{font-size:20px;margin:16px 0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
 th{background:#eee}td.n{text-align:right;white-space:nowrap}.parties td{border:none;padding:2px 12px 2px 0}.tot{text-align:right;margin-top:8px}
-.pre{white-space:pre-wrap}.pbar{margin-bottom:12px}.sign{margin-top:40px}@media print{.pbar{display:none}body{margin:0}}</style></head><body data-crm-print>
-{{if not .Bare}}<div class="pbar"><button type="button" data-print-now>{{t "crm.inv_print"}}</button></div>{{end}}
+.pre{white-space:pre-wrap}.pbar{margin-bottom:12px}.payform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0;padding:12px;border:1px solid #2a7;border-radius:6px}
+.payform button{background:#2a7;color:#fff;border:0;border-radius:4px;padding:8px 14px;font:inherit;cursor:pointer}.payok{color:#185}.paywait{color:#a60}.payerr{color:#b22}.sign{margin-top:40px}@media print{.pbar{display:none}body{margin:0}}</style></head><body data-crm-print>
+{{if not .Bare}}<div class="pbar"><button type="button" data-print-now>{{t "crm.inv_print"}}</button>
+  {{if eq .PayState "succeeded"}}<p class="payok">{{t "crm.pay.done"}}</p>{{else if eq .PayState "pending"}}<p class="paywait">{{t "crm.pay.wait"}}</p>{{else if eq .PayState "canceled"}}<p class="payerr">{{t "crm.pay.canceled"}}</p>{{end}}
+  {{if .PayError}}<p class="payerr">{{t "crm.pay.failed"}}</p>{{end}}
+  {{with .PaySystems}}<form method="post" action="/q/{{$.Token}}/pay" class="payform"><span>{{t "crm.pay.to_pay" (money $v.Due) $v.Currency}}</span>
+    {{range .}}<button name="system" value="{{.ID}}">{{t "crm.pay.pay_via" .Name}}</button>{{end}}</form>{{end}}</div>{{end}}
 {{with .Seller}}<div class="pre">{{.}}</div>{{end}}
 <h1>{{t (print "crm.doc." $v.Kind)}} № {{$v.Code}} {{t "crm.inv_from"}} {{day $v.IssueDate}}</h1>
 <table class="parties">

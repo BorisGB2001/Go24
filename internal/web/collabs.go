@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,6 +28,12 @@ func (s *Server) collabsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.taskErr(w, r, err, "/my")
 		return
 	}
+	var open []tasks.Collab // the open collabs the search finds besides one's own: «Вступить»
+	if !archived {
+		if open, err = s.Tasks.OpenCollabs(r.Context(), sess.UserID, q); err != nil {
+			s.Log.Warn("open collabs", "err", err)
+		}
+	}
 	rooms := map[string]string{} // collab → its chat
 	for _, c := range list {
 		if room, err := s.Matrix.ProjectRoom(r.Context(), c.ID); err == nil && room != "" {
@@ -34,18 +41,36 @@ func (s *Server) collabsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		}
 	}
 	s.render(w, r, "collabs", page{TitleKey: "collab.title", Nav: "collabs", Data: map[string]any{
-		"List": list, "Rooms": rooms, "CanCreate": may && !archived, "Archived": archived, "Q": q, "Messenger": s.Matrix != nil}})
+		"List": list, "Open": open, "Rooms": rooms, "CanCreate": may && !archived, "Archived": archived, "Q": q, "Messenger": s.Matrix != nil}})
 }
 
 // collabOpen opens the collab with its «Стартовый инструмент»: its chat, tasks, drive, calendar or feed. A tool the
 // person has not (the messenger off, a section switched off, the feed for a guest) gives way to the collab's page.
 func (s *Server) collabOpen(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	if errors.Is(err, tasks.ErrNotFound) {
+		if c, oerr := s.Tasks.OpenCollab(r.Context(), sess.UserID, r.PathValue("key")); oerr == nil { // an open one: «Вступить»
+			s.render(w, r, "collabjoin", page{TitleKey: "collab.title", Nav: "collabs", Data: map[string]any{"Collab": c}})
+			return
+		}
+	}
 	if err != nil {
 		s.taskErr(w, r, err, "/collabs")
 		return
 	}
 	http.Redirect(w, r, s.collabStart(r, p), http.StatusFound)
+}
+
+// collabJoin: an employee joins an open collab themselves and it opens with its «Стартовый инструмент».
+func (s *Server) collabJoin(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	p, err := s.Tasks.JoinCollab(r.Context(), sess.UserID, r.PathValue("key"))
+	if err != nil {
+		s.taskErr(w, r, err, "/collabs")
+		return
+	}
+	s.Log.Info("collab joined", "user_id", sess.UserID, "collab", p.Key)
+	s.Matrix.Wake() // into the collab's chat
+	http.Redirect(w, r, s.collabStart(r, p), http.StatusSeeOther)
 }
 
 // collabStart is the address the collab opens with (see collabOpen).
@@ -131,7 +156,7 @@ func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess aut
 			GuestFiles: r.FormValue("guests_files") == "on", EditPerm: r.FormValue("edit_perm"), ChatPerm: r.FormValue("chat_perm"),
 			MsgTTL: msgTTL, EventsMembers: r.FormValue("events_members") == "on", EventsGuests: r.FormValue("events_guests") == "on",
 			EventsInvites: r.FormValue("events_invites") == "on", EventsCollab: r.FormValue("events_collab") == "on",
-			StartTool: r.FormValue("start_tool"),
+			StartTool: r.FormValue("start_tool"), Open: r.FormValue("open") == "1",
 		})
 	}
 	if err != nil {
@@ -143,34 +168,38 @@ func (s *Server) collabSettings(w http.ResponseWriter, r *http.Request, sess aut
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "collab.settings_saved"))+"#settings", http.StatusSeeOther)
 }
 
-// collabOwner hands the collab over to another employee of it (the owner or an administrator).
+// collabOwner hands the collab, group or project over to another employee of it (the owner or an administrator).
 func (s *Server) collabOwner(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/p/" + r.PathValue("key")
-	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, r.PathValue("key"))
 	if err == nil {
-		err = s.Tasks.TransferCollab(r.Context(), p, sess.UserID, r.FormValue("user_id"))
+		err = s.Tasks.TransferProject(r.Context(), p, sess.UserID, r.FormValue("user_id"))
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	s.Log.Info("collab owner", "user_id", sess.UserID, "collab", p.Key, "owner", r.FormValue("user_id"))
+	s.Log.Info("project owner", "user_id", sess.UserID, "project", p.Key, "owner", r.FormValue("user_id"))
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "collab.owner_changed"))+"#members", http.StatusSeeOther)
 }
 
-// collabDelete deletes the collab for good (the owner or an administrator, the name typed again).
+// collabDelete deletes the collab, group or project for good (the owner or an administrator, the name typed again).
 func (s *Server) collabDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/p/" + r.PathValue("key")
-	p, err := s.Tasks.CollabByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, r.PathValue("key"))
 	if err == nil {
-		err = s.Tasks.DeleteCollab(r.Context(), p, sess.UserID, r.FormValue("confirm"))
+		err = s.Tasks.DeleteProject(r.Context(), p, sess.UserID, r.FormValue("confirm"))
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	s.Log.Info("collab deleted", "user_id", sess.UserID, "collab", p.Key, "admin", sess.AdminActive())
+	s.Log.Info("project deleted", "user_id", sess.UserID, "project", p.Key, "admin", sess.AdminActive())
 	s.Matrix.Wake() // its chat is emptied
+	if !p.Collab() {
+		http.Redirect(w, r, "/projects?msg="+url.QueryEscape(s.tr(r, "project.deleted", p.Name)), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/collabs?msg="+url.QueryEscape(s.tr(r, "collab.deleted", p.Name)), http.StatusSeeOther)
 }
 
@@ -194,9 +223,9 @@ func (s *Server) collabData(r *http.Request, p tasks.Project, data map[string]an
 	data["Messenger"] = s.Matrix != nil
 	me := tasks.Viewer(r.Context())
 	data["CanAddMembers"] = s.Tasks.CanAddMembers(r.Context(), p)
-	data["CanDelete"] = p.MyRole == "owner" || p.MyRole == "admin"
 	if set, err := s.Tasks.CollabSettings(r.Context(), p); err == nil {
 		data["Settings"], data["MsgTTLs"], data["StartTools"] = set, tasks.MsgTTLs, tasks.StartTools
+		data["CollabLink"] = s.absURL(r, "/c/"+p.Key)
 	}
 	if p.CanManage() {
 		if log, err := s.Tasks.CollabLog(r.Context(), p, 100); err == nil {

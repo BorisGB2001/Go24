@@ -128,12 +128,13 @@ func TestComposeSend(t *testing.T) {
 	// a draft: kept in «Черновики», changed, with its files
 	var nf *i18n.Error
 	d := Draft{MailboxID: box, To: `"Клиент" <boss@buyer.test>`, CC: "cc@buyer.test", BCC: "boss2@buyer.test", Subject: "Счёт",
-		HTML: `<p>Счёт <b>во вложении</b></p><script>x()</script>`, Importance: 1, Receipt: true, Mode: "reply", ReplyTo: order.ID}
+		HTML: `<p>Счёт <b>во вложении</b></p><script>x()</script>`, Importance: 1, Sensitivity: "confidential", Receipt: true, Mode: "reply", ReplyTo: order.ID}
 	id, err := s.SaveDraft(ctx, anna, d)
 	must(err)
 	got, err := s.Draft(ctx, anna, id)
 	must(err)
-	if got.HTML != `<p>Счёт <b>во вложении</b></p>` || got.BCC != "boss2@buyer.test" || !got.Receipt || got.Importance != 1 || got.Mode != "reply" {
+	if got.HTML != `<p>Счёт <b>во вложении</b></p>` || got.BCC != "boss2@buyer.test" || !got.Receipt || got.Importance != 1 || got.Sensitivity != "confidential" ||
+		got.Mode != "reply" {
 		t.Fatalf("draft = %+v", got)
 	}
 	drafts, err := s.folderByRole(ctx, box, "drafts")
@@ -162,6 +163,9 @@ func TestComposeSend(t *testing.T) {
 	must(err)
 
 	// nobody else reaches the draft
+	if _, err := s.SaveDraft(ctx, anna, Draft{MailboxID: box, Sensitivity: "secret"}); err == nil {
+		t.Fatal("a draft with an unknown sensitivity is kept")
+	}
 	if _, err := s.Draft(ctx, eve, id); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("someone else read the draft: %v", err)
 	}
@@ -196,6 +200,7 @@ func TestComposeSend(t *testing.T) {
 	}
 	p := parseFull(strings.NewReader(letters[0]))
 	if !strings.Contains(p.html, "<b>во вложении</b>") || !strings.Contains(p.html, `src="cid:`) || p.importance != 1 || p.receiptTo != "anna.p@go24.test" ||
+		p.sensitivity != "confidential" ||
 		len(p.files) != 2 || len(p.refs) == 0 || p.refs[len(p.refs)-1] != "order-1@buyer.test" {
 		t.Fatalf("boss got %+v", p)
 	}
@@ -214,7 +219,8 @@ func TestComposeSend(t *testing.T) {
 	}
 	sm, err := s.Message(ctx, anna, sent[0].ID)
 	must(err)
-	if sm.BCC != "boss2@buyer.test" || sm.CC != "cc@buyer.test" || !strings.Contains(sm.HTML, "во вложении") || sm.Importance != 1 {
+	if sm.BCC != "boss2@buyer.test" || sm.CC != "cc@buyer.test" || !strings.Contains(sm.HTML, "во вложении") || sm.Importance != 1 ||
+		sm.Sensitivity != "confidential" {
 		t.Fatalf("the sent copy = %+v", sm)
 	}
 	// the answered letter says so («Вы ответили на это письмо …»), here and after a sync with the server's \Answered
@@ -346,14 +352,14 @@ func TestComposeSend(t *testing.T) {
 	if sg, _ := s.MailboxSignatures(ctx, anna, box); sg.New != "" {
 		t.Fatalf("a deleted signature stays the mailbox's: %+v", sg)
 	}
-	if p, _ := s.Prefs(ctx, anna); p.UndoSeconds != 5 {
+	if p, _ := s.Prefs(ctx, anna); p.UndoSeconds != 5 || p.A11yCheck {
 		t.Fatalf("default settings = %+v", p)
 	}
 	if err := s.SavePrefs(ctx, anna, Prefs{UndoSeconds: 11}); err == nil {
 		t.Fatal("11 seconds of undo")
 	}
-	must(s.SavePrefs(ctx, anna, Prefs{UndoSeconds: 0, Font: "Arial", FontSize: "12pt"}))
-	if p, _ := s.Prefs(ctx, anna); p.UndoSeconds != 0 || p.Font != "Arial" {
+	must(s.SavePrefs(ctx, anna, Prefs{UndoSeconds: 0, Font: "Arial", FontSize: "12pt", A11yCheck: true}))
+	if p, _ := s.Prefs(ctx, anna); p.UndoSeconds != 0 || p.Font != "Arial" || !p.A11yCheck {
 		t.Fatalf("settings = %+v", p)
 	}
 

@@ -260,4 +260,39 @@ func TestTaskListMenu(t *testing.T) {
 	if on, _ := ts.Tree(ctx, boss); !on {
 		t.Fatal("the tree is not back on")
 	}
+
+	// «Группировать по проектам» lists: the tasks of a project go together under its header with
+	// their number; a list of one project has no headers
+	_, err = ts.CreateProject(ctx, boss, "LN", "Второй проект", "")
+	must(err)
+	p2, err := ts.ProjectByKey(ctx, boss, "LN")
+	must(err)
+	_, err = ts.CreateTask(ctx, boss, p2, tasks.NewTask{Title: "Из второго", ResponsibleID: anna, Deadline: &soon})
+	must(err)
+	if _, list, _ = do(boss, "GET", "/tasks", nil); strings.Contains(list, "data-group-head=") || !strings.Contains(list, `action="/prefs/byproject"`) {
+		t.Fatal("the list is grouped before the user asked")
+	}
+	if _, _, loc := do(boss, "POST", "/prefs/byproject", url.Values{"on": {"1"}, "back": {"/tasks"}}); loc != "/tasks" {
+		t.Fatalf("«Группировать по проектам» returns to %q", loc)
+	}
+	_, list, _ = do(boss, "GET", "/tasks", nil)
+	h1, h2 := strings.Index(list, `data-group-head="`+p.ID+`"`), strings.Index(list, `data-group-head="`+p2.ID+`"`)
+	if h1 < 0 || h2 < 0 || !strings.Contains(list, `>Второй проект</a> <span class="muted small" title="Задач проекта в списке: 1">1</span>`) ||
+		!strings.Contains(list, `data-group="`+p2.ID+`"`) || !strings.Contains(list, `>Проект</a> <span class="muted small" title="Задач проекта в списке: 14">14</span>`) {
+		t.Fatal("the project headers")
+	}
+	// the tasks of a project are together: «Из второго» (the nearest deadline, with «Бета») is under its own header
+	if x := strings.Index(list, ">Из второго<"); x < h2 || (h1 > h2 && x > h1) || (h1 < h2 && strings.Contains(list[h2:], ">Альфа<")) {
+		t.Fatal("the tasks of a project are not together")
+	}
+	if _, one, _ := do(boss, "GET", "/p/LN", nil); strings.Contains(one, "data-group-head=") {
+		t.Fatal("a list of one project has a header")
+	}
+	if on, _ := ts.ByProject(ctx, anna); on {
+		t.Fatal("another user's list is grouped too")
+	}
+	do(boss, "POST", "/prefs/byproject", url.Values{"on": {"0"}, "back": {"/tasks"}})
+	if _, list, _ = do(boss, "GET", "/tasks", nil); strings.Contains(list, "data-group-head=") {
+		t.Fatal("the grouping is not off")
+	}
 }

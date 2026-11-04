@@ -15,6 +15,10 @@ const (
 	settingRecord = "telephony_record"
 	settingLead   = "telephony_lead"
 	settingText   = "telephony_transcribe"
+	settingSum    = "telephony_summary"
+	settingFill   = "telephony_fill"
+	settingRecall = "telephony_recall"
+	settingDrive  = "telephony_drive"
 )
 
 // LeadAuto tells whether a call from an unknown number makes a lead.
@@ -35,6 +39,49 @@ func (s *Store) SetLeadAuto(ctx context.Context, userID string, on bool) error {
 	return err
 }
 
+// Recalling tells whether a client's missed call plans «Перезвонить» on the CRM card (on unless turned off).
+func (s *Store) Recalling(ctx context.Context) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingRecall).Scan(&on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return on, err
+}
+
+// SetRecalling turns «Перезвонить» for missed calls on or off.
+func (s *Store) SetRecalling(ctx context.Context, userID string, on bool) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		settingRecall, on, userID)
+	return err
+}
+
+// RecordDrive tells whether the recorded conversations go to the company's drive, «Записанные звонки» (on unless
+// turned off.
+func (s *Store) RecordDrive(ctx context.Context) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingDrive).Scan(&on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return on, err
+}
+
+// SetRecordDrive turns the records' copies on the company's drive on or off.
+func (s *Store) SetRecordDrive(ctx context.Context, userID string, on bool) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		settingDrive, on, userID)
+	return err
+}
+
+// SetDriveFile remembers the record's copy on the company's drive.
+func (s *Store) SetDriveFile(ctx context.Context, id, fileID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE telephony_calls SET drive_file = $2::uuid WHERE id::text = $1`, id, fileID)
+	return err
+}
+
 // Transcribing tells whether the records are turned into text by themselves after the call.
 func (s *Store) Transcribing(ctx context.Context) (bool, error) {
 	var on bool
@@ -50,6 +97,55 @@ func (s *Store) SetTranscribing(ctx context.Context, userID string, on bool) err
 	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
 		settingText, on, userID)
+	return err
+}
+
+// Summarizing tells whether the AI sums up a conversation by itself once its record has been turned into text.
+func (s *Store) Summarizing(ctx context.Context) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingSum).Scan(&on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return on, err
+}
+
+// SetSummarizing turns the AI's summaries after the call on or off.
+func (s *Store) SetSummarizing(ctx context.Context, userID string, on bool) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		settingSum, on, userID)
+	return err
+}
+
+// Filling tells whether the AI fills the client's CRM card from a conversation by itself once its record has been
+// turned into text.
+func (s *Store) Filling(ctx context.Context) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(ctx, `SELECT value = 'true'::jsonb FROM company_settings WHERE key = $1`, settingFill).Scan(&on)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return on, err
+}
+
+// SetFilling turns the AI's filling of CRM cards after the call on or off.
+func (s *Store) SetFilling(ctx context.Context, userID string, on bool) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO company_settings (key, value, updated_by) VALUES ($1, to_jsonb($2::boolean), $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		settingFill, on, userID)
+	return err
+}
+
+// SetFilled notes that the AI has filled the client's CRM card from the conversation.
+func (s *Store) SetFilled(ctx context.Context, id string) error {
+	_, err := s.db.Exec(ctx, `UPDATE telephony_calls SET filled_at = now() WHERE id::text = $1`, id)
+	return err
+}
+
+// SetSummary keeps the AI's summary of the conversation.
+func (s *Store) SetSummary(ctx context.Context, id, text string) error {
+	_, err := s.db.Exec(ctx, `UPDATE telephony_calls SET summary = $2 WHERE id::text = $1`, id, text)
 	return err
 }
 
@@ -174,13 +270,19 @@ type Call struct {
 	Answered           *time.Time
 	Seconds            int
 	Status, Record     string
-	Line               string // the external line's number ("" — between employees)
-	Transcript         string // the text of the record ("" — none yet)
-	Rating             int    // the client's rating of the conversation, 1–5 (0 — none)
-	Comment            string // the employee's comment on the call («Карточка звонка»)
-	XFrom, XTo         string // transferred by (an inner number) and to ("" — not transferred)
-	XFromName, XToName string // the employees of those numbers ("" — none)
-	Mobile             string // forwarded to the employee's mobile ("" — not)
+	Line               string     // the external line's number ("" — between employees)
+	Transcript         string     // the text of the record ("" — none yet)
+	Summary            string     // the AI's summary of the conversation ("" — none yet)
+	Filled             *time.Time // when the AI filled the client's CRM card from it (nil — not yet)
+	Score              int        // CoPilot's score of the conversation by a script, % (-1 — not scored)
+	ScoreName          string     // the script's name
+	ScoreText          string     // what was done of the script and what was not, advice
+	Rating             int        // the client's rating of the conversation, 1–5 (0 — none)
+	Comment            string     // the employee's comment on the call («Карточка звонка»)
+	XFrom, XTo         string     // transferred by (an inner number) and to ("" — not transferred)
+	XFromName, XToName string     // the employees of those numbers ("" — none)
+	Mobile             string     // forwarded to the employee's mobile ("" — not)
+	DriveFile          string     // the record's copy on the company's drive, «Записанные звонки» ("" — none)
 	// the client's CRM card the call went to (CRMEntity "" — none)
 	CRMEntity, CRMID, CRMName string
 }
@@ -235,6 +337,7 @@ func (c Call) Duration() string {
 // only the calls with one of these employees on an end (the rights' «dept»); ID — that call only.
 type CallFilter struct {
 	ID, UserID, Kind, Number string
+	Line                     string // the external line's number ("" — any)
 	Users                    []string
 	From, To                 time.Time // started in [From, To); zero — no bound
 	Before                   time.Time // the next page: older than this
@@ -259,8 +362,8 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 	rows, err := s.db.Query(ctx, `SELECT c.id::text, c.from_number, c.to_number,
 			coalesce(c.from_user::text, ''), coalesce(CASE WHEN fu.name <> '' THEN fu.name ELSE fu.email END, ''), coalesce(fu.photo_key, ''),
 			coalesce(c.to_user::text, ''), coalesce(CASE WHEN tu.name <> '' THEN tu.name ELSE tu.email END, ''), coalesce(tu.photo_key, ''),
-			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.rating, c.comment, c.transfer_from, c.transfer_to, c.mobile,
-			`+callWho("c.transfer_from")+`, `+callWho("c.transfer_to")+`, `+callCRM+`
+			c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.summary, c.filled_at, coalesce(c.score, -1), c.score_name, c.score_text, c.rating, c.comment, c.transfer_from, c.transfer_to, c.mobile,
+			coalesce(c.drive_file::text, ''), `+callWho("c.transfer_from")+`, `+callWho("c.transfer_to")+`, `+callCRM+`
 		FROM telephony_calls c LEFT JOIN users fu ON fu.id = c.from_user LEFT JOIN users tu ON tu.id = c.to_user`+callCRMJoin+`
 		WHERE ($1 = '' OR c.from_user::text = $1 OR c.to_user::text = $1)
 		  AND CASE $2
@@ -272,8 +375,8 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 		  AND ($4::timestamptz IS NULL OR c.started_at >= $4) AND ($5::timestamptz IS NULL OR c.started_at < $5)
 		  AND ($6::timestamptz IS NULL OR c.started_at < $6)
 		  AND ($8::text[] IS NULL OR c.from_user::text = ANY($8) OR c.to_user::text = ANY($8))
-		  AND ($9 = '' OR c.id::text = $9)
-		ORDER BY c.started_at DESC, c.id LIMIT $7`, f.UserID, f.Kind, Dialable(f.Number), from, to, before, f.Limit, f.Users, f.ID)
+		  AND ($9 = '' OR c.id::text = $9) AND ($10 = '' OR c.line = $10)
+		ORDER BY c.started_at DESC, c.id LIMIT $7`, f.UserID, f.Kind, Dialable(f.Number), from, to, before, f.Limit, f.Users, f.ID, f.Line)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +384,7 @@ func (s *Store) Calls(ctx context.Context, f CallFilter) ([]Call, error) {
 		var c Call
 		err := r.Scan(&c.ID, &c.From, &c.To, &c.FromUser.UserID, &c.FromUser.Name, &c.FromUser.PhotoKey,
 			&c.ToUser.UserID, &c.ToUser.Name, &c.ToUser.PhotoKey, &c.Started, &c.Answered, &c.Seconds, &c.Status, &c.Record, &c.Line,
-			&c.Transcript, &c.Rating, &c.Comment, &c.XFrom, &c.XTo, &c.Mobile, &c.XFromName, &c.XToName, &c.CRMEntity, &c.CRMID, &c.CRMName)
+			&c.Transcript, &c.Summary, &c.Filled, &c.Score, &c.ScoreName, &c.ScoreText, &c.Rating, &c.Comment, &c.XFrom, &c.XTo, &c.Mobile, &c.DriveFile, &c.XFromName, &c.XToName, &c.CRMEntity, &c.CRMID, &c.CRMName)
 		return c, err
 	})
 }
@@ -296,9 +399,9 @@ func callWho(col string) string {
 func (s *Store) CallByID(ctx context.Context, id string) (Call, error) {
 	var c Call
 	err := s.db.QueryRow(ctx, `SELECT c.id::text, c.from_number, c.to_number, coalesce(c.from_user::text, ''), coalesce(c.to_user::text, ''),
-		c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.comment, `+callCRM+` FROM telephony_calls c`+callCRMJoin+` WHERE c.id::text = $1`, id).
+		c.started_at, c.answered_at, c.seconds, c.status, c.record, c.line, c.transcript, c.summary, c.filled_at, coalesce(c.score, -1), c.score_name, c.score_text, c.comment, coalesce(c.drive_file::text, ''), `+callCRM+` FROM telephony_calls c`+callCRMJoin+` WHERE c.id::text = $1`, id).
 		Scan(&c.ID, &c.From, &c.To, &c.FromUser.UserID, &c.ToUser.UserID, &c.Started, &c.Answered, &c.Seconds, &c.Status, &c.Record, &c.Line,
-			&c.Transcript, &c.Comment, &c.CRMEntity, &c.CRMID, &c.CRMName)
+			&c.Transcript, &c.Summary, &c.Filled, &c.Score, &c.ScoreName, &c.ScoreText, &c.Comment, &c.DriveFile, &c.CRMEntity, &c.CRMID, &c.CRMName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}

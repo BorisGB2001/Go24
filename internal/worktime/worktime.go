@@ -21,10 +21,49 @@ type Schedule struct {
 	LeaveBefore string `json:"leave_before,omitempty"` // a day finished earlier is an early leave
 	MinDuration string `json:"min_duration,omitempty"` // a shorter day (without pauses) is short, "08:00"
 	FreeEdit    bool   `json:"free_edit,omitempty"`    // employees change their days without a manager's approval
+	// «Уведомлять о нарушениях»: the person's manager and/or these people (ids) are told of a violation
+	NotifyHead bool     `json:"notify_head,omitempty"`
+	NotifyTo   []string `json:"notify_to,omitempty"`
 	// «Офисные сети» (the portal timeman): the start and the end of a day remember the address and whether it was
 	// in the office; with OfficeOnly a day is started (or continued) only from an office network
 	Offices    []Office `json:"offices,omitempty"`
 	OfficeOnly bool     `json:"office_only,omitempty"`
+	// «Местоположение» (the portal mobile time tracking): the browser tells where a day is started and finished, if the
+	// employee allows it
+	Geo bool `json:"geo,omitempty"`
+	// «Контроль времени» (the portal timeman.timecontrol): no activity in go24 for IdleMinutes and more during a
+	// running day is an absence; with IdleAsk the person is asked where they were. TimeControlSince is when it was
+	// switched on: the time before it is not counted.
+	TimeControl      bool       `json:"time_control,omitempty"`
+	IdleMinutes      int        `json:"idle_minutes,omitempty"`
+	IdleAsk          bool       `json:"idle_ask,omitempty"`
+	TimeControlSince *time.Time `json:"time_control_since,omitempty"`
+}
+
+// DefaultIdleMinutes is the shortest absence counted when none is set.
+const DefaultIdleMinutes = 15
+
+// SetTimeControl switches «Контроль времени» on (with the minutes and asking the reason) or off; switched on now, it
+// counts from now, else since it was switched on in old.
+func (s *Schedule) SetTimeControl(old Schedule, on, ask bool, minutes int, now time.Time) {
+	s.TimeControl, s.IdleAsk, s.IdleMinutes, s.TimeControlSince = on, ask, minutes, nil
+	if !on {
+		s.IdleAsk, s.IdleMinutes = false, 0
+		return
+	}
+	if old.TimeControl && old.TimeControlSince != nil {
+		s.TimeControlSince = old.TimeControlSince
+	} else {
+		s.TimeControlSince = &now
+	}
+}
+
+// IdleAfter is the shortest absence «Контроль времени» counts.
+func (s Schedule) IdleAfter() time.Duration {
+	if s.IdleMinutes <= 0 {
+		return DefaultIdleMinutes * time.Minute
+	}
+	return time.Duration(s.IdleMinutes) * time.Minute
 }
 
 // Office is an office network: an address or a subnet (CIDR) with its name.
@@ -145,6 +184,16 @@ func (s *Schedule) Validate() error {
 	if s.OfficeOnly && len(s.Offices) == 0 {
 		return fmt.Errorf("office only without offices")
 	}
+	var to []string
+	for _, id := range s.NotifyTo {
+		if id = strings.TrimSpace(id); id != "" && !slices.Contains(to, id) {
+			to = append(to, id)
+		}
+	}
+	s.NotifyTo = to
+	if s.IdleMinutes != 0 && (s.IdleMinutes < 5 || s.IdleMinutes > 480) {
+		return fmt.Errorf("idle minutes %d", s.IdleMinutes)
+	}
 	var hs []string
 	for _, h := range s.Holidays {
 		h = strings.TrimSpace(h)
@@ -244,4 +293,59 @@ func (s Schedule) AdjustDay(t *time.Time) *time.Time {
 	}
 	d := s.Day(*t)
 	return &d
+}
+
+// NextWorking is t itself when it is in working time, else the start of the next working hours.
+func (s Schedule) NextWorking(t time.Time) time.Time {
+	start, err := clock(s.Start)
+	end, err2 := clock(s.End)
+	if err != nil || err2 != nil || start >= end {
+		return t
+	}
+	for i := 0; i < 400; i++ {
+		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+		from, till := day.Add(time.Duration(start)*time.Minute), day.Add(time.Duration(end)*time.Minute)
+		if s.WorkingDay(day) && t.Before(till) {
+			if t.Before(from) {
+				return from
+			}
+			return t
+		}
+		t = day.AddDate(0, 0, 1)
+	}
+	return t
+}
+
+// AddWorking is the moment d of working time after t pause «Учитывать рабочее время»: the hours out of
+// the working day, weekends and holidays are not counted.
+func (s Schedule) AddWorking(t time.Time, d time.Duration) time.Time {
+	start, err := clock(s.Start)
+	end, err2 := clock(s.End)
+	if err != nil || err2 != nil || start >= end {
+		return t.Add(d)
+	}
+	t = s.NextWorking(t)
+	for i := 0; i < 5000 && d > 0; i++ {
+		till := time.Date(t.Year(), t.Month(), t.Day(), end/60, end%60, 0, 0, t.Location())
+		if left := till.Sub(t); d <= left {
+			return t.Add(d)
+		} else {
+			d -= left
+		}
+		t = s.NextWorking(till)
+	}
+	return t
+}
+
+// AddWorkingDays is n working days after t at the same time (t out of working time — from the next working hours'
+// start): «1 день» of a pause with «Учитывать рабочее время» is a working day.
+func (s Schedule) AddWorkingDays(t time.Time, n int) time.Time {
+	t = s.NextWorking(t)
+	for i := 0; i < 5000 && n > 0; i++ {
+		t = t.AddDate(0, 0, 1)
+		if s.WorkingDay(t) {
+			n--
+		}
+	}
+	return t
 }

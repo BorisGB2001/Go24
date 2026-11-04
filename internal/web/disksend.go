@@ -43,8 +43,9 @@ func (s *Server) diskChats(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	writeJSON(w, http.StatusOK, out)
 }
 
-// sendToChat posts a file the person can read into the chat under their name, as a file sent from the chat itself.
-func (s *Server) sendToChat(r *http.Request, sess auth.Session, id, room string) (matrixsync.Message, error) {
+// sendToChat posts a file the person can read into the chat (into a thread of it, with root) under their name, as a
+// file sent from the chat itself.
+func (s *Server) sendToChat(r *http.Request, sess auth.Session, id, room, root string) (matrixsync.Message, error) {
 	if room == "" {
 		return matrixsync.Message{}, i18n.E("err.disk_send_room")
 	}
@@ -61,11 +62,11 @@ func (s *Server) sendToChat(r *http.Request, sess auth.Session, id, room string)
 	if err := s.needMatrix(); err != nil {
 		return matrixsync.Message{}, err
 	}
-	return s.fileToChat(r, sess, m, room)
+	return s.fileToChat(r, sess, m, room, root)
 }
 
 // fileToChat sends the stored file's bytes into the chat.
-func (s *Server) fileToChat(r *http.Request, sess auth.Session, m storages.FileMeta, room string) (matrixsync.Message, error) {
+func (s *Server) fileToChat(r *http.Request, sess auth.Session, m storages.FileMeta, room, root string) (matrixsync.Message, error) {
 	var src io.Reader = bytes.NewReader(nil)
 	if m.Size > 0 {
 		obj, err := s.Storages.Open(r.Context(), m.StorageID, m.Key)
@@ -75,7 +76,7 @@ func (s *Server) fileToChat(r *http.Request, sess auth.Session, m storages.FileM
 		defer obj.Close()
 		src = obj
 	}
-	return s.Matrix.SendFile(r.Context(), sess.UserID, room, "", m.Name, m.ContentType, src, m.Size, nil)
+	return s.Matrix.SendFile(r.Context(), sess.UserID, room, root, m.Name, m.ContentType, src, m.Size, nil)
 }
 
 // diskSend is «Отправить в чат» of the page: POST room=…; the answer names the chat to open.
@@ -85,7 +86,7 @@ func (s *Server) diskSend(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		return
 	}
 	room := r.FormValue("room")
-	if _, err := s.sendToChat(r, sess, r.PathValue("id"), room); err != nil {
+	if _, err := s.sendToChat(r, sess, r.PathValue("id"), room, ""); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}
@@ -102,7 +103,7 @@ func (s *Server) apiDiskSend(w http.ResponseWriter, r *http.Request, p apikeys.P
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	m, err := s.sendToChat(r, auth.Session{UserID: p.UserID}, r.PathValue("id"), in.Room)
+	m, err := s.sendToChat(r, auth.Session{UserID: p.UserID}, r.PathValue("id"), in.Room, "")
 	if err != nil {
 		return err
 	}

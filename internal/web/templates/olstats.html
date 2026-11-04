@@ -10,6 +10,17 @@
   {{if $d.Users}}<select name="operator" data-autosubmit style="width:auto"><option value="">{{t "ol.stats_all_operators"}}</option>
     {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.OperatorID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
   {{else}}<span class="small muted">{{t "ol.stats_own"}}</span>{{end}}
+  {{if eq $d.By "dialogs"}}{{$df := $d.DF}}{{with $df.Sort}}<input type="hidden" name="sort" value="{{.}}">{{end}}
+  <select name="status" data-autosubmit style="width:auto"><option value="">{{t "ol.stats_any_status"}}</option>
+    <option value="open" {{if eq $df.Status "open"}}selected{{end}}>{{t "ol.open"}}</option>
+    <option value="closed" {{if eq $df.Status "closed"}}selected{{end}}>{{t "ol.closed"}}</option>
+    <option value="noanswer" {{if eq $df.Status "noanswer"}}selected{{end}}>{{t "ol.tab_noanswer"}}</option>
+    <option value="spam" {{if eq $df.Status "spam"}}selected{{end}}>{{t "ol.spam"}}</option></select>
+  <select name="channel" data-autosubmit style="width:auto"><option value="">{{t "ol.stats_all_channels"}}</option>
+    {{range $d.Channels}}<option value="{{index . 0}}" {{if eq (index . 0) $df.Channel}}selected{{end}}>{{index . 1}}</option>{{end}}</select>
+  <select name="vote" data-autosubmit style="width:auto"><option value="">{{t "ol.stats_any_vote"}}</option>
+    <option value="up" {{if eq $df.Vote "up"}}selected{{end}}>👍</option><option value="down" {{if eq $df.Vote "down"}}selected{{end}}>👎</option>
+    <option value="none" {{if eq $df.Vote "none"}}selected{{end}}>{{t "ol.stats_vote_none"}}</option></select>{{end}}
   <noscript><button>{{t "crm.find"}}</button></noscript>
 </form>
 <div class="crmkpi">
@@ -23,7 +34,29 @@
   {{if $t.Spam}}<div class="card"><div class="muted small">{{t "ol.stats_spam"}}</div><b>{{$t.Spam}}</b></div>{{end}}
 </div>
 <div class="tabs">{{range $d.BySet}}<a href="{{index $d.ByLinks .}}" {{if eq . $d.By}}class="on"{{end}}>{{t (print "ol.stats_by_" .)}}</a>{{end}}</div>
-<div class="card flush"><div class="tablewrap"><table class="tlist olstats">
+{{if eq $d.By "dialogs"}}{{$so := $d.Sorts}}{{$cur := $d.DF.Sort}}
+{{if $d.More}}<p class="small muted">{{t "ol.stats_more" $d.Limit}}</p>{{end}}
+<div class="card flush"><div class="tablewrap"><table class="tlist olstats oldetail">
+  <thead><tr><th class="right"><a href="{{index $so "num"}}">{{t "ol.stats_num"}}{{if eq $cur "num"}} ↑{{else if eq $cur "-num"}} ↓{{end}}</a></th>
+    <th><a href="{{index $so "started"}}">{{t "ol.stats_started"}}{{if eq $cur "started"}} ↑{{else if eq $cur "-started"}} ↓{{end}}</a></th>
+    <th>{{t "ol.stats_line"}}</th><th>{{t "ol.stats_channel"}}</th><th>{{t "ol.stats_client"}}</th><th>{{t "ol.operator"}}</th><th>{{t "ol.stats_status"}}</th>
+    <th class="right"><a href="{{index $so "answer"}}">{{t "ol.stats_d_answer"}}{{if eq $cur "answer"}} ↑{{else if eq $cur "-answer"}} ↓{{end}}</a></th>
+    <th class="right"><a href="{{index $so "close"}}">{{t "ol.stats_d_close"}}{{if eq $cur "close"}} ↑{{else if eq $cur "-close"}} ↓{{end}}</a></th>
+    <th class="right"><a href="{{index $so "messages"}}">{{t "ol.stats_msgs"}}{{if eq $cur "messages"}} ↑{{else if eq $cur "-messages"}} ↓{{end}}</a></th>
+    <th>{{t "ol.stats_vote"}}</th><th>{{t "ol.stats_crm"}}</th></tr></thead>
+  <tbody>{{range $d.Detail}}<tr>
+    <td class="right"><a href="/openlines?s={{.ID}}">{{.Num}}</a></td><td class="nowrap">{{datetime .Started}}</td><td>{{.Line}}</td>
+    <td>{{index $d.ChannelNames .Channel}}</td>
+    <td><a href="/openlines?s={{.ID}}">{{.Client}}</a>{{with .Phone}}<div class="small muted">{{.}}</div>{{end}}{{with .Email}}<div class="small muted">{{.}}</div>{{end}}</td>
+    <td>{{if .Operator}}{{.Operator}}{{else}}<span class="muted">{{t "ol.stats_nobody"}}</span>{{end}}</td>
+    <td>{{if .Spam}}<span class="pill">{{t "ol.spam_mark"}}</span>{{else}}{{t (print "ol.past_" .Status)}}{{end}}{{if .KPILate}} <span class="pill ol-kpi" title="{{t "ol.kpi_late_hint" .KPILate}}">{{t "ol.kpi_late"}}</span>{{end}}{{with .Closed}}<div class="small muted nowrap">{{datetime .}}</div>{{end}}</td>
+    <td class="right nowrap">{{if .FirstAnswer}}{{durs .FirstAnswer}}{{else}}—{{end}}</td><td class="right nowrap">{{if .ToClose}}{{durs .ToClose}}{{else}}—{{end}}</td>
+    <td class="right">{{.Messages}}</td>
+    <td class="nowrap">{{if gt .Vote 0}}👍{{else if lt .Vote 0}}👎{{end}}{{if .HeadVote}} <span title="{{t "ol.stats_head_vote"}}">{{if gt .HeadVote 0}}👍{{else}}👎{{end}}</span>{{end}}</td>
+    <td>{{if .LeadID}}<a href="/crm/leads/{{.LeadID}}">{{t "mail.open_lead"}}</a>{{else if .ContactID}}<a href="/crm/contacts/{{.ContactID}}">{{t "ol.open_contact"}}</a>{{end}}</td></tr>
+  {{else}}<tr><td colspan="12" class="empty">{{t "ol.stats_none"}}</td></tr>{{end}}</tbody>
+</table></div></div>
+{{else}}<div class="card flush"><div class="tablewrap"><table class="tlist olstats">
   <thead><tr><th>{{if eq $d.By "days"}}{{t "ol.stats_day"}}{{else if eq $d.By "lines"}}{{t "ol.stats_line"}}{{else}}{{t "ol.operator"}}{{end}}</th>
     <th class="right">{{t "ol.stats_new"}}</th><th class="right">{{t "ol.stats_closed"}}</th><th class="right">{{t "ol.stats_noanswer"}}</th>
     <th class="right">{{t "ol.stats_kpi"}}</th><th class="right">{{t "ol.stats_answer"}}</th><th class="right">{{t "ol.stats_close"}}</th><th class="right">👍</th><th class="right">👎</th><th class="right">{{t "ol.stats_spam"}}</th></tr></thead>
@@ -36,6 +69,6 @@
   <tfoot><tr><th>{{t "stock.total"}}</th><th class="right">{{$t.New}}</th><th class="right">{{$t.Closed}}</th><th class="right">{{$t.NoAnswer}}</th><th class="right">{{$t.KPI}}</th>
     <th class="right nowrap">{{if $t.FirstAnswer}}{{durs $t.FirstAnswer}}{{else}}—{{end}}</th><th class="right nowrap">{{if $t.ToClose}}{{durs $t.ToClose}}{{else}}—{{end}}</th>
     <th class="right">{{$t.Up}}</th><th class="right">{{$t.Down}}</th><th class="right">{{$t.Spam}}</th></tr></tfoot>
-</table></div></div>
+</table></div></div>{{end}}
 <script src="{{asset "js/stock.js"}}"></script>
 {{end}}

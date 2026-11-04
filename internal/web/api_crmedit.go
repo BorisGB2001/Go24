@@ -61,14 +61,26 @@ func mainComm(list []crm.Comm, value string) []crm.Comm {
 // PATCH /api/v1/crm/{kind}/{id} — changes only the fields given (as POST /api/v1/crm/{kind}); "stage_id" moves a deal or
 // a lead to that stage, "phone" and "email" replace the main phone and e-mail.
 func (s *Server) apiCRMUpdate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 1<<20))
+	if err != nil {
+		return i18n.E("err.bad_json", err.Error())
+	}
+	if err := s.crmUpdate(r, p, body); err != nil {
+		return err
+	}
+	item, err := s.apiCRMItem(r, p, "read")
+	if err != nil {
+		return err
+	}
+	return s.writeCRMCard(w, r, http.StatusOK, item)
+}
+
+// crmUpdate changes the request's card by the fields of body, a JSON of apiCRMInput (REST of go24 and).
+func (s *Server) crmUpdate(r *http.Request, p apikeys.Principal, body []byte) error {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	item, err := s.apiCRMItem(r, p, "write")
 	if err != nil {
 		return err
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 1<<20))
-	if err != nil {
-		return i18n.E("err.bad_json", err.Error())
 	}
 	var given map[string]json.RawMessage
 	if err := json.Unmarshal(body, &given); err != nil {
@@ -110,8 +122,13 @@ func (s *Server) apiCRMUpdate(w http.ResponseWriter, r *http.Request, p apikeys.
 		for _, c := range in.ContactIDs {
 			d.Contacts = append(d.Contacts, crm.Ref{ID: c})
 		}
-		if _, err = s.CRM.SaveDeal(r.Context(), p.UserID, d); err == nil && in.StageID != x.Stage.ID {
-			_, err = s.CRM.MoveDeal(r.Context(), p.UserID, id, in.StageID)
+		if in.StageID != x.Stage.ID {
+			err = s.CRM.CheckMove(r.Context(), p.UserID, id, in.StageID)
+		}
+		if err == nil {
+			if _, err = s.CRM.SaveDeal(r.Context(), p.UserID, d); err == nil && in.StageID != x.Stage.ID {
+				_, err = s.CRM.MoveDeal(r.Context(), p.UserID, id, in.StageID)
+			}
 		}
 		if _, ok := given["parent_ids"]; ok && err == nil {
 			for _, pid := range in.ParentIDs {
@@ -143,17 +160,23 @@ func (s *Server) apiCRMUpdate(w http.ResponseWriter, r *http.Request, p apikeys.
 	if err == nil && in.UTM != nil && (kind == "deals" || kind == "leads") {
 		err = s.setUTM(r.Context(), crmEntities[kind], id, in.UTM.utm())
 	}
-	if err != nil {
-		return err
+	if err == nil {
+		err = s.CRM.CheckInfoRequests(r.Context(), p.UserID, crmEntities[kind], id) // «Запросить дополнительную информацию»
 	}
-	if item, err = s.apiCRMItem(r, p, "read"); err != nil {
-		return err
-	}
-	return s.writeCRMCard(w, r, http.StatusOK, item)
+	return err
 }
 
 // DELETE /api/v1/crm/{kind}/{id} — the card goes to the CRM's recycle bin (it is restored from there).
 func (s *Server) apiCRMDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if err := s.crmTrash(r, p); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// crmTrash moves the request's card to the recycle bin.
+func (s *Server) crmTrash(r *http.Request, p apikeys.Principal) error {
 	if _, err := s.apiCRMItem(r, p, "read"); err != nil {
 		return err
 	}
@@ -169,9 +192,5 @@ func (s *Server) apiCRMDelete(w http.ResponseWriter, r *http.Request, p apikeys.
 	case "company":
 		err = s.CRM.DeleteCompany(ctx, p.UserID, id)
 	}
-	if err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	return err
 }

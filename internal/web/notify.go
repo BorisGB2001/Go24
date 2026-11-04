@@ -2,16 +2,20 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"go24/internal/auth"
+	"go24/internal/i18n"
 	"go24/internal/notify"
 	"go24/internal/notifyout"
 	"go24/internal/tasks"
@@ -27,20 +31,132 @@ func (s *Server) notifyHTML(r *http.Request, name string, data any) (string, err
 	return buf.String(), err
 }
 
-// notifications is the full list (/notifications).
+// notifications is the full list (/notifications) with the search and filter: words, section, author,
+// period, unread only.
 func (s *Server) notifications(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	items, err := s.Notify.List(r.Context(), sess.UserID, before, notifyPage)
+	q := r.URL.Query()
+	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
+	f := notifyFilter(q)
+	items, err := s.Notify.Search(r.Context(), sess.UserID, f, before, notifyPage)
 	if err != nil {
 		s.taskErr(w, r, err, "/my")
 		return
 	}
 	more := ""
 	if len(items) == notifyPage {
-		more = strconv.FormatInt(items[len(items)-1].ID, 10)
+		q.Set("before", strconv.FormatInt(items[len(items)-1].ID, 10))
+		more = q.Encode()
+	}
+	actors, err := s.Notify.Actors(r.Context(), sess.UserID)
+	if err != nil {
+		s.Log.Error("notify actors", "err", err)
+	}
+	groups := make([]string, 0, len(notify.Kinds))
+	for _, g := range notify.Kinds {
+		groups = append(groups, g.Group)
 	}
 	s.render(w, r, "notifications", page{TitleKey: "notify.title", Nav: "notifications",
-		Data: map[string]any{"Items": items, "More": more}})
+		Data: map[string]any{"Items": items, "More": more, "Filter": f, "Groups": groups, "Actors": actors,
+			"From": q.Get("from"), "To": q.Get("to")}})
+}
+
+// notifyFilter reads the filter of the list (or of the REST list) from the query: q, group, author, from, to
+// (YYYY-MM-DD, local days), unread=1.
+func notifyFilter(q url.Values) notify.Filter {
+	f := notify.Filter{Q: strings.TrimSpace(q.Get("q")), Group: q.Get("group"), ActorID: q.Get("author"), Unread: q.Get("unread") == "1"}
+	if t, err := time.ParseInLocation("2006-01-02", q.Get("from"), time.Local); err == nil {
+		f.From = t
+	}
+	if t, err := time.ParseInLocation("2006-01-02", q.Get("to"), time.Local); err == nil {
+		f.To = t
+	}
+	return f
+}
+
+// notifyDelete removes one notification (✕ in the list and the bell); answers the unread count.
+func (s *Server) notifyDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err := s.Notify.Delete(r.Context(), sess.UserID, id); err != nil && !errors.Is(err, notify.ErrNotFound) {
+		s.jsonErr(w, r, err)
+		return
+	}
+	if !wantsJSON(r) {
+		http.Redirect(w, r, "/notifications", http.StatusSeeOther)
+		return
+	}
+	n, _ := s.Notify.Unread(r.Context(), sess.UserID)
+	writeJSON(w, http.StatusOK, map[string]any{"unread": n})
+}
+
+// answerNotify answers a confirming notification (see notify.Item.Answers) as its card would — the meeting's «Приду»,
+// the project's invitation, the group's request — and reads it. It returns the notification as it is now.
+func (s *Server) answerNotify(ctx context.Context, userID, id, answer string, can func(scope string) bool) (notify.Item, error) {
+	it, err := s.Notify.Get(ctx, userID, id)
+	if errors.Is(err, notify.ErrNotFound) {
+		return it, tasks.ErrNotFound
+	}
+	if err != nil {
+		return it, err
+	}
+	if !slices.Contains(it.Answers(), answer) {
+		return it, i18n.E("err.bad_form")
+	}
+	switch it.Kind {
+	case "event":
+		if !can("calendar:write") {
+			return it, i18n.E("err.api_no_scope", "calendar:write")
+		}
+		err = s.Calendar.Respond(ctx, userID, it.EventID, answer)
+	case "project_invite":
+		if !can("projects:write") {
+			return it, i18n.E("err.api_no_scope", "projects:write")
+		}
+		err = s.Tasks.AnswerInvite(ctx, userID, it.ProjectKey, answer == "accept")
+	case "group_join_request":
+		if !can("projects:write") {
+			return it, i18n.E("err.api_no_scope", "projects:write")
+		}
+		var p tasks.Project
+		if p, err = s.Tasks.ProjectByKey(ctx, userID, it.ProjectKey); err == nil {
+			err = s.Tasks.AnswerJoinRequest(ctx, p, userID, it.ActorID, answer == "accept")
+		}
+	}
+	if err != nil {
+		return it, err
+	}
+	if answer == "accept" {
+		s.Matrix.Wake() // the new member joins the project's chat
+	}
+	if err := s.Notify.MarkRead(ctx, userID, it.ID); err != nil {
+		return it, err
+	}
+	return s.Notify.Get(ctx, userID, id)
+}
+
+// notifyAnswer: a button of a confirming notification in the bell or the list; answers the item re-rendered and the
+// unread count.
+func (s *Server) notifyAnswer(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	it, err := s.answerNotify(r.Context(), sess.UserID, r.PathValue("id"), r.FormValue("answer"), func(string) bool { return true })
+	if err != nil {
+		if !wantsJSON(r) {
+			s.taskErr(w, r, err, "/notifications")
+			return
+		}
+		s.jsonErr(w, r, err)
+		return
+	}
+	s.Log.Info("notification answer", "user_id", sess.UserID, "id", it.ID, "kind", it.Kind, "answer", r.FormValue("answer"))
+	if !wantsJSON(r) {
+		http.Redirect(w, r, "/notifications", http.StatusSeeOther)
+		return
+	}
+	html, err := s.notifyHTML(r, "nitem", it)
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	n, _ := s.Notify.Unread(r.Context(), sess.UserID)
+	writeJSON(w, http.StatusOK, map[string]any{"html": html, "unread": n})
 }
 
 // notifyPop is the bell pop-up: the newest notifications as HTML plus the unread count.
@@ -257,12 +373,14 @@ func (s *Server) notifySettings(w http.ResponseWriter, r *http.Request, sess aut
 			return
 		}
 		var linked []notifyout.Link
+		chats := false // a linked chat takes chat messages: their row is shown
 		for _, l := range links {
 			if l.Linked {
 				linked = append(linked, l)
+				chats = chats || l.Chats
 			}
 		}
-		data["Links"], data["Linked"] = links, linked
+		data["Links"], data["Linked"], data["Chats"] = links, linked, chats
 	}
 	s.render(w, r, "notify_settings", page{TitleKey: "notify.settings", Nav: "notify_settings", Data: data})
 }
@@ -294,6 +412,52 @@ func (s *Server) notifyUnlink(w http.ResponseWriter, r *http.Request, sess auth.
 	http.Redirect(w, r, "/settings/notifications?msg="+url.QueryEscape(s.tr(r, "notifyout.unlinked")), http.StatusSeeOther)
 }
 
+// notifyPushDevice: POST /settings/notifications/push/devices — this browser's push subscription (endpoint, p256dh,
+// auth, label) becomes the person's device; JSON {ok} or {error}.
+func (s *Server) notifyPushDevice(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if s.NotifyOut == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var sub notifyout.PushSub
+	sub.Endpoint, sub.Keys.P256dh, sub.Keys.Auth = r.FormValue("endpoint"), r.FormValue("p256dh"), r.FormValue("auth")
+	if err := s.NotifyOut.AddDevice(r.Context(), sess.UserID, sub, r.FormValue("label")); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// notifyPushRemove: POST /settings/notifications/push/devices/{id}/remove — push no more on that device.
+func (s *Server) notifyPushRemove(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if s.NotifyOut == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.NotifyOut.RemoveDevice(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
+		s.taskErr(w, r, err, "/settings/notifications")
+		return
+	}
+	http.Redirect(w, r, "/settings/notifications?msg="+url.QueryEscape(s.tr(r, "notifyout.push_removed"))+"#ch-push", http.StatusSeeOther)
+}
+
+// notifyPushTest: POST /settings/notifications/push/test — a trial notification to all the person's devices.
+func (s *Server) notifyPushTest(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if s.NotifyOut == nil {
+		http.NotFound(w, r)
+		return
+	}
+	n, err := s.NotifyOut.TestPush(r.Context(), sess.UserID, notifyout.Message{Text: s.tr(r, "notifyout.push_test_text"),
+		Link: s.NotifyOut.AppURL + "/settings/notifications"})
+	msg := s.tr(r, "notifyout.push_test_sent", n)
+	if errors.Is(err, notifyout.ErrGone) {
+		msg = s.tr(r, "notifyout.push_test_gone") // the push services forgot every device: the list is empty now
+	} else if err != nil {
+		msg = s.tr(r, "notifyout.push_test_failed")
+	}
+	http.Redirect(w, r, "/settings/notifications?msg="+url.QueryEscape(msg)+"#ch-push", http.StatusSeeOther)
+}
+
 // notifyBots: «Уведомления в мессенджерах» of the settings (administrators) — the company's bot of each messenger.
 func (s *Server) notifyBots(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
@@ -311,11 +475,15 @@ func (s *Server) notifyBots(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	type bot struct {
 		notifyout.Bot
-		NeedsServer bool
+		NeedsServer, Keyed bool
+		Hook, Verify       string // a messenger the administrators give go24's address themselves (WhatsApp)
 	}
 	var list []bot
 	for _, b := range bots {
-		list = append(list, bot{b, s.NotifyOut.Channel(b.Channel).NeedsServer()})
+		c := s.NotifyOut.Channel(b.Channel)
+		_, keyed := c.(notifyout.Keyed)
+		hook, verify := s.NotifyOut.HookSetup(b)
+		list = append(list, bot{b, c.NeedsServer(), keyed, hook, verify})
 	}
 	s.render(w, r, "notify_bots", page{TitleKey: "notifyout.bots", Nav: "notify_bots", Data: map[string]any{"Bots": list}})
 }
@@ -337,4 +505,57 @@ func (s *Server) notifyBotSave(w http.ResponseWriter, r *http.Request, sess auth
 		return
 	}
 	http.Redirect(w, r, "/settings/notify-bots?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#bot-"+url.PathEscape(ch), http.StatusSeeOther)
+}
+
+// notifyChallenge answers a messenger's check of go24's address (notifyout.Challenged).
+func (s *Server) notifyChallenge(w http.ResponseWriter, r *http.Request) {
+	if s.NotifyOut == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.NotifyOut.Channel(r.PathValue("channel")).(notifyout.Challenged); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	answer, err := s.NotifyOut.Challenge(r.Context(), r.PathValue("channel"), r.URL.Query())
+	if errors.Is(err, notifyout.ErrHookSign) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		s.fail(w, "notify challenge", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, answer)
+}
+
+// notifyHook takes a call of a messenger that calls go24 itself (notifyout.Hooked): the messages to the company's bot.
+func (s *Server) notifyHook(w http.ResponseWriter, r *http.Request) {
+	if s.NotifyOut == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.NotifyOut.Channel(r.PathValue("channel")).(notifyout.Hooked); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reply, err := s.NotifyOut.Hook(r.Context(), r.PathValue("channel"), r.Header, body)
+	if errors.Is(err, notifyout.ErrHookSign) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		s.fail(w, "notify hook", err) // the messenger calls again
+		return
+	}
+	if reply != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(reply)
+	}
 }

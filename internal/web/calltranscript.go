@@ -59,7 +59,7 @@ func (s *Server) transcribeNext(ctx context.Context) bool {
 		return false
 	}
 	lang := s.portalLang()
-	name, id, err := s.transcribeRecording(ctx, rec, fileID)
+	name, id, text, silent, err := s.transcribeRecording(ctx, rec, fileID)
 	if err != nil {
 		s.Log.Error("call transcript", "recording", rec.ID, "try", tries, "err", err)
 		if tries < calls.TranscriptTries {
@@ -76,32 +76,35 @@ func (s *Server) transcribeNext(ctx context.Context) bool {
 		return false
 	}
 	s.Log.Info("call transcript saved", "recording", rec.ID, "file", id)
-	text := s.I18n.T(lang, "call.transcript_saved", name, s.BaseURL+"/files/"+id)
+	told := s.I18n.T(lang, "call.transcript_saved", name, s.BaseURL+"/files/"+id)
 	if f, size, err := s.storedFile(ctx, id); err == nil {
-		s.tellCall(ctx, rec, text, name, &chatFile{f: f, size: size, ctype: "text/plain"})
+		s.tellCall(ctx, rec, told, name, &chatFile{f: f, size: size, ctype: "text/plain"})
 		f.Close()
 		_ = os.Remove(f.Name())
 	} else {
-		s.tellCall(ctx, rec, text, name, nil)
+		s.tellCall(ctx, rec, told, name, nil)
+	}
+	if !silent && s.summaryOn(ctx) {
+		s.summarizeMeeting(ctx, rec, fileID, text)
 	}
 	return true
 }
 
 // transcribeRecording has Whisper make the text of the recording on the Drive and puts it beside it: the name and id of
-// the new file.
-func (s *Server) transcribeRecording(ctx context.Context, rec calls.Recording, fileID string) (string, string, error) {
+// the new file, its text; silent — nothing was heard.
+func (s *Server) transcribeRecording(ctx context.Context, rec calls.Recording, fileID string) (name, id, text string, silent bool, err error) {
 	m, err := s.Storages.FileMeta(ctx, fileID)
 	if err != nil {
-		return "", "", err
+		return "", "", "", false, err
 	}
 	obj, err := s.Storages.Open(ctx, m.StorageID, m.Key)
 	if err != nil {
-		return "", "", err
+		return "", "", "", false, err
 	}
 	defer obj.Close()
 	sound, soundName, done, err := soundOf(ctx, obj, m.Name, rec.Audio)
 	if err != nil {
-		return "", "", err
+		return "", "", "", false, err
 	}
 	defer done()
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Hour) // a long meeting on Whisper's CPU
@@ -111,11 +114,17 @@ func (s *Server) transcribeRecording(ctx context.Context, rec calls.Recording, f
 	long := &speech.Client{Base: s.Speech.Base, HTTP: &http.Client{}}
 	segs, err := long.Segments(ctx, soundName, sound, code)
 	if err != nil {
-		return "", "", err
+		return "", "", "", false, err
 	}
-	text := transcriptText(s.I18n.T(lang, "call.transcript_head", rec.Title, rec.Started.Local().Format(s.I18n.T(lang, "format.datetime"))),
+	text = transcriptText(s.I18n.T(lang, "call.transcript_head", rec.Title, rec.Started.Local().Format(s.I18n.T(lang, "format.datetime"))),
 		segs, s.I18n.T(lang, "im.voice_silent"))
+	name, id, err = s.textBeside(ctx, rec, m, s.I18n.T(lang, "call.transcript_file"), text)
+	return name, id, text, len(segs) == 0, err
+}
 
+// textBeside puts a text file about the recording (its transcript, the summary of the meeting) beside it in «Записи
+// звонков» of the one who started it, among the task's files for a call of a task: its name and id.
+func (s *Server) textBeside(ctx context.Context, rec calls.Recording, m storages.FileMeta, what, text string) (string, string, error) {
 	d, err := s.Drive.Open(ctx, rec.StartedBy, "my")
 	if err != nil {
 		return "", "", err
@@ -123,12 +132,12 @@ func (s *Server) transcribeRecording(ctx context.Context, rec calls.Recording, f
 	if err := s.Drive.Fits(ctx, d, int64(len(text))); err != nil {
 		return "", "", err
 	}
-	folder, err := s.recordFolder(ctx, rec.StartedBy, d, s.I18n.T(lang, "call.record_folder"))
+	folder, err := s.recordFolder(ctx, rec.StartedBy, d, s.portalTr("call.record_folder"))
 	if err != nil {
 		return "", "", err
 	}
-	name := strings.TrimSuffix(m.Name, path.Ext(m.Name)) + " — " + s.I18n.T(lang, "call.transcript_file") + ".txt"
-	key := path.Join("go24", time.Now().Format("2006/01"), randomHex(16), "transcript.txt")
+	name := strings.TrimSuffix(m.Name, path.Ext(m.Name)) + " — " + what + ".txt"
+	key := path.Join("go24", time.Now().Format("2006/01"), randomHex(16), "call.txt")
 	if err := s.Storages.Put(ctx, rec.StartedBy, false, "", key, strings.NewReader(text), int64(len(text)), "text/plain; charset=utf-8"); err != nil {
 		return "", "", err
 	}

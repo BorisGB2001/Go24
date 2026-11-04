@@ -35,11 +35,18 @@ var CardFields = map[string][]string{
 
 // checkCardStep checks what a step of these kinds needs; entity is the template's card.
 func checkCardStep(entity string, st Step) error {
-	if st.Kind != "update" && st.Kind != "create" && st.Kind != "start" && st.Kind != "document" && len(st.Sets) > 0 || st.Kind != "create" && st.Entity != "" ||
-		st.Kind != "chat" && st.Kind != "mail" && st.Kind != "post" && st.Kind != "comment" && st.Kind != "document" && st.From != "" || st.Kind != "mail" && st.Email != "" ||
+	if st.Kind != "update" && st.Kind != "create" && st.Kind != "start" && st.Kind != "document" && st.Kind != "listadd" && st.Kind != "listupdate" && st.Kind != "app" && st.Kind != "crmcopy" && st.Kind != "crmupdate" && len(st.Sets) > 0 ||
+		st.Kind != "create" && st.Kind != "crmupdate" && st.Kind != "crmread" && st.Kind != "crmdelete" && st.Kind != "crmobservers" && st.Kind != "crmclose" && st.Kind != "crmresponsible" && st.Kind != "crmproduct" && st.Entity != "" ||
+		st.Kind != "create" && st.Type != "" ||
+		st.Kind != "crmproduct" && st.Product+st.Price+st.Quantity+st.Discount != "" || len([]rune(st.Price+st.Quantity+st.Discount)) > 1000 ||
+		st.Kind != "chat" && st.Kind != "mail" && st.Kind != "post" && st.Kind != "comment" && st.Kind != "document" && !contains(DiskKinds, st.Kind) && st.From != "" || st.Kind != "mail" && st.Email != "" ||
 		st.Kind != "mail" && st.Kind != "post" && st.Subject != "" || st.Kind == "post" && len([]rune(st.Subject)) > 300 ||
-		st.Kind != "activity" && st.Deed != "" || st.Kind != "activity" && st.Kind != "event" && st.Kind != "task" && st.Note != "" || len([]rune(st.Note)) > 1000 ||
-		(st.Kind == "document") != (st.Doc != "") {
+		st.Kind != "activity" && st.Kind != "crmclose" && st.Deed != "" || st.Kind != "activity" && st.Kind != "event" && st.Kind != "task" && st.Note != "" || len([]rune(st.Note)) > 1000 ||
+		(st.Kind == "document") != (st.Doc != "") || st.Kind != "crmconvert" && len(st.Into) > 0 ||
+		// «Диск»: a folder made on a drive (its path), a thing copied into a folder of a drive
+		(st.Kind == "diskfolder" || st.Kind == "diskcopy") != (st.Drive != "") || st.Kind != "diskfolder" && st.Kind != "diskcopy" && st.Folder != "" ||
+		st.Kind == "diskfolder" && strings.Trim(st.Folder, "/ ") == "" || st.Kind != "diskcopy" && st.Move || len([]rune(st.Folder)) > 1000 ||
+		st.Drive != "" && (len(st.Drive) > 64 || strings.ContainsAny(st.Drive, "/?:# ")) {
 		return i18n.E("err.bp_step")
 	}
 	for _, a := range st.Sets {
@@ -48,6 +55,44 @@ func checkCardStep(entity string, st Step) error {
 		}
 	}
 	switch st.Kind {
+	case "crmread", "crmdelete": // a card of the kind, or the process's own
+		if st.Entity != "" && !crm.Entities[st.Entity] || st.Entity == "" && !crm.Entities[entity] {
+			return i18n.E("err.bp_step")
+		}
+	case "crmmove", "crmcopy": // the process's deal, or the one the step names
+		if entity != "deal" && st.Value == "" || len(st.Sets) > 50 {
+			return i18n.E("err.bp_step")
+		}
+	case "crmobservers": // of a deal or a lead: people added, removed or made the only ones (none — no one)
+		e := cmp.Or(st.Entity, entity)
+		if e != "deal" && e != "lead" || !slices.Contains(crm.ObserverModes, st.Mode) || len(st.Users) == 0 && st.Mode != "set" {
+			return i18n.E("err.bp_step")
+		}
+	case "crmresponsible": // of a card of the kind, or the process's own; the people as «Выбор сотрудника» has them
+		if st.Entity != "" && !crm.Entities[st.Entity] || st.Entity == "" && !crm.Entities[entity] {
+			return i18n.E("err.bp_step")
+		}
+	case "crmproduct": // a row on a deal or a lead
+		if e := cmp.Or(st.Entity, entity); e != "deal" && e != "lead" || st.Product == "" || len(st.Product) > 64 {
+			return i18n.E("err.bp_step")
+		}
+	case "crmclose": // the deeds of a kind, or all
+		if st.Entity != "" && !crm.Entities[st.Entity] || st.Entity == "" && !crm.Entities[entity] || st.Deed != "" && !slices.Contains(crm.ActivityKinds, st.Deed) {
+			return i18n.E("err.bp_step")
+		}
+	case "crmconvert": // the process's lead, or the one the step names
+		if entity != "lead" && st.Value == "" || len(st.Into) > len(ConvertInto) {
+			return i18n.E("err.bp_step")
+		}
+		for _, v := range st.Into {
+			if !slices.Contains(ConvertInto, v) {
+				return i18n.E("err.bp_step")
+			}
+		}
+	case "listadd", "listupdate":
+		if len(st.Sets) == 0 || len(st.Sets) > MaxListFields+1 {
+			return i18n.E("err.bp_step")
+		}
 	case "update":
 		if !crm.Entities[entity] && entity != EntityList || len(st.Sets) == 0 {
 			return i18n.E("err.bp_step")
@@ -60,8 +105,12 @@ func checkCardStep(entity string, st Step) error {
 		if !crm.Entities[entity] || !slices.Contains(crm.ActivityKinds, st.Deed) {
 			return i18n.E("err.bp_step")
 		}
-	case "create":
-		if !crm.Entities[st.Entity] || len(st.Sets) > 50 {
+	case "crmupdate": // a card of the kind, or the process's own: its fields
+		if st.Entity != "" && !crm.Entities[st.Entity] || st.Entity == "" && !crm.Entities[entity] || len(st.Sets) == 0 || len(st.Sets) > 50 {
+			return i18n.E("err.bp_step")
+		}
+	case "create": // a smart process's element in a stage of its pipelines — a deal of them
+		if !crm.Entities[st.Entity] || len(st.Sets) > 50 || st.Entity != "deal" && st.Type+st.Stage != "" {
 			return i18n.E("err.bp_step")
 		}
 	case "mail":
@@ -239,30 +288,35 @@ func companyCard(c *crm.Company) card {
 
 // updateCard sets the fields of the process's card, as its starter: the card's timeline shows what changed.
 func (s *Store) updateCard(ctx context.Context, x Instance, sets []Assign) error {
+	return s.updateCardOf(ctx, x, x.Entity, x.EntityID, sets)
+}
+
+// updateCardOf sets the fields of a card, as the process's starter (the values filled by the process).
+func (s *Store) updateCardOf(ctx context.Context, x Instance, entity, id string, sets []Assign) error {
 	actor := x.StartedBy.ID
 	var c card
 	var save func() error
-	switch x.Entity {
+	switch entity {
 	case "deal":
-		d, err := s.CRM.Deal(ctx, x.EntityID)
+		d, err := s.CRM.Deal(ctx, id)
 		if err != nil {
 			return err
 		}
 		c, save = dealCard(&d), func() error { _, err := s.CRM.SaveDeal(ctx, actor, d); return err }
 	case "lead":
-		l, err := s.CRM.Lead(ctx, x.EntityID)
+		l, err := s.CRM.Lead(ctx, id)
 		if err != nil {
 			return err
 		}
 		c, save = leadCard(&l), func() error { _, err := s.CRM.SaveLead(ctx, actor, l); return err }
 	case "contact":
-		k, err := s.CRM.Contact(ctx, x.EntityID)
+		k, err := s.CRM.Contact(ctx, id)
 		if err != nil {
 			return err
 		}
 		c, save = contactCard(&k), func() error { _, err := s.CRM.SaveContact(ctx, actor, k); return err }
 	case "company":
-		k, err := s.CRM.Company(ctx, x.EntityID)
+		k, err := s.CRM.Company(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -270,7 +324,7 @@ func (s *Store) updateCard(ctx context.Context, x Instance, sets []Assign) error
 	default:
 		return fmt.Errorf("no CRM card")
 	}
-	if err := s.apply(ctx, x, x.Entity, c, sets); err != nil {
+	if err := s.apply(ctx, x, entity, c, sets); err != nil {
 		return err
 	}
 	if err := save(); err != nil {
@@ -279,7 +333,7 @@ func (s *Store) updateCard(ctx context.Context, x Instance, sets []Assign) error
 	if len(c.own) == 0 {
 		return nil
 	}
-	return s.CRM.SetFields(ctx, actor, x.Entity, x.EntityID, c.own)
+	return s.CRM.SetFields(ctx, actor, entity, id, c.own)
 }
 
 // createCard adds a card of the step's kind: the text is its title (a contact's name), To its responsible. A deal made
@@ -309,14 +363,11 @@ func (s *Store) createCard(ctx context.Context, x Instance, st Step, title strin
 	var save func() (string, error)
 	switch st.Entity {
 	case "deal":
-		pipes, err := s.CRM.Pipelines(ctx)
+		pipe, err := s.createPipeline(ctx, st.Type, st.Stage)
 		if err != nil {
 			return "", err
 		}
-		if len(pipes) == 0 {
-			return "", fmt.Errorf("no pipeline")
-		}
-		d := crm.Deal{Title: title, PipelineID: pipes[0].ID, Responsible: crm.Ref{ID: resp}, Contact: contact, Company: company}
+		d := crm.Deal{Title: title, PipelineID: pipe, Stage: crm.Stage{ID: st.Stage}, Responsible: crm.Ref{ID: resp}, Contact: contact, Company: company}
 		c, save = dealCard(&d), func() (string, error) { return s.CRM.SaveDeal(ctx, actor, d) }
 	case "lead":
 		l := crm.Lead{Title: title, Responsible: crm.Ref{ID: resp}}
@@ -342,6 +393,15 @@ func (s *Store) createCard(ctx context.Context, x Instance, st Step, title strin
 			return id, err
 		}
 	}
+	if st.Type != "" && x.Entity == "deal" { // a smart process's element: bound to the process's deal (element) when it may be
+		if parent, err := s.CRM.Deal(ctx, x.EntityID); err == nil {
+			if kinds, err := s.CRM.TypeParents(ctx, st.Type); err == nil && slices.Contains(kinds, parent.TypeID) {
+				if err := s.CRM.SetParent(ctx, actor, id, parent.TypeID, parent.ID); err != nil {
+					return id, err
+				}
+			}
+		}
+	}
 	if x.Values == nil {
 		x.Values = map[string]string{}
 	}
@@ -349,9 +409,28 @@ func (s *Store) createCard(ctx context.Context, x Instance, st Step, title strin
 	return id, s.saveValues(ctx, x)
 }
 
+// createPipeline is the pipeline «Создать» puts a deal into: of the smart process typeID ("" — of deals) with the stage
+// ("" — the first pipeline).
+func (s *Store) createPipeline(ctx context.Context, typeID, stage string) (string, error) {
+	pipes, err := s.CRM.PipelinesOf(ctx, typeID)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range pipes {
+		if stage == "" || slices.ContainsFunc(p.Stages, func(st crm.Stage) bool { return st.ID == stage }) {
+			return p.ID, nil
+		}
+	}
+	return "", i18n.E("err.crm_stage")
+}
+
 func (s *Store) saveValues(ctx context.Context, x Instance) error {
-	vals, _ := json.Marshal(x.Values)
-	_, err := s.db.Exec(ctx, `UPDATE bp_instances SET values = $2 WHERE id = $1`, x.ID, vals)
+	own, err := s.ownValues(ctx, x)
+	if err != nil {
+		return err
+	}
+	vals, _ := json.Marshal(own)
+	_, err = s.db.Exec(ctx, `UPDATE bp_instances SET values = $2 WHERE id = $1`, x.ID, vals)
 	return err
 }
 

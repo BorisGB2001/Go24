@@ -6,6 +6,11 @@ document.querySelectorAll('[data-bpfields]').forEach(box => {
     const kind = row.querySelector('select[name$=_kind]')
     const opts = row.querySelector('input[name$=_opts]')
     opts.hidden = kind.value !== 'select'
+    const multi = row.querySelector('select[name$=_multi]') // «Множественный»: not of a text or a bool
+    if (multi) {
+      multi.hidden = kind.value === 'text' || kind.value === 'bool'
+      if (multi.hidden) multi.value = ''
+    }
     const scope = row.querySelector('select[name$=_scope]') // a variable and a constant are not asked: not required
     if (scope) row.querySelector('select[name$=_req]').hidden = scope.value !== 'param'
   }
@@ -31,5 +36,12 @@ document.querySelectorAll('[data-bpfields]').forEach(box => {
       if (body.children.length > 1) row.remove()
       else clear(row)
     }
+  })
+})
+
+// The designer's steps: a double click on a step opens its properties («Изменить»), as an action in the designer
+document.querySelectorAll('.bpsteps [data-bpedit]').forEach(li => {
+  li.addEventListener('dblclick', e => {
+    if (!e.target.closest('a, button, form')) location.href = li.dataset.bpedit
   })
 })

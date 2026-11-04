@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	netmail "net/mail"
 	"net/url"
 	"path"
 	"strconv"
@@ -66,25 +67,29 @@ func sendTime(v string, now time.Time) (time.Time, bool) {
 
 // mailComposeData is what the editor shows.
 type mailComposeData struct {
-	Draft      mail.Draft
-	HTML       string // the editor's text
-	Files      []mail.File
-	Boxes      []mail.Mailbox
-	Froms      []mail.FromAddress // «От»: each mailbox's own address and its aliases
-	Signatures []mail.Snippet
-	SigOf      map[string]mail.Signatures // the signatures of each mailbox (the script swaps them with «От»)
-	Templates  []mail.Snippet
-	Prefs      mail.Prefs
-	Fonts      []string
-	FontSizes  []string
-	Schedule   []schedPreset
-	Importance []int
-	Voting     []string // the voting buttons offered (mail.VotingPresets)
-	FolderID   string
-	SMIME      bool // the user has a certificate: «Подписать» and «Зашифровать» are offered
-	Inline     bool // under the letter in the reading pane
-	ShowCC     bool
-	ShowBCC    bool
+	Draft         mail.Draft
+	HTML          string // the editor's text
+	Files         []mail.File
+	Boxes         []mail.Mailbox
+	Froms         []mail.FromAddress // «От»: each mailbox's own address and its aliases
+	Signatures    []mail.Snippet
+	SigOf         map[string]mail.Signatures // the signatures of each mailbox (the script swaps them with «От»)
+	Templates     []mail.Snippet
+	Prefs         mail.Prefs
+	Fonts         []string
+	FontSizes     []string
+	Schedule      []schedPreset
+	Importance    []int
+	Sensitivities []string // the levels of «Конфиденциальность» (mail.Sensitivities)
+	Voting        []string // the voting buttons offered (mail.VotingPresets)
+	MergeFields   []string // the fields of «Слияние» (mail.MergeFields)
+	FolderID      string
+	SMIME         bool     // the user has a certificate: «Подписать» and «Зашифровать» are offered
+	Dictate       bool     // Whisper is there: «Диктовка» (static/js/mailvoice.js)
+	DictateLangs  []string // the languages of «Диктовка» offered (mail.Languages)
+	Inline        bool     // under the letter in the reading pane
+	ShowCC        bool
+	ShowBCC       bool
 }
 
 // mailCompose prepares the editor: a draft of the user (draft), or a new letter — from a mailbox (box), to
@@ -99,7 +104,8 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 		return nil, i18n.E("err.mail_no_box")
 	}
 	c := &mailComposeData{Boxes: boxes, Fonts: mail.Fonts, FontSizes: mail.FontSizes, Schedule: sendPresets(time.Now()),
-		Importance: []int{1, 0, -1}, Voting: mail.VotingPresets, FolderID: q.Get("folder"), SigOf: map[string]mail.Signatures{}}
+		Importance: []int{1, 0, -1}, Sensitivities: mail.Sensitivities, Voting: mail.VotingPresets, MergeFields: mail.MergeFields, FolderID: q.Get("folder"), SigOf: map[string]mail.Signatures{},
+		Dictate: s.Speech != nil, DictateLangs: mail.Languages}
 	if c.Prefs, err = s.Mail.Prefs(ctx, sess.UserID); err != nil {
 		return nil, err
 	}
@@ -154,7 +160,12 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 			}
 			c.Draft.MailboxID, c.Draft.ReplyTo = m.MailboxID, m.ID
 			c.Draft.Encrypt = c.Draft.Encrypt || m.SMIMEEnc == mail.EncYes // as Outlook: an encrypted letter is answered encrypted
+			c.Draft.Sensitivity = m.Sensitivity                            // and its «Конфиденциальность» stays
 			c.Draft.Mode = map[string]string{"all": "all", "fwd": "fwd", "fwdatt": "fwdatt", "resend": "resend"}[q.Get("mode")]
+			if m.Locked() && (c.Draft.Mode == "fwd" || c.Draft.Mode == "fwdatt") {
+				return nil, mail.ErrNoForward
+			}
+			c.Draft.NoForward = m.Locked() || m.NoForward && c.Draft.Mode == "resend" // an answer to it is «Не пересылать» too
 			if c.Draft.Mode == "resend" && m.FolderRole != "sent" {
 				c.Draft.Mode = ""
 			}
@@ -217,6 +228,8 @@ func (s *Server) mailCompose(r *http.Request, sess auth.Session, q url.Values) (
 				return nil, err
 			}
 			c.HTML = tpl.HTML
+		} else if say := strings.TrimSpace(q.Get("say")); say != "" && (c.Draft.Mode == "reply" || c.Draft.Mode == "all") {
+			c.HTML = "<p>" + html.EscapeString(say) + "</p><p><br></p>" // «Предлагаемые ответы» (mailsuggest.go)
 		}
 		c.HTML += sig + quote
 		if c.Draft.Mode == "fwd" || c.Draft.Mode == "fwdatt" || c.Draft.Mode == "resend" { // a forward is kept at once: the letter's files (or itself) go along
@@ -286,10 +299,22 @@ func replyAddrs(m mail.Message, mode string, aliases ...string) (to, cc, subject
 		}
 		return strings.Join(out, ", ")
 	}
-	sender := m.FromAddr
+	sender, fromOwn := m.FromAddr, seen[strings.ToLower(m.FromAddr)]
 	if m.FromName != "" && !m.Outgoing() {
 		sender = (&mailAddr{m.FromName, m.FromAddr}).String()
 		seen[strings.ToLower(m.FromAddr)] = true
+	}
+	if list, err := netmail.ParseAddressList(m.RepliesTo); err == nil && !m.Outgoing() { // «Направлять ответы на»: there, not to the sender
+		seen[strings.ToLower(m.FromAddr)] = fromOwn // the sender among them is answered too
+		var out []string
+		for _, a := range list {
+			if k := strings.ToLower(a.Address); !seen[k] {
+				seen[k] = true
+				out = append(out, (&mailAddr{a.Name, a.Address}).String())
+			}
+		}
+		seen[strings.ToLower(m.FromAddr)] = true
+		sender = strings.Join(out, ", ")
 	}
 	prefix := "Re: "
 	switch {
@@ -319,6 +344,9 @@ type mailAddr struct{ Name, Email string }
 
 func (a *mailAddr) String() string {
 	name := a.Name
+	if name == "" {
+		return a.Email
+	}
 	if strings.ContainsAny(name, `,;"<>@()`) {
 		name = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(name) + `"`
 	}
@@ -370,10 +398,15 @@ func (s *Server) mailComposeHTML(w http.ResponseWriter, r *http.Request, sess au
 // draftOf reads the editor's form.
 func draftOf(r *http.Request) mail.Draft {
 	imp, _ := strconv.Atoi(r.FormValue("importance"))
+	var expires *time.Time // «Срок действия истекает»: the editor's datetime-local, in the company's time
+	if t, err := time.ParseInLocation("2006-01-02T15:04", r.FormValue("expires"), time.Local); err == nil {
+		expires = &t
+	}
 	return mail.Draft{ID: r.FormValue("draft"), MailboxID: r.FormValue("box"), From: r.FormValue("from"), To: r.FormValue("to"), CC: r.FormValue("cc"), BCC: r.FormValue("bcc"),
-		Subject: r.FormValue("subject"), HTML: r.FormValue("html"), Importance: imp, Receipt: r.FormValue("receipt") != "",
-		Voting: r.FormValue("voting"), Vote: r.FormValue("vote"),
-		Delivery: r.FormValue("delivery") != "", Sign: r.FormValue("sign") != "", Encrypt: r.FormValue("encrypt") != "", ReplyTo: r.FormValue("reply_to"), Mode: r.FormValue("mode")}
+		Subject: r.FormValue("subject"), HTML: r.FormValue("html"), Importance: imp, Sensitivity: r.FormValue("sensitivity"), Receipt: r.FormValue("receipt") != "",
+		NoForward: r.FormValue("no_forward") != "", RepliesTo: r.FormValue("replies_to"), ExpiresAt: expires, Voting: r.FormValue("voting"), Vote: r.FormValue("vote"),
+		Delivery: r.FormValue("delivery") != "", Sign: r.FormValue("sign") != "", Encrypt: r.FormValue("encrypt") != "", ReplyTo: r.FormValue("reply_to"), Mode: r.FormValue("mode"),
+		Merge: r.FormValue("merge") != ""}
 }
 
 // mailDraftSave keeps the letter being written (the editor calls it a few seconds after a change).
@@ -421,7 +454,7 @@ func (s *Server) mailDraftSend(w http.ResponseWriter, r *http.Request, sess auth
 		s.jsonErr(w, r, err)
 		return
 	}
-	if p.UndoSeconds > 0 {
+	if p.UndoSeconds > 0 || d.Merge { // a merge goes in the background: its letters take a while
 		delay := time.Duration(p.UndoSeconds) * time.Second
 		if err := s.Mail.ScheduleDraft(ctx, sess.UserID, id, time.Now().Add(delay), false); err != nil {
 			s.jsonErr(w, r, err)
@@ -434,7 +467,13 @@ func (s *Server) mailDraftSend(w http.ResponseWriter, r *http.Request, sess auth
 				s.Log.Warn("mail send", "err", err)
 			}
 		})
-		out["undo"] = p.UndoSeconds
+		if d.Merge {
+			s.Log.Info("mail merge queued", "user_id", sess.UserID, "draft", id)
+			out["merge"] = s.tr(r, "mail.merge.queued")
+		}
+		if p.UndoSeconds > 0 {
+			out["undo"] = p.UndoSeconds
+		}
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
@@ -445,6 +484,20 @@ func (s *Server) mailDraftSend(w http.ResponseWriter, r *http.Request, sess auth
 	s.Log.Info("mail sent", "user_id", sess.UserID, "draft", id)
 	out["sent"] = true
 	writeJSON(w, http.StatusOK, out)
+}
+
+// mailMergePreview is the letter a recipient of «Слияние» gets: the editor's subject and text with the fields of the
+// i-th of «Кому».
+func (s *Server) mailMergePreview(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	i, _ := strconv.Atoi(r.FormValue("i"))
+	l, n, err := s.Mail.MergePreview(r.Context(), sess.UserID, r.FormValue("to"), r.FormValue("subject"), r.FormValue("html"), i)
+	if err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
+	i = ((i % n) + n) % n
+	writeJSON(w, http.StatusOK, map[string]any{"to": l.To, "subject": l.Subject, "html": l.HTML, "i": i, "n": n,
+		"of": s.tr(r, "mail.merge.of", i+1, n)})
 }
 
 // mailDraftCancel: «Отменить» after «Отправить» (or «Не отправлять» of a scheduled letter) — it stays a draft.

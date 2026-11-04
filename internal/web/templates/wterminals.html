@@ -1,0 +1,34 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>{{icon "device-tablet"}} {{t "wterm.title"}}</h1>
+<div class="sub"><a href="/settings/worktime">{{t "title.worktime"}}</a> · {{t "wterm.subtitle"}}</div>
+<div class="card flush" style="max-width:900px">
+  {{if $d.Terminals}}<table class="tlist"><thead><tr><th>{{t "wterm.name"}}</th><th>{{t "wterm.link"}}</th><th>{{t "wterm.used"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Terminals}}<tr>
+    <td><form method="post" action="/settings/worktime/terminals" class="row"><input type="hidden" name="op" value="save"><input type="hidden" name="id" value="{{.ID}}">
+      <input type="text" name="name" value="{{.Name}}" required maxlength="100" aria-label="{{t "wterm.name"}}" style="flex:1">
+      <label class="check"><input type="checkbox" name="active" {{if .Active}}checked{{end}}> {{t "wterm.active"}}</label>
+      <button title="{{t "common.save"}}">{{icon "check"}}</button></form></td>
+    <td>{{if .Active}}<input type="text" readonly value="{{index $d.Links .ID}}" class="small" aria-label="{{t "wterm.link"}}">{{else}}<span class="muted small">{{t "wterm.off"}}</span>{{end}}</td>
+    <td class="small">{{with .UsedAt}}{{day .}} {{clock .}}{{else}}—{{end}}</td>
+    <td class="row"><form method="post" action="/settings/worktime/terminals" data-confirm="{{t "wterm.link_confirm"}}"><input type="hidden" name="op" value="link"><input type="hidden" name="id" value="{{.ID}}">
+      <button class="ghost" title="{{t "wterm.new_link"}}">{{icon "refresh"}}</button></form>
+      <form method="post" action="/settings/worktime/terminals" data-confirm="{{t "wterm.delete_confirm"}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">
+      <button class="ghost danger" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+  </tr>{{end}}</tbody></table>{{else}}<div class="empty">{{t "wterm.none"}}</div>{{end}}
+  <form method="post" action="/settings/worktime/terminals" class="row" style="padding:12px 16px">
+    <input type="hidden" name="op" value="add">
+    <input type="text" name="name" required maxlength="100" placeholder="{{t "wterm.name_example"}}" aria-label="{{t "wterm.name"}}" style="flex:1">
+    <button class="primary">{{icon "plus"}} {{t "wterm.add"}}</button>
+  </form>
+</div>
+<p class="muted small" style="max-width:900px">{{t "wterm.hint"}}</p>
+<h2 id="pins">{{icon "key"}} {{t "wpin.title"}}</h2>
+<form method="post" action="/settings/worktime/terminals" class="card row" style="max-width:900px">
+  <input type="hidden" name="op" value="pin">
+  <select name="user" required aria-label="{{t "wpin.employee"}}" style="flex:1"><option value=""></option>{{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}">{{.FullName}}{{if index $d.PINs .ID}} · {{t "wpin.has"}}{{end}}</option>{{end}}{{end}}</select>
+  <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password" placeholder="{{t "wpin.placeholder"}}" aria-label="PIN" style="width:160px">
+  <button class="primary">{{icon "check"}} {{t "wpin.set"}}</button>
+</form>
+<p class="muted small" style="max-width:900px">{{t "wpin.admin_hint"}}</p>
+{{end}}

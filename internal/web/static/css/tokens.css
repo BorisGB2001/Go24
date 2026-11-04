@@ -87,8 +87,34 @@
   --login-bg: linear-gradient(135deg, #1b2838 0%, #2b4a6e 100%);
 }
 
+/* «Тема оформления» (data-theme on <html>): "" — as the system has it, light or dark — the employee's choice */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --side-bg: #121a24;
+  --side-bg-hover: #1a2532;
+  --bg: #0f151c;
+  --card: #18212c;
+  --text: #e5eaf0;
+  --muted: #94a0b0;
+  --line: #26313e;
+  --hover: #1e2834;
+  --accent-soft: #19304f;
+  --ok-soft: #133524;
+  --warn-soft: #3a2a15;
+  --danger-soft: #3b1a1c;
+  --violet-soft: #2a2145;
+  --admin-soft: #3a2316;
+  --shadow: none;
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, .55);
+  --chat-bg: linear-gradient(160deg, #13232a 0%, #141d2b 100%);
+  --chat-other-bg: #1e2834;
+  --chat-mine-bg: #1d3550;
+  --chat-sys-bg: rgba(148, 160, 176, .14);
+  --chat-sys-fg: #b4bfcc;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --side-bg: #121a24;
     --side-bg-hover: #1a2532;
     --bg: #0f151c;
@@ -112,3 +138,41 @@
     --chat-sys-fg: #b4bfcc;
   }
 }
+
+/* the background of the portal (data-bg on <html>): go24's, each with a light and a dark variant, or a picture of
+   one's own (--bg-image); the page shows through around the cards. Any element with data-bg gets --page-bg too: the
+   swatches of the picker */
+[data-bg="sky"] { --page-bg: linear-gradient(160deg, #dbeafe 0%, #eef2ff 60%, #e0f2fe 100%); }
+[data-bg="ocean"] { --page-bg: linear-gradient(160deg, #cfe8f7 0%, #d7e3fb 50%, #c9eef0 100%); }
+[data-bg="mint"] { --page-bg: linear-gradient(160deg, #d9f4ea 0%, #e8f6f0 60%, #def3f6 100%); }
+[data-bg="forest"] { --page-bg: linear-gradient(160deg, #d6ead9 0%, #e3efdc 55%, #d2e6df 100%); }
+[data-bg="sand"] { --page-bg: linear-gradient(160deg, #f6ecdb 0%, #f3e7d3 55%, #efe4d8 100%); }
+[data-bg="sunset"] { --page-bg: linear-gradient(160deg, #fde2cf 0%, #fbd9de 55%, #ead8f3 100%); }
+[data-bg="rose"] { --page-bg: linear-gradient(160deg, #fbe0e8 0%, #f8e6ef 60%, #f1e2f4 100%); }
+[data-bg="lavender"] { --page-bg: linear-gradient(160deg, #e6e1fa 0%, #ece7f9 55%, #dfe6fb 100%); }
+[data-bg="aurora"] { --page-bg: linear-gradient(160deg, #d3f1ec 0%, #dce4fb 45%, #eedcf7 100%); }
+[data-bg="graphite"] { --page-bg: linear-gradient(160deg, #d9dee5 0%, #e3e7ec 55%, #d5dbe3 100%); }
+:root[data-theme="dark"][data-bg="sky"], :root[data-theme="dark"] [data-bg="sky"] { --page-bg: linear-gradient(160deg, #0f1f38 0%, #141b33 60%, #0c2233 100%); }
+:root[data-theme="dark"][data-bg="ocean"], :root[data-theme="dark"] [data-bg="ocean"] { --page-bg: linear-gradient(160deg, #0b2233 0%, #10213f 50%, #0b2a2e 100%); }
+:root[data-theme="dark"][data-bg="mint"], :root[data-theme="dark"] [data-bg="mint"] { --page-bg: linear-gradient(160deg, #0d2a22 0%, #10241f 60%, #0d2629 100%); }
+:root[data-theme="dark"][data-bg="forest"], :root[data-theme="dark"] [data-bg="forest"] { --page-bg: linear-gradient(160deg, #10251a 0%, #15261a 55%, #0f2420 100%); }
+:root[data-theme="dark"][data-bg="sand"], :root[data-theme="dark"] [data-bg="sand"] { --page-bg: linear-gradient(160deg, #2a2216 0%, #2a2014 55%, #251f1a 100%); }
+:root[data-theme="dark"][data-bg="sunset"], :root[data-theme="dark"] [data-bg="sunset"] { --page-bg: linear-gradient(160deg, #2e1a14 0%, #2c1820 55%, #23182e 100%); }
+:root[data-theme="dark"][data-bg="rose"], :root[data-theme="dark"] [data-bg="rose"] { --page-bg: linear-gradient(160deg, #2c1620 0%, #2a1826 60%, #241a2c 100%); }
+:root[data-theme="dark"][data-bg="lavender"], :root[data-theme="dark"] [data-bg="lavender"] { --page-bg: linear-gradient(160deg, #1d1838 0%, #1f1a35 55%, #171d38 100%); }
+:root[data-theme="dark"][data-bg="aurora"], :root[data-theme="dark"] [data-bg="aurora"] { --page-bg: linear-gradient(160deg, #0c2a28 0%, #121b38 45%, #261734 100%); }
+:root[data-theme="dark"][data-bg="graphite"], :root[data-theme="dark"] [data-bg="graphite"] { --page-bg: linear-gradient(160deg, #161a20 0%, #1b2027 55%, #14181e 100%); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-bg="sky"], :root:not([data-theme="light"]) [data-bg="sky"] { --page-bg: linear-gradient(160deg, #0f1f38 0%, #141b33 60%, #0c2233 100%); }
+  :root:not([data-theme="light"])[data-bg="ocean"], :root:not([data-theme="light"]) [data-bg="ocean"] { --page-bg: linear-gradient(160deg, #0b2233 0%, #10213f 50%, #0b2a2e 100%); }
+  :root:not([data-theme="light"])[data-bg="mint"], :root:not([data-theme="light"]) [data-bg="mint"] { --page-bg: linear-gradient(160deg, #0d2a22 0%, #10241f 60%, #0d2629 100%); }
+  :root:not([data-theme="light"])[data-bg="forest"], :root:not([data-theme="light"]) [data-bg="forest"] { --page-bg: linear-gradient(160deg, #10251a 0%, #15261a 55%, #0f2420 100%); }
+  :root:not([data-theme="light"])[data-bg="sand"], :root:not([data-theme="light"]) [data-bg="sand"] { --page-bg: linear-gradient(160deg, #2a2216 0%, #2a2014 55%, #251f1a 100%); }
+  :root:not([data-theme="light"])[data-bg="sunset"], :root:not([data-theme="light"]) [data-bg="sunset"] { --page-bg: linear-gradient(160deg, #2e1a14 0%, #2c1820 55%, #23182e 100%); }
+  :root:not([data-theme="light"])[data-bg="rose"], :root:not([data-theme="light"]) [data-bg="rose"] { --page-bg: linear-gradient(160deg, #2c1620 0%, #2a1826 60%, #241a2c 100%); }
+  :root:not([data-theme="light"])[data-bg="lavender"], :root:not([data-theme="light"]) [data-bg="lavender"] { --page-bg: linear-gradient(160deg, #1d1838 0%, #1f1a35 55%, #171d38 100%); }
+  :root:not([data-theme="light"])[data-bg="aurora"], :root:not([data-theme="light"]) [data-bg="aurora"] { --page-bg: linear-gradient(160deg, #0c2a28 0%, #121b38 45%, #261734 100%); }
+  :root:not([data-theme="light"])[data-bg="graphite"], :root:not([data-theme="light"]) [data-bg="graphite"] { --page-bg: linear-gradient(160deg, #161a20 0%, #1b2027 55%, #14181e 100%); }
+}
+/* a picture of one's own: veiled with the page's color, so that the text on it reads */
+[data-bg="custom"] { --page-bg: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), var(--bg-image, none) center / cover; }

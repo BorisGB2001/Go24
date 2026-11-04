@@ -196,6 +196,44 @@ function go24Mail(d, lead) {
     } catch { /* stays unread */ }
   });
 
+  // ✕ of a notification (the pop-up, the list, a toast): deleted, the other tabs drop it too
+  const drop = id => document.querySelectorAll(`.nitem[data-nid="${id}"]`).forEach(i => i.remove());
+  document.addEventListener('click', async e => {
+    const x = e.target.closest('[data-ndel]');
+    if (!x) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/notifications/${x.dataset.ndel}/delete`, { method: 'POST', headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+      const d = await res.json();
+      drop(x.dataset.ndel);
+      setUnread(d.unread);
+      bc?.postMessage({ unread: d.unread, deleted: x.dataset.ndel });
+    } catch { /* stays */ }
+  }, true);
+
+  // the buttons of a confirming notification (a meeting, an invitation, a request): answered in place
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('[data-nans]');
+    const item = b?.closest('.nitem[data-nid]');
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    item.querySelectorAll('[data-nans]').forEach(x => { x.disabled = true; });
+    try {
+      const res = await fetch(`/notifications/${item.dataset.nid}/answer`, { method: 'POST',
+        body: new URLSearchParams({ answer: b.dataset.nans }), headers: { Accept: 'application/json' } });
+      const d = await res.json();
+      if (!res.ok) { alert(d.error || res.statusText); return; }
+      document.querySelectorAll(`.nitem[data-nid="${item.dataset.nid}"]`).forEach(i => { i.outerHTML = d.html; });
+      setUnread(d.unread);
+      bc?.postMessage({ unread: d.unread });
+    } catch { /* stays unanswered */ } finally {
+      item.querySelectorAll('[data-nans]').forEach(x => { x.disabled = false; });
+    }
+  }, true);
+
   let toasts = null;
   const toast = html => {
     if (document.visibilityState !== 'visible') return;
@@ -228,6 +266,7 @@ function go24Mail(d, lead) {
     if (d.mail) { go24Mail(d.mail); return; }
     if (d.call) { dispatchEvent(new CustomEvent('go24:call', { detail: d.call })); return; } // ring.js, call.js
     if (typeof d.unread === 'number') setUnread(d.unread);
+    if (d.deleted) drop(d.deleted);
     if (typeof d.invites === 'number') { // meeting invitations not answered yet: the «Календарь» counter
       document.querySelectorAll('[data-counter="calendar"]').forEach(c => { c.textContent = d.invites > 99 ? '99+' : d.invites; c.hidden = !d.invites; });
     }
@@ -299,7 +338,7 @@ function go24Mail(d, lead) {
 (() => {
   const item = document.querySelector('[data-im-unread]');
   if (!item) return;
-  const counter = item.querySelector('[data-counter="im"]');
+  const counters = document.querySelectorAll('[data-counter="im"]'); // the menu's and the phone's bottom bar
   const openRoom = document.querySelector('[data-im]')?.dataset.room || '';
   let last = null;
   const show = d => {
@@ -307,8 +346,7 @@ function go24Mail(d, lead) {
     let total = d.total || 0;
     // the chat open in this tab and in view is read as it comes
     if (openRoom && document.visibilityState === 'visible') total -= (d.rooms || {})[openRoom] || 0;
-    counter.textContent = total > 99 ? '99+' : total;
-    counter.hidden = total <= 0;
+    counters.forEach(c => { c.textContent = total > 99 ? '99+' : total; c.hidden = total <= 0; });
     collabs(d);
   };
   // the collabs' chats: the counter of a chat on its collab's card and their sum added to «Коллабы» in the menu

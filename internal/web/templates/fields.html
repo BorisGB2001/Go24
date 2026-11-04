@@ -16,13 +16,17 @@
 <div class="sub">{{t $d.Sub}}</div>
 <div class="card" style="max-width:720px">
   {{if $d.Fields}}<table class="tlist">
-    <tr><th>{{t "fields.name"}}</th><th>{{t "fields.kind"}}</th><th>{{t "fields.sort"}}</th>{{if $d.CRM}}<th>{{t "fields.required"}}</th>{{end}}<th></th></tr>
+    <tr><th>{{t "fields.name"}}</th><th>{{t "fields.kind"}}</th><th>{{t "fields.sort"}}</th>{{if $d.CRM}}<th>{{t "fields.required"}}</th><th>{{t "fields.visible"}}</th>{{end}}<th></th></tr>
     {{range $d.Fields}}{{$f := .}}<tr><td>{{.Name}}{{if .Options}}<div class="muted small">{{range $i, $o := .Options}}{{if $i}}, {{end}}{{$o}}{{end}}</div>{{end}}</td>
       <td>{{t (print "fields.kind." .Kind)}}</td><td>{{.Sort}}</td>
       {{if $d.CRM}}<td class="small">{{if ne .Kind "bool"}}<details class="tsettings"><summary class="ghost">{{if not .Required}}{{t "fields.required_no"}}{{else if not .Stages}}{{t "fields.required_all"}}{{else}}{{t "fields.required_at"}}
         {{$n := 0}}{{range $d.Pipelines}}{{range .Stages}}{{if has $f.Stages .ID}}{{if $n}}, {{end}}{{$n = add $n 1}}{{template "crmstage" .}}{{end}}{{end}}{{end}}{{end}}</summary>
         <div class="pop"><form method="post" action="{{$d.Base}}/{{.ID}}/required">{{template "fieldreq" (dict "F" . "D" $d)}}
-          <p><button class="primary">{{t "common.save"}}</button></p></form></div></details>{{end}}</td>{{end}}
+          <p><button class="primary">{{t "common.save"}}</button></p></form></div></details>{{end}}</td>
+      <td class="small">{{$seen := index $d.Seen .ID}}<details class="tsettings"><summary class="ghost">{{if not $seen}}{{t "fields.visible_all"}}{{else}}{{range $i, $w := $seen}}{{if $i}}, {{end}}{{$w.Name}}{{end}}{{end}}</summary>
+        <div class="pop"><form method="post" action="{{$d.Base}}/{{.ID}}/visible"><p class="small muted">{{t "fields.visible_hint"}}</p>
+          {{template "upick" (upick "who" $seen $d.Users "multi" "depts" "ph" (t "fields.visible_all"))}}
+          <p><button class="primary">{{t "common.save"}}</button></p></form></div></details></td>{{end}}
       <td><form method="post" action="{{$d.Base}}/{{.ID}}/delete" data-confirm="{{t "fields.delete_confirm"}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></td></tr>{{end}}
   </table>{{else}}<p class="muted">{{t "fields.none"}}</p>{{end}}
 </div>

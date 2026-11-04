@@ -18,7 +18,8 @@ import (
 // Rights are the rights of a role and their levels from the least, in the order of the settings page:
 // calls — «Детализация звонков» and the statistics, records — listening to the records and their text (own: the
 // person's calls, dept: of the people of their departments and the ones below, all: everyone's); outgoing — calls
-// outside (crm: to the clients of CRM only); settings — «Настройки → Телефония».
+// outside (crm: to the clients of CRM only); settings — «Настройки → Телефония»; monitor — «Текущие звонки»: listening
+// to the conversations going on, whispering and barging in (dept: of the people of their departments, all: anyone's).
 var Rights = []struct {
 	Key    string
 	Levels []string
@@ -27,6 +28,7 @@ var Rights = []struct {
 	{"records", []string{"none", "own", "dept", "all"}},
 	{"outgoing", []string{"none", "crm", "all"}},
 	{"settings", []string{"none", "all"}},
+	{"monitor", []string{"none", "dept", "all"}},
 }
 
 // Perms are levels by right.

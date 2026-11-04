@@ -36,6 +36,7 @@
   {{if $d.Admin}}<label class="check"><input type="checkbox" name="fired" value="1" {{if $f.Fired}}checked{{end}}> {{t "company.fired"}}</label>{{end}}
   {{with $f.Preset}}<input type="hidden" name="preset" value="{{.}}">{{end}}
   {{with $d.Team}}<input type="hidden" name="team" value="{{.ID}}"><a class="chip on" href="/company?{{$d.Keep.With "team" ""}}" title="{{t "team.filter_off"}}">{{icon "users-group"}} {{t "team.label"}}: {{.Name}} ×</a>{{end}}
+  {{with $f.Interest}}<input type="hidden" name="interest" value="{{.}}"><a class="chip on" href="/company?{{$d.Keep.With "interest" ""}}" title="{{t "interest.filter_off"}}">{{icon "tag"}} {{t "interest.label"}}: #{{.}} ×</a>{{end}}
   <button>{{icon "search"}} {{t "common.find"}}</button>
 </form>
 <div class="row presets emppresets">
@@ -43,6 +44,13 @@
   {{range $d.Presets}}<a class="chip{{if eq . $f.Preset}} on{{end}}" href="/company?{{$d.Keep.With "preset" .}}">{{t (print "company.preset." .)}}</a>{{end}}{{end}}
   <span style="flex:1"></span>
   <span class="muted small">{{t "company.count" (len $d.Employees)}}</span>
+  {{if not $d.Tiles}}<details class="tmenu emp-cols"><summary class="button ghost">{{icon "layout-columns"}} {{t "company.columns"}}</summary>
+  <form class="pop" method="post" action="/company/columns">
+    <input type="hidden" name="back" value="/company?{{$d.Keep.Encode}}">
+    <p class="muted small">{{t "company.columns_hint"}}</p>
+    {{range $d.Grid.All}}<label class="check"><input type="checkbox" name="col" value="{{.}}" {{if index $d.Grid.Shown .}}checked{{end}}> {{t ($d.Grid.Label .)}}</label>{{end}}
+    <div class="row"><button class="primary">{{t "company.columns_save"}}</button><button class="ghost" name="reset" value="1">{{t "company.columns_reset"}}</button></div>
+  </form></details>{{end}}
   <span class="viewswitch">
     <a href="/company?{{$d.Keep.With "view" "list"}}" {{if not $d.Tiles}}class="on"{{end}} title="{{t "company.view.list"}}">{{icon "list"}}</a>
     <a href="/company?{{$d.Keep.With "view" "tiles"}}" {{if $d.Tiles}}class="on"{{end}} title="{{t "company.view.tiles"}}">{{icon "layout-grid"}}</a>
@@ -57,24 +65,45 @@
     <span class="muted small">{{with .Position}}{{.}}{{else}}{{t "profile.no_position"}}{{end}}</span>
     {{range .Departments}}<span class="small">{{.Name}}</span>{{end}}
     {{range .Collabs}}<span class="small">{{.Name}}</span>{{end}}
-    {{if $a.ID}}<span class="pill abs-{{$a.Kind}}">{{t (print "absence.kind." $a.Kind)}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}
+    {{if $a.ID}}<span class="pill abs-{{absColor $a.Kind}}">{{absKind $a.Kind}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}
   </a>{{end}}
 </div>
-{{else}}
+{{else}}{{$g := $d.Grid}}{{$bulk := or $g.Chat $g.Move $g.Admin}}
 <div class="card flush">
 <div class="tlist-wrap"><table class="tlist">
-  <thead><tr><th>{{t "company.col.name"}}</th><th>{{t "company.col.position"}}</th><th>{{if $f.Guests}}{{t "company.col.collabs"}}{{else}}{{t "company.col.department"}}{{end}}</th>
-    <th>{{t "company.col.email"}}</th><th>{{t "company.col.phone"}}</th><th>{{if $f.Guests}}{{t "company.col.last_login"}}{{else}}{{t "profile.inner_phone"}}{{end}}</th></tr></thead>
-  <tbody>{{range $d.Employees}}{{$a := index $d.Absent .ID}}
-  <tr><td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span><b>{{.FullName}}</b></span></a>
-      {{if $a.ID}}<span class="pill abs-{{$a.Kind}}" title="{{day $a.From}} — {{day $a.To}}">{{t (print "absence.kind." $a.Kind)}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}</td>
-    <td>{{.Position}}</td>
-    <td>{{range $i, $x := .Departments}}{{if $i}}, {{end}}<a href="/company?dept={{$x.ID}}">{{$x.Name}}</a>{{end}}{{range $i, $x := .Collabs}}{{if $i}}, {{end}}<a href="/p/{{$x.ID}}">{{$x.Name}}</a>{{end}}</td>
-    <td>{{with .Email}}<a href="mailto:{{.}}">{{.}}</a>{{end}}</td>
-    <td>{{with .WorkPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}{{if and .WorkPhone .MobilePhone}}<br>{{end}}{{with .MobilePhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}</td>
-    <td>{{if $f.Guests}}<span class="small muted">{{datetime .LastLogin}}</span>{{else}}{{with .InnerPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}{{end}}</td></tr>
+  <thead><tr>{{if $bulk}}<th class="bulkcol"><input type="checkbox" data-bulk-all title="{{t "company.bulk.all"}}"></th>{{end}}
+    <th><a href="/company?{{$g.SortLink $d.Keep "name"}}">{{t "company.col.name"}} {{$g.SortMark "name"}}</a></th>
+    {{range $g.Columns}}<th>{{if $g.Sortable .}}<a href="/company?{{$g.SortLink $d.Keep .}}">{{t ($g.Label .)}} {{$g.SortMark .}}</a>{{else}}{{t ($g.Label .)}}{{end}}</th>{{end}}</tr></thead>
+  <tbody>{{range $e := $d.Employees}}{{$a := index $d.Absent .ID}}
+  <tr>{{if $bulk}}<td class="bulkcol"><input type="checkbox" name="id" value="{{.ID}}" form="bulk"></td>{{end}}
+    <td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span><b>{{.FullName}}</b></span></a>
+      {{if $a.ID}}<span class="pill abs-{{absColor $a.Kind}}" title="{{day $a.From}} — {{day $a.To}}">{{absKind $a.Kind}} {{t "absence.until"}} {{day $a.To}}</span>{{end}}</td>
+    {{range $c := $g.Columns}}<td>{{if eq $c "position"}}{{$e.Position}}
+      {{else if eq $c "department"}}{{range $i, $x := $e.Departments}}{{if $i}}, {{end}}<a href="/company?dept={{$x.ID}}">{{$x.Name}}</a>{{end}}{{range $i, $x := $e.Collabs}}{{if $i}}, {{end}}<a href="/p/{{$x.ID}}">{{$x.Name}}</a>{{end}}
+      {{else if eq $c "email"}}{{with $e.Email}}<a href="mailto:{{.}}">{{.}}</a>{{end}}
+      {{else if eq $c "phone"}}{{with $e.WorkPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}{{if and $e.WorkPhone $e.MobilePhone}}<br>{{end}}{{with $e.MobilePhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}
+      {{else if eq $c "inner_phone"}}{{with $e.InnerPhone}}<a href="tel:{{.}}">{{.}}</a>{{end}}
+      {{else if eq $c "city"}}{{$e.City}}
+      {{else if eq $c "birthday"}}{{with $e.Birthday}}{{bday (deref .) $e.BirthdayYear}}{{end}}
+      {{else if eq $c "employment"}}{{with $e.Employment}}{{day (deref .)}}{{end}}
+      {{else if eq $c "last_login"}}{{if not $e.LastLogin.IsZero}}<span class="small muted">{{datetime $e.LastLogin}}</span>{{end}}
+      {{else if eq $c "teams"}}{{range $i, $x := $e.Teams}}{{if $i}}, {{end}}<a href="/company?team={{$x.ID}}">{{$x.Name}}</a>{{end}}
+      {{else if eq $c "interests"}}{{range $e.Interests}}<a class="chip small" href="/company?interest={{.}}">#{{.}}</a> {{end}}
+      {{end}}</td>{{end}}</tr>
   {{end}}</tbody>
 </table></div>
 </div>
+{{if $bulk}}<form id="bulk" method="post" action="/company/bulk" class="card bulkbar row" data-bulk="id" hidden>
+  <input type="hidden" name="back" value="/company?{{$d.Keep.Encode}}">
+  <b>{{t "company.bulk.selected"}}</b> <span class="muted small" data-bulk-count></span>
+  <select name="action" data-bulk-op>
+    {{if $g.Chat}}<option value="chat">{{t "company.bulk.chat"}}</option>{{end}}
+    {{if $g.Move}}<option value="move">{{t "company.bulk.move"}}</option><option value="add">{{t "company.bulk.add"}}</option>{{end}}
+    {{if $g.Admin}}{{if $f.Fired}}<option value="return">{{t "company.bulk.return"}}</option>{{else}}<option value="fire" data-confirm="{{t "company.bulk.fire_confirm"}}">{{t "company.bulk.fire"}}</option>{{end}}{{end}}
+  </select>
+  <select name="dept" data-bulk-for="move add" style="width:auto"><option value="">{{t "company.bulk.dept"}}</option>
+    {{range $d.Departments}}<option value="{{.ID}}">{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+  <button class="primary">{{t "company.bulk.apply"}}</button>
+</form>{{end}}
 {{end}}
 {{end}}

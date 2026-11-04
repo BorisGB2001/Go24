@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -56,8 +57,8 @@ func (s *Server) dav(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
-// keyUser is the employee who signs in to a network disk or calendar with an API key that may scope (the password;
-// any user name); else the answer asks for one, saying msg.
+// keyUser is the employee who signs in to a network disk or calendar with an API key that may scope ("a|b" — either)
+// (the password; any user name); else the answer asks for one, saying msg.
 func (s *Server) keyUser(w http.ResponseWriter, r *http.Request, scope, msg string) (apikeys.Principal, bool) {
 	_, token, ok := r.BasicAuth()
 	var p apikeys.Principal
@@ -70,7 +71,7 @@ func (s *Server) keyUser(w http.ResponseWriter, r *http.Request, scope, msg stri
 	if err == nil {
 		err = s.DB.QueryRow(r.Context(), `SELECT active, guest FROM users WHERE id = $1`, p.UserID).Scan(&active, &guest)
 	}
-	if err != nil || !active || guest || !p.Can(scope) {
+	if err != nil || !active || guest || !slices.ContainsFunc(strings.Split(scope, "|"), p.Can) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="go24", charset="UTF-8"`)
 		http.Error(w, s.tr(r, msg), http.StatusUnauthorized)
 		return p, false

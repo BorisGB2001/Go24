@@ -8,12 +8,17 @@
   <a href="/p/{{$p.Key}}" class="on">{{icon "list-check"}} {{t "collab.tasks"}}</a>
   <a href="/disk/p/{{$p.Key}}">{{icon "folder"}} {{t "collab.drive"}}</a>
   <a href="/calendar?project={{$p.Key}}">{{icon "calendar-event"}} {{t "collab.calendar"}}</a>
-</div>{{end}}
+</div>{{else}}{{with $d.ToolTabs}}{{if gt (len .) 1}}<div class="tabs collab-tabs">
+  {{range .}}<a href="{{.Href}}"{{if eq .ID "tasks"}} class="on"{{end}}>{{icon .Icon}} {{or .Name (t (print "groups.tool." .ID))}}</a>{{end}}
+</div>{{end}}{{end}}{{end}}
 <div class="sub">{{if $p.Description}}{{$p.Description}}{{else}}{{t "project.open_tasks" $p.OpenTasks}}{{end}}
-  {{if or $p.DateStart $p.DateFinish}} · {{icon "calendar-event"}} {{with $p.DateStart}}{{day .}}{{end}} – {{with $p.DateFinish}}{{day .}}{{end}}{{end}}</div>
+  {{if or $p.DateStart $p.DateFinish}} · {{icon "calendar-event"}} {{with $p.DateStart}}{{day .}}{{end}} – {{with $p.DateFinish}}{{day .}}{{end}}{{end}}
+  {{if not $p.Collab}}{{template "groupsubject" $p}}{{end}}</div>
 {{if $p.Archived}}<div class="flash">{{icon "history"}} {{if $p.Collab}}{{t "collab.archived_note"}}{{else}}{{t "project.archived_note"}}{{end}}</div>{{end}}
 
-<div class="tabs">
+{{if not ($p.ToolOn "tasks")}}<div class="layout2">
+<div><div class="flash">{{icon "list-check"}} {{t "groups.tasks_off"}}</div></div>
+{{else}}<div class="tabs">
   <a href="/p/{{$p.Key}}" {{if not $d.ShowAll}}class="on"{{end}}>{{icon "list-check"}} {{t "tabs.open"}} <span class="cnt">{{$p.OpenTasks}}</span></a>
   <a href="/p/{{$p.Key}}?all=1" {{if $d.ShowAll}}class="on"{{end}}>{{icon "history"}} {{t "tabs.all"}}</a>
   {{if $p.Scrum}}<a href="/p/{{$p.Key}}/scrum">{{icon "layout-kanban"}} {{t "tabs.planning"}}</a>
@@ -27,7 +32,7 @@
 <div>
   <div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true $)}}</div>
 
-</div>
+</div>{{end}}
 
 <div>
   {{if $p.CanManage}}<details class="card" id="about">
@@ -38,6 +43,7 @@
       <label>{{t "form.description"}}</label><textarea name="description" rows="3">{{$p.Description}}</textarea>
       {{if not $p.Collab}}<label>{{t "project.kind"}}</label>
       <select name="kind">{{range list "group" "project" "scrum"}}<option value="{{.}}" {{if eq . $p.Kind}}selected{{end}}>{{t (print "project.kind." .)}}</option>{{end}}</select>{{end}}
+      {{if not $p.Collab}}{{template "groupsubjectform" (dict "Subjects" $d.Subjects "Project" $p)}}{{end}}
       <div class="grid">
         <div><label>{{t "project.date_start"}}</label><input type="date" name="date_start" value="{{dinput $p.DateStart}}"></div>
         <div><label>{{t "project.date_finish"}}</label><input type="date" name="date_finish" value="{{dinput $p.DateFinish}}"></div>
@@ -53,17 +59,64 @@
     <form method="post" action="/p/{{$p.Key}}/archive"{{if not $p.Archived}} data-confirm="{{if $p.Collab}}{{t "collab.archive_confirm"}}{{else}}{{t "project.archive_confirm"}}{{end}}"{{end}}>
       <input type="hidden" name="on" value="{{if $p.Archived}}0{{else}}1{{end}}">
       <button class="ghost">{{icon "history"}} {{if $p.Archived}}{{t "project.unarchive"}}{{else}}{{t "project.archive"}}{{end}}</button></form>
-    {{if $d.CanDelete}}<details class="danger-zone"><summary class="small">{{icon "trash"}} {{t "collab.delete"}}</summary>
-      <form method="post" action="/p/{{$p.Key}}/delete" data-confirm="{{t "collab.delete_confirm"}}">
-        <p class="small muted">{{t "collab.delete_hint" $p.Name}}</p>
-        <input type="text" name="confirm" required autocomplete="off" placeholder="{{$p.Name}}" aria-label="{{t "collab.delete_type"}}">
+    {{if $d.CanDelete}}{{$k := "collab"}}{{if not $p.Collab}}{{$k = "project"}}{{end}}<details class="danger-zone"><summary class="small">{{icon "trash"}} {{t (print $k ".delete")}}</summary>
+      <form method="post" action="/p/{{$p.Key}}/delete" data-confirm="{{t (print $k ".delete_confirm")}}">
+        <p class="small muted">{{t (print $k ".delete_hint") $p.Name}}</p>
+        <input type="text" name="confirm" required autocomplete="off" placeholder="{{$p.Name}}" aria-label="{{t (print $k ".delete_type")}}">
         <p><button class="danger">{{icon "trash"}} {{t "collab.delete_button"}}</button></p></form></details>{{end}}
+  </details>{{end}}
+
+  {{if and (not $p.Collab) $p.CanEdit}}<details class="card" id="copy">
+    <summary><b>{{icon "copy"}} {{t "groups.copy"}}</b></summary>
+    <p class="small muted">{{t "groups.copy_hint"}}</p>
+    <form method="post" action="/p/{{$p.Key}}/copy">
+      <label>{{t "form.name"}}</label><input type="text" name="name" value="{{t "groups.copy_name" $p.Name}}" required>
+      <div class="grid">
+        <div><label>{{t "projects.key_label"}}</label><input type="text" name="key" value="{{$d.CopyKey}}" required pattern="[A-Za-z][A-Za-z0-9]{1,9}" maxlength="10"></div>
+        <div><label>{{t "groups.copy_start"}}</label><input type="date" name="start" value="{{dinput $p.DateStart}}"></div>
+      </div>
+      <p class="small muted">{{t "groups.copy_start_hint"}}</p>
+      <label class="check"><input type="checkbox" name="members" checked> {{t "groups.copy_members"}}</label>
+      <label class="check"><input type="checkbox" name="tasks" checked> {{t "groups.copy_tasks"}}</label>
+      <label class="check"><input type="checkbox" name="closed"> {{t "groups.copy_closed"}}</label>
+      <p><button class="primary">{{icon "copy"}} {{t "groups.copy_button"}}</button></p>
+    </form>
+  </details>{{end}}
+
+  {{if and (not $p.Collab) $p.CanEdit}}<details class="card" id="tools">
+    <summary><b>{{icon "adjustments"}} {{t "groups.tools"}}</b></summary>
+    <form method="post" action="/p/{{$p.Key}}/tools">
+      <fieldset{{if $p.Archived}} disabled{{end}}>
+      {{range $d.ToolForm}}<div class="row" style="margin-bottom:6px">
+        <label class="check" style="flex:1"><input type="checkbox" name="tool_{{.ID}}" {{if .On}}checked{{end}}> {{icon .Icon}} {{t (print "groups.tool." .ID)}}</label>
+        <input type="text" name="name_{{.ID}}" value="{{.Name}}" maxlength="50" style="flex:1" placeholder="{{t "groups.tool_name"}}" aria-label="{{t "groups.tool_name"}}">
+      </div>{{end}}
+      <p class="small muted">{{t "groups.tools_hint"}}</p>
+      <p><button class="primary">{{t "common.save"}}</button></p>
+      </fieldset>
+    </form>
+  </details>{{end}}
+  {{if and (not $p.Collab) $p.CanEdit}}<details class="card" id="perms">
+    <summary><b>{{icon "lock"}} {{t "groups.task_perms"}}</b></summary>
+    <form method="post" action="/p/{{$p.Key}}/task-perms">
+      <fieldset{{if $p.Archived}} disabled{{end}}>
+      {{$tp := $p.TaskPerms}}{{range $k := list "create" "edit" "delete"}}<div class="row" style="margin-bottom:6px">
+        <label style="flex:1" for="tp_{{$k}}">{{t (print "groups.task_perm." $k)}}</label>
+        <select name="{{$k}}" id="tp_{{$k}}" style="flex:1">{{$cur := index (dict "create" $tp.Create "edit" $tp.Edit "delete" $tp.Delete) $k}}{{range list "owner" "managers" "members"}}<option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{t (print "groups.perm_level." .)}}</option>{{end}}</select>
+      </div>{{end}}
+      <p class="small muted">{{t "groups.task_perms_hint"}}</p>
+      <p><button class="primary">{{t "common.save"}}</button></p>
+      </fieldset>
+    </form>
   </details>{{end}}
 
   {{if and $p.Collab $p.CanEdit}}{{with $d.Settings}}<details class="card" id="settings"{{if not $p.Archived}} open{{end}}>
     <summary><b>{{icon "settings"}} {{t "collab.settings"}}</b></summary>
     <form method="post" action="/p/{{$p.Key}}/collab-settings">
       <fieldset{{if $p.Archived}} disabled{{end}}>
+      <label>{{t "collab.type"}}</label>
+      <select name="open"><option value="0">{{t "collab.type.closed"}}</option><option value="1" {{if .Open}}selected{{end}}>{{t "collab.type.open"}}</option></select>
+      <p class="small muted">{{t "collab.type_hint"}} <button type="button" class="ghost small" data-copy="{{$d.CollabLink}}" title="{{t "collab.link"}}">{{icon "link"}} {{t "collab.copy_link"}}</button></p>
       <label>{{t "collab.start_tool"}}</label>
       <select name="start_tool">{{$v := .StartTool}}{{range $d.StartTools}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{t (print "collab.start_tool." .)}}</option>{{end}}</select>
       <p class="small muted">{{t "collab.start_tool_hint"}}</p>
@@ -138,11 +191,17 @@
     {{range $d.Members}}
     <div class="row" style="margin-bottom:8px">
       {{ava .Name}}
-      <div style="flex:1">{{.Name}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}<div class="small muted">{{t (print $rp .Role)}}</div></div>
+      <div style="flex:1">{{.Name}}{{if .Guest}} <span class="pill guest">{{t "collab.guest"}}</span>{{end}}<div class="small muted">{{t (print $rp .Role)}}{{if .ViaDept}} · {{t "groups.via_dept"}}{{end}}</div></div>
       {{if $p.CanRemove .}}
       <form method="post" action="/p/{{$p.Key}}/members/{{.ID}}/delete"{{if $p.Collab}} data-confirm="{{t "collab.remove_confirm" .Name}}"{{end}}><button class="ghost" title="{{t "members.remove"}}">{{icon "x"}}</button></form>{{end}}
     </div>
     {{end}}
+    {{if $d.Requests}}<div id="requests" class="small muted" style="margin-top:8px">{{t "groups.requests"}}</div>
+    {{range $d.Requests}}<div class="row" style="margin-bottom:6px">{{ava .UserName}}
+      <div style="flex:1">{{.UserName}}<div class="small muted">{{datetime .CreatedAt}}</div>{{with .Message}}<div class="small">{{.}}</div>{{end}}</div>
+      {{if not $p.Archived}}<form method="post" action="/p/{{$p.Key}}/requests/{{.UserID}}"><input type="hidden" name="accept" value="1"><button class="primary" title="{{t "groups.accept"}}">{{icon "check"}}</button></form>
+      <form method="post" action="/p/{{$p.Key}}/requests/{{.UserID}}"><input type="hidden" name="accept" value="0"><button class="ghost" title="{{t "groups.reject"}}">{{icon "x"}}</button></form>{{end}}
+    </div>{{end}}{{end}}
     {{if $d.Invites}}<div class="small muted" style="margin-top:8px">{{t "invites.pending"}}</div>
     {{range $d.Invites}}<div class="row" style="margin-bottom:6px">{{ava .UserName}}
       <div style="flex:1">{{.UserName}}<div class="small muted">{{t (print "role." .Role)}} · {{t "invites.by" .InvitedBy}}</div></div>
@@ -176,6 +235,12 @@
       </div>
     </form>
     <p class="small muted">{{t "members.hint"}}</p>{{end}}
+    {{if and $p.CanManage (not $p.Archived)}}<form method="post" action="/p/{{$p.Key}}/departments" id="depts">
+      <label>{{t "groups.depts"}}</label>
+      <div class="row"><div style="flex:1">{{template "upick" (upick "depts" $d.Depts $d.Users "multi" "depts" "ph" (t "groups.depts_ph"))}}</div>
+      <button>{{t "common.save"}}</button></div>
+      <p class="small muted">{{t "groups.depts_hint"}}</p>
+    </form>{{else if $d.Depts}}<p class="small muted">{{t "groups.depts"}}: {{range $i, $x := $d.Depts}}{{if $i}}, {{end}}{{$x.Name}}{{end}}</p>{{end}}
     {{if $p.CanManage}}
     <form method="post" action="/p/{{$p.Key}}/invite-perm">
       <label>{{t "invites.perm"}}</label>
@@ -189,9 +254,21 @@
         <option value="participants" {{if eq $p.Visibility "participants"}}selected{{end}}>{{t "project.visibility.participants"}}</option>
       </select><button>{{t "common.save"}}</button></div>
     </form>
+    <form method="post" action="/p/{{$p.Key}}/settings">
+      <label>{{t "groups.privacy"}}</label>
+      <div class="row"><select name="privacy" style="flex:1">{{range list "open" "closed" "secret"}}<option value="{{.}}" {{if eq . $p.Privacy}}selected{{end}}>{{t (print "groups.privacy." .)}} — {{t (print "groups.privacy_hint." .)}}</option>{{end}}</select>
+      <button>{{t "common.save"}}</button></div>
+    </form>
     {{else}}
-    <p class="small muted">{{t "project.visibility"}}: {{t (print "project.visibility." $p.Visibility)}}</p>
+    <p class="small muted">{{t "project.visibility"}}: {{t (print "project.visibility." $p.Visibility)}}<br>{{t "groups.privacy"}}: {{t (print "groups.privacy." $p.Privacy)}}</p>
     {{end}}
+    {{if and (or (eq $p.MyRole "owner") (eq $p.MyRole "admin")) (not $p.Archived)}}<form method="post" action="/p/{{$p.Key}}/owner" data-confirm="{{t "project.owner_confirm"}}" style="margin-top:8px">
+      <label>{{t "project.owner"}}</label>
+      <div class="row"><select name="user_id" style="flex:1" required><option value=""></option>{{range $d.Members}}{{if and (not .Guest) (ne .Role "owner")}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>
+      <button>{{t "collab.owner_button"}}</button></div>
+      <p class="small muted">{{t "project.owner_hint"}}</p>
+    </form>{{end}}
+    {{if and (ne $p.MyRole "owner") (ne $p.MyRole "admin")}}<form method="post" action="/p/{{$p.Key}}/leave" data-confirm="{{t "groups.leave_confirm"}}" style="margin-top:8px"><button class="ghost">{{icon "logout"}} {{t "groups.leave"}}</button></form>{{end}}
     {{end}}
   </div>
 

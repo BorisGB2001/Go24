@@ -119,6 +119,8 @@ type Prefs struct {
 	UndoSeconds    int // «Отменить» is offered so long after «Отправить» (0 — off)
 	Font, FontSize string
 	Focused        bool // the inbox shows «Отсортированные» and «Другие»
+	Suggest        bool // «Показывать предлагаемые ответы» under letters received (suggest.go)
+	A11yCheck      bool // «Проверять читаемость перед отправкой»: a letter with accessibility errors is sent after a question
 }
 
 // Fonts and sizes the editor offers (the letter's default among them).
@@ -138,9 +140,9 @@ func oneOf(v string, list []string) bool {
 
 // Prefs are the user's mail settings (the defaults when not set).
 func (s *Store) Prefs(ctx context.Context, userID string) (Prefs, error) {
-	p := Prefs{UndoSeconds: 5, Focused: true}
-	err := s.db.QueryRow(ctx, `SELECT undo_seconds, font, font_size, focused FROM mail_settings WHERE user_id::text = $1`, userID).Scan(&p.UndoSeconds,
-		&p.Font, &p.FontSize, &p.Focused)
+	p := Prefs{UndoSeconds: 5, Focused: true, Suggest: true}
+	err := s.db.QueryRow(ctx, `SELECT undo_seconds, font, font_size, focused, suggest, a11y_check FROM mail_settings WHERE user_id::text = $1`, userID).Scan(&p.UndoSeconds,
+		&p.Font, &p.FontSize, &p.Focused, &p.Suggest, &p.A11yCheck)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -152,9 +154,10 @@ func (s *Store) SavePrefs(ctx context.Context, userID string, p Prefs) error {
 	if p.UndoSeconds < 0 || p.UndoSeconds > 10 || (p.Font != "" && !oneOf(p.Font, Fonts)) || (p.FontSize != "" && !oneOf(p.FontSize, FontSizes)) {
 		return i18n.E("err.bad_form")
 	}
-	_, err := s.db.Exec(ctx, `INSERT INTO mail_settings (user_id, undo_seconds, font, font_size) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id) DO UPDATE SET undo_seconds = EXCLUDED.undo_seconds, font = EXCLUDED.font, font_size = EXCLUDED.font_size`,
-		userID, p.UndoSeconds, p.Font, p.FontSize)
+	_, err := s.db.Exec(ctx, `INSERT INTO mail_settings (user_id, undo_seconds, font, font_size, suggest, a11y_check) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id) DO UPDATE SET undo_seconds = EXCLUDED.undo_seconds, font = EXCLUDED.font, font_size = EXCLUDED.font_size,
+			suggest = EXCLUDED.suggest, a11y_check = EXCLUDED.a11y_check`,
+		userID, p.UndoSeconds, p.Font, p.FontSize, p.Suggest, p.A11yCheck)
 	return err
 }
 
@@ -171,6 +174,7 @@ type Handling struct {
 	ReadAfter int    // 0 — when it opens in the reading pane, N — after N seconds there, -1 — never by itself
 	Receipts  string // one of ReceiptModes
 	AfterMove string // one of AfterMoveModes
+	Nudges    bool   // «Показывать напоминания о письмах» over the inbox (nudges.go)
 }
 
 // The choices of «Обработка сообщений».
@@ -182,9 +186,9 @@ var (
 
 // Handling of the user (the defaults when not set).
 func (s *Store) Handling(ctx context.Context, userID string) (Handling, error) {
-	h := Handling{Receipts: "ask", AfterMove: "next"}
-	err := s.db.QueryRow(ctx, `SELECT read_after, receipts, after_move FROM mail_settings WHERE user_id::text = $1`, userID).Scan(&h.ReadAfter,
-		&h.Receipts, &h.AfterMove)
+	h := Handling{Receipts: "ask", AfterMove: "next", Nudges: true}
+	err := s.db.QueryRow(ctx, `SELECT read_after, receipts, after_move, nudges FROM mail_settings WHERE user_id::text = $1`, userID).Scan(&h.ReadAfter,
+		&h.Receipts, &h.AfterMove, &h.Nudges)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -200,9 +204,10 @@ func (s *Store) SaveHandling(ctx context.Context, userID string, h Handling) err
 	if !ok || !oneOf(h.Receipts, ReceiptModes) || !oneOf(h.AfterMove, AfterMoveModes) {
 		return i18n.E("err.bad_form")
 	}
-	_, err := s.db.Exec(ctx, `INSERT INTO mail_settings (user_id, read_after, receipts, after_move) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id) DO UPDATE SET read_after = EXCLUDED.read_after, receipts = EXCLUDED.receipts, after_move = EXCLUDED.after_move`,
-		userID, h.ReadAfter, h.Receipts, h.AfterMove)
+	_, err := s.db.Exec(ctx, `INSERT INTO mail_settings (user_id, read_after, receipts, after_move, nudges) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id) DO UPDATE SET read_after = EXCLUDED.read_after, receipts = EXCLUDED.receipts, after_move = EXCLUDED.after_move,
+			nudges = EXCLUDED.nudges`,
+		userID, h.ReadAfter, h.Receipts, h.AfterMove, h.Nudges)
 	return err
 }
 

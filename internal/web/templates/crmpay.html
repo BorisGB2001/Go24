@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$d := .Data}}{{$admin := $.User.Admin}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1>
+  {{if $admin}}<details class="tsettings"><summary class="button create">{{icon "plus"}} {{t "crm.pay.add"}}</summary>
+    <div class="pop">{{template "crmpayform" (dict "S" nil "D" $d)}}</div></details>{{end}}</div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.pay.page_hint"}}</p>
+{{with $d.Systems}}<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "crm.pay.name"}}</th><th>{{t "crm.pay.kind"}}</th>{{if $admin}}<th>{{t "crm.pay.notify"}}</th><th></th>{{end}}</tr></thead>
+  <tbody>{{range .}}<tr>
+    <td><b>{{.Name}}</b>{{if not .Active}} <span class="muted small">{{t "crm.pay.off"}}</span>{{end}}</td>
+    <td>{{t (print "crm.pay.kind." .Kind)}} <span class="muted small">{{.Login}}</span></td>
+    {{if $admin}}<td><div class="row"><input type="text" readonly value="{{$d.Base}}/pay/{{.ID}}/notify" style="flex:1">
+      <button type="button" class="ghost" data-copy="{{$d.Base}}/pay/{{.ID}}/notify" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div></td>
+    <td class="nowrap"><details class="tsettings"><summary class="button ghost" title="{{t "crm.pay.edit"}}">{{icon "edit"}}</summary>
+      <div class="pop">{{template "crmpayform" (dict "S" . "D" $d)}}
+        <form method="post" action="/crm/paysystems" data-confirm="{{t "crm.pay.delete_confirm"}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">
+          <button class="ghost">{{icon "trash"}} {{t "crm.delete"}}</button></form></div></details></td>{{end}}
+  </tr>{{end}}</tbody></table></div>
+  {{if $admin}}<p class="small muted">{{t "crm.pay.notify_hint"}}</p>{{end}}{{else}}<p class="muted">{{t "crm.pay.none"}}</p>{{end}}
+<script src="{{asset "js/robots.js"}}"></script>
+{{end}}
+
+{{/* a service's form: the names of its fields as the service calls them (robots.js shows them by data-for) */}}
+{{define "crmpayform"}}{{$s := .S}}
+<form method="post" action="/crm/paysystems" data-robot><input type="hidden" name="op" value="save">{{with $s}}<input type="hidden" name="id" value="{{.ID}}">{{end}}
+  <label>{{t "crm.pay.kind"}}</label><select name="kind">{{range .D.Kinds}}<option value="{{.}}" {{if and $s (eq . $s.Kind)}}selected{{end}}>{{t (print "crm.pay.kind." .)}}</option>{{end}}</select>
+  <label>{{t "crm.pay.name"}}</label><input type="text" name="name" required maxlength="200" value="{{with $s}}{{.Name}}{{end}}">
+  {{range .D.Kinds}}<div data-for="{{.}}"><label>{{t (print "crm.pay.login." .)}}</label>
+    <input type="text" name="login" required maxlength="200" value="{{with $s}}{{.Login}}{{end}}" autocomplete="off"></div>
+  <div data-for="{{.}}"><label>{{t (print "crm.pay.secret." .)}}</label>
+    <input type="password" name="secret" maxlength="500" autocomplete="new-password"{{if not $s}} required{{end}}{{if and $s $s.HasKey}} placeholder="{{t "crm.sms.secret_keep"}}"{{end}}></div>{{end}}
+  <label class="check"><input type="checkbox" name="active" value="1" {{if or (not $s) $s.Active}}checked{{end}}> {{t "crm.pay.active"}}</label>
+  <p><button class="primary">{{t "common.save"}}</button></p>
+</form>{{end}}

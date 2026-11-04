@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"go24/internal/auth"
@@ -173,6 +174,9 @@ func (s *Server) mailSharedPage(w http.ResponseWriter, r *http.Request, sess aut
 		if err != nil {
 			s.taskErr(w, r, err, sharedURL(box, q))
 			return
+		}
+		if sh.OwnerID != sess.UserID { // «Частное» — the owner's only, as Outlook's private items
+			thread = slices.DeleteFunc(thread, func(m mail.Message) bool { return m.Sensitivity == "private" })
 		}
 		files := map[string][]mail.File{}
 		docs := map[string]string{}

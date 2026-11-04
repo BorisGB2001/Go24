@@ -31,6 +31,7 @@ var settingsSections = []struct {
 		{"/settings/admins", "admins.title", "shield-lock", true},
 		{"/settings/tools", "sections.title", "adjustments", true},
 		{"/settings/ip", "ipaccess.title", "lock", true},
+		{"/settings/two-factor", "twofa.title", "shield-lock", true},
 		{"/settings/backup", "backup.title", "database", true},
 		{"/settings/system", "sys.title", "server-2", true},
 		{"/settings/notifications", "notify.settings", "bell", false},
@@ -46,6 +47,7 @@ var settingsSections = []struct {
 		{"/settings/call-links", "call.ext_my", "video", false},
 		{"/settings/telephony", "tel.title", "phone", true},
 		{"/settings/collabs", "collab.creators.title", "users", true},
+		{"/settings/general-chat", "imgeneral.title", "messages", true},
 		{"/booking/rights", "booking.rights_settings", "shield-lock", true},
 	}},
 	{"settings.sec.tasks", []settingsLink{

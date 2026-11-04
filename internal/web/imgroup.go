@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"go24/internal/auth"
+	"go24/internal/calendar"
 	"go24/internal/i18n"
 	"go24/internal/matrixsync"
+	"go24/internal/tasks"
 )
 
 // ---------- group chats of the messenger (made, named, with a picture; people added, removed, leaving), pinned
@@ -30,7 +32,7 @@ func (s *Server) imGroup(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	http.Redirect(w, r, imRoomURL(room), http.StatusSeeOther)
 }
 
-// imGroupAction: a change of a group chat — people added or removed, leaving, a new name or picture; a channel or a
+// imGroupAction: a change of a group chat — people added or removed, leaving, deleting it, a new name or picture; a channel or a
 // group chat, open or closed, its owner, admins and rights; joining an open one.
 func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	room := r.FormValue("room")
@@ -44,6 +46,10 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 		err = s.Matrix.RemoveFromGroup(r.Context(), sess.UserID, room, r.FormValue("user"))
 	case "leave":
 		if err = s.Matrix.LeaveGroup(r.Context(), sess.UserID, room); err == nil {
+			back = "/im"
+		}
+	case "delete":
+		if err = s.Matrix.DeleteGroup(r.Context(), sess.UserID, room); err == nil {
 			back = "/im"
 		}
 	case "rename":
@@ -60,6 +66,8 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 		err = s.Matrix.SetChannel(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
 	case "open":
 		err = s.Matrix.SetOpen(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
+	case "history":
+		err = s.Matrix.SetHistory(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
 	case "join":
 		err = s.Matrix.JoinOpen(r.Context(), sess.UserID, room)
 	case "photo":
@@ -83,8 +91,8 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// imCollabChat: the chats of a collab — a group chat made in it (create), a group chat of one's own added to it (add),
-// one taken out of it (remove).
+// imCollabChat: the chats of a collab — a group chat made in it (create), a «Чат с CoPilot» made in it (copilot), a
+// group chat of one's own added to it (add), one taken out of it (remove).
 func (s *Server) imCollabChat(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	_ = r.ParseForm()
 	room := r.FormValue("room")
@@ -94,6 +102,11 @@ func (s *Server) imCollabChat(w http.ResponseWriter, r *http.Request, sess auth.
 	case "create":
 		var made string
 		if made, err = s.Matrix.CreateCollabChat(r.Context(), sess.UserID, r.FormValue("collab"), r.FormValue("name"), r.Form["users"]); err == nil {
+			back = imRoomURL(made)
+		}
+	case "copilot":
+		var made string
+		if made, err = s.Matrix.CreateCollabCoPilot(r.Context(), sess.UserID, r.FormValue("collab"), s.tr(r, "collab.copilot_chat"), r.Form["users"]); err == nil {
 			back = imRoomURL(made)
 		}
 	case "add":
@@ -278,16 +291,60 @@ func (s *Server) imSaved(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 }
 
 // chatMedia is the chat's panel of what was sent to it: «Медиа» (pictures, videos), «Файлы»,
-// «Аудио» (voice messages too) and «Ссылки».
+// «Аудио» (voice messages too), «Ссылки», «Задачи» and «Встречи» (made of its messages or from the panel).
 type chatMedia struct {
 	Room                string
 	Media, Files, Audio []matrixsync.Message
 	Links               []matrixsync.Link
+	Tasks               []chatTask
+	Events              []chatEvent
+}
+
+// chatTask, chatEvent: a task or a meeting of the chat and the message it was made of ("" — of none).
+type chatTask struct {
+	tasks.Task
+	Message string
+}
+
+type chatEvent struct {
+	calendar.Event
+	Message string
+}
+
+// chatItems are the chat's tasks and meetings the person may see, the latest tied first.
+func (s *Server) chatItems(r *http.Request, userID, room string) ([]chatTask, []chatEvent, error) {
+	ctx := r.Context()
+	var ts []chatTask
+	var es []chatEvent
+	items, err := s.Matrix.ChatItems(ctx, userID, room, "task")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, it := range items {
+		if c, err := s.Tasks.RowCard(ctx, userID, it.ItemID); err == nil {
+			ts = append(ts, chatTask{c.Task, it.EventID})
+		}
+	}
+	if s.Calendar == nil {
+		return ts, nil, nil
+	}
+	if items, err = s.Matrix.ChatItems(ctx, userID, room, "event"); err != nil {
+		return nil, nil, err
+	}
+	for _, it := range items {
+		if e, err := s.Calendar.Get(ctx, userID, it.ItemID); err == nil {
+			es = append(es, chatEvent{e, it.EventID})
+		}
+	}
+	return ts, es, nil
 }
 
 func (s *Server) chatMedia(r *http.Request, userID, room string) (chatMedia, error) {
 	files, links, err := s.Matrix.Media(r.Context(), userID, room)
 	out := chatMedia{Room: room, Links: links}
+	if err == nil {
+		out.Tasks, out.Events, err = s.chatItems(r, userID, room)
+	}
 	for _, m := range files {
 		switch m.File.Kind {
 		case "image", "video":

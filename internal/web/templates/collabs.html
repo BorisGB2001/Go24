@@ -25,7 +25,16 @@
     </div>
   </div>{{end}}
 </div>
-{{else}}<div class="card"><div class="empty">{{if $d.Q}}{{t "collab.search_empty"}}{{else if $d.Archived}}{{t "collab.archive_empty"}}{{else}}{{t "collab.empty"}}{{end}}</div></div>{{end}}
+{{else if not $d.Open}}<div class="card"><div class="empty">{{if $d.Q}}{{t "collab.search_empty"}}{{else if $d.Archived}}{{t "collab.archive_empty"}}{{else}}{{t "collab.empty"}}{{end}}</div></div>{{end}}
+{{if $d.Open}}<h2>{{icon "world"}} {{t "collab.open_found"}}</h2>
+<div class="collabs">
+  {{range $d.Open}}<div class="card collab">
+    <a href="/c/{{.Key}}" class="row ttitle">{{photo .Name .PhotoURL true}} <b>{{.Name}}</b></a>
+    {{with .Description}}<p class="small muted">{{.}}</p>{{end}}
+    <div class="small muted">{{t "collab.members_n" .Members}}</div>
+    <form method="post" action="/c/{{.Key}}/join"><button class="primary">{{icon "user-plus"}} {{t "collab.join"}}</button></form>
+  </div>{{end}}
+</div>{{end}}
 {{if $d.CanCreate}}<div class="card" id="new">
   <h2>{{icon "users-group"}} {{t "collab.new"}}</h2>
   <form method="post" action="/collabs" enctype="multipart/form-data">

@@ -289,6 +289,20 @@ func (s *Store) ByClientID(ctx context.Context, clientID string) (App, error) {
 	return a, nil
 }
 
+// WebhookApp is the application of the incoming webhook keyID (the public part of a personal API key): the owner of
+// the chat bots of imbot.v2 the webhook registers with botToken (GO24DEV-962). It is made on first use — named as the
+// key, api-only, installed, with the scope imbot.
+func (s *Store) WebhookApp(ctx context.Context, keyID string) (App, error) {
+	if _, err := s.db.Exec(ctx, `INSERT INTO apps (name, api_only, scopes, client_id, client_secret, application_token,
+			created_by, installed_at, webhook_key)
+		SELECT left(k.name, 100), true, '{imbot}', $2, $3, $4, k.user_id, now(), k.key_id FROM api_keys k
+		WHERE k.key_id = $1 AND length(k.name) > 0 ON CONFLICT (webhook_key) DO NOTHING`,
+		keyID, "local."+randomHex(8), randomHex(32), randomHex(16)); err != nil {
+		return App{}, err
+	}
+	return s.one(ctx, "WHERE a.webhook_key = $1", keyID)
+}
+
 // Delete removes the application with all its tokens and places.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM apps WHERE id::text = $1`, id)
@@ -489,11 +503,16 @@ func (s *Store) Uninstall(ctx context.Context, id, base, lang string) error {
 }
 
 func (s *Store) post(ctx context.Context, target, secret, event string, body []byte) (int, error) {
+	return s.postAs(ctx, target, secret, event, "application/json", body)
+}
+
+// postAs is post of a body of the content type.
+func (s *Store) postAs(ctx context.Context, target, secret, event, ctype string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", ctype)
 	req.Header.Set("User-Agent", "go24-app")
 	req.Header.Set("X-Go24-Event", event)
 	req.Header.Set("X-Go24-Signature", hooks.Sign(secret, body))

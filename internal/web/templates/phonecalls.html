@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}{{$f := $d.Filter}}
-<div class="pagehead"><h1>{{icon "phone"}} {{t "tel.calls"}}</h1><a class="button ghost" href="/telephony/stats">{{icon "chart-bar"}} {{t "tel.stats"}}</a></div>
+<div class="pagehead"><h1>{{icon "phone"}} {{t "tel.calls"}}</h1>{{if $d.Monitor}}<a class="button ghost" href="/telephony/active">{{icon "speakerphone"}} {{t "tel.active"}}</a>{{end}}<a class="button ghost" href="/telephony/stats">{{icon "chart-bar"}} {{t "tel.stats"}}</a><a class="button ghost" href="/telephony/calllists">{{icon "list-check"}} {{t "tel.cl_title"}}</a></div>
 <form method="get" action="/telephony/calls" class="card row phonefilter">
   {{if $d.Users}}<select name="user" style="width:auto" aria-label="{{t "tel.col.employee"}}"><option value="">{{t "tel.filter.everyone"}}</option>
     {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.UserID}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{end}}
@@ -8,8 +8,11 @@
     {{range list "in" "out" "missed"}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "tel.kind." .)}}</option>{{end}}</select>
   <label class="small">{{t "tel.filter.from"}} <input type="date" name="from" value="{{$d.From}}" style="width:auto"></label>
   <label class="small">{{t "tel.filter.to"}} <input type="date" name="to" value="{{$d.To}}" style="width:auto"></label>
+  {{if $d.Lines}}<select name="line" style="width:auto" aria-label="{{t "tel.col.line"}}"><option value="">{{t "tel.filter.all_lines"}}</option>
+    {{range $d.Lines}}<option value="{{.Number}}" {{if eq .Number $f.Line}}selected{{end}}>{{with .Name}}{{.}} · {{end}}{{.Number}}</option>{{end}}</select>{{end}}
   <input type="search" name="q" value="{{$f.Number}}" placeholder="{{t "tel.filter.number"}}" inputmode="tel" style="width:12em">
   <button class="primary">{{icon "search"}} {{t "tel.filter.show"}}</button>
+  <a class="button ghost" href="{{$d.CSV}}" title="{{t "tel.export_hint"}}">{{icon "download"}} {{t "tel.export"}}</a>
 </form>
 <div class="card flush">
   <div class="tlist-wrap"><table class="list phonecalls">
@@ -31,7 +34,15 @@
           <button class="ghost small" title="{{t "tel.black.add_hint"}}">{{icon "lock"}} {{t "tel.black.add"}}</button></form>{{end}}{{end}}</td>
       <td>{{if .CanListen}}<div class="row nowrap"><audio controls preload="none" src="/telephony/calls/{{.ID}}/record"></audio>
         <a class="button ghost small" href="/telephony/calls/{{.ID}}/record?download=1" title="{{t "tel.download"}}" aria-label="{{t "tel.download"}}">{{icon "download"}}</a>
-        {{if and (not .Transcript) $d.Speech}}<form method="post" action="/telephony/calls/{{.ID}}/transcript"><button class="ghost small" title="{{t "tel.transcribe_hint"}}">{{icon "file-text"}} {{t "tel.transcribe"}}</button></form>{{end}}</div>
+        {{if and $d.Admin .DriveFile}}<a class="button ghost small" href="/files/{{.DriveFile}}" title="{{t "tel.on_drive"}}" aria-label="{{t "tel.on_drive"}}">{{icon "folder"}}</a>{{end}}
+        {{if and (not .Transcript) $d.Speech}}<form method="post" action="/telephony/calls/{{.ID}}/transcript"><button class="ghost small" title="{{t "tel.transcribe_hint"}}">{{icon "file-text"}} {{t "tel.transcribe"}}</button></form>{{end}}
+        {{if and (not .Summary) $d.AI (or .Transcript $d.Speech)}}<form method="post" action="/telephony/calls/{{.ID}}/summary"><button class="ghost small" title="{{t "tel.summarize_hint"}}">{{icon "sparkles"}} {{t "tel.summarize"}}</button></form>{{end}}
+        {{if and $d.AI $d.CRM .CRMID (or .Transcript $d.Speech)}}<form method="post" action="/telephony/calls/{{.ID}}/fill"><button class="ghost small" title="{{t "tel.fill_hint"}}">{{icon "edit"}} {{if .Filled}}{{t "tel.refill"}}{{else}}{{t "tel.fill"}}{{end}}</button></form>{{end}}
+        {{if and $d.AI $d.Scripts (or .Transcript $d.Speech)}}<form method="post" action="/telephony/calls/{{.ID}}/assess" class="row nowrap">
+          <select name="script" class="small" style="width:auto" aria-label="{{t "tel.script"}}">{{range $d.Scripts}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+          <button class="ghost small" title="{{t "tel.assess_hint"}}">{{icon "list-check"}} {{if ge .Score 0}}{{t "tel.reassess"}}{{else}}{{t "tel.assess"}}{{end}}</button></form>{{end}}</div>
+        {{if ge .Score 0}}<details class="tel-text"><summary class="small">{{icon "list-check"}} {{t "tel.score"}}: <b class="pill {{if ge .Score 80}}tel-in{{else if ge .Score 50}}st-deferred{{else}}tel-missed{{end}}">{{.Score}}%</b> <span class="muted">· {{.ScoreName}}</span></summary><p class="small">{{nl2br .ScoreText}}</p></details>{{end}}
+        {{with .Summary}}<details class="tel-text" open><summary class="small">{{icon "sparkles"}} {{t "tel.summary"}}</summary><p class="small">{{nl2br .}}</p></details>{{end}}
         {{with .Transcript}}<details class="tel-text"><summary class="small">{{t "tel.transcript"}}</summary><p class="small">{{nl2br .}}</p></details>{{end}}
         {{else if .HasRecord}}<span class="muted small">{{t "tel.recorded"}}</span>{{else}}<span class="muted">—</span>{{end}}</td></tr>
     {{else}}<tr><td colspan="7" class="empty">{{t "tel.calls_empty"}}</td></tr>{{end}}</tbody>

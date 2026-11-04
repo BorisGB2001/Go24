@@ -1,7 +1,12 @@
 {{/* bpfield is an input of a process's field: of the start form or of a request */}}
 {{define "bpfield"}}{{$f := .}}{{if eq .Kind "bool"}}<label class="check"><input type="checkbox" name="f_{{.Key}}" value="Y" {{if eq .Default "Y"}}checked{{end}}> {{.Label}}</label><input type="hidden" name="f_{{.Key}}" value="N">
 {{else}}<label>{{.Label}}{{if .Required}} <span class="req">*</span>{{end}}</label>
-{{if eq .Kind "text"}}<textarea name="f_{{.Key}}" rows="4" {{if .Required}}required{{end}}>{{.Default}}</textarea>
+{{if .Multiple}}<input type="hidden" name="m_{{.Key}}" value="">{{if eq .Kind "user"}}{{template "upick" (upick (print "m_" .Key) (.List .Default) nil "multi")}}
+{{else if eq .Kind "select"}}<select name="m_{{.Key}}" multiple size="4" {{if .Required}}required{{end}}>{{range .Options}}<option {{if $f.Picked .}}selected{{end}}>{{.}}</option>{{end}}</select>
+{{else}}{{$type := "text"}}{{if eq .Kind "date"}}{{$type = "date"}}{{else if eq .Kind "datetime"}}{{$type = "datetime-local"}}{{end}}<div class="bpmulti" data-multi>
+  {{range .List .Default}}<input type="{{$type}}" name="m_{{$f.Key}}" value="{{.}}" maxlength="1000">{{end}}<input type="{{$type}}" name="m_{{.Key}}" value="" maxlength="1000" {{if and .Required (not .Default)}}required{{end}}{{if eq .Kind "number"}} inputmode="decimal"{{end}}>
+  <button type="button" class="ghost small" data-more>{{icon "plus"}} {{t "bp.f.more"}}</button></div>{{end}}
+{{else if eq .Kind "text"}}<textarea name="f_{{.Key}}" rows="4" {{if .Required}}required{{end}}>{{.Default}}</textarea>
 {{else if eq .Kind "date"}}<input type="date" name="f_{{.Key}}" value="{{.Default}}" {{if .Required}}required{{end}}>
 {{else if eq .Kind "datetime"}}<input type="datetime-local" name="f_{{.Key}}" value="{{.Default}}" {{if .Required}}required{{end}}>
 {{else if eq .Kind "number"}}<input type="text" inputmode="decimal" name="f_{{.Key}}" value="{{.Default}}" {{if .Required}}required{{end}}>
@@ -10,17 +15,25 @@
 {{else}}<input type="text" name="f_{{.Key}}" value="{{.Default}}" maxlength="1000" {{if .Required}}required{{end}}>{{end}}{{end}}{{end}}
 
 {{/* bpvalue is a value of a process's field as people read it: (dict "F" field "V" value "Users" users) */}}
-{{define "bpvalue"}}{{$v := .V}}{{if not $v}}{{else if eq .F.Kind "bool"}}{{t (print "bp.bool." $v)}}{{else if eq .F.Kind "user"}}{{range .Users}}{{if eq .ID $v}}{{.Name}}{{end}}{{end}}{{else}}{{.F.Shown $v}}{{end}}{{end}}
+{{define "bpvalue"}}{{$v := .V}}{{$users := .Users}}{{if not $v}}{{else if and .F.Multiple (eq .F.Kind "user")}}{{range $i, $id := .F.List $v}}{{if $i}}, {{end}}{{range $users}}{{if eq .ID $id}}{{.Name}}{{end}}{{end}}{{end}}{{else if eq .F.Kind "bool"}}{{t (print "bp.bool." $v)}}{{else if eq .F.Kind "user"}}{{range .Users}}{{if eq .ID $v}}{{.Name}}{{end}}{{end}}{{else}}{{.F.Shown $v}}{{end}}{{end}}
 
 {{/* bpfields edits the fields of a form (the template's or a request's), as the parameters of the designer:
      a row a field, the last one empty to add; (dict "P" prefix "Rows" bpFieldRows "Kinds" kinds ["Scopes" scopes — the template's]) */}}
+{{/* bpcond is a row of one more condition of an «if» or a loop step: (dict "C" bp.Cond-or-nil "D" the page's data) */}}
+{{define "bpcond"}}{{$c := .C}}<div class="row" data-row><select name="more_join"><option value="and">{{t "bp.cond.and"}}</option><option value="or" {{if and $c $c.Or}}selected{{end}}>{{t "bp.cond.or"}}</option></select>
+  <select name="more_field">{{range .D.AllFields}}<option value="{{.Key}}" {{if and $c (eq .Key $c.Field)}}selected{{end}}>{{.Label}}</option>{{end}}</select>
+  <select name="more_cmp">{{range .D.Ops}}<option value="{{.}}" {{if and $c (eq . $c.Op)}}selected{{end}}>{{t (print "bp.op." .)}}</option>{{end}}</select>
+  <input type="text" name="more_value" maxlength="1000" placeholder="{{t "bp.step_value"}}" style="flex:1" value="{{if $c}}{{$c.Value}}{{end}}">
+  <button type="button" class="ghost small" data-rm-row title="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}
+
 {{define "bpfields"}}{{$p := .P}}{{$kinds := .Kinds}}{{$scopes := .Scopes}}<div class="bpfields" data-bpfields><div class="tablewrap"><table class="tlist"><thead><tr><th>{{t "bp.f.key"}}</th><th>{{t "bp.f.label"}}</th><th>{{t "bp.f.kind"}}</th>{{if $scopes}}<th>{{t "bp.f.scope"}}</th>{{end}}
-  <th>{{t "bp.f.required"}}</th><th>{{t "bp.f.options"}}</th><th>{{t "bp.f.default"}}</th><th></th></tr></thead><tbody>
+  <th>{{t "bp.f.required"}}</th><th>{{t "bp.f.multiple"}}</th><th>{{t "bp.f.options"}}</th><th>{{t "bp.f.default"}}</th><th></th></tr></thead><tbody>
   {{range .Rows}}{{$f := .}}<tr><td><input type="text" name="{{$p}}_key" value="{{.Key}}" maxlength="50" placeholder="sum"></td>
     <td><input type="text" name="{{$p}}_label" value="{{.Label}}" maxlength="200"></td>
     <td><select name="{{$p}}_kind">{{range $kinds}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "bp.fkind." .)}}</option>{{end}}</select></td>
     {{if $scopes}}<td><select name="{{$p}}_scope">{{range $scopes}}<option value="{{.}}" {{if or (eq . $f.Scope) (and (eq . "param") (not $f.Scope))}}selected{{end}}>{{t (print "bp.scope." .)}}</option>{{end}}</select></td>{{end}}
     <td><select name="{{$p}}_req"><option value="">{{t "bp.bool.N"}}</option><option value="1" {{if .Required}}selected{{end}}>{{t "bp.bool.Y"}}</option></select></td>
+    <td><select name="{{$p}}_multi"><option value="">{{t "bp.bool.N"}}</option><option value="1" {{if .Multiple}}selected{{end}}>{{t "bp.bool.Y"}}</option></select></td>
     <td><input type="text" name="{{$p}}_opts" value="{{.Options}}" maxlength="5000" placeholder="{{t "bp.f.options_ph"}}"></td>
     <td><input type="text" name="{{$p}}_def" value="{{.Default}}" maxlength="1000"></td>
     <td><button type="button" class="ghost small" data-rm-row title="{{t "common.remove"}}">{{icon "x"}}</button></td></tr>{{end}}
@@ -30,13 +43,14 @@
 {{/* bpanswer is the form of a person's part in a process: approve or reject, «Ознакомлен», or a request's fields
      (with «Отклонить» when the step allows): (dict "A" approval "Back" url) */}}
 {{define "bpanswer"}}{{$a := .A}}<form method="post" action="/bp/approvals/{{$a.ID}}" class="{{if eq $a.Kind "request"}}bprequest{{else}}row{{end}}"><input type="hidden" name="back" value="{{.Back}}">
+    {{with $a.Due}}<p class="small muted">{{icon "clock"}} {{t "bp.due" (datetime .)}}</p>{{end}}
     {{if eq $a.Kind "request"}}{{range $a.Fields}}{{template "bpfield" .}}{{end}}<label>{{t "bp.comment"}}</label>{{end}}
-    <div class="row"><input type="text" name="comment" maxlength="5000" placeholder="{{t "bp.comment"}}" style="flex:1">
-    {{if eq $a.Kind "review"}}<button class="primary" name="decision" value="seen">{{icon "check"}} {{t "bp.seen"}}</button>
-    {{else if eq $a.Kind "request"}}<button class="primary" name="decision" value="answer">{{icon "send"}} {{t "bp.answer"}}</button>
-    {{if $a.CanReject}}<button class="ghost" name="decision" value="reject" formnovalidate>{{icon "x"}} {{t "bp.reject"}}</button>{{end}}
-    {{else}}<button class="primary" name="decision" value="approve">{{icon "check"}} {{t "bp.approve"}}</button>
-    <button class="ghost" name="decision" value="reject">{{icon "x"}} {{t "bp.reject"}}</button>{{end}}</div></form>
+    <div class="row"><input type="text" name="comment" maxlength="5000" placeholder="{{if $a.Remark}}{{t "bp.comment_required"}}{{else}}{{t "bp.comment"}}{{end}}" {{if eq $a.Remark "yes"}}required{{end}} style="flex:1">
+    {{if eq $a.Kind "review"}}<button class="primary" name="decision" value="seen">{{icon "check"}} {{or $a.Yes (t "bp.seen")}}</button>
+    {{else if eq $a.Kind "request"}}<button class="primary" name="decision" value="answer">{{icon "send"}} {{or $a.Yes (t "bp.answer")}}</button>
+    {{if $a.CanReject}}<button class="ghost" name="decision" value="reject" {{if ne $a.Remark "yes"}}formnovalidate{{end}}>{{icon "x"}} {{or $a.No (t "bp.reject")}}</button>{{end}}
+    {{else}}<button class="primary" name="decision" value="approve">{{icon "check"}} {{or $a.Yes (t "bp.approve")}}</button>
+    <button class="ghost" name="decision" value="reject">{{icon "x"}} {{or $a.No (t "bp.reject")}}</button>{{end}}</div></form>
     {{if ne $a.Delegate "none"}}{{template "bpdelegate" (dict "A" $a "Back" .Back)}}{{end}}{{end}}
 
 {{/* bpdelegate is «Делегировать» of a person's part in a process: handed to an employee (dict "A" approval "Back" url) */}}
@@ -47,26 +61,41 @@
 
 {{/* bpstep describes a step of a business process: (dict "S" step "Users" users) */}}
 {{define "bpstep"}}{{$s := .S}}{{$users := .Users}}{{$fields := .Fields}}<b>{{t (print "bp.kind." $s.Kind)}}</b>{{with $s.Text}}{{if ne $s.Kind "mail"}}: {{.}}{{end}}{{end}}
-{{- if or (eq $s.Kind "if") (eq $s.Kind "loop")}}: <code>{{$s.Field}}</code> {{t (print "bp.op." $s.Op)}}{{if and (ne $s.Op "empty") (ne $s.Op "filled")}} «{{$s.Value}}»{{end}}{{end}}
+{{- if or (eq $s.Kind "if") (eq $s.Kind "loop")}}: <code>{{$s.Field}}</code> {{t (print "bp.op." $s.Op)}}{{if and (ne $s.Op "empty") (ne $s.Op "filled")}} «{{$s.Value}}»{{end}}{{range $s.More}} {{if .Or}}{{t "bp.cond.or"}}{{else}}{{t "bp.cond.and"}}{{end}} <code>{{.Field}}</code> {{t (print "bp.op." .Op)}}{{if and (ne .Op "empty") (ne .Op "filled")}} «{{.Value}}»{{end}}{{end}}{{end}}
 {{- if eq $s.Kind "request"}}{{range $i, $f := $s.Fields}}{{if $i}},{{else}}:{{end}} <code>{{$f.Key}}</code>{{end}}{{end}}
+{{- if eq $s.Kind "app"}}{{if $s.Fields}} → {{range $i, $f := $s.Fields}}{{if $i}}, {{end}}<code>{{$f.Key}}</code>{{end}}{{end}}{{if $s.Timeout}} <span class="small muted">({{t "bp.app_wait_max" $s.Timeout}})</span>{{end}}{{end}}
 {{- if and $s.Delegate (or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request"))}} <span class="small muted">({{t (print "bp.delegation." $s.Delegate)}})</span>{{end}}
+{{- if eq $s.Kind "commands"}}{{range $i, $c := $s.Commands}}{{if $i}},{{else}}:{{end}} «{{$c.Title}}» → {{if $c.Goto}}{{t "bp.to_step" $c.Goto}}{{else}}{{t "bp.to_next"}}{{end}}{{end}}{{if $s.Timeout}}; {{t "bp.commands_timeout" (bpTimeout $s.Timeout)}} → {{if $s.Goto}}{{t "bp.to_step" $s.Goto}}{{else}}{{t "bp.to_next"}}{{end}}{{end}}{{end}}
 {{- if eq $s.Kind "set"}}: <code>{{$s.Field}}</code> = «{{$s.Value}}»{{end}}
+{{- if eq $s.Kind "foreach"}}: <code>{{$s.Field}}</code> → <code>{{$s.Item}}</code>{{end}}
 {{- if eq $s.Kind "event"}} (<code>{{$s.Start}}</code>{{with $s.End}} — <code>{{.}}</code>{{end}}) · {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
 {{- if eq $s.Kind "pick"}}: <code>{{$s.Field}}</code> ← {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
-{{- if eq $s.Kind "create"}} ({{t (print "crm." $s.Entity)}}){{end}}{{if eq $s.Kind "absence"}} ({{t (print "absence.kind." $s.Absence)}}: <code>{{$s.Start}}</code> — <code>{{$s.End}}</code>){{end}}{{if eq $s.Kind "mail"}}: {{$s.Subject}}{{end}}
+{{- if eq $s.Kind "create"}} ({{if $s.Type}}{{t "bp.step_create_types"}}{{else}}{{t (print "crm." $s.Entity)}}{{end}}){{end}}{{if eq $s.Kind "absence"}} ({{absKind $s.Absence}}: <code>{{$s.Start}}</code> — <code>{{$s.End}}</code>){{end}}{{if eq $s.Kind "mail"}}: {{$s.Subject}}{{end}}
+{{- if hasPrefix $s.Kind "disk"}}{{with $s.Value}}: «{{.}}»{{end}}{{if $s.Drive}} → {{if eq $s.Drive "company"}}{{t "bp.disk_company"}}{{else if eq $s.Drive "my"}}{{t "bp.disk_my"}}{{else}}{{$s.Drive}}{{end}}{{with $s.Folder}} / {{.}}{{end}}{{end}}{{if $s.Move}} ({{t "bp.disk_move"}}){{end}}{{end}}
+{{- if hasPrefix $s.Kind "crm"}}{{with $s.Entity}} ({{t (print "crm." .)}}){{end}}{{with $s.Value}} «{{.}}»{{end}}{{end}}
+{{- if eq $s.Kind "crmobservers"}}: {{t (print "bp.obs." $s.Mode)}}{{range $i, $to := $s.Users}}{{if $i}},{{end}} {{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
+{{- if eq $s.Kind "crmresponsible"}}: {{if eq $s.Mode "queue"}}{{t "bp.pick.queue"}}{{else}}{{t "bp.pick.random"}}{{end}}{{range $i, $to := $s.Users}}{{if $i}},{{end}} {{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
+{{- if eq $s.Kind "crmproduct"}}{{if not $s.Text}}: {{$s.Product}}{{end}}{{with $s.Quantity}} × {{.}}{{end}}{{with $s.Price}}, {{.}}{{end}}{{with $s.Discount}}, −{{.}}%{{end}}{{end}}
+{{- if eq $s.Kind "crmclose"}}: {{if $s.Deed}}{{t (print "crm.act." $s.Deed)}}{{else}}{{t "bp.step_close_all"}}{{end}}{{end}}
+{{- if eq $s.Kind "sms"}} → {{or $s.Value (t "bp.to.client")}}{{end}}
+{{- if eq $s.Kind "workday"}} ({{t (print "bp.workday." $s.Act)}}){{end}}
+{{- if or (eq $s.Kind "workday") (eq $s.Kind "workdayinfo")}} · {{template "bpwho" (dict "To" (or $s.To "starter") "Users" $users "Fields" $fields)}}{{end}}
+{{- if eq $s.Kind "random"}}: <code>{{$s.Field}}</code> ← {{t "bp.random_of" $s.Size}}{{range $i, $c := $s.Chars}}{{if $i}},{{else}}:{{end}} {{t (print "bp.random." $c)}}{{end}}{{end}}
 {{- range $i, $a := $s.Sets}}{{if $i}},{{else}}:{{end}} <code>{{$a.Field}}</code> = «{{$a.Value}}»{{end}}
 <span class="small muted">
 {{- if eq $s.Kind "activity"}} ({{t (print "crm.act." $s.Deed)}}){{end}}
 {{- if or (eq $s.Kind "chat") (eq $s.Kind "mail") (eq $s.Kind "post") (eq $s.Kind "comment") (eq $s.Kind "document")}} · {{t "bp.from"}} {{template "bpwho" (dict "To" (or $s.From "starter") "Users" $users "Fields" $fields)}} →{{end}}
+{{- if hasPrefix $s.Kind "disk"}} · {{t "bp.disk_as"}} {{template "bpwho" (dict "To" (or $s.From "starter") "Users" $users "Fields" $fields)}}{{end}}
 {{- if and (eq $s.Kind "mail") $s.To}} {{template "bpwho" (dict "To" $s.To "Users" $users "Fields" $fields)}}{{end}}{{with $s.Email}} {{.}}{{end}}
-{{- if or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request") (eq $s.Kind "notify") (eq $s.Kind "chat") (eq $s.Kind "create") (eq $s.Kind "activity") (eq $s.Kind "userinfo")}}{{range $i, $to := $s.People}}{{if $i}},{{else}} ·{{end}} {{if or (eq $to "starter") (eq $to "manager") (eq $to "responsible")}}{{t (print "bp.to." $to)}}{{else if hasPrefix $to "field:"}}{{$k := slice $to 6}}{{range $fields}}{{if eq .Key $k}}{{$k = .Label}}{{end}}{{end}}{{t "bp.to.field" $k}}{{else}}{{range $users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}{{end}}
+{{- if or (eq $s.Kind "approve") (eq $s.Kind "review") (eq $s.Kind "request") (eq $s.Kind "commands") (eq $s.Kind "notify") (eq $s.Kind "chat") (eq $s.Kind "create") (eq $s.Kind "activity") (eq $s.Kind "userinfo")}}{{range $i, $to := $s.People}}{{if $i}},{{else}} ·{{end}} {{if or (eq $to "starter") (eq $to "manager") (eq $to "responsible")}}{{t (print "bp.to." $to)}}{{else if hasPrefix $to "field:"}}{{$k := slice $to 6}}{{range $fields}}{{if eq .Key $k}}{{$k = .Label}}{{end}}{{end}}{{t "bp.to.field" $k}}{{else}}{{range $users}}{{if eq .ID $to}}{{.Name}}{{end}}{{end}}{{end}}{{end}}{{end}}
 {{- if eq $s.Kind "task"}} · {{template "bpwho" (dict "To" (or $s.To "starter") "Users" $users "Fields" $fields)}}
 {{- if $s.Users}} · {{t "bp.task_accomplices"}} {{range $i, $to := $s.Users}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
 {{- if $s.Watchers}} · {{t "bp.task_watchers"}} {{range $i, $to := $s.Watchers}}{{if $i}}, {{end}}{{template "bpwho" (dict "To" $to "Users" $users "Fields" $fields)}}{{end}}{{end}}
 {{- if $s.High}} · {{t "bp.task_high"}}{{end}}{{if $s.Control}} · {{t "bp.task_control"}}{{end}}{{with $s.Items}} · {{t "bp.task_items" (len .)}}{{end}}{{if $s.Wait}} · {{t "bp.task_wait"}}{{end}}{{end}}
-{{- if and (eq $s.Kind "approve") $s.Users}} · {{t (print "bp.mode." (or $s.Mode "any"))}}{{end}}
+{{- if and (eq $s.Kind "approve") $s.Users}} · {{if eq $s.Mode "vote"}}{{t "bp.vote_of" $s.Percent}}{{if $s.WaitAll}}, {{t "bp.vote_all"}}{{end}}{{else}}{{t (print "bp.mode." (or $s.Mode "any"))}}{{end}}{{end}}
+{{- if and $s.Timeout (ne $s.Kind "commands") (ne $s.Kind "wait")}} · {{t "bp.timeout_of" (bpTimeout $s.Timeout)}}{{end}}{{if $s.Remark}} · {{t "bp.step_remark"}}: {{t (print "bp.remark." $s.Remark)}}{{end}}
 {{- if eq $s.Kind "pick"}} · {{t (print "bp.pick." (or $s.Mode "random"))}}{{if $s.Skip}} · {{t "bp.pick.skip"}}{{with $s.To}} · {{t "bp.pick.reserve"}} {{template "bpwho" (dict "To" . "Users" $users "Fields" $fields)}}{{end}}{{end}}{{end}}
-{{- with $s.Project}} · {{.}}{{end}}{{with $s.URL}} · <code>{{.}}</code>{{end}}{{if $s.Days}} · {{t "bp.days" $s.Days}}{{end}}{{if and (eq $s.Kind "wait") $s.Field}} · {{t "bp.until"}} <code>{{$s.Field}}</code>{{end}}
+{{- with $s.Project}} · {{.}}{{end}}{{with $s.URL}} · <code>{{.}}</code>{{end}}{{if $s.Days}} · {{t "bp.days" $s.Days}}{{end}}{{if and (eq $s.Kind "wait") $s.Timeout}} · {{bpTimeout $s.Timeout}}{{end}}{{if and (eq $s.Kind "wait") $s.Field}} · {{t "bp.until"}} <code>{{$s.Field}}</code>{{end}}{{if $s.WorkTime}} · {{t "bp.worktime"}}{{end}}
 {{- if eq $s.Kind "if"}} · {{t "bp.else"}}{{end}}{{if eq $s.Kind "loop"}} · {{t "bp.while"}}{{end}}{{if or (eq $s.Kind "approve") (eq $s.Kind "request")}}{{if $s.Goto}} · {{t "bp.if_rejected"}}{{else if $s.Reject}} · {{t "bp.can_reject"}}{{end}}{{end}}
 {{- if eq $s.Kind "parallel"}} · {{t "bp.branches_from"}}{{range $s.Branches}}, {{.}}{{end}}{{end}}
 {{- if or (eq $s.Kind "if") (eq $s.Kind "goto") (eq $s.Kind "loop") (eq $s.Kind "parallel") (and (eq $s.Kind "approve") $s.Goto) (and (eq $s.Kind "request") $s.Goto)}} → {{if $s.Goto}}{{t "bp.to_step" $s.Goto}}{{else}}{{t "bp.to_end"}}{{end}}{{end}}</span>
@@ -79,3 +108,22 @@
   <div class="row"><span class="pill bp-{{$c.X.Status}}">{{t (print "bp.status." $c.X.Status)}}</span><a class="small" href="/bp/i/{{$c.X.ID}}">{{icon "external-link"}} {{t "feed.bp_open"}}</a></div>
   {{range $c.Mine}}<div class="bpapproval"><div>{{.Text}}</div>{{template "bpanswer" (dict "A" . "Back" $back)}}</div>{{end}}
 </div>{{end}}
+
+{{/* bpscheme is the scheme of a template's steps, as the graphical designer: (dict "Nodes" bp.Scheme "ID"
+  the template "Users" "Fields"); a block opens «Изменить», «+» — a step put there, a block dragged to a «+» moves */}}
+{{define "bpscheme"}}<div class="bpscheme"><div class="bpflow">{{template "bpgap" (dict "At" 1)}}{{range .Nodes}}{{template "bpnode" (dict "N" . "X" $)}}{{end}}<div class="bpend">{{t "bp.scheme.end"}}</div></div></div>{{end}}
+
+{{define "bpnode"}}{{$n := .N}}{{$x := .X}}<div class="bpnode">
+  <div class="bpblock k-{{$n.Step.Kind}}" draggable="true" data-a="{{$n.A}}" data-b="{{$n.B}}" data-bpedit="?step={{$n.N}}#stepform">
+    <span class="bpnum">{{$n.N}}</span><div class="bptext">{{template "bpstep" (dict "S" $n.Step "Users" $x.Users "Fields" $x.Fields)}}</div>
+    <span class="bptools"><a class="button ghost small" href="?step={{$n.N}}#stepform" title="{{t "bp.edit_step" $n.N}}">{{icon "edit"}}</a>
+      <form method="post" action="/bp/templates/{{$x.ID}}"><input type="hidden" name="op" value="copy"><input type="hidden" name="a" value="{{$n.A}}"><input type="hidden" name="b" value="{{$n.B}}"><button class="ghost small" title="{{t "bp.scheme.copy"}}">{{icon "copy"}}</button></form>
+      <form method="post" action="/bp/templates/{{$x.ID}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="n" value="{{$n.A}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>
+  </div>
+  {{with $n.Cols}}<div class="bpsplit{{if eq (len .) 1}} bpbody{{end}}">{{range .}}<div class="bpcol">{{with .Label}}<div class="bpcolhead">{{t .}}</div>{{end}}
+    {{if .Open}}{{template "bpgap" (dict "At" .Gap.At "From" .Gap.From "Br" .Gap.Br)}}{{else}}<div class="bpskip">{{t "bp.scheme.skip"}}</div>{{end}}
+    {{range .Nodes}}{{template "bpnode" (dict "N" . "X" $x)}}{{end}}</div>{{end}}</div>{{end}}
+  {{template "bpgap" (dict "At" (add $n.B 1))}}
+</div>{{end}}
+
+{{define "bpgap"}}<a class="bpgap" href="?at={{.At}}{{with .From}}&from={{.}}{{end}}{{with .Br}}&br={{.}}{{end}}#stepform" data-at="{{.At}}" data-from="{{or .From 0}}" data-br="{{or .Br 0}}" title="{{t "bp.scheme.add"}}">+</a>{{end}}

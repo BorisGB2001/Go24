@@ -18,8 +18,8 @@ const cardCalls = 5
 
 // phoneCard is the call card of the softphone for the number on the other end (JSON): the client of CRM (the card,
 // its company, responsible and open deals — when the employee may read it; else the name only), «Создать лид» and
-// «Создать контакт» for an unknown number, the last calls with it the employee may see and the comment written on the
-// call so far. at is go24's time: the softphone sends it back with the comment, so it finds this very call.
+// «Создать контакт» for an unknown number, the last calls with it the employee may see, the sales scripts of the call's
+// direction (dir: in, out) and the comment written on the call so far. at is go24's time: the softphone sends it back with the comment, so it finds this very call.
 func (s *Server) phoneCard(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	ctx := r.Context()
 	if _, ok := s.phoneLine(ctx, sess.UserID); !ok {
@@ -55,7 +55,7 @@ func (s *Server) phoneCard(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	} else if s.CRM != nil {
 		create := []map[string]string{}
 		for _, e := range []string{"lead", "contact"} {
-			if ok, err := s.CRM.Can(ctx, sess.UserID, e, "write", sess.UserID); err == nil && ok {
+			if ok, err := s.CRM.Can(ctx, sess.UserID, e, "add", sess.UserID); err == nil && ok {
 				create = append(create, map[string]string{"what": e, "title": s.tr(r, "phone.card_new_"+e)})
 			}
 		}
@@ -88,6 +88,10 @@ func (s *Server) phoneCard(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			"status": tr("tel.status." + c.Status), "time": formatDuration(tr, c.Seconds), "who": who, "comment": c.Comment})
 	}
 	card["calls"] = calls
+	if card["scripts"], err = s.cardScripts(ctx, r.FormValue("dir")); err != nil {
+		s.jsonErr(w, r, err)
+		return
+	}
 	if card["comment"], err = s.Telephony.Pending(ctx, sess.UserID, n); err != nil {
 		s.jsonErr(w, r, err)
 		return
@@ -207,7 +211,7 @@ func (s *Server) phoneCardCreate(w http.ResponseWriter, r *http.Request, sess au
 		http.Error(w, "bad kind", http.StatusBadRequest)
 		return
 	}
-	if err := s.CRM.Check(ctx, sess.UserID, what, "write", sess.UserID); err != nil {
+	if err := s.CRM.Check(ctx, sess.UserID, what, "add", sess.UserID); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}

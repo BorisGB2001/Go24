@@ -32,17 +32,71 @@ const TemplateInvoice = "invoice"
 // DocTemplate is a template and where its file is.
 type DocTemplate struct {
 	ID, Name, Entity, FileID, FileName string
+	TypeID                             string // a template of a smart process's cards (Entity "deal"); "" — of deals
 	NumeratorID, NumeratorName         string
 	Numerator                          string // its numerator's format: {NUMBER}, {YEAR}, {MONTH}, {DAY} and text
 	CreatedAt                          time.Time
+	Active                             bool // «Активен»: offered for new documents
+	Sort                               int  // «Сортировка»: the order in the lists, then the name
+	WithStamps                         bool // «С печатями и подписями» of a new document by it, unless asked otherwise
+	CreatedBy, UpdatedBy               string
+	UpdatedAt                          *time.Time // the last change of its settings, name or file; nil — none
+	Changer                            string     // the name of who changed it last (or added it)
 }
 
-const tplCols = `t.id, t.name, t.entity, t.file_id::text, f.name, t.numerator_id::text, n.name, n.format, t.created_at
+// Changed is when the template was changed last (or added).
+func (t DocTemplate) Changed() time.Time {
+	if t.UpdatedAt != nil {
+		return *t.UpdatedAt
+	}
+	return t.CreatedAt
+}
+
+// DocTemplateSettings are «Активен», «Сортировка» and «С печатями и подписями» of a template.
+type DocTemplateSettings struct {
+	Active     bool
+	Sort       int
+	WithStamps bool
+}
+
+// TypeKind is the kind of templates of a smart process's cards, as DocTemplates and NewDocTemplate take it.
+func TypeKind(typeID string) string {
+	return "type:" + typeID
+}
+
+// DocKind is the kind of templates of a card of the entity (a smart process's — of its type).
+func DocKind(entity, typeID string) string {
+	if entity == "deal" && typeID != "" {
+		return TypeKind(typeID)
+	}
+	return entity
+}
+
+// Kind is the kind of cards the template is of: an entity or TypeKind.
+func (t DocTemplate) Kind() string {
+	return DocKind(t.Entity, t.TypeID)
+}
+
+const tplCols = `t.id, t.name, t.entity, t.file_id::text, f.name, coalesce(t.type_id::text, ''), t.numerator_id::text, n.name,
+	n.format, t.created_at, t.active, t.sort, t.with_stamps, t.created_by::text, coalesce(t.updated_by::text, ''), t.updated_at,
+	coalesce((SELECT u.name FROM users u WHERE u.id = coalesce(t.updated_by, t.created_by)), '')
 	FROM crm_doc_templates t JOIN files f ON f.id = t.file_id JOIN doc_numerators n ON n.id = t.numerator_id`
 
-// DocTemplates of an entity ("" — all).
-func (s *Store) DocTemplates(ctx context.Context, entity string) ([]DocTemplate, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE $1 = '' OR t.entity = $1 ORDER BY t.entity, lower(t.name)`, entity)
+// tplKind is the template t's kind, as DocKind
+const tplKind = `CASE WHEN t.type_id IS NULL THEN t.entity ELSE 'type:' || t.type_id END`
+
+// DocTemplates of a kind ("" — all; TypeKind — of a smart process), active or not.
+func (s *Store) DocTemplates(ctx context.Context, kind string) ([]DocTemplate, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE $1 = '' OR `+tplKind+` = $1 ORDER BY t.entity, t.sort, lower(t.name)`, kind)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[DocTemplate])
+}
+
+// ActiveDocTemplates are DocTemplates offered for new documents: «Активен» ones.
+func (s *Store) ActiveDocTemplates(ctx context.Context, kind string) ([]DocTemplate, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE ($1 = '' OR `+tplKind+` = $1) AND t.active ORDER BY t.entity, t.sort, lower(t.name)`, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +111,9 @@ const templateFor = `(NOT EXISTS (SELECT 1 FROM crm_doc_template_access a WHERE 
 			UNION SELECT d.parent_id FROM departments d JOIN dep ON d.id = dep.id WHERE d.parent_id IS NOT NULL)
 		SELECT id FROM dep))))`
 
-// DocTemplatesFor are the templates of an entity the user may make documents by («Кому доступен»).
-func (s *Store) DocTemplatesFor(ctx context.Context, entity, userID string) ([]DocTemplate, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE t.entity = $1 AND `+templateFor+` ORDER BY lower(t.name)`, entity, userID)
+// DocTemplatesFor are the active templates of a kind the user may make documents by («Кому доступен»).
+func (s *Store) DocTemplatesFor(ctx context.Context, kind, userID string) ([]DocTemplate, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE `+tplKind+` = $1 AND t.active AND `+templateFor+` ORDER BY t.sort, lower(t.name)`, kind, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +186,34 @@ func (s *Store) SetDocTemplateAccess(ctx context.Context, id string, to []string
 
 func (s *Store) DocTemplate(ctx context.Context, id string) (DocTemplate, error) {
 	var t DocTemplate
-	err := s.db.QueryRow(ctx, `SELECT `+tplCols+` WHERE t.id::text = $1`, id).Scan(&t.ID, &t.Name, &t.Entity, &t.FileID, &t.FileName, &t.NumeratorID, &t.NumeratorName, &t.Numerator, &t.CreatedAt)
+	rows, err := s.db.Query(ctx, `SELECT `+tplCols+` WHERE t.id::text = $1`, id)
+	if err != nil {
+		return t, err
+	}
+	t, err = pgx.CollectExactlyOneRow(rows, pgx.RowToStructByPos[DocTemplate])
 	if err == pgx.ErrNoRows {
 		return t, ErrNotFound
 	}
 	return t, err
+}
+
+// SetDocTemplateSettings saves «Активен», «Сортировка» and «С печатями и подписями» of the template, changed by the user.
+func (s *Store) SetDocTemplateSettings(ctx context.Context, id, userID string, set DocTemplateSettings) error {
+	if set.Sort < 0 || set.Sort > 1000000 {
+		return i18n.E("err.doc_template_sort")
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE crm_doc_templates SET active = $2, sort = $3, with_stamps = $4, updated_by = $5, updated_at = now()
+		WHERE id::text = $1`, id, set.Active, set.Sort, set.WithStamps, optional(userID))
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// DocTemplateChanged notes who changed the template (its name, file, numerator or access) and when.
+func (s *Store) DocTemplateChanged(ctx context.Context, id, userID string) error {
+	_, err := s.db.Exec(ctx, `UPDATE crm_doc_templates SET updated_by = $2, updated_at = now() WHERE id::text = $1`, id, optional(userID))
+	return err
 }
 
 // AddDocTemplate keeps an uploaded DOCX as a template (administrators; checked by the web layer).
@@ -145,16 +222,23 @@ func (s *Store) AddDocTemplate(ctx context.Context, userID, name, entity, fileID
 	return err
 }
 
-// NewDocTemplate is AddDocTemplate giving the template's id.
-func (s *Store) NewDocTemplate(ctx context.Context, userID, name, entity, fileID string) (string, error) {
+// NewDocTemplate is AddDocTemplate giving the template's id; the kind is an entity or a smart process's TypeKind.
+func (s *Store) NewDocTemplate(ctx context.Context, userID, name, kind, fileID string) (string, error) {
 	name = strings.TrimSpace(name)
+	entity, typeID := kind, ""
+	if t, ok := strings.CutPrefix(kind, "type:"); ok {
+		entity, typeID = "deal", t
+		if _, err := s.Type(ctx, typeID); err != nil {
+			return "", i18n.E("err.doc_template")
+		}
+	}
 	if name == "" || len([]rune(name)) > 200 || !(Entities[entity] || entity == TemplateEmployee || entity == TemplateInvoice) {
 		return "", i18n.E("err.doc_template")
 	}
 	var id string
 	err := s.db.QueryRow(ctx, `WITH n AS (INSERT INTO doc_numerators (name) VALUES ($1) RETURNING id)
-		INSERT INTO crm_doc_templates (name, entity, file_id, created_by, numerator_id) SELECT $1, $2, $3, $4, n.id FROM n
-		RETURNING id::text`, name, entity, fileID, userID).Scan(&id)
+		INSERT INTO crm_doc_templates (name, entity, type_id, file_id, created_by, numerator_id) SELECT $1, $2, $3, $4, $5, n.id
+		FROM n RETURNING id::text`, name, entity, optional(typeID), fileID, userID).Scan(&id)
 	return id, err
 }
 
@@ -174,6 +258,19 @@ func (s *Store) DeleteDocTemplate(ctx context.Context, id string) error {
 	}
 	_, err = s.db.Exec(ctx, `DELETE FROM doc_numerators n WHERE n.id::text = $1
 		AND NOT EXISTS (SELECT 1 FROM crm_doc_templates t WHERE t.numerator_id = n.id)`, num)
+	return err
+}
+
+// RenameDocTemplate gives the template another name.
+func (s *Store) RenameDocTemplate(ctx context.Context, id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 200 {
+		return i18n.E("err.doc_template")
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE crm_doc_templates SET name = $2 WHERE id::text = $1`, id, name)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
 	return err
 }
 
@@ -364,13 +461,15 @@ type Document struct {
 	Values                                                                   map[string]string
 	AuthorID, Author                                                         string
 	CreatedAt, UpdatedAt                                                     time.Time
-	PDFFileID                                                                string // its PDF, once made
-	PublicToken                                                              string // «Публичная ссылка»; "" — off
+	PDFFileID                                                                string     // its PDF, once made
+	PublicToken                                                              string     // «Публичная ссылка»; "" — off
+	ViewedAt                                                                 *time.Time // the client first opened the public link
+	Stamps                                                                   bool       // «С печатями и подписями»
 }
 
 const docCols = `d.id, coalesce(d.template_id::text, ''), d.template_name, d.entity, d.entity_id::text, d.number, d.file_id::text,
 	f.name, f.size, d.values, d.created_by::text, u.name, d.created_at, d.updated_at, coalesce(d.pdf_file_id::text, ''),
-	coalesce(d.public_token, '')
+	coalesce(d.public_token, ''), d.viewed_at, d.stamps
 	FROM crm_documents d JOIN files f ON f.id = d.file_id JOIN users u ON u.id = d.created_by`
 
 // AddDocument keeps a made document at its card and notes it in the card's history.
@@ -384,9 +483,9 @@ func (s *Store) AddDocument(ctx context.Context, d Document) (string, error) {
 	}
 	defer tx.Rollback(ctx)
 	var id string
-	err = tx.QueryRow(ctx, `INSERT INTO crm_documents (template_id, template_name, entity, entity_id, number, file_id, values, created_by)
-		VALUES (nullif($1, '')::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-		d.TemplateID, d.TemplateName, d.Entity, d.EntityID, d.Number, d.FileID, d.Values, d.AuthorID).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO crm_documents (template_id, template_name, entity, entity_id, number, file_id, values, created_by, stamps)
+		VALUES (nullif($1, '')::uuid, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+		d.TemplateID, d.TemplateName, d.Entity, d.EntityID, d.Number, d.FileID, d.Values, d.AuthorID, d.Stamps).Scan(&id)
 	if err != nil {
 		return "", err
 	}
@@ -394,17 +493,59 @@ func (s *Store) AddDocument(ctx context.Context, d Document) (string, error) {
 	if d.Number != "" {
 		body += " № " + d.Number
 	}
-	entity, card := d.Entity, d.EntityID
-	if entity == TemplateInvoice { // the note goes to the deal or the lead of the invoice
-		if err := tx.QueryRow(ctx, `SELECT CASE WHEN deal_id IS NULL THEN 'lead' ELSE 'deal' END, coalesce(deal_id, lead_id)::text
-			FROM crm_invoices WHERE id::text = $1`, card).Scan(&entity, &card); err != nil {
-			return "", err
-		}
+	entity, card, err := docCard(ctx, tx, d.Entity, d.EntityID)
+	if err != nil {
+		return "", err
 	}
 	if err := s.event(ctx, tx, entity, card, d.AuthorID, "document", body); err != nil {
 		return "", err
 	}
 	return id, tx.Commit(ctx)
+}
+
+// docCard is the card whose history and triggers a document of (entity, id) has: an invoice's are of its deal or lead.
+func docCard(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, entity, id string) (string, string, error) {
+	if entity != TemplateInvoice {
+		return entity, id, nil
+	}
+	err := q.QueryRow(ctx, `SELECT CASE WHEN deal_id IS NULL THEN 'lead' ELSE 'deal' END, coalesce(deal_id, lead_id)::text
+		FROM crm_invoices WHERE id::text = $1`, id).Scan(&entity, &id)
+	return entity, id, err
+}
+
+// DocumentViewed notes the client's first opening of a document's public link («Просмотр документа клиентом» of
+// the portal): the card's history says so and its triggers fire; later openings change nothing (false).
+func (s *Store) DocumentViewed(ctx context.Context, d Document) (bool, error) {
+	tag, err := s.db.Exec(ctx, `UPDATE crm_documents SET viewed_at = now() WHERE id::text = $1 AND viewed_at IS NULL`, d.ID)
+	if err != nil || tag.RowsAffected() == 0 {
+		return false, err
+	}
+	body := d.TemplateName
+	if d.Number != "" {
+		body += " № " + d.Number
+	}
+	return true, s.docEvent(ctx, d.Entity, d.EntityID, d.AuthorID, "doc_viewed", body)
+}
+
+// DocumentSigned notes that all the sides signed a card's document sent for signing (title — the signing's), and its
+// «Подписание документа» triggers fire.
+func (s *Store) DocumentSigned(ctx context.Context, entity, id, author, title string) error {
+	return s.docEvent(ctx, entity, id, author, "doc_signed", title)
+}
+
+// docEvent writes the document's line (kind: doc_viewed, doc_signed — also the triggers' kind) in its card's history
+// and fires the card's triggers of the kind.
+func (s *Store) docEvent(ctx context.Context, entity, id, author, kind, body string) error {
+	entity, card, err := docCard(ctx, s.db, entity, id)
+	if err != nil {
+		return err
+	}
+	if err := s.event(ctx, s.db, entity, card, author, kind, body); err != nil {
+		return err
+	}
+	return s.Fire(ctx, entity, card, kind)
 }
 
 // Documents of a card, newest first.
@@ -442,8 +583,9 @@ func (s *Store) DocumentByID(ctx context.Context, id string) (Document, error) {
 	return d, err
 }
 
-// RemakeDocument puts the document made again with other values in place of its file; the number stays.
-func (s *Store) RemakeDocument(ctx context.Context, id, fileID string, values map[string]string) error {
+// RemakeDocument puts the document made again with other values (with the stamps or not) in place of its file; the
+// number stays.
+func (s *Store) RemakeDocument(ctx context.Context, id, fileID string, values map[string]string, stamps bool) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -457,8 +599,8 @@ func (s *Store) RemakeDocument(ctx context.Context, id, fileID string, values ma
 		}
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE crm_documents SET file_id = $2, values = $3, pdf_file_id = NULL, updated_at = now() WHERE id::text = $1`,
-		id, fileID, values); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE crm_documents SET file_id = $2, values = $3, stamps = $4, pdf_file_id = NULL, updated_at = now()
+		WHERE id::text = $1`, id, fileID, values, stamps); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM files WHERE id::text IN ($1, $2)`, old, pdf); err != nil {

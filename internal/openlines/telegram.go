@@ -419,8 +419,12 @@ func (s *Store) tgDownload(ctx context.Context, b tgBot, src tgFile) (*File, err
 	if err != nil || len(data) > tgMaxFile {
 		return nil, i18n.E("err.ol_file")
 	}
-	name := CleanName(src.name())
-	ct := src.MimeType
+	return s.keepFile(ctx, src.name(), src.MimeType, data)
+}
+
+// keepFile puts a client's file from a messenger into the built-in storage; ct — its type, if the messenger told it.
+func (s *Store) keepFile(ctx context.Context, name, ct string, data []byte) (*File, error) {
+	name = CleanName(name)
 	if ct == "" {
 		ct = mime.TypeByExtension(path.Ext(name))
 	}

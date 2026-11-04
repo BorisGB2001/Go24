@@ -1,0 +1,39 @@
+{{define "content"}}{{$d := .Data}}
+{{/* «Опросы о времени» (web.mailPollsPage) and the page of one poll (web.mailPollPage): every answer, who of the
+   employees is busy at each time, «Назначить» */}}
+<div class="crumbs"><a href="/mail">{{t "mail.title"}}</a> {{icon "chevron-right"}} {{if $d.Poll}}<a href="/mail/polls">{{t "mail.poll.list"}}</a> {{icon "chevron-right"}} {{$d.Poll.Title}}{{else}}{{t "mail.poll.list"}}{{end}}</div>
+{{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+{{with $d.Poll}}{{$p := .}}
+<div class="pagehead"><h1>{{icon "calendar-event"}} {{.Title}}</h1>
+  <span class="badge mpoll-st-{{.Status}}">{{t (print "mail.poll.st." .Status)}}</span></div>
+<p class="muted small">{{t "mail.poll.length_n" (printf "%d" .Length)}}{{with .Where}} · {{.}}{{end}}{{if .Video}} · {{icon "video"}} {{t "calendar.video"}}{{end}}{{if .Auto}} · {{icon "bolt"}} {{t "mail.poll.auto"}}{{end}} · {{t "mail.poll.voted_n" .Votes (len .Voters)}}</p>
+{{with .Note}}<p>{{nl2br .}}</p>{{end}}
+{{if .Open}}<div class="row mpoll-link"><input type="text" readonly value="{{$d.URL}}" aria-label="{{t "mail.poll.link"}}" data-copy-src>
+  <a class="button ghost small" href="{{$d.URL}}" target="_blank">{{icon "external-link"}} {{t "mail.poll.open_vote"}}</a>
+  <form method="post" action="/mail/polls/{{.ID}}/cancel" data-confirm="{{t "mail.poll.cancel_confirm"}}"><button class="ghost small danger">{{icon "x"}} {{t "mail.poll.cancel"}}</button></form></div>
+{{else if eq .Status "scheduled"}}{{with .Chosen}}<div class="card mpoll-chosen">{{icon "circle-check"}} {{t "mail.poll.chosen"}} <b>{{.When}}</b>
+  {{with $p.EventID}}<a class="button ghost small" href="/calendar/{{.}}">{{icon "calendar-event"}} {{t "mail.poll.open_event"}}</a>{{end}}</div>{{end}}{{end}}
+<div class="card flush tlist-wrap"><table class="tlist mpoll-grid">
+  <thead><tr><th>{{t "mail.poll.time"}}</th><th class="mpoll-sum">{{t "mail.poll.yes"}}</th><th class="mpoll-sum">{{t "mail.poll.maybe"}}</th><th class="mpoll-sum">{{t "mail.poll.no"}}</th>
+    {{range .Voters}}<th class="mpoll-who" title="{{.Email}}">{{.Label}}</th>{{end}}<th></th></tr></thead>
+  <tbody>{{range .Options}}{{$o := .}}<tr class="{{if .Best}}mpoll-best{{end}}{{if eq .ID $p.ChosenID}} mpoll-on{{end}}">
+    <td><b>{{.When}}</b>{{if .Best}} <span class="small mpoll-tag">{{t "mail.poll.best"}}</span>{{end}}
+      {{if .Busy}}<div class="small mpoll-busy">{{icon "alert-triangle"}} {{t "mail.poll.busy"}} {{range $i, $n := .Busy}}{{if $i}}, {{end}}{{$n}}{{end}}</div>{{end}}</td>
+    <td class="mpoll-sum mpoll-yes">{{.Yes}}</td><td class="mpoll-sum mpoll-maybe">{{.Maybe}}</td><td class="mpoll-sum mpoll-no">{{.No}}</td>
+    {{range $p.Voters}}{{$a := index .Answers $o.ID}}<td class="mpoll-a mpoll-{{if $a}}{{$a}}{{else}}none{{end}}" title="{{if $a}}{{t (print "mail.poll." $a)}}{{else}}{{t "mail.poll.not_voted"}}{{end}}">{{if eq $a "yes"}}{{icon "check"}}{{else if eq $a "maybe"}}?{{else if eq $a "no"}}{{icon "x"}}{{else}}·{{end}}</td>{{end}}
+    <td>{{if and $p.Open (.Start.After $d.Now)}}<form method="post" action="/mail/polls/{{$p.ID}}/schedule" data-confirm="{{t "mail.poll.schedule_confirm" .When}}"><input type="hidden" name="option" value="{{.ID}}"><button class="small{{if .Best}} primary{{else}} ghost{{end}}">{{icon "calendar-event"}} {{t "mail.poll.schedule"}}</button></form>{{end}}</td>
+  </tr>{{end}}</tbody></table></div>
+<p class="small muted">{{t "mail.poll.page_hint"}}</p>
+<form method="post" action="/mail/polls/{{.ID}}/delete" data-confirm="{{t "mail.poll.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "mail.poll.delete"}}</button></form>
+{{else}}
+<div class="pagehead"><h1>{{icon "calendar-event"}} {{t "mail.poll.list"}}</h1></div>
+<p class="muted small">{{t "mail.poll.list_hint"}}</p>
+{{if $d.Polls}}<div class="card flush tlist-wrap"><table class="tlist mpolls">
+  <thead><tr><th>{{t "mail.subject"}}</th><th>{{t "mail.poll.status"}}</th><th>{{t "mail.poll.answers"}}</th><th>{{t "mail.poll.leader"}}</th><th>{{t "mail.poll.created"}}</th></tr></thead>
+  <tbody>{{range $d.Polls}}{{$p := .}}<tr><td><a href="/mail/polls/{{.ID}}">{{.Title}}</a></td><td><span class="badge mpoll-st-{{.Status}}">{{t (print "mail.poll.st." .Status)}}</span></td>
+    <td>{{t "mail.poll.voted_n" .Votes (len .Voters)}}</td>
+    <td class="small">{{if eq .Status "scheduled"}}{{with .Chosen}}{{icon "circle-check"}} {{.When}}{{end}}{{else}}{{range .Options}}{{if .Best}}{{.When}} ({{.Yes}}){{break}}{{end}}{{end}}{{end}}</td>
+    <td class="small muted">{{datetime .CreatedAt}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="card"><p class="muted">{{t "mail.poll.none"}}</p></div>{{end}}
+{{end}}
+{{end}}

@@ -309,8 +309,8 @@ func (s *Server) bpElementSave(w http.ResponseWriter, r *http.Request, sess auth
 		}
 		e.ListID = old.ListID
 		for _, f := range l.Fields {
-			if _, ok := r.Form["f_"+f.Key]; ok {
-				e.Values[f.Key] = r.FormValue("f_" + f.Key)
+			if _, ok := r.Form[map[bool]string{true: "m_", false: "f_"}[f.Multiple]+f.Key]; ok {
+				e.Values[f.Key] = bpFormValue(r, f)
 			}
 		}
 	} else {
@@ -320,7 +320,7 @@ func (s *Server) bpElementSave(w http.ResponseWriter, r *http.Request, sess auth
 			return
 		}
 		for _, f := range l.Fields {
-			e.Values[f.Key] = r.FormValue("f_" + f.Key)
+			e.Values[f.Key] = bpFormValue(r, f)
 		}
 	}
 	id, err := s.BP.SaveElement(ctx, sess.UserID, e)

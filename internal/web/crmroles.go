@@ -23,11 +23,21 @@ func (s *Server) crmRoles(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.taskErr(w, r, err, "/crm")
 		return
 	}
+	pipes, err := s.CRM.Pipelines(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
+	if len(pipes) < 2 { // the deals of the only pipeline are just the deals
+		pipes = nil
+	}
 	s.render(w, r, "crmroles", page{TitleKey: "crmroles.title", Nav: "crm_deals", Data: map[string]any{
-		"Roles": roles, "Users": users, "Levels": crm.Levels, "Actions": crm.Actions, "Entities": []string{"deal", "lead", "contact", "company"}}})
+		"Roles": roles, "Users": users, "Levels": crm.Levels, "Actions": crm.Actions, "Entities": []string{"deal", "lead", "contact", "company"},
+		"Pipelines": pipes}})
 }
 
-// crmRoleSave: the role's levels from the form (fields <entity>.<action>), a new role with id "new".
+// crmRoleSave: the role's levels from the form (fields <entity>.<action>, the deals of a pipeline —
+// deal:<pipeline id>.<action>, "" — as for all the deals), a new role with id "new".
 func (s *Server) crmRoleSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
@@ -38,10 +48,21 @@ func (s *Server) crmRoleSave(w http.ResponseWriter, r *http.Request, sess auth.S
 		id = ""
 	}
 	perms := crm.Perms{}
+	keys := []string{}
 	for e := range crm.Entities {
-		perms[e] = map[string]string{}
+		keys = append(keys, e)
+	}
+	if pipes, err := s.CRM.Pipelines(r.Context()); err == nil {
+		for _, p := range pipes {
+			keys = append(keys, "deal:"+p.ID)
+		}
+	}
+	for _, k := range keys {
+		perms[k] = map[string]string{}
 		for _, a := range crm.Actions {
-			perms[e][a] = r.FormValue(e + "." + a)
+			if v := r.FormValue(k + "." + a); v != "" {
+				perms[k][a] = v
+			}
 		}
 	}
 	if _, err := s.CRM.SaveRole(r.Context(), crm.Role{ID: id, Name: r.FormValue("name"), Perms: perms}); err != nil {
@@ -64,7 +85,7 @@ func (s *Server) crmRoleDelete(w http.ResponseWriter, r *http.Request, sess auth
 	http.Redirect(w, r, "/crm/roles", http.StatusSeeOther)
 }
 
-// crmRoleMember gives a person the role (op=add) or takes it away.
+// crmRoleMember gives a person or a department («dept:<id>») the role (op=add) or takes it away.
 func (s *Server) crmRoleMember(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !sess.Admin {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)

@@ -1,27 +1,29 @@
-# Импорт задач из корпоративного портала (коробка)
+Русская версия: [ru/import-legacy.md](ru/import-legacy.md)
 
-Импорт переносит задачи, подзадачи, соисполнителей, наблюдателей и комментарии из MySQL коробочного корпоративного портала в проект go24. Личные данные обезличиваются:
+# Importing Tasks (On-Premise)
 
-| Что | Как |
+The import transfers tasks, subtasks, participants (co-executors), observers, and comments from MySQL of an on-premise the portal instance into a go24 project. Personal data is anonymized:
+
+| What | How |
 |---|---|
-| ФИО сотрудников | Случайные ФИО того же пола, одинаковые для человека везде. Подменяются и в тексте, со склонениями: «Иванову» → «Белову» |
-| Упоминания `[USER=17]…[/USER]` | `@Псевдоним` этого пользователя |
-| Телефоны | Случайные цифры с сохранением формата (`+7 (9xx) …`, `8-9xx-…`, городские `xx-xx-xx`) |
-| Почта | Сотрудники — `user<ID>@portal.import`; прочие адреса — `contact<хеш>@<тот же домен>` |
-| Комментарии без автора (письма, гости) | Общий пользователь «Внешний автор», имя отправителя не переносится |
-| Компании, тексты задач | Остаются как есть |
+| Employee full names | Random full names of the same gender, consistent for each person everywhere. Also substituted in text, with declensions: "Иванову" → "Белову" |
+| Mentions `[USER=17]…[/USER]` | `@Pseudonym` of that user |
+| Phone numbers | Random digits preserving the format (`+7 (9xx) …`, `8-9xx-…`, local `xx-xx-xx`) |
+| Email | Employees — `user<ID>@portal.import`; other addresses — `contact<hash>@<same-domain>` |
+| Comments without author (emails, guests) | Shared user "Внешний автор", sender name is not transferred |
+| Companies, task texts | Preserved as is |
 
-**Ограничение.** Имена внешних людей (клиентов), которых нет среди пользователей корпоративного портала, в текстах не распознаются и не заменяются. Телефоны и почта заменяются у всех.
+**Limitation.** Names of external people (clients) who are not the portal users are not recognized or replaced in text. Phone numbers and emails are replaced for everyone.
 
-Номер задачи сохраняется: задача 123 из корпоративного портала становится `EXT-123`. Импорт идёт одной транзакцией и запускается повторно без дублей: записи сопоставляются по `legacy_id`. Служебные сообщения форума корпоративного портала (`SERVICE_TYPE`) не переносятся.
+The task number is preserved: task 123 becomes `EXT-123`. The import runs in a single transaction and can be rerun without duplicates: records are matched by `legacy_id`. Legacy forum service messages (`SERVICE_TYPE`) are not transferred.
 
-## Порядок
+## Procedure
 
-1. **Выгрузка на сервере корпоративного портала** (MySQL, база `sitemanager`). Тексты кодируются в base64, папка доступна только root:
+1. **Export on the Legacy server** (MySQL, `sitemanager` database). Texts are base64-encoded, directory is accessible only to root:
 
 ```bash
 D=/root/go24-export; install -d -m 700 $D; cd $D
-B64='REPLACE(TO_BASE64(IFNULL(%s,"")),"\n","")'   # шаблон для текстовых колонок
+B64='REPLACE(TO_BASE64(IFNULL(%s,"")),"\n","")'   # template for text columns
 mysql sitemanager -N -B -e 'select ID, <base64 NAME>, <base64 LAST_NAME>, <base64 SECOND_NAME>, IFNULL(PERSONAL_GENDER,""), <base64 EMAIL>, <base64 LOGIN> from b_user where ID in (select USER_ID from b_tasks_member union select AUTHOR_ID from b_forum_message where XML_ID like "TASK_%" and SERVICE_TYPE is null)' > users.tsv
 mysql sitemanager -N -B -e 'select ID, <base64 TITLE>, <base64 DESCRIPTION>, STATUS, PRIORITY, CREATED_BY, RESPONSIBLE_ID, IFNULL(PARENT_ID,0), TASK_CONTROL, IFNULL(DEADLINE,""), IFNULL(START_DATE_PLAN,""), IFNULL(END_DATE_PLAN,""), CREATED_DATE, IFNULL(CHANGED_DATE,""), IFNULL(CLOSED_DATE,""), IFNULL(CLOSED_BY,0) from b_tasks where ZOMBIE="N" order by ID' > tasks.tsv
 mysql sitemanager -N -B -e 'select TASK_ID, USER_ID, TYPE from b_tasks_member' > members.tsv
@@ -29,28 +31,28 @@ mysql sitemanager -N -B -e 'select m.ID, cast(substring(m.XML_ID,6) as unsigned)
 chmod 600 *.tsv
 ```
 
-`<base64 X>` означает `REPLACE(TO_BASE64(IFNULL(X,"")),"\n","")`.
+`<base64 X>` means `REPLACE(TO_BASE64(IFNULL(X,"")),"\n","")`.
 
-2. **Перенос** файлов в `/srv/go24-import/` на сервер go24 (права 700, вне кода — `make sync` эту папку не трогает).
-3. **Импорт**: `make import-legacy`. При первом запуске в `/srv/go24-import/seed` создаётся случайный seed обезличивания. Сохраните его: с ним повторный импорт даст те же псевдонимы.
-4. **Удалите исходные выгрузки** везде (`users.tsv`, `tasks.tsv`, `members.tsv`, `comments.tsv`), оставьте только `seed`.
+2. **Transfer** files to `/srv/go24-import/` on the go24 server (permissions 700, outside codebase — `make sync` does not touch this directory).
+3. **Import**: `make import-legacy`. On the first run, a random anonymization seed is created in `/srv/go24-import/seed`. Save it: with it, repeated imports will produce the same pseudonyms.
+4. **Delete original export files** everywhere (`users.tsv`, `tasks.tsv`, `members.tsv`, `comments.tsv`), leaving only `seed`.
 
-Проект `EXT` создаётся с владельцем — первым пользователем, вошедшим в go24 через Authentik (или `-owner <email>`). Все импортированные сотрудники добавляются участниками. Войти под импортированными пользователями нельзя: у них `oidc_sub = legacy:<ID>`.
+The `EXT` project is created with its owner set to the first user who logged into go24 via Authentik (or `-owner <email>`). All imported employees are added as members. Logging in as imported users is not possible: their `oidc_sub = legacy:<ID>`.
 
-## Пользователи в Authentik и первый вход
+## Users in Authentik and first login
 
-Импортированные сотрудники создаются и в Authentik — командой `make authentik-users`. Она пишет blueprint `deploy/authentik/blueprints/generated/legacy-users.yaml` из базы go24 (только псевдонимы), Authentik применяет его сам. Пользователи лежат в разделе `go24/portal`, их логины — `portal-user<ID>`, адреса — `user<ID>@portal.import`. Пароля у них нет: администратор задаёт его в Authentik или отправляет ссылку восстановления.
+Imported employees are also created in Authentik via the `make authentik-users` command. It writes the blueprint `deploy/authentik/blueprints/generated/legacy-users.yaml` from the go24 database (pseudonyms only), which Authentik applies automatically. Users are located in the `go24/portal` section, their usernames are `portal-user<ID>`, and email addresses are `user<ID>@portal.import`. They have no password: an administrator sets it in Authentik or sends a password recovery link.
 
-При первом входе go24 находит импортированную запись с той же почтой и привязывает её к учётной записи Authentik. Все задачи и комментарии этого сотрудника становятся его, новый пользователь не создаётся. Когда сотрудникам выдадут настоящие учётные записи, достаточно указать в Authentik их настоящую почту и одновременно поменять её в go24 — или войти под псевдонимом и сменить данные в Authentik.
+Upon first login, go24 finds the imported record with the matching email and links it to the Authentik account. All tasks and comments of this employee become theirs; no new user is created. When employees are given real accounts, simply set their real email in Authentik and update it in go24 at the same time — or log in under the pseudonym and update the details in Authentik.
 
-## Вложения
+## Attachments
 
-`make import-legacy-files` переносит вложения задач и комментариев **пустыми**: сохраняются обезличенное имя, тип и привязка к задаче, содержимое не копируется. Причина: документы (таблицы, PDF, сканы) обезличить нельзя. Вложения из комментариев прикрепляются к задаче. Для пустых файлов объект в хранилище не создаётся, скачивание отдаёт пустой файл.
+`make import-legacy-files` transfers attachments of tasks and comments as **empty**: the anonymized name, type, and task association are preserved, but the file content is not copied. Reason: documents (spreadsheets, PDFs, scans) cannot be anonymized. Attachments from comments are attached to the task. For empty files, no object is created in storage; downloading returns an empty file.
 
-Выгрузка — `users.tsv` (как выше) и `files.tsv`:
+Export — `users.tsv` (as above) and `files.tsv`:
 
 ```
 ATTACHED_ID, TASK_ID, <base64 NAME>, CONTENT_TYPE, CREATED_BY, task|comment, CREATE_TIME
 ```
 
-Строки берутся из `b_utm_tasks_task` (поле `UF_TASK_WEBDAV_FILES`) → `b_disk_attached_object` → `b_disk_object`, а для комментариев — из `b_disk_attached_object` с `ENTITY_TYPE` `ForumMessageConnector` → `b_forum_message.XML_ID = TASK_<id>`.
+Rows are taken from `b_utm_tasks_task` (field `UF_TASK_WEBDAV_FILES`) → `b_disk_attached_object` → `b_disk_object`, and for comments — from `b_disk_attached_object` with `ENTITY_TYPE` `ForumMessageConnector` → `b_forum_message.XML_ID = TASK_<id>`.

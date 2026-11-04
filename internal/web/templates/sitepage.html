@@ -30,6 +30,11 @@ its form; .From — the page being edited. */}}
             <option value="on" {{if eq $v "on"}}selected{{end}}>{{t "site.ask.on"}}</option><option value="req" {{if eq $v "req"}}selected{{end}}>{{t "site.ask.req"}}</option></select>
           {{else if eq .Kind "user"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.responsible_creator"}}</option>
             {{range $d.Users}}{{if not .Guest}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+          {{else if eq .Kind "section"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">{{t "site.catalog_all"}}</option>
+            {{range $d.Sections}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Path}}</option>{{end}}</select>
+            <div class="small muted">{{t "site.hint.section"}} <a href="/crm/catalog" target="_blank" rel="noopener">{{t "site.catalog_link"}}</a></div>
+          {{else if eq .Kind "pipeline"}}{{$v := $b.Get .Name}}<select name="{{.Name}}">
+            {{range $d.Pipelines}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{.Name}}</option>{{end}}</select>
           {{else if eq .Kind "booking"}}{{$v := $b.Get .Name}}<select name="{{.Name}}"><option value="">—</option>
             {{range $d.BookingLinks}}<option value="{{.Token}}" {{if eq .Token $v}}selected{{end}}>{{.Name}}{{if not .Active}} · {{t "booking.link_off"}}{{end}}</option>{{end}}</select>
             <div class="small muted">{{t "site.hint.booking"}} <a href="/booking/links" target="_blank" rel="noopener">{{t "booking.links"}}</a></div>

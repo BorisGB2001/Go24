@@ -170,6 +170,24 @@ func (s *Store) CompleteActivity(ctx context.Context, userID, id string) (Activi
 	return a, err
 }
 
+// UpdateActivity changes a deed's subject, description, deadline and responsible as a has them; a moved deadline is
+// reminded of again. done false reopens a done deed.
+func (s *Store) UpdateActivity(ctx context.Context, a Activity, done bool) error {
+	if err := clean(&a.Subject, 300); err != nil || a.Subject == "" {
+		return i18n.E("err.crm_activity_subject")
+	}
+	if err := clean(&a.Description, 10000); err != nil {
+		return err
+	}
+	if a.Deadline.IsZero() {
+		return i18n.E("err.crm_activity_deadline")
+	}
+	_, err := s.db.Exec(ctx, `UPDATE crm_activities SET subject = $2, description = $3, deadline = $4, responsible_id = $5,
+		reminded_at = CASE WHEN deadline = $4 THEN reminded_at END, done_at = CASE WHEN $6 THEN done_at END WHERE id::text = $1`,
+		a.ID, a.Subject, a.Description, a.Deadline, a.Responsible.ID, done)
+	return err
+}
+
 // DeleteActivity removes a deed.
 func (s *Store) DeleteActivity(ctx context.Context, id string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM crm_activities WHERE id::text = $1`, id)

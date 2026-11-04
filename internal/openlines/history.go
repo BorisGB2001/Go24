@@ -9,13 +9,16 @@ import (
 )
 
 // clientSQL: the other dialogues of the same client as the dialogue $1 — by the CRM contact and lead, the e-mail,
-// the phone (its last 10 digits) and the Telegram user, of every line and channel.
+// the phone (its last 10 digits), the Telegram, MAX, VK, Viber, OK, Avito and WhatsApp user, of every line and channel.
 const clientSQL = ` WHERE s.id::text <> $1 AND EXISTS (SELECT 1 FROM ol_messages m WHERE m.session_id = s.id)
 	AND EXISTS (SELECT 1 FROM ol_sessions c WHERE c.id::text = $1 AND (s.contact_id = c.contact_id OR s.lead_id = c.lead_id
 		OR (c.email <> '' AND lower(s.email) = lower(c.email))
 		OR (length(regexp_replace(c.phone, '\D', '', 'g')) >= 7
 			AND right(regexp_replace(s.phone, '\D', '', 'g'), 10) = right(regexp_replace(c.phone, '\D', '', 'g'), 10))
-		OR (c.tg_user <> '' AND s.tg_user = c.tg_user)))`
+		OR (c.tg_user <> '' AND s.tg_user = c.tg_user) OR (c.max_user <> '' AND s.max_user = c.max_user)
+		OR (c.vk_user <> '' AND s.vk_user = c.vk_user) OR (c.viber_user <> '' AND s.viber_user = c.viber_user)
+		OR (c.ok_user <> '' AND s.ok_user = c.ok_user) OR (c.avito_user <> '' AND s.avito_user = c.avito_user)
+		OR (c.wa_user <> '' AND s.wa_user = c.wa_user)))`
 
 // ClientDialogues are the client's other dialogues (the latest first, 20 at most), as «Другие обращения клиента»
 // ; open — those of them the user may open.

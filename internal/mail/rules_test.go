@@ -36,10 +36,15 @@ func TestRuleMatch(t *testing.T) {
 		{Rule{If: Cond{OnlyMe: true}}, false}, // boss is in Cc
 		{Rule{If: Cond{From: "ivan"}, Except: Cond{Subject: "октябрь"}}, false},
 		{Rule{If: Cond{From: "ivan"}, Except: Cond{Subject: "ноябрь", CcMe: true}}, true}, // no exception holds
+		{Rule{If: Cond{Sensitivity: "normal"}}, true},
+		{Rule{If: Cond{Sensitivity: "private"}}, false},
 	} {
 		if got := c.r.matches(f); got != c.want {
 			t.Errorf("%+v: %v, want %v", c.r, got, c.want)
 		}
+	}
+	if !(Rule{If: Cond{Sensitivity: "private"}}).matches(facts{sensitivity: "private"}) || (Cond{Sensitivity: "private"}).Empty() {
+		t.Error("sensitivity")
 	}
 	only := facts{to: "Me <ME@go24.test>", me: "me@go24.test"}
 	if !(Rule{If: Cond{OnlyMe: true, ToMe: true}}).matches(only) {
@@ -80,7 +85,7 @@ func TestComposeAuto(t *testing.T) {
 	now := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 	to, _ := addresses("x@y.test")
 	msg, _ := compose(envelope{From: mailAddr("Ivan", "me@go24.test"), To: to, Host: "go24.test", Now: now, Auto: "auto-replied",
-		ReplyTo: ptrAddr("Ivan", "ivan@client.test"), ResentFrom: ptrAddr("", "me@go24.test")},
+		ReplyTo: []*mail.Address{ptrAddr("Ivan", "ivan@client.test")}, ResentFrom: ptrAddr("", "me@go24.test")},
 		Letter{Subject: "Re", Text: "hi", Files: []Attachment{{Name: "Счёт.eml", ContentType: "message/rfc822", Data: []byte("From: a@b\r\n\r\nx\r\n")}}})
 	s := string(msg)
 	for _, want := range []string{"Auto-Submitted: auto-replied\r\n", "X-Auto-Response-Suppress: All\r\n", "Reply-To: \"Ivan\" <ivan@client.test>\r\n",

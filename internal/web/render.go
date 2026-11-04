@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"go24/internal/audit"
+	"go24/internal/apps"
 	"go24/internal/auth"
 	"go24/internal/company"
 	"go24/internal/crm"
@@ -32,7 +33,7 @@ import (
 	"go24/internal/office"
 	"go24/internal/portal"
 	"go24/internal/sign"
-	"go24/internal/sites"
+	"go24/internal/speech"
 	"go24/internal/tasks"
 )
 
@@ -133,6 +134,13 @@ var baseFuncs = template.FuncMap{
 	"menuLabels": func() []string { return menuLabels },
 	// remindDays are the choices of «Напоминать подписанту» of «Подпись»
 	"remindDays": func() []int { return sign.RemindDays },
+	// ttsVoices are the voices of «Озвучить текст»; none — no speech synthesis
+	"ttsVoices": func() []string {
+		if ttsOn.Load() {
+			return speech.Voices
+		}
+		return nil
+	},
 	// asset is a /static/ URL with the build's version, e.g. {{asset "css/app.css"}}.
 	"asset": func(name string) string { return "/static/" + name + "?v=" + assetVersion },
 	// icon renders <i class="i i-NAME">; the picture itself is set in CSS (icons.css or a theme).
@@ -142,6 +150,11 @@ var baseFuncs = template.FuncMap{
 		}
 		return template.HTML(`<i class="i i-` + name + `" aria-hidden="true"></i>`), nil
 	},
+	// imAppIcon, imAppColor are the icon and color of a widget of an application in the messenger (imapps.go)
+	"imAppIcon":  imAppIcon,
+	"imAppColor": func(c string) string { return imAppColors[strings.ToUpper(c)] },
+	// imWidgets are the widgets of the place in Data.Apps of the messenger (none when it has none)
+	"imWidgets": func(m map[string][]apps.Placement, place string) []apps.Placement { return m[place] },
 	"pct": func(done, total int) int {
 		if total == 0 {
 			return 0
@@ -200,7 +213,6 @@ var baseFuncs = template.FuncMap{
 	"mktROI":     mktROI,
 	"keepOf":     keepOf,
 	"photoURL":   company.PhotoURL,
-	"sitefields": func() []string { return sites.FormFields }, // the fields a site's form may ask
 	// dict builds a map for passing several values to a sub-template: dict "P" $p "On" "board".
 	"dict": func(kv ...any) (map[string]any, error) {
 		if len(kv)%2 != 0 {
@@ -229,6 +241,7 @@ var baseFuncs = template.FuncMap{
 	"hasPrefix": strings.HasPrefix,
 	"join":      strings.Join,
 	"mailGroup": func(t time.Time, pinned bool) string { return mailGroup(t, pinned, time.Now()) },
+	"mailPerson": mailPersonRef,
 	// indent shifts a department name in a <select> by its depth in the structure.
 	"indent": func(depth int) string { return strings.Repeat("\u00a0\u00a0\u00a0", depth) },
 	// preview: the start of a text on one line (a letter in the list)
@@ -261,7 +274,7 @@ var baseFuncs = template.FuncMap{
 		}
 		l := taskList{Tasks: list, Cols: cols, All: tasks.ListColumns, Gear: gear}
 		if gear && len(p) > 0 {
-			l.Sort, l.Back, l.Tree = p[0].Sort, p[0].Path, p[0].Tree
+			l.Sort, l.Back, l.Tree, l.ByProject = p[0].Sort, p[0].Path, p[0].Tree, p[0].ByProject
 			if u, err := url.Parse(l.Back); err == nil { // the message of the last action is not shown again
 				q := u.Query()
 				q.Del("msg")
@@ -321,11 +334,12 @@ var baseFuncs = template.FuncMap{
 		n = max(0, min(n, 5))
 		return strings.Repeat("★", n) + strings.Repeat("☆", 5-n)
 	},
-	"secs":    func(minutes int) int { return minutes * 60 },
-	"add":     func(a, b int) int { return a + b },
-	"share":   share,
-	"mul":     func(a, b int) int { return a * b },
-	"half":    func(a int) int { return a / 2 },
+	"secs":  func(minutes int) int { return minutes * 60 },
+	"add":   func(a, b int) int { return a + b },
+	"sub":   func(a, b int) int { return a - b },
+	"share": share,
+	"mul":   func(a, b int) int { return a * b },
+	"half":  func(a int) int { return a / 2 },
 	// dinput formats a plan date for <input type="date">.
 	"dinput": func(t *time.Time) string {
 		if t == nil {
@@ -369,6 +383,7 @@ var baseFuncs = template.FuncMap{
 		return false
 	},
 	// json renders a value for a data-* attribute; nil maps and slices become {} so JS can index them.
+	"absColor": company.AbsenceKindColor, // the class abs-COLOR of a reason of absence
 	"json": func(v any) (string, error) {
 		b, err := json.Marshal(v)
 		if string(b) == "null" {
@@ -398,9 +413,12 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			return format(*t)
 		},
 		"datetime":       format,
-		"crmCall":        crmCall, // «Звонок» in a CRM card's timeline
+		"crmCall":        crmCall,    // «Звонок» in a CRM card's timeline
+		"crmSMS":         crmSMS,     // «SMS» in it
+		"crmDocSent":     crmDocSent, // «Документ отправлен в чат» in it
 		"crmObserverIDs": crm.ObserverIDs,
 		// crmStage shows a stage kept in a CRM timeline ("code:won" → its name; "a → b" both sides)
+		"waDigits": waDigits, // a WhatsApp number for wa.me
 		"crmStage": func(v string) string {
 			parts := strings.Split(v, " → ")
 			for i, p := range parts {
@@ -420,6 +438,18 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			}
 			return strings.Join(parts, " → ")
 		},
+		// bpTimeout: «Время на выполнение» of a workflow's step, minutes, in days, hours or minutes
+		"bpTimeout": func(m int) string {
+			switch {
+			case m%(24*60) == 0:
+				return tr("bp.days", m/(24*60))
+			case m%60 == 0:
+				return tr("bp.hours", m/60)
+			}
+			return tr("bp.minutes", m)
+		},
+		// absKind is the name of a reason of absence (the company's «Типы отсутствий»)
+		"absKind": func(key string) string { return company.AbsenceKindName(key, tr) },
 		// crmChanges shows an edit kept in a CRM timeline: each changed field «Сумма: 100 → 200» on its line
 		"crmChanges": func(body string) template.HTML {
 			value := func(field, v string) string {
@@ -447,6 +477,30 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 					template.HTMLEscapeString(value(c.Field, c.Old)) + `</s> → <b>` + template.HTMLEscapeString(value(c.Field, c.New)) + `</b></div>`)
 			}
 			return template.HTML(out.String())
+		},
+		// crmFill shows CoPilot's line of a CRM timeline: the fields a call filled or offers, values as people read them
+		"crmFill": func(body string) []crmFillRow {
+			f := crm.ParseFill(body)
+			rows := make([]crmFillRow, len(f.Items))
+			for i, it := range f.Items {
+				value := func(v string) string {
+					switch {
+					case v != "" && it.Kind == "bool":
+						return tr("bool.true")
+					case it.Kind == "date":
+						if d, err := time.Parse(time.DateOnly, v); err == nil {
+							return d.Format(tr("format.date"))
+						}
+					}
+					return v
+				}
+				name := it.Name
+				if name == "" {
+					name = tr("crm.f." + it.Field)
+				}
+				rows[i] = crmFillRow{Label: name, Old: value(it.Old), New: value(it.New), State: it.State}
+			}
+			return rows
 		},
 		// crmInvoice shows a quote's or an invoice's event kept in a CRM timeline ("invoice:3:paid" → «Счёт № 3: оплачен»,
 		// "invoice:3:pay:500.00 RUB" → «Счёт № 3: оплата 500.00 RUB»)
@@ -513,10 +567,12 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 				return tr("robots.did."+what) + " " + rest
 			case "trigger":
 				return tr("robots.did.trigger") + " " + tr("triggers.kind."+rest)
-			case "document", "bp":
+			case "document", "sign", "bp":
 				return tr("robots.did."+what) + " «" + rest + "»"
 			case "close":
 				return tr("robots.did.close", rest)
+			case "request", "request_done":
+				return tr("robots.did."+what) + " «" + rest + "»"
 			}
 			return v
 		},
@@ -549,6 +605,8 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 			}
 			return tr("format.daymonth", t.Day(), m)
 		},
+		// monthyear: a month as «Октябрь 2026» / «October 2026» (payslips)
+		"monthyear": func(t time.Time) string { return tr(fmt.Sprintf("month_full.%d", int(t.Month()))) + " " + strconv.Itoa(t.Year()) },
 		// dur formats seconds as "2 ч 05 мин" / "2h 05m".
 		"dur": func(secs int) string { return formatDuration(tr, secs) },
 		// durs formats a time span to the second under a minute ("40 с"), as dur above it (the open lines' answer times).
@@ -591,7 +649,7 @@ func historyValue(b *i18n.Bundle, lang, field, v string) string {
 	}
 	key := map[string]string{"status": "status.", "priority": "priority.", "requires_control": "bool.",
 		"allow_change_deadline": "bool.", "match_work_time": "bool.", "no_efficiency": "bool.",
-		"dates_from_subtasks": "bool.", "auto_complete": "bool.", "result_required": "bool."}[field]
+		"dates_from_subtasks": "bool.", "auto_complete": "bool.", "result_required": "bool.", "time_tracking": "bool."}[field]
 	if key != "" && b.Has(lang, key+v) {
 		return tr(key + v)
 	}
@@ -674,6 +732,10 @@ type taskList struct {
 	// (pages count the top tasks) lists
 	Rows []tasks.TreeRow
 	Tree bool
+	// ByProject groups the rows by projects («Группировать по проектам»); Heads are the project headers shown above
+	// the first row of each project on the page (by its task key), when the list has more than one project
+	ByProject bool
+	Heads     map[string]*groupHead
 	// the footer grids: all the tasks, the page shown (?page=, from 1) of Pages, «На странице»
 	Total, Page, Pages, Size int
 	Sizes                    []int
@@ -681,6 +743,12 @@ type taskList struct {
 	Prev, Next               string // the previous and the next page ("" — none)
 	// Info: the checklist and file counters of the rows shown (by task id)
 	Info map[string]tasks.CardInfo
+}
+
+// groupHead is the header of a project's tasks in a list grouped by projects: the project and its tasks in the list.
+type groupHead struct {
+	ID, Key, Name string
+	Count         int
 }
 
 // pageLink is a page number under a list; Gap is «…» between the numbers.
@@ -706,6 +774,13 @@ func (l *taskList) paginate(p page) {
 	} else {
 		for _, t := range l.Tasks {
 			groups = append(groups, []tasks.TreeRow{{Task: t}})
+		}
+	}
+	count := map[string]int{}
+	if l.ByProject {
+		groups = tasks.GroupByProject(groups)
+		for _, t := range l.Tasks {
+			count[t.ProjectID]++
 		}
 	}
 	groups, l.Page, l.Pages = tasks.Paginate(groups, n, l.Size)
@@ -747,6 +822,28 @@ func (l *taskList) paginate(p page) {
 		}
 		l.Info = p.CardInfo(ids)
 	}
+	if len(count) > 1 && len(l.Rows) > 0 {
+		ids := make([]string, 0, len(count))
+		for id := range count {
+			ids = append(ids, id)
+		}
+		var names map[string]string
+		if p.ProjectNames != nil {
+			names = p.ProjectNames(ids)
+		}
+		l.Heads = map[string]*groupHead{}
+		prev := ""
+		for _, r := range l.Rows {
+			if r.ProjectID != prev {
+				name := names[r.ProjectID]
+				if name == "" {
+					name = r.ProjectKey
+				}
+				l.Heads[r.Key()] = &groupHead{ID: r.ProjectID, Key: r.ProjectKey, Name: name, Count: count[r.ProjectID]}
+				prev = r.ProjectID
+			}
+		}
+	}
 }
 
 type keptField struct{ Name, Value string }
@@ -786,6 +883,7 @@ func keepOf(c tasks.TaskCard, except ...string) []keptField {
 			all = append(all, keptField{name, "on"})
 		}
 	}
+	all = append(all, keptField{"time_tracking", map[bool]string{true: "off", false: "on"}[c.NoTimeTracking]}) // see formParams
 	out := all[:0]
 	for _, f := range all {
 		if !skip[f.Name] {
@@ -873,38 +971,49 @@ type page struct {
 	Sort     string          // the user's sort of task lists (a click on a column header)
 	PageSize int             // the user's «На странице» of task lists
 	Tree     bool            // the user's task lists show subtasks under their parent tasks
+	// ByProject: the user's task lists are grouped by projects; ProjectNames names the projects of their headers
+	ByProject    bool
+	ProjectNames func(ids []string) map[string]string
 	// CardInfo counts the checklists and files of the tasks a list shows
 	CardInfo func(ids []string) map[string]tasks.CardInfo
 	// left menu: the user's projects under «Проекты», and the project of the current page
 	NavProjects    []tasks.Project
 	NavProject     string
-	FeedUnread     int              // important feed posts not confirmed yet
-	FeedNews       int              // new posts and comments in the feed since the person last opened it
-	ActingFor      []company.Person // people the user acts for today (menu «Задачи за …»)
-	Unread         int              // unread notifications (the bell)
-	MailUnread     int              // unread letters of the inboxes («Почта» in the menu)
-	CalInvites     int              // meeting invitations not answered yet («Календарь» in the menu)
-	Workday        *company.Workday // today's working day («Рабочее время» in the top bar); nil — not started
-	WorkdayOn      bool             // the top bar shows the working day (signed-in pages)
+	FeedUnread     int                   // important feed posts not confirmed yet
+	FeedNews       int                   // new posts and comments in the feed since the person last opened it
+	ActingFor      []company.Person      // people the user acts for today (menu «Задачи за …»)
+	Unread         int                   // unread notifications (the bell)
+	MailUnread     int                   // unread letters of the inboxes («Почта» in the menu)
+	CalInvites     int                   // meeting invitations not answered yet («Календарь» in the menu)
+	Workday        *company.Workday      // today's working day («Рабочее время» in the top bar); nil — not started
+	WorkdayOn      bool                  // the top bar shows the working day (signed-in pages)
+	WorkdayGeo     bool                  // «Местоположение»: its start and finish ask the browser where it is
+	WorkdayRules   company.DayRules      // the report on finishing and the devices of the person's work schedule
 	ReportDue      *company.ReportPeriod // a work report whose day has come is not sent yet
-	Forgotten      *company.Workday // a past day left unfinished («Вы не завершили рабочий день»)
-	DayPlan        []tasks.DayPlanItem // «План на день» in the working day window
-	DayPlanChoices []tasks.Task        // the user's open tasks to add to it
-	HR             company.HR       // the user's role «Сотрудник кадров»
-	CanInvite      bool             // «Пригласить сотрудника»: an administrator, an HR officer let invite, or all by «Сотрудники»
-	CanPulse       bool             // «Пульс компании»: an administrator, a head or a deputy of a department
-	VacationRemind bool             // no vacation in this year's plan («Укажите план отпуска»)
-	Path           string           // this page (forms in the top bar come back to it)
-	Presence       string           // the user's own status: "" (online), away, dnd — no pop-ups and sounds
-	Portal         portal.Settings  // the portal's name and logo (the menu, the title)
-	Menu           []menuEntry      // the left menu in the employee's order (not for guests)
-	MenuHidden     []menuEntry      // its hidden items («Скрытые»)
-	MenuOwn        bool             // the employee has set up a menu of their own
-	Telephony      bool             // go24 has its Asterisk («Телефония» in the settings)
-	TelAdmin       bool             // may change telephony's settings (an administrator or by a role)
-	Phone          string           // the user's inner number: «Позвонить» goes through the softphone ("" — none)
-	PhoneURL       string           // the softphone window (/phone at go24's https address)
-	Bare           bool             // a window of its own (the softphone): no menu, no top bar, no common scripts
+	Forgotten      *company.Workday      // a past day left unfinished («Вы не завершили рабочий день»)
+	DayPlan        []tasks.DayPlanItem   // «План на день» in the working day window
+	DayPlanChoices []tasks.Task          // the user's open tasks to add to it
+	DayEvents      []DayEvent            // «События» of today in the working day window
+	HR             company.HR            // the user's role «Сотрудник кадров»
+	CanInvite      bool                  // «Пригласить сотрудника»: an administrator, an HR officer let invite, or all by «Сотрудники»
+	CanPulse       bool                  // «Пульс компании»: an administrator, a head or a deputy of a department
+	VacationRemind bool                  // no vacation in this year's plan («Укажите план отпуска»)
+	EnpsDue        *company.Enps         // an open «eNPS» survey the user has not answered
+	TimeControl    bool                  // «Контроль времени» watches the running day: the page reports activity
+	OpenIdle       *company.Idle         // today's absence the user has not said where they were
+	Path           string                // this page (forms in the top bar come back to it)
+	Presence       string                // the user's own status: "" (online), away, dnd — no pop-ups and sounds
+	Portal         portal.Settings       // the portal's name and logo (the menu, the title)
+	Menu           []menuEntry           // the left menu in the employee's order (not for guests)
+	MenuHidden     []menuEntry           // its hidden items («Скрытые»)
+	MenuOwn        bool                  // the employee has set up a menu of their own
+	Look           themeLook             // «Тема оформления»: the employee's theme
+	ThemeBgs       []string              // go24's backgrounds to pick from
+	Telephony      bool                  // go24 has its Asterisk («Телефония» in the settings)
+	TelAdmin       bool                  // may change telephony's settings (an administrator or by a role)
+	Phone          string                // the user's inner number: «Позвонить» goes through the softphone ("" — none)
+	PhoneURL       string                // the softphone window (/phone at go24's https address)
+	Bare           bool                  // a window of its own (the softphone): no menu, no top bar, no common scripts
 	// «Онлайн-запись» in the menu: the user's bookings not confirmed or with a late client
 	BookingAttention int
 	// messenger section of the menu (when Matrix is on)
@@ -938,6 +1047,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 		if s.DB != nil {
 			s.refreshGuests(r)
 		}
+		if s.Company != nil {
+			s.Company.RefreshAbsenceKinds(r.Context())
+		}
 		if s.Tasks != nil {
 			if c, err := s.Tasks.Counters(r.Context(), sess.UserID); err == nil {
 				p.Counters = c
@@ -951,6 +1063,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 			p.Sort, _ = s.Tasks.Sort(r.Context(), sess.UserID)
 			p.PageSize, _ = s.Tasks.PageSize(r.Context(), sess.UserID)
 			p.Tree, _ = s.Tasks.Tree(r.Context(), sess.UserID)
+			p.ByProject, _ = s.Tasks.ByProject(r.Context(), sess.UserID)
+			p.ProjectNames = func(ids []string) map[string]string {
+				m, _ := s.Tasks.ProjectNames(r.Context(), ids)
+				return m
+			}
 			p.CardInfo = func(ids []string) map[string]tasks.CardInfo {
 				m, _ := s.Tasks.CardInfo(r.Context(), ids)
 				return m
@@ -983,16 +1100,26 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 				p.Forgotten, _ = s.Company.ForgottenDay(r.Context(), sess.UserID, time.Now())
 				if sched, err := s.Tasks.Schedule(r.Context()); err == nil {
 					p.ReportDue, _ = s.Company.ReportDue(r.Context(), sess.UserID, sched, time.Now())
+					p.WorkdayGeo = sched.Geo
 				}
 				p.WorkdayOn = true
+				p.WorkdayRules, _ = s.Company.DayRulesOf(r.Context(), sess.UserID)
+				if sched, err := s.Tasks.Schedule(r.Context()); err == nil && sched.TimeControl {
+					p.TimeControl = p.Workday != nil && p.Workday.State() == "running"
+					if sched.IdleAsk {
+						p.OpenIdle, _ = s.Company.OpenIdle(r.Context(), sess.UserID, time.Now())
+					}
+				}
 				p.DayPlan, _ = s.Tasks.DayPlan(r.Context(), sess.UserID, time.Now())
 				p.DayPlanChoices, _ = s.Tasks.DayPlanChoices(r.Context(), sess.UserID)
+				p.DayEvents = s.dayEvents(r, sess.UserID, time.Now())
 				p.HR, _ = s.Company.HROf(r.Context(), sess.UserID)
 				p.CanInvite, _ = s.Company.CanInvite(r.Context(), sess.UserID, sess.Admin)
 				if scope, all, err := s.Company.PulseScope(r.Context(), sess.UserID, sess.Admin); err == nil {
 					p.CanPulse = all || len(scope) > 0
 				}
 				p.VacationRemind, _ = s.Company.VacationRemind(r.Context(), sess.UserID, time.Now())
+				p.EnpsDue, _ = s.Company.EnpsDue(r.Context(), sess.UserID, time.Now())
 			}
 			if s.Matrix != nil {
 				p.Messenger = s.Matrix.ElementURL
@@ -1008,6 +1135,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, p p
 				p.NavProjects = navProjects(list, tasks.IsAdmin(r.Context()))
 			}
 			s.navMenu(r.Context(), &p)
+			s.pageTheme(r.Context(), &p)
 		}
 	}
 	if rest, ok := strings.CutPrefix(r.URL.Path, "/p/"); ok {

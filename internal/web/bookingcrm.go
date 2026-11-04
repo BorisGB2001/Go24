@@ -132,13 +132,13 @@ func (s *Server) bookingDeal(w http.ResponseWriter, r *http.Request, sess auth.S
 		http.Redirect(w, r, "/crm/deals/"+b.DealID, http.StatusSeeOther)
 		return
 	}
-	if err := s.CRM.Check(ctx, sess.UserID, "deal", "write", sess.UserID); err != nil {
+	if err := s.CRM.Check(ctx, sess.UserID, "deal", "add", sess.UserID); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
 	old := b
 	if b.ContactID == "" && (b.ClientName != "" || b.ClientPhone != "" || b.ClientEmail != "") {
-		if err = s.CRM.Check(ctx, sess.UserID, "contact", "write", sess.UserID); err == nil {
+		if err = s.CRM.Check(ctx, sess.UserID, "contact", "add", sess.UserID); err == nil {
 			b.ContactID, _, err = s.CRM.ClientContact(ctx, sess.UserID, b.ClientName, b.ClientPhone, b.ClientEmail, crm.Dict{Code: "BOOKING"})
 		}
 		if err != nil {

@@ -19,7 +19,8 @@ import (
 // «Роботы»: what a stage does when a deal or a lead enters it. A task robot makes a task in a project
 // (for the card's responsible or a given person, with a deadline in N days), a notify robot sends a notification, a
 // comment robot writes into the card's history, an activity robot plans a deed (a call, a meeting, a to-do) on the
-// card, a mail robot writes to the client from the responsible's mailbox, a responsible robot gives the card to
+// card, a mail robot writes to the client from the responsible's mailbox, an sms robot sends the text to the client's
+// phone (sms.go), a responsible robot gives the card to
 // another person, a stage robot moves it on. Sales tunnels («Туннели продаж»): a copy robot makes the deal's copy in
 // a stage of another pipeline of the same kind of cards, a move robot moves the deal itself there. A booking robot
 // («Отправить ссылку для записи») writes to the client as a mail robot does, with the address of a booking link. A robot may wait («Выполнить через» minutes, hours or days: the card
@@ -29,8 +30,8 @@ import (
 // {responsible}, {client}, {link}.
 
 // RobotKinds in the order the settings offer them.
-var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "infocall", "comment", "fields", "webhook", "responsible",
-	"observers", "document", "bp", "close", "stage", "copy", "move"}
+var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "infocall", "sms", "comment", "fields", "webhook", "responsible",
+	"observers", "document", "sign", "bp", "close", "request", "create", "convert", "stage", "copy", "move"}
 
 // TunnelKinds are the robots that lead into another pipeline (of deals and smart processes only).
 var TunnelKinds = []string{"copy", "move"}
@@ -47,29 +48,31 @@ type Robot struct {
 
 // RobotParams are a robot's settings (unused ones stay empty).
 type RobotParams struct {
-	Text    string     `json:"text"`              // task title, notification, comment, deed's or letter's subject
-	Details string     `json:"details,omitempty"` // task or deed description, the letter's text
-	Project string     `json:"project,omitempty"` // task: the project key
-	To      string     `json:"to,omitempty"`      // "responsible", "creator" or a user id
-	Days    int        `json:"days,omitempty"`    // task, deed: deadline in days (0 — a task has none, a deed is in an hour)
-	Act     string     `json:"act,omitempty"`     // deed: call | meeting | todo
-	Stage   string     `json:"stage,omitempty"`   // stage, copy, move robots: where the card (or its copy) goes
-	Delay   int        `json:"delay,omitempty"`   // wait so many units before running
-	Unit    string     `json:"unit,omitempty"`    // min | hour | day
-	Min     float64    `json:"min,omitempty"`     // run only for an amount from (0 — any)
-	Max     float64    `json:"max,omitempty"`     // and up to (0 — any)
-	If      *RobotCond `json:"if,omitempty"`      // run only when the card meets it («Условие»)
-	Set     []RobotSet `json:"set,omitempty"`     // fields robot: what it sets
-	URL     string     `json:"url,omitempty"`     // webhook robot: where it posts the card
-	Link    string     `json:"link,omitempty"`    // booking: the booking link's id
-	Users   []string   `json:"users,omitempty"`   // responsible robot: the people it gives cards to (one — To of old robots)
-	Mode    string     `json:"mode,omitempty"`    // responsible robot among several: queue | even | random
-	Skip    bool       `json:"skip,omitempty"`    // responsible robot: passes over the absent («Пропускать отсутствующих»)
-	Line    string     `json:"line,omitempty"`    // infocall: the external line it calls through
-	Sound   string     `json:"sound,omitempty"`   // infocall: the message's checksum (telephony_sounds)
-	Obs     string     `json:"obs,omitempty"`     // observers robot: add | remove | set (its Users)
-	Doc     string     `json:"doc,omitempty"`     // document robot: the template's id
-	BP      string     `json:"bp,omitempty"`      // process robot: the template's id
+	Text    string     `json:"text"`               // task title, notification, comment, deed's or letter's subject
+	Details string     `json:"details,omitempty"`  // task or deed description, the letter's text
+	Project string     `json:"project,omitempty"`  // task: the project key
+	To      string     `json:"to,omitempty"`       // "responsible", "creator" or a user id
+	Days    int        `json:"days,omitempty"`     // task, deed: deadline in days (0 — a task has none, a deed is in an hour)
+	Act     string     `json:"act,omitempty"`      // deed: call | meeting | todo
+	Stage   string     `json:"stage,omitempty"`    // stage, copy, move robots: where the card (or its copy) goes
+	Delay   int        `json:"delay,omitempty"`    // wait so many units before running
+	Unit    string     `json:"unit,omitempty"`     // min | hour | day
+	Min     float64    `json:"min,omitempty"`      // run only for an amount from (0 — any)
+	Max     float64    `json:"max,omitempty"`      // and up to (0 — any)
+	If      *RobotCond `json:"if,omitempty"`       // run only when the card meets it («Условие»)
+	Set     []RobotSet `json:"set,omitempty"`      // fields robot: what it sets
+	URL     string     `json:"url,omitempty"`      // webhook robot: where it posts the card
+	Link    string     `json:"link,omitempty"`     // booking: the booking link's id
+	Users   []string   `json:"users,omitempty"`    // responsible robot: the people it gives cards to (one — To of old robots); observers, sign robots: whom
+	Mode    string     `json:"mode,omitempty"`     // responsible robot among several: queue | even | random
+	Skip    bool       `json:"skip,omitempty"`     // responsible robot: passes over the absent («Пропускать отсутствующих»)
+	Line    string     `json:"line,omitempty"`     // infocall: the external line it calls through
+	Sound   string     `json:"sound,omitempty"`    // infocall: the message's checksum (telephony_sounds)
+	Obs     string     `json:"obs,omitempty"`      // observers robot: add | remove | set (its Users)
+	Doc     string     `json:"doc,omitempty"`      // document and sign robots: the template's id
+	BP      string     `json:"bp,omitempty"`       // process robot: the template's id
+	Pipe    string     `json:"pipeline,omitempty"` // convert robot: the deal's pipeline ("" — the first)
+	Fields  []string   `json:"fields,omitempty"`   // request robot: the fields to fill (RobotFieldKeys, «uf:» ones)
 }
 
 // ShareModes are how the responsible robot shares cards among several people: in turn, to whom has the fewest open
@@ -102,7 +105,8 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 	for _, k := range RobotKinds {
 		ok = ok || k == kind
 	}
-	needText := !slices.Contains([]string{"responsible", "stage", "fields", "webhook", "infocall", "observers", "document", "bp", "close"}, kind) &&
+	needText := !slices.Contains([]string{"responsible", "stage", "fields", "webhook", "infocall", "observers", "document", "sign", "bp", "close",
+		"create", "convert"}, kind) &&
 		!slices.Contains(TunnelKinds, kind)
 	if !ok || (needText && p.Text == "") || len([]rune(p.Text)) > 500 || len([]rune(p.Details)) > 5000 || p.Days < 0 || p.Days > 365 {
 		return i18n.E("err.robot")
@@ -117,6 +121,9 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 		return err
 	}
 	if err := s.checkRobotMore(ctx, stageID, kind, &p); err != nil {
+		return err
+	}
+	if err := s.checkRobotBased(ctx, stageID, kind, &p); err != nil {
 		return err
 	}
 	switch kind {
@@ -159,6 +166,10 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 		}
 		if _, err := s.BookingURL(ctx, p.Link); err != nil {
 			return i18n.E("err.robot_booking")
+		}
+	case "sms":
+		if s.SendSMS == nil {
+			return i18n.E("err.sms_no_sender")
 		}
 	case "infocall":
 		if s.InfoCall == nil || p.Line == "" || p.Sound == "" {
@@ -218,7 +229,13 @@ func (s *Store) runRobots(ctx context.Context, actorID, stageID string, c card) 
 	if err != nil {
 		return
 	}
-	for _, r := range robots {
+	s.runRobotList(ctx, actorID, stageID, robots, c)
+}
+
+// runRobotList runs the robots of the stage on the card in their order: one that waits is queued; a request robot
+// that asks something holds the robots after it until it is answered (CheckInfoRequests).
+func (s *Store) runRobotList(ctx context.Context, actorID, stageID string, robots []Robot, c card) {
+	for i, r := range robots {
 		if !r.Active {
 			continue
 		}
@@ -229,20 +246,35 @@ func (s *Store) runRobots(ctx context.Context, actorID, stageID string, c card) 
 			}
 			continue
 		}
+		if r.Kind == "request" {
+			var held []string
+			for _, h := range robots[i+1:] {
+				held = append(held, h.ID)
+			}
+			if s.runRobotHeld(ctx, actorID, r, c, held) {
+				return
+			}
+			continue
+		}
 		s.runRobot(ctx, actorID, r, c)
 	}
 }
 
 // runRobot does one robot's work on the card (if the card's amount is in the robot's range).
 func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
+	s.runRobotHeld(ctx, actorID, r, c, nil)
+}
+
+// runRobotHeld is runRobot that tells whether a request robot asked something: held are the robots it holds then.
+func (s *Store) runRobotHeld(ctx context.Context, actorID string, r Robot, c card, held []string) (asked bool) {
 	p := r.Params
 	if (p.Min > 0 && c.amount < p.Min) || (p.Max > 0 && c.amount > p.Max) {
-		return
+		return false
 	}
 	if p.If != nil {
 		values, err := s.cardValues(ctx, c)
 		if err != nil || !robotCondOK(*p.If, values) {
-			return
+			return false
 		}
 	}
 	var respName string
@@ -280,18 +312,29 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 		err = s.robotBooking(ctx, actorID, c, p, text, respName)
 	case "infocall":
 		err = s.robotInfoCall(ctx, actorID, c, p)
+	case "sms":
+		err = s.robotSMS(ctx, actorID, c, text)
 	case "fields":
 		err = s.robotFields(ctx, actorID, c, p.Set, respName)
 	case "webhook":
 		err = s.robotWebhook(ctx, actorID, c, p.URL)
 	case "document":
 		err = s.robotDocument(ctx, actorID, c, p.Doc)
+	case "sign":
+		err = s.robotSign(ctx, actorID, c, p)
 	case "bp":
 		err = s.robotProcess(ctx, actorID, c, p.BP)
 	case "observers":
 		err = s.robotObservers(ctx, actorID, c, p)
 	case "close":
 		err = s.robotClose(ctx, actorID, c, p.Act)
+	case "convert":
+		depth, _ := ctx.Value(robotDepth{}).(int)
+		err = s.robotConvert(context.WithValue(ctx, robotDepth{}, depth+1), actorID, c, p.Pipe)
+	case "create":
+		err = s.robotCreate(ctx, actorID, to, c, p, text)
+	case "request":
+		asked, err = s.robotRequest(ctx, actorID, to, r, c, text, held)
 	case "responsible":
 		if to, err = s.shareTo(ctx, r, c); err != nil || to == c.responsible {
 			break
@@ -316,6 +359,7 @@ func (s *Store) runRobot(ctx context.Context, actorID string, r Robot, c card) {
 	if err != nil {
 		_ = s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "fail:"+r.Kind+":"+errKey(err))
 	}
+	return asked
 }
 
 // shareTo is whom the responsible robot gives the card: its only person, or one of its people by its mode — of those
@@ -406,11 +450,31 @@ func errKey(err error) string {
 }
 
 // robotMail writes to the card's client (a lead's e-mail; a deal's contact's or else company's) from the first
-// mailbox of the card's responsible; the letter lands in the card as any letter to a client does.
+// mailbox of the card's responsible; the letter lands in the card as any letter to a client does. The addresses of
+// «Переход по ссылке» triggers in it become the card's tracked links.
 func (s *Store) robotMail(ctx context.Context, actorID string, c card, subject, text string) error {
 	if s.SendMail == nil {
 		return i18n.E("err.robot_mailbox")
 	}
+	to, err := s.clientEmail(ctx, c)
+	if err != nil {
+		return err
+	}
+	if text == "" {
+		text = subject
+	}
+	text, err = s.trackLinks(ctx, actorID, c, text)
+	if err != nil {
+		return err
+	}
+	if err := s.SendMail(ctx, c.responsible, to, subject, text); err != nil {
+		return err
+	}
+	return s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "mail:"+to)
+}
+
+// clientEmail is the card's client's e-mail: a lead's, a deal's contact's or else company's.
+func (s *Store) clientEmail(ctx context.Context, c card) (string, error) {
 	var to string
 	q := `SELECT email FROM crm_leads WHERE id::text = $1`
 	if c.entity == "deal" {
@@ -418,19 +482,15 @@ func (s *Store) robotMail(ctx context.Context, actorID string, c card, subject, 
 			LEFT JOIN crm_companies c ON c.id = d.company_id WHERE d.id::text = $1`
 	}
 	if err := s.db.QueryRow(ctx, q, c.id).Scan(&to); err != nil {
-		return err
+		return "", err
 	}
 	if to == "" {
-		return i18n.E("err.robot_email")
+		return "", errNoEmail
 	}
-	if text == "" {
-		text = subject
-	}
-	if err := s.SendMail(ctx, c.responsible, to, subject, text); err != nil {
-		return err
-	}
-	return s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "mail:"+to)
+	return to, nil
 }
+
+var errNoEmail = i18n.E("err.robot_email")
 
 // robotBooking writes to the client as robotMail with the address of the booking link: in place of {booking} in the
 // text, or else after it; a link removed or switched off since is the robot's failure.

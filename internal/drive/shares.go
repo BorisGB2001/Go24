@@ -206,6 +206,23 @@ func (s *Store) SetShare(ctx context.Context, userID string, d Drive, folderID, 
 	return tx.Commit(ctx)
 }
 
+// ShareFileWith opens a file of the user's own «Мой диск» to the employees with the access, without «Вам открыли
+// файл»: a document made in a chat is opened to the chat's people, and the chat's message tells them. Access they
+// already have stays as strong as it is.
+func (s *Store) ShareFileWith(ctx context.Context, userID string, d Drive, fileID string, users []string, access string) error {
+	if d.Kind != "user" || d.Root != "" || d.File != "" || d.OwnerID != userID || !slices.Contains(FileAccesses, access) {
+		return ErrForbidden
+	}
+	if _, _, err := s.fileOf(ctx, s.db, d, fileID); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(ctx, `INSERT INTO drive_shares (file_id, user_id, access, created_by)
+		SELECT $1::uuid, u.id, $3, $4::uuid FROM users u WHERE u.id::text = ANY($2) AND u.id <> $4::uuid AND u.active
+		ON CONFLICT (file_id, user_id) WHERE file_id IS NOT NULL AND user_id IS NOT NULL DO UPDATE
+		SET access = CASE WHEN drive_shares.access = 'edit' THEN 'edit' ELSE EXCLUDED.access END`, fileID, users, access, userID)
+	return err
+}
+
 // SharesOf are the shares of a folder (or, with fileID, a file) of the user's own «Мой диск».
 func (s *Store) SharesOf(ctx context.Context, userID string, d Drive, folderID, fileID string) ([]Share, error) {
 	if d.Kind != "user" || d.Root != "" || d.File != "" || d.OwnerID != userID {

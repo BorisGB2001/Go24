@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"go24/internal/company"
 )
 
 var ErrNotFound = errors.New("notification not found")
@@ -37,6 +39,30 @@ type Item struct {
 	Body        string
 	CreatedAt   time.Time
 	Read        bool
+	Answer      string // a confirming notification: «invited» while it waits for the answer; a meeting's answer
+}
+
+// Answers are the buttons of a confirming notification, answered in the bell itself: an invitation to a
+// meeting or to a project, a request to join a group (nil: nothing to answer, or answered already).
+func (i Item) Answers() []string {
+	if i.Answer != "invited" {
+		return nil
+	}
+	switch i.Kind {
+	case "event":
+		return []string{"accepted", "tentative", "declined"}
+	case "project_invite", "group_join_request":
+		return []string{"accept", "decline"}
+	}
+	return nil
+}
+
+// Answered is the person's answer to a meeting shown under its invitation ("" none).
+func (i Item) Answered() string {
+	if i.Kind == "event" && i.Answer != "invited" {
+		return i.Answer
+	}
+	return ""
 }
 
 // Link is where the notification leads.
@@ -71,7 +97,14 @@ func (i Item) Deadline() *time.Time {
 const selectSQL = `SELECT n.id, n.kind, coalesce(n.actor_id::text, ''), coalesce(a.name, ''), coalesce(a.photo_key, ''),
 		coalesce(p.key || '-' || t.number, ''), coalesce(t.title, ''), coalesce(n.post_id::text, ''),
 		coalesce(nullif(fp.title, ''), left(fp.body, 80), ''), coalesce(n.event_id::text, ''), coalesce(ev.title, ''),
-		coalesce(np.key, ''), coalesce(np.name, ''), coalesce(n.url, ''), n.body, n.created_at, n.read_at IS NOT NULL
+		coalesce(np.key, ''), coalesce(np.name, ''), coalesce(n.url, ''), n.body, n.created_at, n.read_at IS NOT NULL,
+		CASE n.kind
+			WHEN 'event' THEN coalesce((SELECT a.status FROM event_attendees a WHERE a.event_id = n.event_id AND a.user_id = n.user_id), '')
+			WHEN 'project_invite' THEN CASE WHEN EXISTS (SELECT 1 FROM project_invites i WHERE i.project_id = n.project_id
+				AND i.user_id = n.user_id) AND NOT np.archived THEN 'invited' ELSE '' END
+			WHEN 'group_join_request' THEN CASE WHEN EXISTS (SELECT 1 FROM project_join_requests j WHERE j.project_id = n.project_id
+				AND j.user_id = n.actor_id) AND NOT np.archived THEN 'invited' ELSE '' END
+			ELSE '' END
 	FROM notifications n
 	LEFT JOIN users a ON a.id = n.actor_id
 	LEFT JOIN tasks t ON t.id = n.task_id LEFT JOIN projects p ON p.id = t.project_id
@@ -83,7 +116,7 @@ func scan(rows pgx.Rows) ([]Item, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Item, error) {
 		var i Item
 		err := r.Scan(&i.ID, &i.Kind, &i.ActorID, &i.ActorName, &i.ActorPhoto, &i.TaskKey, &i.TaskTitle, &i.PostID, &i.PostTitle,
-			&i.EventID, &i.EventTitle, &i.ProjectKey, &i.ProjectName, &i.URL, &i.Body, &i.CreatedAt, &i.Read)
+			&i.EventID, &i.EventTitle, &i.ProjectKey, &i.ProjectName, &i.URL, &i.Body, &i.CreatedAt, &i.Read, &i.Answer)
 		return i, err
 	})
 }
@@ -98,6 +131,87 @@ func (s *Store) List(ctx context.Context, userID string, before int64, limit int
 		return nil, err
 	}
 	return scan(rows)
+}
+
+// Filter narrows «Уведомления» as the search does: words of the text, a section (a group of Kinds), the
+// author, a period of local days and unread only.
+type Filter struct {
+	Q        string
+	Group    string
+	ActorID  string
+	From, To time.Time // whole days: To is the last day shown (zero: no bound)
+	Unread   bool
+}
+
+func (f Filter) Empty() bool {
+	return f.Q == "" && f.Group == "" && f.ActorID == "" && f.From.IsZero() && f.To.IsZero() && !f.Unread
+}
+
+// GroupKinds lists the kinds of a section of the settings (nil: no such section).
+func GroupKinds(group string) []string {
+	for _, g := range Kinds {
+		if g.Group == group {
+			return g.Kinds
+		}
+	}
+	return nil
+}
+
+// Search is List narrowed by the filter.
+func (s *Store) Search(ctx context.Context, userID string, f Filter, before int64, limit int) ([]Item, error) {
+	if before <= 0 {
+		before = 1<<63 - 1
+	}
+	var kinds []string // nil: any
+	if f.Group != "" {
+		if kinds = GroupKinds(f.Group); kinds == nil {
+			return nil, nil
+		}
+	}
+	var from, to *time.Time
+	if !f.From.IsZero() {
+		from = &f.From
+	}
+	if !f.To.IsZero() {
+		t := f.To.AddDate(0, 0, 1)
+		to = &t
+	}
+	q := ""
+	if w := strings.TrimSpace(f.Q); w != "" {
+		q = "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(w) + "%"
+	}
+	rows, err := s.db.Query(ctx, selectSQL+` WHERE n.user_id = $1 AND n.id < $2
+		AND ($4::text[] IS NULL OR n.kind = ANY($4)) AND ($5 = '' OR n.actor_id::text = $5)
+		AND ($6::timestamptz IS NULL OR n.created_at >= $6) AND ($7::timestamptz IS NULL OR n.created_at < $7)
+		AND (NOT $8 OR n.read_at IS NULL)
+		AND ($9 = '' OR concat_ws(' ', n.body, a.name, p.key || '-' || t.number, t.title, fp.title, fp.body, ev.title, np.name) ILIKE $9)
+		ORDER BY n.id DESC LIMIT $3`, userID, before, limit, kinds, f.ActorID, from, to, f.Unread, q)
+	if err != nil {
+		return nil, err
+	}
+	return scan(rows)
+}
+
+// Actors are the people the user's notifications are from — the «Автор» list of the filter.
+func (s *Store) Actors(ctx context.Context, userID string) ([]company.Person, error) {
+	rows, err := s.db.Query(ctx, `SELECT DISTINCT a.id::text, a.name FROM notifications n JOIN users a ON a.id = n.actor_id
+		WHERE n.user_id = $1 ORDER BY a.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (company.Person, error) {
+		var p company.Person
+		return p, r.Scan(&p.ID, &p.Name)
+	})
+}
+
+// Delete removes one notification of the user — the ✕.
+func (s *Store) Delete(ctx context.Context, userID string, id int64) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM notifications WHERE user_id = $1 AND id = $2`, userID, id)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = ErrNotFound
+	}
+	return err
 }
 
 // Get loads one notification of the user.
@@ -176,27 +290,37 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "comment_like": // the reaction's emoji, then the comment
 		t += " " + i.Reaction()
 		i.Body = i.Excerpt()
-	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_share_left", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like", "learn_assign":
+	case "flow_task", "mail_assign", "mail_recall", "disk_share", "disk_file_share", "disk_share_left", "disk_comment", "kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like", "learn_assign", "enps":
 		t += " «" + i.Body + "»"
 	case "subtasks_done":
 		t = "✅ " + tr("notify.kind.subtasks_done")
 	case "event_reply":
 		t = i.ActorName + " " + tr("notify.kind.event_reply."+i.Body)
+	case "event_invited":
+		t += ": " + i.Body
 	case "task_remind":
 		t = "⏰ " + tr("notify.kind.task_remind")
+	case "task_time_over":
+		t = "⏱ " + tr("notify.kind.task_time_over")
 	case "crm_robot", "task_robot":
 		return "🤖 " + i.Body
-	case "crm_activity", "crm_recurring", "crm_observer", "crm_comment", "crm_stage":
+	case "app": // an integration's notification (REST im.notify.system.add)
+		return "🔔 " + i.Body
+	case "app_personal":
+		return i.ActorName + ": " + i.Body
+	case "crm_activity", "crm_recurring", "crm_salesgen", "crm_observer", "crm_comment", "crm_stage":
 		t += " «" + i.Body + "»"
 	case "crm_activity_remind":
 		return "⏰ " + tr("notify.kind.crm_activity_remind") + ": " + i.Body
+	case "crm_wait_over":
+		return "⏳ " + tr("notify.kind.crm_wait_over") + ": " + i.Body
 	case "learn_due", "learn_overdue":
 		return "⏰ " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "sign_request", "sign_review":
 		t += " «" + i.Body + "»"
-	case "sign_done", "sign_refused", "sign_cancelled":
+	case "sign_done", "sign_refused", "sign_cancelled", "sign_expired":
 		return "✍ " + tr("notify.kind."+i.Kind) + ": " + i.Body
-	case "booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated", "event_slot", "event_slot_cancel":
+	case "booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_moved", "booking_rated", "event_slot", "event_slot_cancel":
 		return "📅 " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "bp":
 		return "⚙ " + i.Body
@@ -207,9 +331,16 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 	case "workday_decided": // "approved|25.10.2026"
 		status, day, _ := strings.Cut(i.Body, "|")
 		return i.ActorName + " " + tr("notify.kind.workday_decided."+status) + " " + day
+	case "workday_violation": // "late|28.10.2026" — the person's day: late, early or short
+		v, day, _ := strings.Cut(i.Body, "|")
+		return "⏱ " + i.ActorName + " " + tr("notify.kind.workday_violation."+v) + " · " + day
 	case "meeting": // "title|02.01.2006 15:04"
 		title, at, _ := strings.Cut(i.Body, "|")
 		return "📋 " + i.ActorName + " " + tr("notify.kind.meeting") + " «" + title + "» · " + at
+	case "payslip": // the month, "10.2026"
+		return "💵 " + i.ActorName + " " + tr("notify.kind.payslip") + " " + i.Body
+	case "gallery_comment": // the comment
+		return "📷 " + i.ActorName + " " + tr("notify.kind.gallery_comment") + ": " + i.Body
 	case "honor": // the reason
 		t = "🏆 " + i.ActorName + " " + tr("notify.kind.honor")
 		if i.Body != "" {
@@ -223,7 +354,7 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		return i.ActorName + " " + tr("notify.kind.work_report_mark") + " " + period + ": " + tr("wreport.mark."+mark)
 	case "absence_hr": // "added|vacation|Пётр Иванов|01.11.2026|14.11.2026" — an HR officer's action with an absence
 		if f := i.HRParts(); f != nil {
-			return i.ActorName + " " + tr("notify.kind.absence_hr."+f[0]) + " «" + tr("absence.kind."+f[1]) + "» · " + f[2] + ", " + f[3] + " — " + f[4]
+			return i.ActorName + " " + tr("notify.kind.absence_hr."+f[0]) + " «" + company.AbsenceKindName(f[1], tr) + "» · " + f[2] + ", " + f[3] + " — " + f[4]
 		}
 	case "openline":
 		return "💬 " + i.Body
@@ -235,12 +366,18 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		return "📋 " + tr("notify.kind.crm_form") + ": " + i.Body
 	case "phone":
 		return "📞 " + i.Body
+	case "call_conference":
+		return "🎥 " + i.ActorName + " " + tr("notify.kind.call_conference") + " «" + i.Body + "»"
+	case "phone_score":
+		return "📞 " + tr("notify.kind.phone_score") + ": " + i.Body
 	case "im_remind":
 		return "⏰ " + tr("notify.kind.im_remind") + ": " + i.Body
 	case "mail":
 		return "✉ " + i.Body
 	case "mail_remind":
 		return "⏰ " + tr("notify.kind.mail_remind") + ": " + i.Body
+	case "mail_poll", "mail_poll_done":
+		return "📅 " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "event_remind":
 		t = "⏰ " + tr("notify.kind.event_remind")
 		if at, err := time.Parse(time.RFC3339, i.Body); err == nil {
@@ -294,19 +431,20 @@ var Kinds = []struct {
 	Group string
 	Kinds []string
 }{
-	{"tasks", []string{"task_new", "flow_task", "subtasks_done", "comment", "mention", "status", "deadline", "responsible", "participant", "task_remind", "task_robot"}},
+	{"tasks", []string{"task_new", "flow_task", "subtasks_done", "comment", "mention", "status", "deadline", "responsible", "participant", "task_remind", "task_time_over", "task_robot"}},
 	{"feed", []string{"post_to_you", "post_shared", "post_comment", "post_followed", "like", "comment_like", "important", "gratitude"}},
-	{"calendar", []string{"event", "event_open", "event_reply", "event_remind", "event_comment", "event_slot", "event_slot_cancel"}},
-	{"projects", []string{"project_invite", "collab_added", "collab_joined", "collab_manager", "collab_member", "collab_removed", "collab_owner"}},
-	{"crm", []string{"crm_activity", "crm_activity_remind", "crm_recurring", "crm_observer", "crm_comment", "crm_stage", "crm_robot", "bp", "openline", "site_form", "crm_form"}},
-	{"telephony", []string{"phone"}},
-	{"mail", []string{"mail", "mail_assign", "mail_remind", "mail_recall"}},
-	{"messenger", []string{"im_remind"}},
+	{"calendar", []string{"event", "event_open", "event_reply", "event_invited", "event_remind", "event_comment", "event_slot", "event_slot_cancel"}},
+	{"projects", []string{"project_invite", "group_join_request", "group_join_accepted", "group_join_rejected", "collab_added", "collab_joined", "collab_manager", "collab_member", "collab_removed", "collab_owner", "project_owner"}},
+	{"crm", []string{"crm_activity", "crm_activity_remind", "crm_wait_over", "crm_recurring", "crm_salesgen", "crm_observer", "crm_comment", "crm_stage", "crm_robot", "bp", "openline", "site_form", "crm_form"}},
+	{"telephony", []string{"phone", "phone_score"}},
+	{"apps", []string{"app", "app_personal"}},
+	{"mail", []string{"mail", "mail_assign", "mail_remind", "mail_recall", "mail_poll", "mail_poll_done"}},
+	{"messenger", []string{"im_chat", "im_remind", "call_conference"}}, // im_chat: chat messages, only to the outside messengers (notifyout)
 	{"disk", []string{"disk_share", "disk_file_share", "disk_share_left", "disk_comment"}},
 	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
-	{"sign", []string{"sign_request", "sign_review", "sign_done", "sign_refused", "sign_cancelled"}},
-	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_rated"}},
-	{"company", []string{"workday_change", "workday_decided", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "learn_assign", "learn_due", "learn_overdue", "meeting", "backup_failed", "backup_restored", "backup_restore_failed", "join_request"}},
+	{"sign", []string{"sign_request", "sign_review", "sign_done", "sign_refused", "sign_cancelled", "sign_expired"}},
+	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_moved", "booking_rated"}},
+	{"company", []string{"workday_change", "workday_decided", "workday_violation", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "payslip", "gallery_comment", "enps", "learn_assign", "learn_due", "learn_overdue", "meeting", "backup_failed", "backup_restored", "backup_restore_failed", "join_request"}},
 }
 
 // Settings of a person: kinds turned off, copies in the messenger.

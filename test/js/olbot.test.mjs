@@ -16,7 +16,8 @@ const dom = new JSDOM(`<!doctype html><body><form><details data-olbot>
       <option value="queue">q</option><option value="close">c</option></select><button type="button" data-olbot-del>x</button></div>
     <textarea data-k="text" data-ph-text="Текст" data-ph-menu="Заголовок" data-ph-queue="Соединяю" data-ph-close="Пока"></textarea>
     <div class="olbot-sub"><div data-olbot-list></div><button type="button" data-olbot-add>+ sub</button></div>
-  </div></template></details></form></body>`, { runScripts: 'outside-only' });
+  </div></template></details>
+  <details><textarea name="holidays">31.12</textarea><button type="button" data-ol-holidays="01.01,08.03">cal</button></details></form></body>`, { runScripts: 'outside-only' });
 const w = dom.window, d = w.document;
 w.eval(src);
 const box = d.querySelector('[data-olbot]'), top = box.querySelector(':scope > [data-olbot-list]');
@@ -47,5 +48,7 @@ assert.deepEqual(JSON.parse(box.querySelector('[name="bot_menu"]').value), [
   { title: 'Оплата', action: 'menu', text: '', items: [{ title: 'Картой', action: 'text', text: 'На сайте' }] },
   { title: 'Доставка', action: 'menu', text: '', items: [{ title: 'Курьером', action: 'text', text: 'Завтра' }] },
 ], 'the tree as JSON, the empty sub-item dropped');
+d.querySelector('[data-ol-holidays]').click();
+assert.equal(d.querySelector('[name="holidays"]').value, '01.01\n08.03', 'the company calendar\'s holidays');
 console.log('olbot.js: the chat bot menu editor passed');
 process.exit(0);

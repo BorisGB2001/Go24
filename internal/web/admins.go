@@ -47,7 +47,7 @@ type Admin struct {
 // admins lists the administrators of go24: the working employees of the groups GO24_ADMIN_GROUPS and those made here.
 func (s *Server) admins(ctx context.Context) ([]Admin, error) {
 	rows, err := s.DB.Query(ctx, `
-		SELECT u.id, u.name, u.email, u.groups && $1::text[], u.admin, COALESCE(b.name, ''), u.admin_at
+		SELECT u.id, u.name, u.email, coalesce(u.groups && $1::text[], false), u.admin, COALESCE(b.name, ''), u.admin_at
 		FROM users u LEFT JOIN users b ON b.id = u.admin_by
 		WHERE u.active AND NOT u.guest AND (u.admin OR u.groups && $1::text[])
 		ORDER BY u.name, u.email`, s.AdminGroups)

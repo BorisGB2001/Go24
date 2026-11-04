@@ -9,9 +9,12 @@
 {{/* sgremind is the choice of «Напоминать подписанту», the days chosen given */}}
 {{define "sgremind"}}{{$days := .}}<select name="remind" id="sg-remind">{{range remindDays}}<option value="{{.}}" {{if eq . $days}}selected{{end}}>{{t (print "sign.remind_" .)}}</option>{{end}}</select>{{end}}
 
-{{/* sgclient is a row of a client signing: (list name email) */}}
+{{/* sgclient is a row of a client signing: (list name email phone chat inchat); chat — the card has a dialogue of the open lines
+(«В чат» offered), inchat — chosen */}}
 {{define "sgclient"}}<div class="sgclient" data-row><input type="text" name="client_name" maxlength="200" value="{{index . 0}}" placeholder="{{t "sign.client_name"}}" aria-label="{{t "sign.client_name"}}">
   <input type="email" name="client_email" value="{{index . 1}}" placeholder="{{t "sign.client_email"}}" aria-label="{{t "sign.client_email"}}">
+  <input type="tel" name="client_phone" value="{{index . 2}}" maxlength="30" placeholder="{{t "sign.client_phone"}}" aria-label="{{t "sign.client_phone"}}" title="{{t "sign.client_phone_hint"}}">
+  {{if index . 3}}<select name="client_via" aria-label="{{t "sign.chat.via"}}" title="{{t "sign.chat.via_hint"}}"><option value="">{{t "sign.chat.via_mail"}}</option><option value="chat"{{if index . 4}} selected{{end}}>{{t "sign.chat.via_chat"}}</option></select>{{end}}
   <button type="button" class="ghost" data-rm-row title="{{t "common.remove"}}">{{icon "x"}}</button></div>{{end}}
 
 {{/* sgpad is «Ваша подпись»: drawn, written by the name or uploaded — (list saved name); saved is the
@@ -24,4 +27,20 @@ signature kept to sign with (a data URL, "" — none), name — the signer's, to
   <div class="row small muted"><span style="flex:1">{{t "sign.pad.hint"}}</span>
     <button type="button" class="ghost small" data-pad-write>{{icon "edit"}} {{t "sign.pad.write"}}</button>
     <label class="button ghost small">{{icon "cloud-upload"}} {{t "sign.pad.upload"}}<input type="file" accept="image/png,image/jpeg" hidden data-pad-file></label></div>
+</div>{{end}}
+
+{{/* sgfields are the signer's fields on the pages to fill in before signing (sign.Block of «field») */}}
+{{define "sgfields"}}{{with .}}<fieldset class="sgfields"><legend>{{t "sign.fields.title"}}</legend>
+  {{range .}}<label>{{.Text}}{{if .Required}} *{{end}} <span class="small muted">{{t "sign.blocks.page" .Page}}</span>
+    <input type="text" name="field_{{.ID}}" value="{{.Value}}" maxlength="200"{{if .Required}} required{{end}}></label>{{end}}</fieldset>{{end}}{{end}}
+
+{{/* sgqes signs with КЭП: the signer's certificate from the CryptoPro plug-in signs the document's PDF
+     (index 0 — its address); the form gets the detached signature in «cms» (js/qes.js) */}}
+{{define "sgqes"}}<div class="sgqes" data-qes data-pdf="{{index . 0}}" data-no-plugin="{{t "sign.qes.no_plugin"}}" data-no-certs="{{t "sign.qes.no_certs"}}"
+  data-pick="{{t "sign.qes.pick"}}" data-signing="{{t "sign.qes.signing"}}" data-until="{{t "sign.qes.until"}}" data-failed="{{t "sign.qes.failed"}}">
+  <div class="row"><b style="flex:1">{{icon "certificate"}} {{t "sign.qes.title"}}</b></div>
+  <p class="small muted">{{t "sign.qes.hint"}}</p>
+  <select data-qes-cert aria-label="{{t "sign.qes.cert"}}" disabled><option value="">{{t "sign.qes.loading"}}</option></select>
+  <p class="small" data-qes-msg hidden></p>
+  <input type="hidden" name="cms">
 </div>{{end}}

@@ -1,0 +1,22 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.score.page_hint" $d.Min $d.MinEach $d.MinEach}}</p>
+<div class="card flush"><table class="tlist">
+  <thead><tr><th>{{t "crm.f.pipeline"}}</th><th>{{t "crm.score.state"}}</th><th>{{t "crm.score.learned"}}</th><th>{{t "crm.score.accuracy"}}</th><th>{{t "crm.score.trained_at"}}</th>{{if $.User.Admin}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.Scoring}}<tr>
+    <td><b>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}</b><div class="small muted">{{t "crm.score.closed_now" .Closed .ClosedWon}}</div></td>
+    <td>{{if not .Enabled}}<span class="muted">{{t "crm.score.off"}}</span>{{else if and .Ready .Samples}}<span class="pill crmscore hi">{{t "crm.score.on"}}</span>{{else}}<span class="pill crmscore mid" title="{{t "crm.score.need" $d.Min $d.MinEach}}">{{t "crm.score.waiting"}}</span>{{end}}</td>
+    <td class="nowrap">{{if .Samples}}{{t "crm.score.samples" .Samples .Won}}{{else}}—{{end}}</td>
+    <td>{{if and .Enabled .Ready .Samples}}<b>{{.AccuracyPercent}}%</b>{{else}}—{{end}}</td>
+    <td class="small muted nowrap">{{with .TrainedAt}}{{datetime (deref .)}}{{end}}</td>
+    {{if $.User.Admin}}<td class="nowrap">
+      <form method="post" action="/crm/scoring" class="inline"><input type="hidden" name="pipeline" value="{{.PipelineID}}">
+        {{if .Enabled}}<button class="ghost small" name="op" value="train" title="{{t "crm.score.train_hint"}}">{{icon "refresh"}} {{t "crm.score.train"}}</button>
+        <button class="ghost small" name="op" value="off">{{t "crm.score.turn_off"}}</button>{{else}}<button class="primary small" name="op" value="on">{{icon "chart-line"}} {{t "crm.score.turn_on"}}</button>{{end}}</form></td>{{end}}
+  </tr>{{end}}</tbody></table></div>
+<div class="card"><h2>{{icon "sparkles"}} {{t "crm.score.what"}}</h2>
+  <ul class="small">{{range $d.Features}}<li>{{t (print "crm.score.f." .)}}</li>{{end}}</ul>
+  <p class="small muted">{{t "crm.score.how"}}</p></div>
+{{end}}

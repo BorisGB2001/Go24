@@ -53,8 +53,9 @@ func (s *Store) CardStage(ctx context.Context, entity, id, pipelineID, stage str
 }
 
 // CheckRequired: the card (id; "" — a new one) with the values about to be written (field id → value; absent ones
-// keep what the card has) at the stage — a *RequiredError names the required fields left empty.
-func (s *Store) CheckRequired(ctx context.Context, entity, id, stage string, values map[string]string) error {
+// keep what the card has) at the stage — a *RequiredError names the required fields left empty. A field hidden from
+// the person («Видимость поля») is not asked of them.
+func (s *Store) CheckRequired(ctx context.Context, entity, id, stage string, values map[string]string, sight FieldSight) error {
 	set, ok := tasks.CRMFieldSets[entity]
 	if !ok {
 		return nil
@@ -83,7 +84,7 @@ func (s *Store) CheckRequired(ctx context.Context, entity, id, stage string, val
 		if v, ok := values[f.ID]; ok {
 			f.Value = v
 		}
-		if f.RequiredAt(stage) && strings.TrimSpace(f.Value) == "" {
+		if f.RequiredAt(stage) && strings.TrimSpace(f.Value) == "" && sight.Sees(f.Field) {
 			missing = append(missing, f)
 		}
 	}

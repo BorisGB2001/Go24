@@ -15,16 +15,21 @@ import (
 // ---------- REST of «Компания» (user.*, department.*, timeman.*) ----------
 //
 // user.get, user.search             — /api/v1/users, /api/v1/users/{id}
-// department.get/add/update/delete  — /api/v1/departments (changed by administrators)
+// department.get/add/update/delete  — /api/v1/departments (changed as «Права доступа» of the structure allow;
+//                                     the rights — /api/v1/departments/rights)
 // «Команды» of the structure          — /api/v1/teams (administrators; a team's head changes its people)
 // timeman.status/open/pause/close   — /api/v1/worktime/status, /api/v1/worktime/{action} (the key owner's own day)
-// timeman.timecontrol.reports.get   — /api/v1/worktime/days (another person's days — for their managers)
+// timeman.timecontrol.reports.get   — /api/v1/worktime/days (another person's days — for their managers),
+//                                     /api/v1/worktime/timecontrol — absences of «Контроль времени», its settings
 // timeman.schedule.get              — /api/v1/worktime/schedules, /api/v1/users/{id}/schedule
-// «График отсутствий»               — /api/v1/absences (with the rights of the page)
+// «График отсутствий»               — /api/v1/absences (with the rights of the page), /absences/kinds — «Типы отсутствий»
 // user.add (an invitation by e-mail) — /api/v1/users/invite, /api/v1/users/invites (who may invite)
+// «Интересы» of the profile           — interests in /api/v1/users, ?interest=, PUT /api/v1/users/{id}/interests,
+//                                     GET /api/v1/interests (the popular ones)
 // «Доска почёта»                    — /api/v1/honors (kept by administrators and HR officers with the right)
 // meeting.* («Собрания и планёрки») — /api/v1/meetings (api_meetings.go)
 // «Обучение» (learning.*)          — /api/v1/learning/… (api_learning.go)
+// «Зарплата и отпуск»               — /api/v1/users/{id}/vacation, /api/v1/payslips (api_salary.go)
 
 func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users", s.api("company:read", s.apiUsers))
@@ -36,10 +41,18 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users/join-requests", s.api("company:read", s.apiJoinRequests))
 	mux.HandleFunc("POST /api/v1/users/join-requests/{id}/{op}", s.api("company:write", s.apiJoinDecide))
 	mux.HandleFunc("GET /api/v1/users/{id}/schedule", s.api("company:read", s.apiUserSchedule))
+	mux.HandleFunc("PUT /api/v1/users/{id}/interests", s.api("company:write", s.apiUserInterests))
+	mux.HandleFunc("GET /api/v1/interests", s.api("company:read", s.apiInterests))
 	mux.HandleFunc("GET /api/v1/departments", s.api("company:read", s.apiDepartments))
+	mux.HandleFunc("GET /api/v1/departments/rights", s.api("company:read", s.apiStructRights))
+	mux.HandleFunc("PUT /api/v1/departments/rights", s.api("company:write", s.apiStructRights))
 	mux.HandleFunc("POST /api/v1/departments", s.api("company:write", s.apiDepartmentAdd))
 	mux.HandleFunc("PATCH /api/v1/departments/{id}", s.api("company:write", s.apiDepartmentUpdate))
 	mux.HandleFunc("DELETE /api/v1/departments/{id}", s.api("company:write", s.apiDepartmentDelete))
+	mux.HandleFunc("GET /api/v1/departments/{id}/chats", s.api("company:read", s.apiDeptChats))
+	mux.HandleFunc("POST /api/v1/departments/{id}/chats", s.api("company:write", s.apiDeptChatAdd))
+	mux.HandleFunc("PATCH /api/v1/departments/{id}/chats", s.api("company:write", s.apiDeptChatUpdate))
+	mux.HandleFunc("DELETE /api/v1/departments/{id}/chats", s.api("company:write", s.apiDeptChatDelete))
 	mux.HandleFunc("GET /api/v1/teams", s.api("company:read", s.apiTeams))
 	mux.HandleFunc("GET /api/v1/teams/{id}", s.api("company:read", s.apiTeam))
 	mux.HandleFunc("POST /api/v1/teams", s.api("company:write", s.apiTeamAdd))
@@ -48,9 +61,22 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/worktime/status", s.api("company:read", s.apiWorkStatus))
 	mux.HandleFunc("POST /api/v1/worktime/{action}", s.api("company:write", s.apiWorkAction))
 	mux.HandleFunc("GET /api/v1/worktime/days", s.api("company:read", s.apiWorkdays))
+	mux.HandleFunc("GET /api/v1/worktime/timecontrol", s.api("company:read", s.apiIdles))
+	mux.HandleFunc("GET /api/v1/worktime/timecontrol/settings", s.api("company:read", s.apiTimeControlSettings))
+	mux.HandleFunc("PUT /api/v1/worktime/timecontrol/settings", s.api("company:write", s.apiTimeControlSave))
+	mux.HandleFunc("POST /api/v1/worktime/timecontrol/{id}", s.api("company:write", s.apiAnswerIdle))
+	mux.HandleFunc("GET /api/v1/worktime/rights", s.api("company:read", s.apiWorktimeRights))
+	mux.HandleFunc("PUT /api/v1/worktime/rights", s.api("company:write", s.apiWorktimeRights))
+	mux.HandleFunc("GET /api/v1/worktime/terminals", s.api("company:read", s.apiTerminals))
+	mux.HandleFunc("POST /api/v1/worktime/terminals", s.api("company:write", s.apiTerminals))
+	mux.HandleFunc("GET /api/v1/worktime/terminals/{id}", s.api("company:read", s.apiTerminals))
+	mux.HandleFunc("PUT /api/v1/worktime/terminals/{id}", s.api("company:write", s.apiTerminals))
+	mux.HandleFunc("DELETE /api/v1/worktime/terminals/{id}", s.api("company:write", s.apiTerminals))
 	mux.HandleFunc("GET /api/v1/worktime/schedules", s.api("company:read", s.apiWorkSchedules))
 	mux.HandleFunc("GET /api/v1/worktime/schedules/{id}", s.api("company:read", s.apiWorkSchedule))
 	mux.HandleFunc("GET /api/v1/absences", s.api("company:read", s.apiAbsences))
+	mux.HandleFunc("GET /api/v1/absences/kinds", s.api("company:read", s.apiAbsenceKinds))
+	mux.HandleFunc("PUT /api/v1/absences/kinds", s.api("company:write", s.apiAbsenceKindsSave))
 	mux.HandleFunc("POST /api/v1/absences", s.api("company:write", s.apiAbsenceAdd))
 	mux.HandleFunc("DELETE /api/v1/absences/{id}", s.api("company:write", s.apiAbsenceDelete))
 	mux.HandleFunc("GET /api/v1/honors", s.api("company:read", s.apiHonors))
@@ -58,6 +84,8 @@ func (s *Server) apiCompanyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/honors/{id}", s.api("company:write", s.apiHonorDelete))
 	s.apiMeetingRoutes(mux)
 	s.apiLearningRoutes(mux)
+	s.apiSalaryRoutes(mux)
+	s.apiGalleryRoutes(mux)
 }
 
 type apiDeptRef struct {
@@ -92,13 +120,17 @@ type apiUserOut struct {
 	PhotoURL    string       `json:"photo_url,omitempty"`
 	Departments []apiDeptRef `json:"departments"`
 	Teams       []apiDeptRef `json:"teams"`
+	Interests   []string     `json:"interests"`
 }
 
 func apiUserOf(p company.Profile, viewer string) apiUserOut {
 	u := apiUserOut{ID: p.ID, Name: p.Name, LastName: p.LastName, FirstName: p.FirstName, SecondName: p.SecondName, Email: p.Email,
 		Position: p.Position, WorkPhone: p.WorkPhone, MobilePhone: p.MobilePhone, InnerPhone: p.InnerPhone, Gender: p.Gender,
 		City: p.City, TimeZone: p.TimeZone, Telegram: p.Telegram, WhatsApp: p.WhatsApp, Website: p.Website, Username: p.Username,
-		About: p.About, Active: p.Active, Guest: p.Guest, Departments: []apiDeptRef{}, Teams: []apiDeptRef{}}
+		About: p.About, Active: p.Active, Guest: p.Guest, Departments: []apiDeptRef{}, Teams: []apiDeptRef{}, Interests: p.Interests}
+	if u.Interests == nil {
+		u.Interests = []string{}
+	}
 	if p.Birthday != nil {
 		if p.BirthdayYear || p.ID == viewer {
 			u.Birthday = p.Birthday.Format(time.DateOnly)
@@ -124,12 +156,12 @@ func apiUserOf(p company.Profile, viewer string) apiUserOut {
 	return u
 }
 
-// GET /api/v1/users?q=&department_id=&team_id=&fired=1&preset=here|absent|new&guests=1 — the employees (user.search);
+// GET /api/v1/users?q=&department_id=&team_id=&interest=&fired=1&preset=here|absent|new&guests=1 — the employees (user.search);
 // guests of collabs — for administrators.
 func (s *Server) apiUsers(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	q := r.URL.Query()
-	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("department_id"), TeamID: q.Get("team_id"), Fired: q.Get("fired") == "1", Preset: q.Get("preset"),
-		Guests: q.Get("guests") == "1"}
+	f := company.Filter{Query: q.Get("q"), DepartmentID: q.Get("department_id"), TeamID: q.Get("team_id"), Interest: q.Get("interest"),
+		Fired: q.Get("fired") == "1", Preset: q.Get("preset"), Guests: q.Get("guests") == "1"}
 	if f.Preset != "" && !slices.Contains(company.EmployeePresets, f.Preset) {
 		return i18n.E("err.bad_form")
 	}
@@ -162,6 +194,42 @@ func (s *Server) apiUser(w http.ResponseWriter, r *http.Request, p apikeys.Princ
 		return i18n.E("err.not_found")
 	}
 	writeJSON(w, http.StatusOK, apiUserOf(prof, p.UserID))
+	return nil
+}
+
+// PUT /api/v1/users/{id}/interests {"interests": ["…"]} — replaces the person's «Интересы» ("me" — the key's owner;
+// another person's — administrators); answers with the card.
+func (s *Server) apiUserInterests(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	id := r.PathValue("id")
+	if id == "me" {
+		id = p.UserID
+	}
+	if id != p.UserID && !s.apiAdmin(r.Context(), p.UserID) {
+		return i18n.E("err.forbidden")
+	}
+	var in struct {
+		Interests []string `json:"interests"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if err := s.Company.SetInterests(r.Context(), id, in.Interests); err != nil {
+		return err
+	}
+	return s.apiUser(w, r, p)
+}
+
+// GET /api/v1/interests?q=&limit= — the interests of the employees, the most common first, with their counts.
+func (s *Server) apiInterests(w http.ResponseWriter, r *http.Request, _ apikeys.Principal) error {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list, err := s.Company.PopularInterests(r.Context(), r.URL.Query().Get("q"), min(max(limit, 0), 200))
+	if err != nil {
+		return err
+	}
+	if list == nil {
+		list = []company.Interest{}
+	}
+	writeJSON(w, http.StatusOK, list)
 	return nil
 }
 
@@ -222,9 +290,6 @@ type apiDeptIn struct {
 
 // POST /api/v1/departments {"parent_id","name","head_id"} — a new department (department.add).
 func (s *Server) apiDepartmentAdd(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiAdmin(r.Context(), p.UserID) {
-		return i18n.E("err.forbidden")
-	}
 	var in apiDeptIn
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -245,6 +310,9 @@ func (s *Server) apiDepartmentAdd(w http.ResponseWriter, r *http.Request, p apik
 			parent = root.ID
 		}
 	}
+	if err := s.structCheck(r, p.UserID, s.apiAdmin(r.Context(), p.UserID), "create", parent); err != nil {
+		return err
+	}
 	id, err := s.Company.CreateDepartment(r.Context(), parent, str(in.Name), str(in.HeadID))
 	if err != nil {
 		return err
@@ -256,8 +324,9 @@ func (s *Server) apiDepartmentAdd(w http.ResponseWriter, r *http.Request, p apik
 
 // PATCH /api/v1/departments/{id} — changes the given fields (department.update): a new parent moves the department.
 func (s *Server) apiDepartmentUpdate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiAdmin(r.Context(), p.UserID) {
-		return i18n.E("err.forbidden")
+	admin := s.apiAdmin(r.Context(), p.UserID)
+	if err := s.structCheck(r, p.UserID, admin, "edit", r.PathValue("id")); err != nil {
+		return err
 	}
 	var in apiDeptIn
 	if err := readJSON(r, &in); err != nil {
@@ -277,8 +346,11 @@ func (s *Server) apiDepartmentUpdate(w http.ResponseWriter, r *http.Request, p a
 	for _, x := range d.Deputies {
 		deputies = append(deputies, x.ID)
 	}
-	if in.ParentID != nil {
+	if in.ParentID != nil && *in.ParentID != parent {
 		parent = *in.ParentID
+		if err := s.structCheck(r, p.UserID, admin, "edit", parent); err != nil {
+			return err
+		}
 	}
 	if in.Name != nil {
 		name = *in.Name
@@ -299,8 +371,8 @@ func (s *Server) apiDepartmentUpdate(w http.ResponseWriter, r *http.Request, p a
 
 // DELETE /api/v1/departments/{id} — department.delete.
 func (s *Server) apiDepartmentDelete(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	if !s.apiAdmin(r.Context(), p.UserID) {
-		return i18n.E("err.forbidden")
+	if err := s.structCheck(r, p.UserID, s.apiAdmin(r.Context(), p.UserID), "delete", r.PathValue("id")); err != nil {
+		return err
 	}
 	if err := s.Company.DeleteDepartment(r.Context(), r.PathValue("id")); err != nil {
 		return err
@@ -326,18 +398,35 @@ type apiWorkdayOut struct {
 }
 
 // apiPlace is where the day was started or finished: "office" — the office network, "" outside the offices, absent
-// when no office networks are set.
+// when no office networks are set; "terminal" — the time terminal it was done at.
 type apiPlace struct {
-	IP     string  `json:"ip,omitempty"`
-	Office *string `json:"office,omitempty"`
+	IP       string  `json:"ip,omitempty"`
+	Office   *string `json:"office,omitempty"`
+	Terminal string  `json:"terminal,omitempty"`
+	Geo      *apiGeo `json:"geo,omitempty"` // «Местоположение»
+}
+
+type apiGeo struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+	Acc int     `json:"acc,omitempty"` // metres
+}
+
+func apiPlaceOf(p company.Place) apiPlace {
+	out := apiPlace{IP: p.IP, Office: p.Office, Terminal: p.Terminal}
+	if p.Geo != nil {
+		out.Geo = &apiGeo{p.Geo.Lat, p.Geo.Lon, p.Geo.Acc}
+	}
+	return out
 }
 
 func apiWorkdayOf(d company.Workday, n company.Norm, now time.Time) apiWorkdayOut {
 	out := apiWorkdayOut{UserID: d.UserID, Day: d.Day.Format(time.DateOnly), State: d.State(), Started: d.Started, Ended: d.Ended,
 		PausedAt: d.PausedAt, PauseSecs: d.PauseSecs, WorkedSecs: d.Worked(now), Report: d.Report, Violations: n.Violations(d, now),
-		Start: apiPlace(d.Start)}
+		Start: apiPlaceOf(d.Start)}
 	if d.Ended != nil {
-		out.End = &apiPlace{d.End.IP, d.End.Office}
+		end := apiPlaceOf(d.End)
+		out.End = &end
 	}
 	return out
 }
@@ -384,11 +473,14 @@ func (s *Server) apiWorkStatus(w http.ResponseWriter, r *http.Request, p apikeys
 	return nil
 }
 
-// POST /api/v1/worktime/{start|pause|resume|finish|reopen} {"report"} — the key owner's working day (timeman.open,
-// pause, close; reopen — «Продолжить рабочий день»).
+// POST /api/v1/worktime/{start|pause|resume|finish|reopen} {"report", "lat", "lon", "acc"} — the key owner's working
+// day (timeman.open, pause, close; reopen — «Продолжить рабочий день»); the position is kept with «Местоположение» on.
 func (s *Server) apiWorkAction(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
-		Report string `json:"report"`
+		Report string  `json:"report"`
+		Lat    float64 `json:"lat"`
+		Lon    float64 `json:"lon"`
+		Acc    float64 `json:"acc"`
 	}
 	if r.ContentLength != 0 {
 		if err := readJSON(r, &in); err != nil {
@@ -396,14 +488,17 @@ func (s *Server) apiWorkAction(w http.ResponseWriter, r *http.Request, p apikeys
 		}
 	}
 	action := r.PathValue("action")
-	at, err := s.workPlace(r, action)
+	at, err := s.workPlace(r, action, company.NewGeo(in.Lat, in.Lon, in.Acc))
 	if err != nil {
 		return err
 	}
+	at.Device = "app"
 	if err := s.Company.WorkAction(r.Context(), p.UserID, action, in.Report, time.Now(), at); err != nil {
 		return err
 	}
 	s.Log.Info("api workday", "user_id", p.UserID, "action", action)
+	s.tellViolations(r, p.UserID, action)
+	s.Telephony.Kick() // the clients' calls may pass them by now (or not)
 	return s.apiWorkStatus(w, r, p)
 }
 
@@ -442,7 +537,7 @@ func (s *Server) apiWorkdays(w http.ResponseWriter, r *http.Request, p apikeys.P
 		uid = p.UserID
 	}
 	if uid != p.UserID {
-		ok, err := s.Company.Manages(r.Context(), p.UserID, uid, s.apiAdmin(r.Context(), p.UserID))
+		ok, err := s.Company.Sees(r.Context(), p.UserID, uid, s.apiAdmin(r.Context(), p.UserID))
 		if err != nil {
 			return err
 		}
@@ -486,14 +581,19 @@ type apiScheduleOut struct {
 	LeaveBefore string                 `json:"leave_before,omitempty"`
 	MinDuration string                 `json:"min_duration,omitempty"`
 	Tolerance   int                    `json:"tolerance,omitempty"`
-	Members     []string               `json:"members"`  // people's ids and departments as "dept:ID"
-	Excluded    []string               `json:"excluded"` // people left out of the departments
+	NotifyHead  bool                   `json:"notify_head"` // violations are told to the person's manager
+	NotifyTo    []string               `json:"notify_to"`   // and to these people
+	ReportReq   string                 `json:"report_req"`  // the report on finishing a day: optional | required | none
+	Devices     []string               `json:"devices"`     // the day is marked from: browser | terminal | app
+	Members     []string               `json:"members"`     // people's ids and departments as "dept:ID"
+	Excluded    []string               `json:"excluded"`    // people left out of the departments
 	People      []apiPersonOut         `json:"people,omitempty"`
 }
 
 func apiScheduleOf(ws *company.WorkSchedule) apiScheduleOut {
 	out := apiScheduleOut{ID: ws.ID, Name: ws.Name, Kind: ws.Kind, Times: ws.Times, LateAfter: ws.LateAfter, LeaveBefore: ws.LeaveBefore,
-		MinDuration: ws.MinDuration, Tolerance: ws.Tolerance, Members: ws.Members, Excluded: ws.Excluded}
+		MinDuration: ws.MinDuration, Tolerance: ws.Tolerance, NotifyHead: ws.NotifyHead, NotifyTo: ws.NotifyTo,
+		ReportReq: ws.ReportReq, Devices: ws.Devices, Members: ws.Members, Excluded: ws.Excluded}
 	for _, sh := range ws.Shifts {
 		out.Shifts = append(out.Shifts, apiShiftOut{sh.ID, sh.Name, sh.Start, sh.End, sh.Break})
 	}
@@ -502,6 +602,9 @@ func apiScheduleOf(ws *company.WorkSchedule) apiScheduleOut {
 	}
 	if out.Excluded == nil {
 		out.Excluded = []string{}
+	}
+	if out.NotifyTo == nil {
+		out.NotifyTo = []string{}
 	}
 	return out
 }
@@ -583,7 +686,7 @@ type apiAbsenceOut struct {
 	ID         string   `json:"id"`
 	UserID     string   `json:"user_id"`
 	UserName   string   `json:"user_name"`
-	Kind       string   `json:"kind"` // vacation | sick | trip | dayoff | other
+	Kind       string   `json:"kind"` // vacation | sick | trip | dayoff | absent | maternity | other | an own one (/absences/kinds)
 	From       string   `json:"from"`
 	To         string   `json:"to"`
 	Comment    string   `json:"comment,omitempty"`

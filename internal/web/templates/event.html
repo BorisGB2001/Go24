@@ -8,7 +8,7 @@
 {{with $d.AsName}}<div class="flash">{{icon "key"}} {{t "calendar.managing" .}}</div>{{end}}
 {{if $e.ReadOnly}}<div class="flash">{{icon "link"}} {{t "calendar.linked_readonly"}}</div>{{end}}
 {{with $e.SeriesID}}<div class="flash">{{icon "history"}} {{t "calendar.series_changed"}}</div>{{end}}
-{{with $d.IM}}<div class="flash">{{icon "message-circle"}} {{t "calendar.from_message" .Sender}}</div>{{end}}
+{{with $d.IM}}<div class="flash">{{icon "message-circle"}} {{if .Event}}{{t "calendar.from_message" .Sender}}{{else}}{{t "calendar.from_chat" .Chat}}{{end}}</div>{{end}}
 {{with $d.FromLetter}}<div class="flash">{{icon "mail"}} {{t "calendar.from_letter"}} <a href="/mail?letter={{.ID}}">{{if .Subject}}{{.Subject}}{{else}}{{t "mail.no_subject"}}{{end}}</a> · {{.From}}</div>{{end}}
 {{if and $e.ID $e.Video (not $e.Hidden)}}<div class="card row evanswer">{{icon "video"}} <b>{{t "calendar.video"}}</b><span style="flex:1"></span>
   <a class="button primary" href="/call?event={{$e.ID}}">{{t "calendar.video_join"}}</a></div>{{end}}
@@ -97,6 +97,11 @@
     <label>{{t "calendar.accessibility"}}</label>
     <div class="row evwhen"><select name="accessibility" style="width:auto">{{range list "busy" "tentative" "absent" "free"}}<option value="{{.}}" {{if eq . $e.Accessibility}}selected{{end}}>{{t (print "calendar.acc." .)}}</option>{{end}}</select>
       <label class="check" title="{{t "calendar.private_hint"}}"><input type="checkbox" name="private" {{if $e.Private}}checked{{end}}> {{icon "lock"}} {{t "calendar.private"}}</label></div>
+    <label>{{t "calendar.more"}}</label>
+    <div class="evopts"><input type="hidden" name="opts_on" value="1">
+      <label class="check"><input type="checkbox" name="allow_invite" {{if $e.AllowInvite}}checked{{end}}> {{icon "user-plus"}} {{t "calendar.allow_invite"}}</label>
+      <label class="check"><input type="checkbox" name="notify_answers" {{if not $e.QuietAnswers}}checked{{end}}> {{icon "bell"}} {{t "calendar.notify_answers"}}</label>
+      <label class="check"><input type="checkbox" name="hide_guests" {{if $e.HideGuests}}checked{{end}}> {{icon "eye-off"}} {{t "calendar.hide_guests"}}</label></div>
     {{with $d.MailBoxes}}<label>{{t "calendar.externals"}}</label>
     <div><input type="text" name="external" value="{{$d.ExternalText}}" placeholder="{{t "calendar.externals_placeholder"}}" autocomplete="off">
       <div class="row evwhen small muted"><span>{{t "calendar.externals_from"}}</span><select name="mailbox" style="width:auto">{{range .}}<option value="{{.ID}}"{{if eq .ID $d.MailboxID}} selected{{end}}>{{.Email}}</option>{{end}}</select></div>
@@ -126,10 +131,14 @@
   {{with $e.Description}}<span class="k">{{t "form.description"}}</span><span>{{nl2br .}}</span>{{end}}
 </div>
 {{end}}
-{{if or $e.Attendees $d.Externals}}
+{{if or $e.Attendees $d.Externals $d.CanInvite}}
 <div class="card"><h2>{{icon "users"}} {{t "calendar.attendees"}}</h2>
   {{range $e.Attendees}}<div class="row evatt">{{person .Name}}{{guestMark .ID}}<span class="pill ev-{{.Status}}">{{t (print "calendar.status." .Status)}}</span></div>{{end}}
+  {{with $e.Others}}<div class="row evatt muted" title="{{t "calendar.hide_guests"}}">{{icon "eye-off"}} {{t "calendar.others_n" .}}</div>{{end}}
   {{range $d.Externals}}<div class="row evatt"><span>{{icon "mail"}} {{if .Name}}{{.Name}} <span class="muted small">&lt;{{.Email}}&gt;</span>{{else}}{{.Email}}{{end}}</span><span class="pill ev-{{.Status}}">{{t (print "calendar.status." .Status)}}</span></div>{{end}}
+  {{if $d.CanInvite}}<form method="post" action="/calendar/{{$e.ID}}/invite{{$d.AsQ}}" class="evinvite">
+    <label>{{icon "user-plus"}} {{t "calendar.invite_more"}}</label>{{template "upick" (upick "invite" nil $d.Users "multi")}}
+    <p class="row"><button class="primary">{{t "calendar.invite"}}</button></p></form>{{end}}
 </div>
 {{end}}
 {{with $d.Disc}}{{$own := or (eq $e.OwnerID $d.Me) $d.Admin}}

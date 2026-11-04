@@ -9,6 +9,7 @@
         {{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key $d.Project.Key}}selected{{end}}>{{.Key}} · {{.Name}}</option>{{end}}</select>
       <input type="file" name="file" accept=".csv,text/csv" required>
       <p><button class="primary">{{t "tasks.import"}}</button></p></form></div></details>{{end}}
+  {{if $d.TaskAI}}{{template "aitoggle" (t "tasks.ai.hint")}}{{end}}
   <a href="/tasks/new{{with $d.Project.Key}}?project={{.}}{{end}}" class="button create">{{icon "plus"}} {{t "common.create"}}</a></div>
 <div class="sub">{{if .User.AdminActive}}{{t "tasks.subtitle_admin"}}{{else}}{{t "tasks.subtitle"}}{{end}}</div>
 <div class="tabs">
@@ -46,4 +47,5 @@
 <div class="card flush">{{template "tasklist" (tl $d.Tasks $.Cols true $)}}</div>
 {{if $d.Tasks}}{{template "bulkbar" $d.Bulk}}{{end}}
 {{if ge (len $d.Tasks) $d.Limit}}<p class="small muted">{{t "tasks.limit" $d.Limit}}</p>{{end}}
+{{if $d.TaskAI}}{{template "aiaside" (dict "URL" "/tasks/agent")}}{{end}}
 {{end}}

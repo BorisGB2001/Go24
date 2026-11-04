@@ -3,10 +3,12 @@ package web
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"go24/internal/auth"
+	"go24/internal/company"
 	"go24/internal/crm"
 	"go24/internal/i18n"
 	"go24/internal/tasks"
@@ -63,13 +65,32 @@ func (s *Server) fieldsPage(w http.ResponseWriter, r *http.Request, sess auth.Se
 	if err == nil && fs.CRM != "" {
 		pipes, err = s.fieldStages(r, fs.CRM)
 	}
+	var users []tasks.User
+	seen := map[string][]tasks.User{} // «Видимость поля»: the chips of who sees each field
+	if err == nil && fs.CRM != "" {
+		users, err = s.Tasks.ListUsers(r.Context())
+		for _, f := range list {
+			for _, id := range f.Visible {
+				if err != nil {
+					break
+				}
+				who := tasks.User{ID: id}
+				if dept, ok := strings.CutPrefix(id, "dept:"); ok {
+					who.Name, err = s.Company.DepartmentName(r.Context(), dept)
+				} else if i := slices.IndexFunc(users, func(u tasks.User) bool { return u.ID == id }); i >= 0 {
+					who = users[i]
+				}
+				seen[f.ID] = append(seen[f.ID], who)
+			}
+		}
+	}
 	if err != nil {
 		s.fail(w, "fields", err)
 		return
 	}
 	s.render(w, r, "fields", page{Title: s.tr(r, fs.Title), Nav: strings.ReplaceAll(r.PathValue("set"), "-", "_"),
 		Data: map[string]any{"Fields": list, "Kinds": tasks.FieldKinds, "Base": "/settings/" + r.PathValue("set"), "Title": fs.Title, "Sub": fs.Sub,
-			"CRM": fs.CRM, "Pipelines": pipes}})
+			"CRM": fs.CRM, "Pipelines": pipes, "Users": users, "Seen": seen}})
 }
 
 func (s *Server) fieldAdd(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -128,6 +149,26 @@ func (s *Server) fieldRequired(w http.ResponseWriter, r *http.Request, sess auth
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "fields.required_saved")), http.StatusSeeOther)
 }
 
+// fieldVisible sets who sees a CRM field («Видимость поля»): the chosen employees and departments, nobody chosen —
+// everyone.
+func (s *Server) fieldVisible(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	fs, ok := fieldSets[r.PathValue("set")]
+	if !sess.Admin || !ok || fs.CRM == "" {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	back := "/settings/" + r.PathValue("set")
+	if err := r.ParseForm(); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	if err := s.Tasks.SetFieldVisible(r.Context(), fs.Set, r.PathValue("id"), r.Form["who"]); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "fields.visible_saved")), http.StatusSeeOther)
+}
+
 // userFields saves an employee's profile fields: the employee or an administrator.
 func (s *Server) userFields(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
@@ -147,6 +188,32 @@ func (s *Server) userFields(w http.ResponseWriter, r *http.Request, sess auth.Se
 			values[f.ID] = r.FormValue("f_" + f.ID)
 		}
 		err = s.Tasks.SetUserFieldValues(r.Context(), id, values)
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// userInterests: POST /u/{id}/interests — «Интересы» of the profile: op=add (tag — one or several, separated by commas
+// or «#») or op=remove (tag); the person themselves and administrators.
+func (s *Server) userInterests(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id := r.PathValue("id")
+	back := "/u/" + id + "#pinterests"
+	if sess.UserID != id && !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	list, err := s.Company.Interests(r.Context(), id)
+	if err == nil {
+		switch tag := r.FormValue("tag"); r.FormValue("op") {
+		case "add":
+			list = append(list, company.SplitInterests(tag)...)
+		case "remove":
+			list = slices.DeleteFunc(list, func(t string) bool { return strings.EqualFold(t, tag) })
+		}
+		err = s.Company.SetInterests(r.Context(), id, list)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)

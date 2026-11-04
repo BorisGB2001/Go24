@@ -1,7 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}{{$s := $d.Schedule}}
 <h1>{{t "title.worktime"}}</h1>
-<div class="sub">{{t "worktime.subtitle"}}</div>
+<div class="sub">{{t "worktime.subtitle"}}{{if .User.Admin}} · <a href="/settings/worktime/rights">{{icon "lock"}} {{t "wtrights.title"}}</a>{{end}} · <a href="/settings/worktime/terminals">{{icon "device-tablet"}} {{t "wterm.title"}}</a></div>
 <div class="card" style="max-width:640px">
   <form method="post" action="/settings/worktime">
     <div class="grid">
@@ -20,6 +20,9 @@
       <div><label>{{t "worktime.leave_before"}}</label><input type="time" name="leave_before" value="{{$s.LeaveBefore}}"></div>
       <div><label>{{t "worktime.min_duration"}}</label><input type="time" name="min_duration" value="{{$s.MinDuration}}"></div>
     </div>
+    <label class="check"><input type="checkbox" name="notify_head" {{if $s.NotifyHead}}checked{{end}}> {{t "worktime.notify_head"}}</label>
+    <label>{{t "worktime.notify_to"}}</label>{{template "upick" (upick "notify_to" $s.NotifyTo nil "multi" "ph" (t "worktime.notify_to_ph"))}}
+    <p class="small muted">{{t "worktime.notify_hint"}}</p>
     <label class="check"><input type="checkbox" name="free_edit" {{if $s.FreeEdit}}checked{{end}}> {{t "worktime.free_edit"}}</label>
     <p class="small muted">{{t "worktime.free_edit_hint"}}</p>
     <h2 id="offices">{{icon "world"}} {{t "worktime.offices"}}</h2>
@@ -28,6 +31,14 @@
     <p class="small muted">{{t "worktime.your_ip"}}: <code>{{$d.IP}}</code></p>
     <label class="check"><input type="checkbox" name="office_only" {{if $s.OfficeOnly}}checked{{end}}> {{t "worktime.office_only"}}</label>
     <p class="small muted">{{t "worktime.office_only_hint"}}</p>
+    <label class="check"><input type="checkbox" name="geo" {{if $s.Geo}}checked{{end}}> {{icon "map-pin"}} {{t "worktime.geo"}}</label>
+    <p class="small muted">{{t "worktime.geo_hint"}}</p>
+    <h2 id="timecontrol">{{icon "clock"}} {{t "tc.title"}}</h2>
+    <p class="small muted">{{t "tc.settings_hint"}}</p>
+    <label class="check"><input type="checkbox" name="time_control" {{if $s.TimeControl}}checked{{end}}> {{t "tc.on"}}</label>
+    <div class="grid"><div><label>{{t "tc.idle_minutes"}}</label><input type="number" name="idle_minutes" min="5" max="480" value="{{$s.IdleAfter.Minutes}}"></div></div>
+    <label class="check"><input type="checkbox" name="idle_ask" {{if or $s.IdleAsk (not $s.TimeControl)}}checked{{end}}> {{t "tc.ask_on"}}</label>
+    <p class="small muted"><a href="/worktime/timecontrol">{{t "tc.report_link"}}</a></p>
     <p><button class="primary">{{t "common.save"}}</button></p>
   </form>
 </div>

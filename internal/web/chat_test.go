@@ -208,7 +208,10 @@ func TestIMGroup(t *testing.T) {
 	if strings.Contains(other, "/im/group/rights") {
 		t.Error("a member sets the rights")
 	}
-	for _, not := range []string{"/im/group/rename", "/im/group/photo", "/im/group/remove"} {
+	if !strings.Contains(own, "/im/group/delete") || !strings.Contains(own, "Удалить чат у всех участников") {
+		t.Error("the owner cannot delete the chat")
+	}
+	for _, not := range []string{"/im/group/rename", "/im/group/photo", "/im/group/remove", "/im/group/delete"} {
 		if strings.Contains(other, not) {
 			t.Errorf("a member who does not own the chat sees %q", not)
 		}
@@ -389,6 +392,14 @@ func TestIMTask(t *testing.T) {
 		!strings.Contains(b.String(), `name="im_event" value="$e"`) {
 		t.Errorf("the meeting's form of a message:\n%s", b.String())
 	}
+	b.Reset() // … from the chat's panel: of the chat, no message
+	if err := pages["ru-RU"]["event"].ExecuteTemplate(&b, "content", page{Data: map[string]any{"E": e, "CanEdit": true,
+		"IM": &imSource{Room: "!r:x", Chat: "Запуск"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Встреча чата «Запуск»") || !strings.Contains(b.String(), `name="im_event" value=""`) {
+		t.Errorf("the meeting's form of a chat:\n%s", b.String())
+	}
 	if got := s.tr(r, "im.event_made", "Планёрка", "21.10.2026 09:30", "http://x/calendar/1"); got != "Создана встреча «Планёрка» на 21.10.2026 09:30: http://x/calendar/1" {
 		t.Errorf("the answer in the chat: %q", got)
 	}
@@ -536,7 +547,7 @@ func TestIMChannel(t *testing.T) {
 	}
 	render := func(g *matrixsync.Group) string {
 		ch := matrixsync.Room{ID: "!c:x", Name: "Новости", Kind: "channel"}
-		data := map[string]any{"Rooms": []matrixsync.Room{ch}, "Room": ch.ID, "Current": ch, "Tab": "all", "Group": g, "ReadOnly": !g.Writer}
+		data := map[string]any{"Rooms": []matrixsync.Room{ch}, "Room": ch.ID, "Current": ch, "Tab": "all", "Group": g, "ReadOnly": !g.Writer, "Comments": g.Channel && !g.Writer}
 		var b strings.Builder
 		if err := pages["ru-RU"]["im"].ExecuteTemplate(&b, "content", page{Data: data}); err != nil {
 			t.Fatal(err)
@@ -558,9 +569,17 @@ func TestIMChannel(t *testing.T) {
 		t.Error("«Сделать владельцем» for the others")
 	}
 	reader := render(&matrixsync.Group{Channel: true, Members: []matrixsync.Member{{ID: "u1", Name: "Борис", Owner: true}, {ID: "u3", Name: "Я", Me: true}}})
-	if !strings.Contains(reader, "Писать в канале могут только администраторы") || strings.Contains(reader, "data-send>") || strings.Contains(reader, "data-send-thread") ||
-		!strings.Contains(reader, `class="im read-only"`) || strings.Contains(reader, "/im/group/admin") || strings.Contains(reader, "/im/group/owner") || strings.Contains(reader, "/im/group/channel") {
+	if !strings.Contains(reader, "Писать в канале могут только администраторы") || strings.Contains(reader, "data-send>") ||
+		!strings.Contains(reader, `class="im read-only channel"`) || strings.Contains(reader, "/im/group/admin") || strings.Contains(reader, "/im/group/owner") || strings.Contains(reader, "/im/group/channel") {
 		t.Errorf("the channel for one who reads it:\n%s", reader)
+	}
+	// comments on the posts (GO24DEV-826): one who reads the channel writes in a post's thread — no polls there
+	if !strings.Contains(reader, "data-send-thread") || !strings.Contains(reader, `placeholder="Комментарий…"`) || !strings.Contains(reader, "<b>Комментарии</b>") ||
+		!strings.Contains(reader, `data-replies-fmt="Комментариев: %s"`) || strings.Contains(reader, "data-poll-new") {
+		t.Error("a reader comments on the channel's posts")
+	}
+	if !strings.Contains(owner, "data-poll-new") || !strings.Contains(owner, `class="im channel"`) {
+		t.Error("the owner's thread keeps its polls")
 	}
 	grp := render(&matrixsync.Group{Owner: true, Writer: true, Members: []matrixsync.Member{{ID: "u1", Name: "Я", Owner: true, Me: true}, {ID: "u2", Name: "Анна"}}})
 	if !strings.Contains(grp, "Сделать каналом") || !strings.Contains(grp, "Сделать администратором") {
@@ -622,7 +641,9 @@ func TestIMMedia(t *testing.T) {
 			{ID: "$v", SenderName: "Анна", At: at, ThreadRoot: "$t", File: &matrixsync.File{Kind: "video", Name: "ролик.mp4"}}},
 		Files: []matrixsync.Message{{ID: "$f", SenderName: "Борис", At: at, File: &matrixsync.File{Kind: "file", Name: "план.pdf", Size: 2048}}},
 		Audio: []matrixsync.Message{{ID: "$a", SenderName: "Вера", At: at, File: &matrixsync.File{Kind: "audio", Name: "voice.ogg", Duration: 4200}}},
-		Links: []matrixsync.Link{{URL: "https://example.com/a?b=1", MessageID: "$l", SenderName: "Глеб", At: at}}})
+		Links: []matrixsync.Link{{URL: "https://example.com/a?b=1", MessageID: "$l", SenderName: "Глеб", At: at}},
+		Tasks: []chatTask{{tasks.Task{ProjectKey: "DEV", Number: 7, Title: "Сделать макет", Status: "in_progress", ResponsibleName: "Анна", Deadline: &at}, "$m"}},
+		Events: []chatEvent{{calendar.Event{ID: "ev1", Title: "Планёрка", Start: at, End: at.Add(time.Hour), Where: "Переговорная"}, ""}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,13 +651,16 @@ func TestIMMedia(t *testing.T) {
 	for _, want := range []string{`Медиа <span class="muted">2</span>`, `Файлы <span class="muted">1</span>`, `Аудио <span class="muted">1</span>`, `Ссылки <span class="muted">1</span>`,
 		`<img loading="lazy" src="/im/file?room=%21r&amp;event=%24p"`, `data-goto="$v" data-goto-thread="$t"`, `i-video`,
 		`href="/im/file?room=%21r&amp;event=%24f&amp;dl=1" download>`, "план.pdf", "2,0 КБ · Борис", "0:04 · Вера",
-		`href="https://example.com/a?b=1" target="_blank"`, `data-goto="$l"`, "21.10.2026 09:05"} {
+		`href="https://example.com/a?b=1" target="_blank"`, `data-goto="$l"`, "21.10.2026 09:05",
+		`Задачи <span class="muted">1</span>`, `Встречи <span class="muted">1</span>`, `href="/tasks/new?im_room=%21r"`, `href="/calendar/new?im_room=%21r"`,
+		`href="/t/DEV-7"`, "DEV-7 Сделать макет", "Выполняется · срок 21.10.2026 09:05 · Анна", `data-goto="$m">к сообщению`,
+		`href="/calendar/ev1"`, "Планёрка", "21.10.2026 09:05–10:05 · Переговорная"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the panel lacks %q:\n%s", want, got)
 		}
 	}
 	b.Reset()
-	if err := pages["ru-RU"]["im"].ExecuteTemplate(&b, "immedia", chatMedia{Room: "!r"}); err != nil || strings.Count(b.String(), "В этом чате пока ничего нет.") != 4 {
+	if err := pages["ru-RU"]["im"].ExecuteTemplate(&b, "immedia", chatMedia{Room: "!r"}); err != nil || strings.Count(b.String(), "В этом чате пока ничего нет.") != 6 {
 		t.Errorf("the empty panel: %v %s", err, b.String())
 	}
 }

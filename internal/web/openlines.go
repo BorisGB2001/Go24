@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/csv"
@@ -16,12 +17,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"go24/internal/auth"
+	"go24/internal/calendar"
 	"go24/internal/company"
 	"go24/internal/crm"
 	"go24/internal/i18n"
+	"go24/internal/kb"
 	"go24/internal/openlines"
+	"go24/internal/payqr"
+	"go24/internal/sites"
+	"go24/internal/telephony"
 )
 
 // ---------- «Виджет на сайт»: the public side (no go24 account) ----------
@@ -65,19 +72,74 @@ func (s *Server) widgetScript(w http.ResponseWriter, r *http.Request) {
 	lang := s.lang(r)
 	t := map[string]string{}
 	for _, k := range []string{"open", "chat", "contact", "placeholder", "contact_note", "name", "phone", "email", "question", "send", "thanks",
-		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram",
-		"form_fill", "form_filled", "booking_open", "booking_booked", "close"} {
+		"vote", "vote_comment", "vote_thanks", "history", "history_note", "history_sent", "attach", "typing", "read", "file_big", "consent", "consent_accept", "telegram", "max", "vk", "viber", "ok", "avito", "whatsapp",
+		"form_fill", "form_filled", "booking_open", "booking_booked", "close", "callback", "callback_note", "callback_send", "callback_sent"} {
 		t[k] = s.I18n.T(lang, "widget."+k)
 	}
-	bot, _ := s.OpenLines.Telegram(r.Context(), wd.ID) // the line's other channel: «Написать в Telegram»
+	bot, _ := s.OpenLines.Telegram(r.Context(), wd.ID) // the line's other channels: «Написать в Telegram», «… в MAX», «… во ВКонтакте»
+	maxBot, _ := s.OpenLines.Max(r.Context(), wd.ID)
+	vkGroup, _ := s.OpenLines.VK(r.Context(), wd.ID)
+	viberBot, _ := s.OpenLines.Viber(r.Context(), wd.ID)
+	okGroup, _ := s.OpenLines.OK(r.Context(), wd.ID)
+	avito, _ := s.OpenLines.Avito(r.Context(), wd.ID)
+	wa, _ := s.OpenLines.WhatsApp(r.Context(), wd.ID)
+	var callback map[string]string // «Обратный звонок»: the form's title and text
+	if c, ok := s.widgetCallback(r.Context(), wd); ok {
+		callback = map[string]string{"title": c.Title, "text": c.Text, "button": c.Button}
+	}
 	cfg, _ := json.Marshal(map[string]any{"id": wd.ID, "base": s.widgetBase(r), "color": wd.Color, "name": wd.Name,
 		"greeting": wd.Greeting, "t": t, "max_file": openlines.MaxFile, "consent": map[bool]string{true: wd.ConsentText}[wd.ConsentOn],
-		"telegram": bot.Name, "position": wd.Position, "pages_mode": wd.PagesMode, "pages": wd.Pages, "show_delay": wd.ShowDelay,
+		"telegram": bot.Name, "max": maxBot.Name, "vk": vkGroup.Screen, "viber": viberBot.URI, "ok": okGroup.Link, "avito": avito.Link, "whatsapp": waDigits(wa.Number), "callback": callback, "position": wd.Position, "pages_mode": wd.PagesMode, "pages": wd.Pages, "show_delay": wd.ShowDelay,
 		"hello": map[bool]string{true: wd.HelloText}[wd.HelloOn], "hello_delay": wd.HelloDelay, "hello_photo": s.widgetHelloPhoto(r, wd),
-		"offline": wd.HideOffline && !wd.InHours(time.Now())})
+		"offline": wd.HideOffline && !wd.InHours(time.Now()), "page": r.URL.Query().Get("page") == "1"})
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60") // working hours: the button hides within a minute
 	_, _ = w.Write([]byte(strings.Replace(widgetJS, "/*CONFIG*/{}", string(cfg), 1)))
+}
+
+// olChatPublic is the line's «Живой чат» by a link (/online/{id}): a page of its own with the chat on all of it, for
+// a letter, a social network or a QR code on a card.
+func (s *Server) olChatPublic(w http.ResponseWriter, r *http.Request) {
+	wd, err := s.OpenLines.Widget(r.Context(), r.PathValue("id"))
+	if err != nil || !wd.Active {
+		w.WriteHeader(http.StatusNotFound)
+		s.render(w, r, "share", page{TitleKey: "share.gone", Data: map[string]any{"Gone": true}})
+		return
+	}
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	s.render(w, r, "olchatpub", page{Data: wd})
+}
+
+// widgetQR: the QR code of the line's chat link (PNG), to print or to show to clients (administrators).
+func (s *Server) widgetQR(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	wd, err := s.OpenLines.Widget(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	png, err := payqr.PNG(s.olPublicBase(r) + "/online/" + wd.ID)
+	if err != nil {
+		s.fail(w, "widget qr", err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", `attachment; filename="chat-qr.png"`)
+	}
+	_, _ = w.Write(png)
+}
+
+// olPublicBase is go24's address for a line's code and chat link: the https one, if any (a site on https loads only
+// https scripts).
+func (s *Server) olPublicBase(r *http.Request) string {
+	if s.CallURL != "" {
+		return strings.TrimSuffix(s.CallURL, "/")
+	}
+	return s.absURL(r, "")
 }
 
 // widgetAPI: visit | messages (with the dialogue's state; seen=1 — the widget is open) | say | file | typing | contact |
@@ -99,13 +161,15 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Page, Body, Name, Phone, Email, Text string
 		Vote                                 int
+		Website                              string // «Обратный звонок»: the trap field and the seconds the form was open
+		Elapsed                              int64
 	}
 	if r.Method == http.MethodPost {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 	}
 	token := r.Header.Get("X-Go24-Visitor")
 	var err error
-	if op := r.PathValue("op"); wd.ConsentOn && (op == "say" || op == "contact") {
+	if op := r.PathValue("op"); wd.ConsentOn && (op == "say" || op == "contact" || op == "callback") {
 		err = s.widgetConsented(r, wd, token)
 	}
 	out := map[string]any{}
@@ -127,7 +191,7 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 			for _, m := range list {
 				x := map[string]any{"id": m.ID, "operator": m.Operator, "body": m.Body}
 				if m.FileName != "" {
-					x["file"] = map[string]any{"name": m.FileName, "size": m.FileSize, "image": m.Image(), "url": openlines.FileLink(base, wd.ID, m)}
+					x["file"] = map[string]any{"name": m.FileName, "size": m.FileSize, "image": m.Image(), "audio": m.Audio(), "url": openlines.FileLink(base, wd.ID, m)}
 				}
 				switch { // a CRM form an operator sent: its card and the form inside the widget (its link line is for Telegram)
 				case m.Kind == "form" && m.FormToken != "":
@@ -180,6 +244,19 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.OpenLines.VisitorSay(r.Context(), wd.ID, token, in.Body)
 	case op == "contact" && r.Method == http.MethodPost:
 		err = s.OpenLines.Contact(r.Context(), wd.ID, token, in.Name, in.Phone, in.Email, in.Text, s.tr(r, "widget.source"))
+	case op == "callback" && r.Method == http.MethodPost:
+		c, ok := s.widgetCallback(r.Context(), wd)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var key string
+		var status int
+		stamp := sites.FormStamp(time.Now().Add(-time.Duration(in.Elapsed) * time.Second))
+		if key, status, err = s.callbackRequest(r, c, in.Phone, in.Name, in.Page, in.Website, stamp); err == nil && key != "" {
+			writeJSON(w, status, map[string]string{"error": s.tr(r, key)})
+			return
+		}
 	case op == "vote" && r.Method == http.MethodPost:
 		err = s.OpenLines.VisitorVote(r.Context(), wd.ID, token, in.Vote, in.Text)
 	case op == "history" && r.Method == http.MethodPost:
@@ -193,6 +270,24 @@ func (s *Server) widgetAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// widgetCallback is the form of «Обратный звонок» the line's widget offers (none — false).
+func (s *Server) widgetCallback(ctx context.Context, wd openlines.Widget) (telephony.Callback, bool) {
+	if wd.CallbackID == "" || s.Telephony == nil {
+		return telephony.Callback{}, false
+	}
+	list, err := s.Telephony.Callbacks(ctx)
+	if err != nil {
+		s.Log.Error("widget callback", "err", err, "line", wd.ID)
+		return telephony.Callback{}, false
+	}
+	for _, c := range list {
+		if c.ID == wd.CallbackID {
+			return c, true
+		}
+	}
+	return telephony.Callback{}, false
 }
 
 // widgetConsented: has the visitor accepted the line's agreement (err.ol_consent — not yet)?
@@ -283,7 +378,7 @@ func (s *Server) olServe(w http.ResponseWriter, r *http.Request, f openlines.Sto
 	}
 	defer obj.Close()
 	disposition := "attachment"
-	if (openlines.Message{FileType: f.Type}).Image() {
+	if (openlines.Message{FileType: f.Type}).Image() || openlines.Audio(f.Name, f.Type) { // a voice message plays in the page
 		disposition = "inline"
 	}
 	w.Header().Set("Content-Type", f.Type)
@@ -429,6 +524,9 @@ func (s *Server) openlinesPage(w http.ResponseWriter, r *http.Request, sess auth
 		}
 		data["Read"] = read
 		data["CanRate"] = s.olHead(r, sess, x.OperatorID)
+		data["AI"], data["Speech"] = s.aiOn(r.Context(), sess.UserID, "openlines"), s.Speech != nil
+		// who may take the invited colleagues out of the dialogue: its operator, the lines' heads, administrators
+		data["CanUninvite"] = who.All || x.OperatorID == sess.UserID
 		var forms []crm.Form // «Форма»: the active CRM forms to send to the client
 		if s.CRM != nil && !slices.Contains(s.sectionsOff(r.Context()), "crm") {
 			list, err := s.CRM.Forms(r.Context())
@@ -505,7 +603,7 @@ func (s *Server) olHead(r *http.Request, sess auth.Session, operator string) boo
 	return slices.ContainsFunc(heads, func(p company.Person) bool { return p.ID == sess.UserID })
 }
 
-// openlinesAction: reply (body, file), close, reopen, lead, transfer (to), spam, rate (vote, comment). back — the list's tab and search.
+// openlinesAction: reply (body, file), close, reopen, summary (CoPilot), lead, transfer (to), invite (to), uninvite (who, "" — oneself), spam, rate (vote, comment). back — the list's tab and search.
 func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id := r.PathValue("id")
 	r.Body = http.MaxBytesReader(w, r.Body, openlines.MaxFile+1<<20)
@@ -550,10 +648,19 @@ func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess au
 		}
 	case "intercept":
 		err = s.OpenLines.Intercept(r.Context(), sess.UserID, id)
+	case "invite":
+		err = s.OpenLines.Invite(r.Context(), sess.UserID, id, r.FormValue("to"))
+	case "uninvite":
+		err = s.OpenLines.Uninvite(r.Context(), who, id, cmp.Or(r.FormValue("who"), sess.UserID))
+		if err == nil && s.OpenLines.See(r.Context(), who, id) != nil { // left it: back to the list
+			back = list
+		}
 	case "form":
 		err = s.OpenLines.SendForm(r.Context(), sess.UserID, id, r.FormValue("form"), s.olFormLink)
 	case "booking":
 		err = s.olSendBooking(r.Context(), sess.UserID, sess.Admin, id, r.FormValue("link"))
+	case "summary":
+		err = s.olSummarize(r.Context(), id, sess.UserID)
 	case "spam":
 		err = s.OpenLines.Spam(r.Context(), sess.UserID, id)
 		back = list
@@ -570,7 +677,7 @@ func (s *Server) openlinesAction(w http.ResponseWriter, r *http.Request, sess au
 			}
 		}
 	case "lead":
-		if err = s.CRM.Check(r.Context(), sess.UserID, "lead", "write", sess.UserID); err == nil {
+		if err = s.CRM.Check(r.Context(), sess.UserID, "lead", "add", sess.UserID); err == nil {
 			var card string
 			if card, err = s.OpenLines.MakeLead(r.Context(), sess.UserID, id, s.tr(r, "widget.source")); err == nil {
 				back = card
@@ -705,13 +812,30 @@ func (s *Server) widgetsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.taskErr(w, r, err, "/openlines")
 		return
 	}
-	base := s.BaseURL
-	if s.CallURL != "" { // the https address: a site on https loads only https scripts
-		base = s.CallURL
-	}
-	bots := map[string]openlines.TelegramBot{} // the channel Telegram of each line
+	base := s.olPublicBase(r)
+	bots, maxBots, vkGroups, viberBots := map[string]openlines.TelegramBot{}, map[string]openlines.MaxBot{}, map[string]openlines.VKGroup{}, map[string]openlines.ViberBot{} // the channels Telegram, MAX, VK and Viber of each line
+	// and OK, Avito and WhatsApp
+	okGroups, avitos, was := map[string]openlines.OKGroup{}, map[string]openlines.AvitoAccount{}, map[string]openlines.WANumber{}
 	for _, wd := range list {
-		if bots[wd.ID], err = s.OpenLines.Telegram(r.Context(), wd.ID); err != nil {
+		if bots[wd.ID], err = s.OpenLines.Telegram(r.Context(), wd.ID); err == nil {
+			maxBots[wd.ID], err = s.OpenLines.Max(r.Context(), wd.ID)
+		}
+		if err == nil {
+			vkGroups[wd.ID], err = s.OpenLines.VK(r.Context(), wd.ID)
+		}
+		if err == nil {
+			viberBots[wd.ID], err = s.OpenLines.Viber(r.Context(), wd.ID)
+		}
+		if err == nil {
+			okGroups[wd.ID], err = s.OpenLines.OK(r.Context(), wd.ID)
+		}
+		if err == nil {
+			avitos[wd.ID], err = s.OpenLines.Avito(r.Context(), wd.ID)
+		}
+		if err == nil {
+			was[wd.ID], err = s.OpenLines.WhatsApp(r.Context(), wd.ID)
+		}
+		if err != nil {
 			s.taskErr(w, r, err, "/openlines")
 			return
 		}
@@ -721,10 +845,39 @@ func (s *Server) widgetsPage(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.taskErr(w, r, err, "/openlines")
 		return
 	}
+	connectors := map[string][]openlines.ConnectorLine{} // the applications' channels of each line
+	conns, err := s.OpenLines.ConnectorLines(r.Context(), "")
+	if err != nil {
+		s.taskErr(w, r, err, "/openlines")
+		return
+	}
+	for _, c := range conns {
+		connectors[c.WidgetID] = append(connectors[c.WidgetID], c)
+	}
+	var callbacks []telephony.Callback // the forms of «Обратный звонок» a line's widget may offer
+	if s.Telephony != nil {
+		if callbacks, err = s.Telephony.Callbacks(r.Context()); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+	}
+	var spaces []kb.Space // the knowledge base spaces a line's AI bot may answer from
+	if s.KB != nil {
+		if spaces, err = s.KB.Spaces(r.Context(), sess.UserID); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+	}
+	var holidays string // «Из производственного календаря»: the company's holidays for a line
+	if sched, err := s.Tasks.Schedule(r.Context()); err == nil {
+		holidays = strings.Join(openlines.HolidaysDM(sched.Holidays), ",")
+	}
 	fresh := openlines.Widget{QueueMode: "all", AnswerWait: 3, HoursDays: []int32{1, 2, 3, 4, 5}, HoursFrom: "09:00", HoursTo: "18:00", NoanswerAfter: 5, KPIOperator: true,
 		VoteOn: true, HistoryOn: true, CRMAuto: true}
 	s.render(w, r, "widgets", page{TitleKey: "ol.widgets", Nav: "openlines", Data: map[string]any{"Widgets": list, "Users": users, "Base": base,
-		"New": fresh, "Days": []int{1, 2, 3, 4, 5, 6, 0}, "Bots": bots, "Heads": heads}})
+		"New": fresh, "Days": []int{1, 2, 3, 4, 5, 6, 0}, "Bots": bots, "MaxBots": maxBots, "VKGroups": vkGroups, "ViberBots": viberBots, "OKGroups": okGroups, "Avitos": avitos, "WhatsApps": was, "Heads": heads,
+		"Connectors": connectors, "Callbacks": callbacks, "Spaces": spaces,
+		"Zones": calendar.Zones(time.Now(), ""), "PortalTZ": portalTZ(), "CompanyHolidays": holidays}})
 }
 
 // olHeadsSave sets the heads of the open lines: they see every dialogue and everyone's statistics (administrators).
@@ -766,6 +919,17 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 		s.taskErr(w, r, i18n.E("err.bad_form"), "/openlines/widgets")
 		return
 	}
+	var autoMsgs []openlines.AutoMsg // «Автоматические сообщения»: a delay in hours or days and a text each
+	for i, text := range r.Form["automsg_text"] {
+		n, unit := 0, 60
+		if i < len(r.Form["automsg_count"]) {
+			n, _ = strconv.Atoi(r.Form["automsg_count"][i])
+		}
+		if i < len(r.Form["automsg_unit"]) && r.Form["automsg_unit"][i] == "days" {
+			unit = 24 * 60
+		}
+		autoMsgs = append(autoMsgs, openlines.AutoMsg{After: n * unit, Text: text})
+	}
 	_, err := s.OpenLines.SaveWidget(r.Context(), sess.UserID, openlines.Widget{ID: id, Name: r.FormValue("name"), Greeting: r.FormValue("greeting"),
 		Color: r.FormValue("color"), Origins: strings.Fields(r.FormValue("origins")), Operators: r.Form["operators"], Active: r.FormValue("active") == "on",
 		QueueMode: r.FormValue("queue_mode"), AnswerWait: num("answer_wait"), MaxChats: num("max_chats"), MaxChatsType: r.FormValue("max_chats_type"),
@@ -778,7 +942,11 @@ func (s *Server) widgetSave(w http.ResponseWriter, r *http.Request, sess auth.Se
 		KPIFirst: num("kpi_first"), KPIFurther: num("kpi_further"), KPIOperator: r.FormValue("kpi_operator") == "on", KPIHeads: r.FormValue("kpi_heads") == "on",
 		BotOn: r.FormValue("bot_on") == "on", BotText: r.FormValue("bot_text"), BotMenu: menu, BotOther: r.FormValue("bot_other"),
 		Position: r.FormValue("position"), PagesMode: r.FormValue("pages_mode"), Pages: strings.Split(r.FormValue("pages"), "\n"), ShowDelay: num("show_delay"),
-		HelloOn: r.FormValue("hello_on") == "on", HelloText: r.FormValue("hello_text"), HelloDelay: num("hello_delay"), HideOffline: r.FormValue("hide_offline") == "on"})
+		HelloOn: r.FormValue("hello_on") == "on", HelloText: r.FormValue("hello_text"), HelloDelay: num("hello_delay"), HideOffline: r.FormValue("hide_offline") == "on",
+		AISummary: r.FormValue("ai_summary") == "on", CallbackID: r.FormValue("callback_id"),
+		AIBot: r.FormValue("ai_bot") == "on", AISpace: r.FormValue("ai_space"),
+		HoursTZ: r.FormValue("hours_tz"), Holidays: strings.FieldsFunc(r.FormValue("holidays"), func(c rune) bool { return c == ',' || c == ';' || unicode.IsSpace(c) }),
+		AutoMsgs: autoMsgs})
 	if err != nil {
 		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
 		return
@@ -797,6 +965,220 @@ func (s *Server) widgetTelegram(w http.ResponseWriter, r *http.Request, sess aut
 		err = s.OpenLines.DisconnectTelegram(r.Context(), r.PathValue("id"))
 	} else {
 		_, err = s.OpenLines.ConnectTelegram(r.Context(), r.PathValue("id"), r.FormValue("token"))
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetMax connects the line's MAX bot by its token (op=connect, token) or disconnects it (administrators).
+func (s *Server) widgetMax(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectMax(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectMax(r.Context(), r.PathValue("id"), r.FormValue("token"))
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetViber connects the line's Viber bot by its token (op=connect, token) — Viber is told to call go24 at its
+// public address — or disconnects it (administrators).
+func (s *Server) widgetViber(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectViber(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectViber(r.Context(), r.PathValue("id"), r.FormValue("token"), s.BaseURL)
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetOK connects the line's OK group by its bot token (op=connect, token, link — the group's page) — OK is told to
+// call go24 at its public address — or disconnects it (administrators).
+func (s *Server) widgetOK(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectOK(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectOK(r.Context(), r.PathValue("id"), r.FormValue("token"), r.FormValue("link"), s.BaseURL)
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetAvito connects the line's Avito account by its application's client id and secret (op=connect, client_id,
+// client_secret) or disconnects it (administrators).
+func (s *Server) widgetAvito(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectAvito(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectAvito(r.Context(), r.PathValue("id"), r.FormValue("client_id"), r.FormValue("client_secret"), s.BaseURL)
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetWhatsApp connects the line's WhatsApp Business number (op=connect, phone — its id in the Cloud API, waba — the
+// business account's id, token, app_secret) — with waba Meta is told to call go24 at its public address — or
+// disconnects it (administrators).
+func (s *Server) widgetWhatsApp(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectWhatsApp(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectWhatsApp(r.Context(), r.PathValue("id"), r.FormValue("phone"), r.FormValue("waba"), r.FormValue("token"),
+			r.FormValue("app_secret"), s.BaseURL)
+	}
+	if err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// widgetConnectorOff turns an application's channel off on the line (administrators); the application hears
+// ONIMCONNECTORSTATUSDELETE and turns it on again itself.
+func (s *Server) widgetConnectorOff(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if err := s.OpenLines.TurnOffConnector(r.Context(), r.PathValue("conn"), r.PathValue("id")); err != nil {
+		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/openlines/widgets", http.StatusSeeOther)
+}
+
+// waDigits is a WhatsApp number as wa.me takes it: its digits.
+func waDigits(number string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, number)
+}
+
+// waVerify answers Meta's check of a line's webhook address (GET with hub.mode, hub.verify_token, hub.challenge).
+func (s *Server) waVerify(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	challenge, err := s.OpenLines.WAVerify(r.Context(), r.PathValue("id"), q.Get("hub.mode"), q.Get("hub.verify_token"), q.Get("hub.challenge"))
+	switch {
+	case errors.Is(err, openlines.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, openlines.ErrWASign):
+		http.Error(w, "forbidden", http.StatusForbidden)
+	case err != nil:
+		s.fail(w, "whatsapp verify", err)
+	default:
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, challenge)
+	}
+}
+
+// waHook takes a call of Meta to a line's WhatsApp number: the clients' messages.
+func (s *Server) waHook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch err := s.OpenLines.WAHook(r.Context(), r.PathValue("id"), r.Header.Get("X-Hub-Signature-256"), body); {
+	case errors.Is(err, openlines.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, openlines.ErrWASign):
+		http.Error(w, "forbidden", http.StatusForbidden)
+	case err != nil:
+		s.fail(w, "whatsapp hook", err) // Meta calls again
+	}
+}
+
+// okHook takes a call of OK to a line's group: a client's message or button, the chat's start.
+func (s *Server) okHook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch err := s.OpenLines.OKHook(r.Context(), r.PathValue("id"), r.PathValue("secret"), body); {
+	case errors.Is(err, openlines.ErrNotFound):
+		http.NotFound(w, r)
+	case err != nil:
+		s.fail(w, "ok hook", err) // OK calls again
+	}
+}
+
+// viberHook takes a call of Viber to a line's bot: a client's message, the chat opened (the greeting is the answer).
+func (s *Server) viberHook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reply, err := s.OpenLines.ViberHook(r.Context(), r.PathValue("id"), r.Header.Get("X-Viber-Content-Signature"), body)
+	switch {
+	case errors.Is(err, openlines.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, openlines.ErrViberSign):
+		http.Error(w, "forbidden", http.StatusForbidden)
+	case err != nil:
+		s.fail(w, "viber hook", err) // Viber calls again
+	case reply != nil:
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(reply)
+	}
+}
+
+// widgetVK connects the line's VK community by its access key (op=connect, token) or disconnects it (administrators).
+func (s *Server) widgetVK(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !sess.Admin {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	var err error
+	if r.FormValue("op") == "disconnect" {
+		err = s.OpenLines.DisconnectVK(r.Context(), r.PathValue("id"))
+	} else {
+		_, err = s.OpenLines.ConnectVK(r.Context(), r.PathValue("id"), r.FormValue("token"))
 	}
 	if err != nil {
 		http.Redirect(w, r, "/openlines/widgets?msg="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
@@ -833,11 +1215,27 @@ func (s *Server) widgetPreview(w http.ResponseWriter, r *http.Request, sess auth
 
 // ---------- «Статистика» ----------
 
-var olStatsBy = []string{"days", "lines", "operators"}
+var olStatsBy = []string{"days", "lines", "operators", "dialogs"}
+
+// olChannels are the channels a dialogue comes from, as the filter of «Детальная статистика» lists them.
+var olChannels = []string{"widget", "telegram", "whatsapp", "max", "vk", "viber", "ok", "avito", "app"}
+
+// olChannel names a channel: the brand, or a word of the locale.
+func (s *Server) olChannel(r *http.Request, c string) string {
+	switch c {
+	case "widget", "app":
+		return s.tr(r, "ol.channel_"+c)
+	case "vk", "ok", "avito":
+		return s.tr(r, "ol."+c)
+	}
+	return map[string]string{"telegram": "Telegram", "whatsapp": "WhatsApp", "max": "MAX", "viber": "Viber"}[c]
+}
 
 // openlinesStats is the report of the lines for the days ?from= (the month's first day) to ?to= (today), by days, lines
 // or operators (?by=), of a line (?line=) and an operator (?operator=); ?csv=1 gives the table as a CSV file. An
-// administrator or a head of the lines sees every operator; the others — their own dialogues.
+// administrator or a head of the lines sees every operator; the others — their own dialogues. ?by=dialogs is
+// «Детальная статистика»: the dialogues themselves, also of a status (?status=), a channel (?channel=) and
+// a rating (?vote=), sorted by ?sort=.
 func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	q := r.URL.Query()
 	now := time.Now()
@@ -875,7 +1273,20 @@ func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 	rows := map[string][]openlines.StatsRow{"days": st.Days, "lines": st.Lines, "operators": st.Operators}[by]
+	var detail []openlines.DetailRow
+	df := openlines.DetailFilter{StatsFilter: f, Status: q.Get("status"), Channel: q.Get("channel"), Vote: q.Get("vote"), Sort: q.Get("sort")}
+	more := false
+	if by == "dialogs" {
+		if detail, more, err = s.OpenLines.Detail(r.Context(), df); err != nil {
+			s.taskErr(w, r, err, "/openlines")
+			return
+		}
+	}
 	if q.Get("csv") == "1" {
+		if by == "dialogs" {
+			s.openlinesDetailCSV(w, r, detail)
+			return
+		}
 		s.openlinesStatsCSV(w, r, by, rows, st.Total)
 		return
 	}
@@ -884,7 +1295,8 @@ func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess aut
 		s.taskErr(w, r, err, "/openlines")
 		return
 	}
-	data := map[string]any{"F": f, "By": by, "BySet": olStatsBy, "Stats": st, "Rows": rows, "Widgets": widgets}
+	data := map[string]any{"F": f, "By": by, "BySet": olStatsBy, "Stats": st, "Rows": rows, "Widgets": widgets,
+		"DF": df, "Detail": detail, "More": more, "Limit": openlines.DetailLimit}
 	if all {
 		if data["Users"], err = s.Tasks.ListUsers(r.Context()); err != nil {
 			s.taskErr(w, r, err, "/openlines")
@@ -902,6 +1314,26 @@ func (s *Server) openlinesStats(w http.ResponseWriter, r *http.Request, sess aut
 		byLinks[b] = link("by", b)
 	}
 	data["ByLinks"], data["CSV"] = byLinks, link("csv", "1")
+	if by == "dialogs" {
+		channels := [][2]string{}
+		for _, c := range olChannels {
+			channels = append(channels, [2]string{c, s.olChannel(r, c)})
+		}
+		// a column's header sorts by it, ascending; again — descending
+		sorts := map[string]string{}
+		for _, k := range openlines.DetailSorts {
+			v := k
+			if df.Sort == k {
+				v = "-" + k
+			}
+			sorts[k] = link("sort", v)
+		}
+		names := map[string]string{}
+		for _, x := range detail {
+			names[x.Channel] = s.olChannel(r, x.Channel)
+		}
+		data["Channels"], data["Sorts"], data["ChannelNames"] = channels, sorts, names
+	}
 	s.render(w, r, "olstats", page{TitleKey: "ol.stats", Nav: "openlines", Data: data})
 }
 
@@ -932,6 +1364,58 @@ func (s *Server) openlinesStatsCSV(w http.ResponseWriter, r *http.Request, by st
 	out = append(out, line(tr("stock.total"), total))
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename="+"openlines-"+by+"-"+time.Now().Format(time.DateOnly)+".csv")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
+	cw := csv.NewWriter(w)
+	cw.Comma = ';'
+	_ = cw.Write(head)
+	_ = cw.WriteAll(out)
+}
+
+// openlinesDetailCSV gives «Детальная статистика» as a CSV file Excel opens: a dialogue a row, the times in seconds.
+func (s *Server) openlinesDetailCSV(w http.ResponseWriter, r *http.Request, list []openlines.DetailRow) {
+	tr := func(k string) string { return s.tr(r, k) }
+	secs := func(d time.Duration) string {
+		if d == 0 {
+			return ""
+		}
+		return strconv.Itoa(int(d / time.Second))
+	}
+	at := func(t *time.Time) string {
+		if t == nil {
+			return ""
+		}
+		return t.In(time.Local).Format("2006-01-02 15:04:05")
+	}
+	head := []string{}
+	for _, k := range []string{"ol.stats_num", "ol.stats_line", "ol.stats_channel", "ol.stats_client", "crm.f.phone", "crm.f.email", "ol.operator",
+		"ol.stats_status", "ol.stats_started", "ol.stats_closed_at", "ol.stats_answer_s", "ol.stats_close_s", "ol.stats_msgs",
+		"ol.stats_vote", "ol.stats_head_vote", "ol.stats_kpi", "ol.stats_spam", "ol.stats_crm"} {
+		head = append(head, tr(k))
+	}
+	base := "http://" + r.Host
+	if r.TLS != nil {
+		base = "https://" + r.Host
+	}
+	out := [][]string{}
+	for _, x := range list {
+		status := tr("ol.past_" + x.Status)
+		crmLink := ""
+		switch {
+		case x.LeadID != "":
+			crmLink = base + "/crm/leads/" + x.LeadID
+		case x.ContactID != "":
+			crmLink = base + "/crm/contacts/" + x.ContactID
+		}
+		spam := ""
+		if x.Spam {
+			spam = "1"
+		}
+		out = append(out, []string{strconv.FormatInt(x.Num, 10), x.Line, s.olChannel(r, x.Channel), x.Client(), x.Phone, x.Email, x.Operator,
+			status, at(&x.Started), at(x.Closed), secs(x.FirstAnswer()), secs(x.ToClose()), strconv.Itoa(x.Messages),
+			strconv.Itoa(x.Vote), strconv.Itoa(x.HeadVote), strconv.Itoa(x.KPILate), spam, crmLink})
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename="+"openlines-dialogs-"+time.Now().Format(time.DateOnly)+".csv")
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
 	cw := csv.NewWriter(w)
 	cw.Comma = ';'

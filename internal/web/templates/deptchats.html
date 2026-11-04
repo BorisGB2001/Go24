@@ -1,0 +1,41 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1 style="flex:1">{{t "deptchat.title"}} · {{$d.Name}}</h1>
+  <a class="button ghost" href="/company/structure">{{icon "hierarchy-2"}} {{t "nav.structure"}}</a></div>
+<p class="muted">{{t "deptchat.hint"}}</p>
+<div class="card">
+  {{range $d.Chats}}
+  <div class="row deptchat">
+    <a href="/im?room={{.Room}}" style="flex:1">{{if .Channel}}{{icon "speakerphone"}}{{else}}{{icon "messages"}}{{end}} {{or .Name .Room}}</a>
+    <span class="muted small">{{if .Channel}}{{t "deptchat.channel"}}{{else}}{{t "deptchat.chat"}}{{end}}{{if .Sub}} · {{t "deptchat.with_sub"}}{{end}}</span>
+    {{if $d.Can}}
+    <form method="post" class="inline"><input type="hidden" name="op" value="sub"><input type="hidden" name="room" value="{{.Room}}">
+      <input type="hidden" name="sub" value="{{if .Sub}}0{{else}}1{{end}}">
+      <button class="ghost small">{{if .Sub}}{{t "deptchat.sub_off"}}{{else}}{{t "deptchat.sub_on"}}{{end}}</button></form>
+    <form method="post" class="inline" data-confirm="{{t "deptchat.unlink_confirm"}}"><input type="hidden" name="op" value="unlink"><input type="hidden" name="room" value="{{.Room}}">
+      <button class="ghost small" title="{{t "deptchat.unlink"}}">{{icon "unlink"}} {{t "deptchat.unlink"}}</button></form>
+    {{end}}
+  </div>
+  {{else}}<p class="muted">{{t "deptchat.none"}}</p>{{end}}
+</div>
+{{if and $d.Can $d.Messenger}}
+<div class="card">
+  <h3>{{t "deptchat.create"}}</h3>
+  <form method="post"><input type="hidden" name="op" value="create">
+    <label>{{t "deptchat.name"}}</label><input type="text" name="name" maxlength="200" placeholder="{{$d.Name}}">
+    <label><input type="radio" name="channel" value="0" checked> {{t "deptchat.chat"}}</label>
+    <label><input type="radio" name="channel" value="1"> {{t "deptchat.channel"}} <span class="muted small">— {{t "deptchat.channel_hint"}}</span></label>
+    <label><input type="checkbox" name="sub" value="1"> {{t "deptchat.with_sub"}}</label>
+    <p><button class="primary">{{icon "plus"}} {{t "deptchat.create_go"}}</button></p></form>
+</div>
+{{if $d.Rooms}}
+<div class="card">
+  <h3>{{t "deptchat.link"}}</h3>
+  <form method="post"><input type="hidden" name="op" value="link">
+    <select name="room" required>{{range $d.Rooms}}<option value="{{.ID}}">{{.Name}}{{if eq .Kind "channel"}} · {{t "deptchat.channel"}}{{end}}</option>{{end}}</select>
+    <label><input type="checkbox" name="sub" value="1"> {{t "deptchat.with_sub"}}</label>
+    <p class="muted small">{{t "deptchat.link_hint"}}</p>
+    <p><button>{{icon "link"}} {{t "deptchat.link_go"}}</button></p></form>
+</div>
+{{end}}
+{{end}}
+{{end}}

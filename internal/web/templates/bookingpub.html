@@ -11,7 +11,9 @@
       <dt>{{t "booking.status"}}</dt><dd>{{t (print "booking.st." .Status)}}</dd></dl>
     {{if eq .Status "unconfirmed"}}<p class="muted">{{t "booking.pub_wait"}}</p>{{end}}
     {{if $d.Open}}<div class="row">{{if eq .Status "unconfirmed"}}<form method="post" action="/bk/b/{{.ClientToken}}/status"><input type="hidden" name="status" value="confirmed">{{if $e}}<input type="hidden" name="embed" value="1">{{end}}<button class="primary">{{icon "check"}} {{t "booking.pub_confirm"}}</button></form>{{end}}
-      <form method="post" action="/bk/b/{{.ClientToken}}/status" data-confirm="{{t "booking.pub_cancel_confirm"}}"><input type="hidden" name="status" value="cancelled">{{if $e}}<input type="hidden" name="embed" value="1">{{end}}<button class="ghost danger">{{icon "x"}} {{t "booking.pub_cancel"}}</button></form></div>{{end}}
+      <form method="post" action="/bk/b/{{.ClientToken}}/status" data-confirm="{{t "booking.pub_cancel_confirm"}}"><input type="hidden" name="status" value="cancelled">{{if $e}}<input type="hidden" name="embed" value="1">{{end}}<button class="ghost danger">{{icon "x"}} {{t "booking.pub_cancel"}}</button></form>
+      {{if not $d.Move}}<a class="button ghost" href="/bk/b/{{.ClientToken}}?move=1{{$d.Q}}">{{icon "calendar-event"}} {{t "booking.pub_move"}}</a>{{end}}</div>{{end}}
+    {{if ne .Status "cancelled"}}<p><a href="/bk/b/{{.ClientToken}}/ics" download>{{icon "download"}} {{t "booking.pub_ics"}}</a> <span class="small muted">{{t "booking.pub_ics_hint"}}</span></p>{{end}}
     {{if eq .Status "came"}}<div class="bk-rate">{{if .Rating}}<p><b>{{t "booking.rate_thanks"}}</b> <span class="bk-stars" title="{{.Rating}}/5">{{stars .Rating}}</span></p>{{with .RatingNote}}<p class="bk-text">{{.}}</p>{{end}}{{end}}
       <form method="post" action="/bk/b/{{.ClientToken}}/rate" class="bk-rate-form">{{if $e}}<input type="hidden" name="embed" value="1">{{end}}<h3>{{if .Rating}}{{t "booking.rate_change"}}{{else}}{{t "booking.rate_ask"}}{{end}}</h3>
         <div class="bk-starpick">{{range list "5" "4" "3" "2" "1"}}<input type="radio" name="stars" value="{{.}}" id="bk-star-{{.}}" {{if eq . (printf "%d" $b.Rating)}}checked{{end}} required><label for="bk-star-{{.}}" title="{{.}}">★</label>{{end}}</div>
@@ -19,6 +21,13 @@
         <button class="primary">{{t "booking.rate_send"}}</button></form></div>{{end}}
     <p class="small muted">{{t "booking.pub_keep"}}</p>
   </div>
+  {{if $d.Move}}<div class="card"><h3>{{t "booking.pub_move_title"}} · {{$d.Res.Name}}</h3>
+    {{template "bkdays" $d}}
+    <p><a href="/bk/b/{{.ClientToken}}{{with $d.Embed}}?embed=1{{end}}">{{t "common.cancel"}}</a></p></div>
+  {{if $d.Slot}}<div class="card" id="form"><form method="post" action="/bk/b/{{.ClientToken}}/move">{{if $e}}<input type="hidden" name="embed" value="1">{{end}}
+    <input type="hidden" name="date" value="{{$d.DayValue}}"><input type="hidden" name="t" value="{{$d.Slot}}">
+    <p>{{t "booking.pub_move_to"}} <b>{{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}, {{$d.Slot}}</b></p>
+    <button class="primary">{{icon "check"}} {{t "booking.pub_move_save"}}</button></form></div>{{end}}{{end}}
 {{else}}{{$l := $d.Link}}{{$t := $d.Token}}{{$q := $d.Q}}{{/* $q: $e and the key of a dialogue's link (&ol=) */}}
   <div><h2>{{icon "calendar-event"}} {{$l.Name}}</h2>{{with $l.Description}}<p class="bk-text">{{.}}</p>{{end}}</div>
   {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
@@ -33,11 +42,7 @@
       <span class="small muted">{{t "booking.slot_n" (printf "%d" .Minutes)}} · {{money .Price}} {{.Currency}}</span></a>{{end}}</div></div>{{end}}
   {{if $d.Days}}
   <div class="card"><h3>{{t "booking.pub_step_time"}}{{if eq (len $d.Resources) 1}} · {{.Name}}{{end}}</h3>
-    <div class="row bk-days">{{with $d.PrevWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.}}{{$q}}" title="{{t "booking.pub_prev_week"}}">{{icon "chevron-left"}}</a>{{end}}
-      {{range $d.Days}}{{if .Works}}<a class="bk-day{{if eq .Value $d.DayValue}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.Value}}{{$q}}">{{else}}<span class="bk-day off">{{end}}<span class="small">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</span><b>{{.Date.Day}}</b><span class="small">{{t (print "month." (printf "%d" .Date.Month))}}</span>{{if .Works}}</a>{{else}}</span>{{end}}{{end}}
-      {{with $d.NextWeek}}<a class="button ghost" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{.}}{{$q}}" title="{{t "booking.pub_next_week"}}">{{icon "chevron-right"}}</a>{{end}}</div>
-    {{if $d.Free}}<div class="bk-slots">{{range $d.Free}}{{$c := clock .}}<a class="bk-slot{{if eq $c $d.Slot}} on{{end}}" href="/bk/{{$t}}?r={{$r.ID}}&s={{$s}}&date={{$d.DayValue}}&t={{$c}}{{with $d.Keep}}&{{.}}{{end}}{{$q}}#form">{{$c}}</a>{{end}}</div>
-    {{else}}<p class="muted">{{t "booking.pub_no_slots"}}</p>{{end}}
+    {{template "bkdays" $d}}
   </div>{{end}}
   {{if $d.Slot}}<div class="card" id="form"><h3>{{t "booking.pub_step_client"}}</h3>
     <p><b>{{$r.Name}}</b>{{with $d.Svc}} · {{.Name}}{{end}} · {{t (print "wd." (printf "%d" (wdnum $d.Day)))}}, {{day $d.Day}}, {{$d.Slot}} · {{t "booking.slot_n" (printf "%d" $d.Mins)}}{{with $d.Svc}} · {{money .Price}} {{.Currency}}{{end}}</p>
@@ -55,4 +60,11 @@
   <p class="muted small share-foot">go24 · {{t "booking.title"}}</p>
 </div>
 {{if $e}}<script src="{{asset "js/bkembed.js"}}"></script>{{end}}
+{{end}}
+{{define "bkdays"}}{{$d := .}}{{/* the days of a week and the free times of the day: links to Base with &date= and &t= */}}
+    <div class="row bk-days">{{with $d.PrevWeek}}<a class="button ghost" href="{{$d.Base}}&date={{.}}{{$d.Q}}" title="{{t "booking.pub_prev_week"}}">{{icon "chevron-left"}}</a>{{end}}
+      {{range $d.Days}}{{if .Works}}<a class="bk-day{{if eq .Value $d.DayValue}} on{{end}}" href="{{$d.Base}}&date={{.Value}}{{$d.Q}}">{{else}}<span class="bk-day off">{{end}}<span class="small">{{t (print "wd." (printf "%d" (wdnum .Date)))}}</span><b>{{.Date.Day}}</b><span class="small">{{t (print "month." (printf "%d" .Date.Month))}}</span>{{if .Works}}</a>{{else}}</span>{{end}}{{end}}
+      {{with $d.NextWeek}}<a class="button ghost" href="{{$d.Base}}&date={{.}}{{$d.Q}}" title="{{t "booking.pub_next_week"}}">{{icon "chevron-right"}}</a>{{end}}</div>
+    {{if $d.Free}}<div class="bk-slots">{{range $d.Free}}{{$c := clock .}}<a class="bk-slot{{if eq $c $d.Slot}} on{{end}}" href="{{$d.Base}}&date={{$d.DayValue}}&t={{$c}}{{with $d.Keep}}&{{.}}{{end}}{{$d.Q}}#form">{{$c}}</a>{{end}}</div>
+    {{else}}<p class="muted">{{t "booking.pub_no_slots"}}</p>{{end}}
 {{end}}

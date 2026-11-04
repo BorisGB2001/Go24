@@ -64,8 +64,15 @@ build: deploy-only sync
 
 ## test: go vet + go test в контейнере golang на сервере (кэш модулей в томе go24-gomod)
 # boris.gb 2026-10-11 15:20 - проверка кода без Go на Mac
+# boris.gb 2026-10-28 13:38 - на сервере сначала на agent (srv-pve3, tools/remote-test.sh), чтобы не грузить go24 (ноутбук);
+#   agent недоступен (код 3) — тесты здесь, как раньше
 test: sync
+ifeq ($(ON_SERVER),1)
+	@$(REMOTE_DIR)/tools/remote-test.sh $(SRC); rc=$$?; [ $$rc = 3 ] || exit $$rc; \
+	  $(TESTRUN) 'cd $(SRC) && docker run --rm -v "$$PWD":/src -v go24-gomod:/go/pkg/mod -w /src golang:1-alpine sh -c "go vet ./... && go test ./..."'
+else
 	$(TESTRUN) 'cd $(SRC) && docker run --rm -v "$$PWD":/src -v go24-gomod:/go/pkg/mod -w /src golang:1-alpine sh -c "go vet ./... && go test ./..."'
+endif
 
 ## test-js: сценарии перетаскивания на досках (static/js/boards.js) в jsdom
 # boris.gb 2026-10-11 17:03 - Node только в контейнере; jsdom ставится во временный том go24-npm
@@ -76,8 +83,12 @@ test: sync
 # boris.gb 2026-10-25 16:14 - добавлен kbedit.test.mjs (база знаний: панель форматирования и предпросмотр, GO24DEV-395)
 # boris.gb 2026-10-26 10:52 - добавлен appsdk.test.mjs (go24.js во фрейме приложения, GO24DEV-585)
 # boris.gb 2026-10-26 21:09 - добавлен olbot.test.mjs (редактор меню чат-бота открытой линии, GO24DEV-717)
+# boris.gb 2026-10-28 16:05 - добавлен timecontrol.test.mjs («Контроль времени» рабочего дня, GO24DEV-858)
+# boris.gb 2026-10-28 16:47 - добавлен calltrack.test.mjs (колл-трекинг: подмена номера на сайте, GO24DEV-865)
+# boris.gb 2026-10-29 06:40 - добавлен push.test.mjs (push-уведомления на телефон: подписка устройства, service worker, GO24DEV-743)
 # boris.gb 2026-10-26 10:41 - добавлен kbdraft.test.mjs (база знаний: черновик с автосохранением, GO24DEV-605)
 # boris.gb 2026-10-25 13:19 - добавлен widths.test.mjs (ширина столбцов и панелей перетаскиванием, GO24DEV-477)
+# boris.gb 2026-10-28 22:30 - добавлен qes.test.mjs (подписание КЭП через КриптоПро плагин, GO24DEV-913)
 # boris.gb 2026-10-25 13:53 - добавлен crmdocsend.test.mjs («Отправить» документ CRM письмом, GO24DEV-357)
 # boris.gb 2026-10-25 14:40 - добавлен imshare.test.mjs (меню «…» сообщения: реакции, «по почте», «Поделиться картинкой», GO24DEV-508)
 # boris.gb 2026-10-25 14:04 - добавлен imthreads.test.mjs (непрочитанные ответы в тредах, GO24DEV-497)
@@ -120,15 +131,27 @@ test: sync
 # boris.gb 2026-10-25 19:09 - добавлен crmcols.test.mjs («Настроить колонки» в списках CRM, GO24DEV-532)
 # boris.gb 2026-10-27 18:45 - добавлен crmlayout.test.mjs («Настроить карточку» CRM, GO24DEV-786)
 # boris.gb 2026-10-25 22:59 - добавлен pop.test.mjs (одно всплывающее окно за раз, щелчок вне и Esc закрывают, GO24DEV-527)
+# boris.gb 2026-10-28 00:53 - added drawer.test.mjs (the phone's left menu: open, close, swipe, GO24DEV-742)
 # boris.gb 2026-10-26 12:00 - добавлен softphone.test.mjs (перевод звонка в софтфоне, GO24DEV-632)
+# boris.gb 2026-10-28 13:53 - добавлен signblocks.test.mjs (Подпись: блоки на страницах документа, GO24DEV-837)
+# boris.gb 2026-10-28 13:44 - added imselect.test.mjs (messenger: «Select» several messages — forward, copy, delete, GO24DEV-840)
+# boris.gb 2026-10-28 17:26 - добавлен mailvoice.test.mjs (почта: «Диктовка» и «Прочитать вслух», GO24DEV-870)
+# boris.gb 2026-10-28 19:03 - added mailaccess.test.mjs (mail: «Проверка читаемости», as Outlook's Accessibility Checker, GO24DEV-887)
+# boris.gb 2026-10-29 01:35 - тест диалога «Опрос о времени встречи» почты (mailpoll.test.mjs, GO24DEV-942)
+# boris.gb 2026-10-29 02:04 - added mailread.test.mjs (mail: «Immersive Reader», as in Outlook, GO24DEV-949)
+# boris.gb 2026-10-29 04:53 - added workgeo.test.mjs (worktime: «Местоположение» of the working day, GO24DEV-968)
+# boris.gb 2026-10-29 05:42 - added imapps.test.mjs (messenger: widgets of applications IM_SIDEBAR, IM_CONTEXT_MENU, IM_TEXTAREA, GO24DEV-977)
+# boris.gb 2026-10-29 05:34 - added crmdupcheck.test.mjs (CRM: «Duplicate control» while a form is filled, GO24DEV-970)
+# boris.gb 2026-10-29 09:02 - добавлен tts.test.mjs («Озвучить текст» у полей звуков телефонии, GO24DEV-1002)
 test-js: sync
 	$(TESTRUN) 'cd $(SRC) && docker run --rm -v "$$PWD":/src:ro -v go24-npm:/deps -w /deps node:22-alpine \
-	  sh -c "test -d node_modules/jsdom || npm install --silent --no-audit --no-fund jsdom >/dev/null; cp -r /src/test /src/internal /tmp/ && ln -s /deps/node_modules /tmp/node_modules && node /tmp/test/js/boards.test.mjs && node /tmp/test/js/task.test.mjs && node /tmp/test/js/list.test.mjs && node /tmp/test/js/feed.test.mjs && node /tmp/test/js/bell.test.mjs && node /tmp/test/js/presence.test.mjs && node /tmp/test/js/mention.test.mjs && node /tmp/test/js/forms.test.mjs && node /tmp/test/js/people.test.mjs && node /tmp/test/js/mail.test.mjs && node /tmp/test/js/im.test.mjs && node /tmp/test/js/imfiles.test.mjs && node /tmp/test/js/immenu.test.mjs && node /tmp/test/js/impins.test.mjs && node /tmp/test/js/imsaved.test.mjs && node /tmp/test/js/immedia.test.mjs && node /tmp/test/js/impoll.test.mjs && node /tmp/test/js/imemoji.test.mjs && node /tmp/test/js/imread.test.mjs && node /tmp/test/js/imrooms.test.mjs && node /tmp/test/js/imopen.test.mjs && node /tmp/test/js/imdraft.test.mjs && node /tmp/test/js/immention.test.mjs && node /tmp/test/js/imlink.test.mjs && node /tmp/test/js/imkeys.test.mjs && node /tmp/test/js/ring.test.mjs && node /tmp/test/js/phone.test.mjs && node /tmp/test/js/softphone.test.mjs && node /tmp/test/js/call.test.mjs && node /tmp/test/js/callguests.test.mjs && node /tmp/test/js/callrecord.test.mjs && node /tmp/test/js/callext.test.mjs && node /tmp/test/js/collab.test.mjs && node /tmp/test/js/imcalls.test.mjs && node /tmp/test/js/imsettings.test.mjs && node /tmp/test/js/imquote.test.mjs && node /tmp/test/js/imthreads.test.mjs && node /tmp/test/js/imshare.test.mjs && node /tmp/test/js/imview.test.mjs && node /tmp/test/js/imbot.test.mjs && node /tmp/test/js/guest.test.mjs && node /tmp/test/js/compose.test.mjs && node /tmp/test/js/widget.test.mjs && node /tmp/test/js/mailx.test.mjs && node /tmp/test/js/mailcrm.test.mjs && node /tmp/test/js/calendar.test.mjs && node /tmp/test/js/disk.test.mjs && node /tmp/test/js/drivepick.test.mjs && node /tmp/test/js/calmove.test.mjs && node /tmp/test/js/calrepeat.test.mjs && node /tmp/test/js/mailquick.test.mjs && node /tmp/test/js/crmrequired.test.mjs && node /tmp/test/js/kb.test.mjs && node /tmp/test/js/kbtree.test.mjs && node /tmp/test/js/kbedit.test.mjs && node /tmp/test/js/kbdraft.test.mjs && node /tmp/test/js/widths.test.mjs && node /tmp/test/js/crmdocsend.test.mjs && node /tmp/test/js/crmcols.test.mjs && node /tmp/test/js/crmlayout.test.mjs && node /tmp/test/js/openlines.test.mjs && node /tmp/test/js/olbot.test.mjs && node /tmp/test/js/booking.test.mjs && node /tmp/test/js/structure.test.mjs && node /tmp/test/js/pop.test.mjs && node /tmp/test/js/appsdk.test.mjs"'
+	  sh -c "test -d node_modules/jsdom || npm install --silent --no-audit --no-fund jsdom >/dev/null; cp -r /src/test /src/internal /tmp/ && ln -s /deps/node_modules /tmp/node_modules && node /tmp/test/js/boards.test.mjs && node /tmp/test/js/task.test.mjs && node /tmp/test/js/list.test.mjs && node /tmp/test/js/feed.test.mjs && node /tmp/test/js/bell.test.mjs && node /tmp/test/js/presence.test.mjs && node /tmp/test/js/mention.test.mjs && node /tmp/test/js/forms.test.mjs && node /tmp/test/js/people.test.mjs && node /tmp/test/js/mail.test.mjs && node /tmp/test/js/im.test.mjs && node /tmp/test/js/imfiles.test.mjs && node /tmp/test/js/immenu.test.mjs && node /tmp/test/js/imselect.test.mjs && node /tmp/test/js/impins.test.mjs && node /tmp/test/js/imsaved.test.mjs && node /tmp/test/js/immedia.test.mjs && node /tmp/test/js/impoll.test.mjs && node /tmp/test/js/imemoji.test.mjs && node /tmp/test/js/imread.test.mjs && node /tmp/test/js/imrooms.test.mjs && node /tmp/test/js/imopen.test.mjs && node /tmp/test/js/imdraft.test.mjs && node /tmp/test/js/immention.test.mjs && node /tmp/test/js/imlink.test.mjs && node /tmp/test/js/imkeys.test.mjs && node /tmp/test/js/ring.test.mjs && node /tmp/test/js/phone.test.mjs && node /tmp/test/js/softphone.test.mjs && node /tmp/test/js/call.test.mjs && node /tmp/test/js/callguests.test.mjs && node /tmp/test/js/callrecord.test.mjs && node /tmp/test/js/callext.test.mjs && node /tmp/test/js/collab.test.mjs && node /tmp/test/js/imcalls.test.mjs && node /tmp/test/js/imsettings.test.mjs && node /tmp/test/js/imquote.test.mjs && node /tmp/test/js/imthreads.test.mjs && node /tmp/test/js/imshare.test.mjs && node /tmp/test/js/imview.test.mjs && node /tmp/test/js/imbot.test.mjs && node /tmp/test/js/imapps.test.mjs && node /tmp/test/js/guest.test.mjs && node /tmp/test/js/compose.test.mjs && node /tmp/test/js/mailvoice.test.mjs && node /tmp/test/js/mailaccess.test.mjs && node /tmp/test/js/widget.test.mjs && node /tmp/test/js/mailx.test.mjs && node /tmp/test/js/mailcrm.test.mjs && node /tmp/test/js/calendar.test.mjs && node /tmp/test/js/disk.test.mjs && node /tmp/test/js/drivepick.test.mjs && node /tmp/test/js/calmove.test.mjs && node /tmp/test/js/calrepeat.test.mjs && node /tmp/test/js/mailquick.test.mjs && node /tmp/test/js/mailpoll.test.mjs && node /tmp/test/js/mailread.test.mjs && node /tmp/test/js/crmrequired.test.mjs && node /tmp/test/js/kb.test.mjs && node /tmp/test/js/kbtree.test.mjs && node /tmp/test/js/kbedit.test.mjs && node /tmp/test/js/kbdraft.test.mjs && node /tmp/test/js/widths.test.mjs && node /tmp/test/js/crmdocsend.test.mjs && node /tmp/test/js/crmcols.test.mjs && node /tmp/test/js/crmlayout.test.mjs && node /tmp/test/js/openlines.test.mjs && node /tmp/test/js/olbot.test.mjs && node /tmp/test/js/booking.test.mjs && node /tmp/test/js/structure.test.mjs && node /tmp/test/js/pop.test.mjs && node /tmp/test/js/drawer.test.mjs && node /tmp/test/js/appsdk.test.mjs && node /tmp/test/js/timecontrol.test.mjs && node /tmp/test/js/signblocks.test.mjs && node /tmp/test/js/qes.test.mjs && node /tmp/test/js/calltrack.test.mjs && node /tmp/test/js/workgeo.test.mjs && node /tmp/test/js/crmdupcheck.test.mjs && node /tmp/test/js/push.test.mjs && node /tmp/test/js/aipane.test.mjs && node /tmp/test/js/tts.test.mjs"'
 
 ## test-db: все тесты, включая интеграционные, на отдельной базе go24_test (рабочую базу go24 не трогает);
 ##          -p 1 — пакеты по очереди, т.к. тесты разных пакетов пересоздают одну и ту же базу
 # boris.gb 2026-10-11 15:22 - база go24_test пересоздаётся тестом; пароль суперпользователя берётся из deploy/.env на сервере
 # boris.gb 2026-10-20 20:41 - временное S3 (rclone serve s3, пустая папка, удаляется после теста) — файлы письма копируются в задачу (GO24DEV-203)
+# boris.gb 2026-10-28 09:39 - -timeout 60m: интеграционные тесты internal/web дольше 10 минут по умолчанию (go test падал по таймауту)
 test-db: sync
 	$(TESTRUN) 'cd $(SRC) && . $(REMOTE_DIR)/deploy/.env && \
 	  docker exec go24-postgres-1 psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'$(TEST_DB)'"'"'" | grep -q 1 || \
@@ -138,7 +161,7 @@ test-db: sync
 	  docker run --rm --network go24_default -v "$$PWD":/src -v go24-gomod:/go/pkg/mod -w /src \
 	    -e GO24_TEST_DATABASE_URL="postgres://postgres:$$PG_SUPERUSER_PASSWORD@postgres:5432/$(TEST_DB)?sslmode=disable" \
 	    -e GO24_TEST_S3=$(S3TEST):8333 \
-	    golang:1-alpine go test -p 1 -count=1 ./...; status=$$?; docker rm -f $(S3TEST) >/dev/null; exit $$status'
+	    golang:1-alpine go test -p 1 -count=1 -timeout 60m ./...; status=$$?; docker rm -f $(S3TEST) >/dev/null; exit $$status'
 
 ## test-storages: сквозной тест «Хранилищ» через настоящий rclone rcd и временный WebDAV-сервер
 # boris.gb 2026-10-11 16:31 - временный WebDAV (rclone serve webdav) живёт только на время теста в сети go24_storages

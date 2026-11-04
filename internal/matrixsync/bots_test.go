@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,7 +57,7 @@ func TestChatBots(t *testing.T) {
 		VALUES ('Helper', 'local.1', 's', 'at', now(), $1) RETURNING id`, ann).Scan(&app))
 	const hook = "https://helper.example/bot"
 	for _, ev := range []string{BotMessageAdd, BotJoinChat, BotDelete} {
-		_, err := pool.Exec(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id) VALUES ($1, $2, $3, $4)`, app, ev, hook, ann)
+		_, err := pool.Exec(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id, portal) VALUES ($1, $2, $3, $4, true)`, app, ev, hook, ann)
 		must(err)
 	}
 	fake := newFake()
@@ -144,6 +146,22 @@ func TestChatBots(t *testing.T) {
 	if p["MESSAGE"] != "привет, бот" || p["DIALOG_ID"] != ann || p["FROM_USER_ID"] != ann || p["TO_USER_ID"] != bot.ID || p["MESSAGE_ID"] == "" {
 		t.Fatalf("message add params: %v", p)
 	}
+	// the copy for a handler: numbers for the people, the bot, the chat and the message
+	var annNum, chatNum, msgNum float64
+	must(pool.QueryRow(ctx, `SELECT num FROM users WHERE id = $1`, ann).Scan(&annNum))
+	must(pool.QueryRow(ctx, `SELECT num FROM portal_chats WHERE room_id = $1`, room).Scan(&chatNum))
+	must(pool.QueryRow(ctx, `SELECT num FROM portal_messages WHERE event_id = $1`, p["MESSAGE_ID"]).Scan(&msgNum))
+	portal := d[0]["Portal_DATA"].(map[string]any)
+	bp := portal["PARAMS"].(map[string]any)
+	botNum := strconv.FormatInt(bot.Num, 10)
+	if bot.Num <= int64(annNum) || bp["DIALOG_ID"] != annNum || bp["FROM_USER_ID"] != annNum || bp["TO_USER_ID"] != float64(bot.Num) ||
+		bp["CHAT_ID"] != chatNum || bp["MESSAGE_ID"] != msgNum || bp["MESSAGE"] != "привет, бот" ||
+		portal["USER"].(map[string]any)["ID"] != annNum || portal["BOT"].(map[string]any)[botNum] == nil {
+		t.Fatalf("the event for the portal (bot %d): %v", bot.Num, portal)
+	}
+	if b, err := s.AppBot(ctx, app, botNum); err != nil || b.ID != bot.ID {
+		t.Fatalf("by number: %+v %v", b, err)
+	}
 
 	// the bot answers in the dialog of ann (by her ID): the same chat, ann sees it as the bot's
 	dialog, err := s.BotDialog(ctx, bot.ID, ann)
@@ -201,6 +219,10 @@ func TestChatBots(t *testing.T) {
 		d[1]["PARAMS"].(map[string]any)["FROM_USER_ID"] != bob {
 		t.Fatalf("a mention in the group: %v", d)
 	}
+	if portal := d[1]["Portal_DATA"].(map[string]any)["PARAMS"].(map[string]any); !strings.HasPrefix(portal["DIALOG_ID"].(string), "chat") ||
+		portal["DIALOG_ID"] != "chat"+strconv.FormatFloat(portal["CHAT_ID"].(float64), 'f', -1, 64) {
+		t.Fatalf("a group chat for the portal: %v", portal)
+	}
 	g, err := s.GroupInfo(ctx, ann, group)
 	must(err)
 	var botMember bool
@@ -212,7 +234,7 @@ func TestChatBots(t *testing.T) {
 	}
 
 	// commands: «/weather Москва» in the bot's chat goes to the command, not to ONIMBOTMESSAGEADD
-	_, err = pool.Exec(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id) VALUES ($1, $2, $3, $4)`, app, BotCommand, hook, ann)
+	_, err = pool.Exec(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id, portal) VALUES ($1, $2, $3, $4, true)`, app, BotCommand, hook, ann)
 	must(err)
 	cmd, err := s.RegisterCommand(ctx, app, bot.ID, Command{Command: "/weather", Handler: hook,
 		Lang: map[string]CommandText{"ru": {Title: "Погода", Params: "город"}}})
@@ -244,6 +266,13 @@ func TestChatBots(t *testing.T) {
 	if len(d) != 1 || cmdOf(d[0])["COMMAND_PARAMS"] != "Москва" || cmdOf(d[0])["COMMAND_CONTEXT"] != "TEXTAREA" ||
 		cmdOf(d[0])["MESSAGE_ID"] != ev.EventID || d[0]["PARAMS"].(map[string]any)["DIALOG_ID"] != ann {
 		t.Fatalf("command add: %v", d)
+	}
+	if c := d[0]["Portal_DATA"].(map[string]any)["COMMAND"].(map[string]any)[strconv.FormatInt(cmd.Num, 10)].(map[string]any); c == nil ||
+		c["COMMAND_ID"] != float64(cmd.Num) || c["BOT_ID"] != float64(bot.Num) || c["COMMAND_PARAMS"] != "Москва" {
+		t.Fatalf("command add for the portal: %v", d[0]["Portal_DATA"])
+	}
+	if c, err := s.CommandOf(ctx, app, strconv.FormatInt(cmd.Num, 10)); err != nil || c.ID != cmd.ID {
+		t.Fatalf("the command by number: %+v %v", c, err)
 	}
 	if _, err := s.Send(ctx, ann, room, "/unknown", ""); err != nil || len(deliveries(BotCommand)) != 1 {
 		t.Fatalf("an unknown command: %v", err)

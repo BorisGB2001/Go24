@@ -53,3 +53,15 @@ func TestDeadlinePeriods(t *testing.T) {
 		t.Error("on Sunday this week has no day left")
 	}
 }
+
+func TestDayDeadline(t *testing.T) {
+	loc := time.FixedZone("CET", 3600)
+	day := time.Date(2026, 10, 21, 0, 0, 0, 0, loc)
+	cur := time.Date(2026, 10, 14, 11, 30, 0, 0, time.UTC) // 12:30 in CET
+	if got := DayDeadline(&cur, day, worktime.Default()); !got.Equal(time.Date(2026, 10, 21, 12, 30, 0, 0, loc)) {
+		t.Errorf("the time of the deadline is kept: %v", got)
+	}
+	if got := DayDeadline(nil, day, worktime.Default()); !got.Equal(time.Date(2026, 10, 21, 18, 0, 0, 0, loc)) {
+		t.Errorf("no deadline: the end of the working day, %v", got)
+	}
+}

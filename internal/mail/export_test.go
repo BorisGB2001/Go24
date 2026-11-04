@@ -173,7 +173,9 @@ func TestExport(t *testing.T) {
 	}
 	// Outlook's file: the folders' tree under «Top of Personal Folders», the inbox named as go24 names it
 	out := tempPST(t)
-	tr := func(key string, _ ...any) string { return map[string]string{"mail.folder.inbox": "Входящие"}[key] }
+	tr := func(key string, _ ...any) string {
+		return map[string]string{"mail.folder.inbox": "Входящие"}[key]
+	}
 	n, err := s.WriteExport(ctx, Export{UserID: ira, MailboxID: box, Email: addr, Format: "pst", Tr: tr}, out, nil)
 	must(err)
 	tree, f := readPST(t, out.Name())

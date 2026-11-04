@@ -55,7 +55,7 @@ func usersByID(users []tasks.User, ids []string) []tasks.User {
 func templateForm(t tasks.Template, users []tasks.User, projects []tasks.Project) taskForm {
 	f := taskForm{Template: true, TemplateID: t.ID, Title: t.Title, Description: t.Description, Responsible: t.ResponsibleID,
 		Priority: t.Priority, Control: t.RequiresControl, AllowDeadline: t.AllowChangeDeadline, MatchWorkTime: t.MatchWorkTime, Params: t.Params,
-		Accomplices: usersByID(users, t.Accomplices), Auditors: usersByID(users, t.Auditors), Users: users, Projects: projects,
+		Estimate: t.EstimateMinutes, Accomplices: usersByID(users, t.Accomplices), Auditors: usersByID(users, t.Auditors), Users: users, Projects: projects,
 		Project: t.ProjectKey, Checklist: strings.Join(t.Checklist, "\n"), Repeat: t.Repeat, Cancel: "/templates",
 		TemplateParent: t.ParentID, TemplateSubs: len(t.Subtasks), ForNewUsers: t.ForNewUsers}
 	if t.ParentID != "" {
@@ -105,6 +105,7 @@ func (s *Server) templateEdit(w http.ResponseWriter, r *http.Request, sess auth.
 	if t.ID != "" {
 		f.Action = "/templates/" + t.ID
 	}
+	f.CoPilot = (t.ID == "" || t.CanEdit()) && s.taskCopilotOn(r.Context(), sess.UserID)
 	title := "templates.new"
 	if t.ID != "" {
 		title = "templates.edit"
@@ -137,7 +138,8 @@ func (s *Server) templateAccess(w http.ResponseWriter, r *http.Request, sess aut
 
 func templateFromCard(c tasks.TaskCard) tasks.Template {
 	t := tasks.Template{ProjectKey: c.ProjectKey, Title: c.Title, Description: c.Description, ResponsibleID: c.ResponsibleID,
-		Priority: c.Priority, RequiresControl: c.RequiresControl, AllowChangeDeadline: c.AllowChangeDeadline, MatchWorkTime: c.MatchWorkTime, Params: c.Params}
+		Priority: c.Priority, RequiresControl: c.RequiresControl, AllowChangeDeadline: c.AllowChangeDeadline, MatchWorkTime: c.MatchWorkTime, Params: c.Params,
+		EstimateMinutes: c.EstimateMinutes}
 	for _, u := range c.Accomplices {
 		t.Accomplices = append(t.Accomplices, u.ID)
 	}
@@ -187,6 +189,11 @@ func parseTemplate(r *http.Request) (tasks.Template, error) {
 			}
 		}
 	}
+	est, err := formEstimate(r)
+	if err != nil {
+		return t, err
+	}
+	t.EstimateMinutes = est
 	rep := tasks.Repeat{On: r.FormValue("repeat") == "on", Period: r.FormValue("period"), Every: num("every", 1),
 		WorkdaysOnly: r.FormValue("workdays_only") == "on", MonthDay: num("month_day", 1), YearMonth: num("year_month", 1),
 		At: r.FormValue("at")}

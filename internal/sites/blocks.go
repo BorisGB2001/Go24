@@ -16,12 +16,13 @@ type Block struct {
 	// a form block as it is shown: State — preview (cannot be sent) or sent, Err — the locale key of a refusal,
 	// Stamp — FormStamp
 	State, Err, Stamp string `json:"-"`
+	Goods             []Good `json:"-"` // a catalog block as it is shown: its products (filled by the web side)
 }
 
 // Field is a field of a block type. Kind: text, textarea, url, image (a link or an uploaded picture), color,
 // pairs (lines «Заголовок | текст» — the items of a menu or of advantages), show (a field of a form: "" — not asked,
 // on — asked, req — required), user (an employee: the responsible of a form's leads), booking (the token of a link
-// of «Онлайн-запись»: its page is shown in the block).
+// of «Онлайн-запись»: its page is shown in the block), section (a section of the CRM catalog: "" — the whole of it), pipeline (a pipeline of deals: "" — the first one).
 type Field struct{ Name, Kind string }
 
 // BlockType is a block of the library («Добавить блок»); its title and texts by default are locale keys
@@ -44,6 +45,9 @@ var BlockTypes = []BlockType{
 	{"contacts", "phone", []Field{{"title", "text"}, {"phone", "text"}, {"email", "text"}, {"address", "textarea"}}},
 	{"form", "send", []Field{{"title", "text"}, {"text", "textarea"}, {"ask_name", "show"}, {"ask_phone", "show"},
 		{"ask_email", "show"}, {"ask_comment", "show"}, {"button", "text"}, {"thanks", "textarea"}, {"responsible", "user"}, {"color", "color"}}},
+	{"catalog", "shopping-cart", []Field{{"title", "text"}, {"text", "textarea"}, {"section", "section"}, {"button", "text"},
+		{"ask_name", "show"}, {"ask_phone", "show"}, {"ask_email", "show"}, {"ask_address", "show"}, {"ask_comment", "show"},
+		{"thanks", "textarea"}, {"manager", "user"}, {"pipeline", "pipeline"}, {"color", "color"}}},
 	{"booking", "calendar-event", []Field{{"title", "text"}, {"text", "textarea"}, {"booking", "booking"}, {"color", "color"}}},
 	{"footer", "layout-bottombar", []Field{{"text", "textarea"}, {"color", "color"}}},
 }
@@ -101,7 +105,7 @@ func clean(t BlockType, data map[string]string) map[string]string {
 			if v != "on" && v != "req" {
 				v = ""
 			}
-		case "user":
+		case "user", "section", "pipeline":
 			if !uuidRe.MatchString(v) {
 				v = ""
 			}

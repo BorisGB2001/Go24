@@ -12,13 +12,15 @@ LOW_MB=${LOW_MB:-3072}      # доступно меньше — сокращат
 CRIT_MB=${CRIT_MB:-1536}    # доступно меньше — сокращать и работающий
 HIGH_MB=${HIGH_MB:-8192}    # доступно больше (и процессор свободен) — можно добавить поток
 MIN_STREAMS=${MIN_STREAMS:-4}
-MAX_STREAMS=${MAX_STREAMS:-20}  # при 32 потоках сервер перестал отвечать (2026-10-27)
+MAX_STREAMS=${MAX_STREAMS:-10}  # не больше 10 — решение Бориса от 2026-10-28 (при 32 потоках сервер перестал отвечать, 2026-10-27)
 # порядок сокращения: первые — первыми на паузу; запуск с паузы — в обратном порядке
 ORDER="bi kb calendar openlines store docs admin bp company feed calls tasks im crm drive mail"
 ST=$HOME/.cache/go24-mem-guard; mkdir -p "$ST"
 LOG=$HOME/.cache/go24-mem-guard.log
 PAUSED=$HOME/.config/go24/streams-paused
 now=$(date +%s)
+/srv/go24/tools/power.sh flush >/dev/null 2>&1 || true  # отложенные сообщения о питании (интернет был недоступен)
+[ ! -f "$HOME/.config/go24/on-battery" ] || exit 0  # хост на батарее: потоки закрыты (tools/power.sh)
 
 avail=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
 cores=$(nproc)
@@ -57,7 +59,7 @@ if [ "$avail" -lt "$LOW_MB" ] || [ "$overload" = 1 ]; then
 fi
 
 # рост: запас держится 10 минут подряд
-if [ "$avail" -gt "$HIGH_MB" ] && [ "$idle" = 1 ] && [ "$count" -lt "$MAX_STREAMS" ]; then
+if [ "$avail" -gt "$HIGH_MB" ] && [ "$idle" = 1 ] && [ "$count" -lt "$MAX_STREAMS" ] && [ ! -f "$HOME/.cache/go24-limits/LOW" ]; then
   [ -f "$ST/calm" ] || echo "$now" >"$ST/calm"
   [ $((now - $(cat "$ST/calm"))) -ge 600 ] || exit 0
   [ $((now - last)) -ge 600 ] && [ $((now - lastdown)) -ge 1800 ] || exit 0
@@ -65,7 +67,10 @@ if [ "$avail" -gt "$HIGH_MB" ] && [ "$idle" = 1 ] && [ "$count" -lt "$MAX_STREAM
   for s in $(tr ' ' '\n' <<<"$ORDER" | tac); do grep -qx "$s" "$PAUSED" 2>/dev/null && { pick=$s; break; }; done
   [ -n "$pick" ] || exit 0
   /srv/go24/tools/stream.sh resume "$pick" >/dev/null
-  /srv/go24/tools/stream.sh start "$pick" "Поток снова запущен сторожем нагрузки. Сначала git status и git rebase main: доделай и выложи начатое в дереве; свой раздел мог временно вести объединённый поток — сверься с devlog.py mytasks и docs/streams.md." >/dev/null
+  if ! /srv/go24/tools/stream.sh start "$pick" "Поток снова запущен сторожем нагрузки. Сначала git status и git rebase main: доделай и выложи начатое в дереве; свой раздел мог временно вести объединённый поток — сверься с devlog.py mytasks и docs/streams.md." >/dev/null; then
+    /srv/go24/tools/stream.sh pause "$pick" >/dev/null  # не запустился (предел stream.sh) — вернуть на паузу
+    exit 0
+  fi
   echo "$now" >"$ST/last"; rm -f "$ST/calm"
   tell "запас есть (памяти $avail МБ, нагрузка $load на $cores ядер) — поток $pick снова запущен, потоков $((count + 1))."
 else

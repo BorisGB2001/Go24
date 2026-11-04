@@ -1,5 +1,5 @@
 {{/* the tabs of «Маркетинг» */}}
-{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "calls" "templates" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
+{{define "mkttabs"}}{{$on := .}}{{range list "campaigns" "calls" "salesgen" "templates" "segments" "stoplist" "ads" "analytics"}}<a href="/marketing/{{.}}" {{if eq . $on}}class="on"{{end}}>{{t (print "mkt." .)}}</a>{{end}}{{end}}
 
 {{/* a campaign's status: a draft, planned, being sent, paused, done, stopped */}}
 {{define "mktstatus"}}{{if .Planned}}<span class="pill mkt-planned" title="{{date .SendAt}}">{{icon "clock"}} {{t "mkt.st.planned"}}</span>
@@ -12,6 +12,7 @@
 
 {{/* a count of a started campaign: its addressees of a status, a share of Of */}}
 {{define "mktcallstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/calls/{{.ID}}?done={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span></a>{{end}}
+{{define "mktsgstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/salesgen/{{.ID}}?state={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span></a>{{end}}
 {{define "mktstat"}}<a class="mkt-stat{{if eq .S .On}} on{{end}}" href="/marketing/campaigns/{{.ID}}?status={{.S}}"><b>{{.N}}</b><span>{{t .L}}</span>{{with .Of}}<small>{{pct $.N .}}%</small>{{end}}</a>{{end}}
 
 {{/* a line of «Сквозная аналитика»: a channel (Top), a campaign of it or the total */}}

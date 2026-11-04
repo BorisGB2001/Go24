@@ -1,6 +1,7 @@
 // «Файл с Диска»: a button [data-disk-pick] opens the drive picker (my drive, the company's, the projects', folders
-// shared with me). The chosen file is either sent at once (data-to: POST file=ID there, then the page reloads) or
-// kept in the button's form as a hidden input (data-input: its name) with a chip, sent with the form.
+// shared with me). The chosen file is either sent at once (data-to: POST file=ID there, then the page reloads), handed
+// to the page (data-event: the event «disk-picked» on the button, its detail — the file), or kept in the button's form
+// as a hidden input (data-input: its name) with a chip, sent with the form.
 (function () {
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   let dlg = null;
@@ -8,6 +9,11 @@
 
   const choose = async (btn, f) => {
     const l = btn.dataset;
+    if (l.event != null) {
+      close();
+      btn.dispatchEvent(new CustomEvent('disk-picked', { bubbles: true, detail: f }));
+      return;
+    }
     if (l.to) {
       const res = await fetch(l.to, { method: 'POST', headers: { 'X-Go24-Form': '1', Accept: 'application/json' }, body: new URLSearchParams({ file: f.id }) });
       const data = await res.json().catch(() => ({}));

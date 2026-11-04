@@ -1,7 +1,7 @@
 // «Структура компании»: the search above the tree leaves the departments whose name or people (or a team
 // of theirs) match
 // (with the departments above them; under a found department — all of it), marks the people found and opens their
-// lists; Enter scrolls to the first one. Administrators (.orgtree[data-struct-edit]) drag: a person of a department's
+// lists; Enter scrolls to the first one. Those the structure's rights let (.orgtree[data-struct-edit]) drag: a person of a department's
 // list onto another department's card — moved there (op=move_user), a department by its title row onto another
 // card — under it (op=move); the move goes to POST /company/departments, then the page is loaded again.
 (() => {
@@ -78,8 +78,9 @@
   });
 
   if (!('structEdit' in tree.dataset)) return;
-  for (const p of tree.querySelectorAll('.dcard .dpeople .person')) p.draggable = true;
-  for (const d of tree.querySelectorAll('.dkids .dept > .dcard > .dhead')) d.draggable = true;
+  // what «Права доступа» of the structure let move: people of [data-can-staff], departments of [data-can-edit]
+  for (const p of tree.querySelectorAll('.dept[data-can-staff] > .dcard .dpeople .person')) p.draggable = true;
+  for (const d of tree.querySelectorAll('.dkids .dept[data-can-edit] > .dcard > .dhead')) d.draggable = true;
 
   let dragged = null; // {kind: user|dept, id, from (user: their department; dept: its element)}
   const clear = () => tree.querySelectorAll('.drop-in').forEach(el => el.classList.remove('drop-in'));
@@ -87,6 +88,7 @@
     const card = e.target.closest?.('.dcard');
     if (!card || !dragged || !tree.contains(card)) return null;
     const dept = card.closest('.dept');
+    if (!((dragged.kind === 'user' ? 'canStaff' : 'canEdit') in dept.dataset)) return null;
     if (dragged.kind === 'user') return dept.dataset.dept === dragged.from ? null : { card, dept };
     // a department: not onto itself nor under itself, nor where it already is
     if (dragged.el.contains(dept) || dragged.el.parentElement.closest('.dept') === dept) return null;

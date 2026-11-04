@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"go24/internal/crm"
 	"go24/internal/db"
 	"go24/internal/mail"
+	"go24/internal/speech"
 	"go24/internal/tasks"
 )
 
@@ -100,14 +102,39 @@ func TestMailComposeHTTP(t *testing.T) {
 		return out
 	}
 
-	if page := do(anna, "GET", "/mail?new=1&box="+box, nil, 200); !strings.Contains(page, "data-compose") || !strings.Contains(page, "js/compose.js") {
+	if page := do(anna, "GET", "/mail?new=1&box="+box, nil, 200); !strings.Contains(page, "data-compose") || !strings.Contains(page, "js/compose.js") ||
+		!strings.Contains(page, "data-tips") || !strings.Contains(page, `data-l="tip_auto"`) {
 		t.Fatal("no editor on the page")
 	}
-	draft := url.Values{"box": {box}, "to": {`"Клиент" <c@x.ru>`}, "subject": {"Счёт"}, "html": {"<p>Привет</p><script>x()</script>"}, "importance": {"1"}}
+	draft := url.Values{"box": {box}, "to": {`"Клиент" <c@x.ru>`}, "subject": {"Счёт"}, "html": {"<p>Привет</p><script>x()</script>"}, "importance": {"1"},
+		"sensitivity": {"confidential"}}
 	id := js(do(anna, "POST", "/mail/drafts/save", draft, 200))["id"].(string)
 	if ed := do(anna, "GET", "/mail/compose?draft="+id, nil, 200); !strings.Contains(ed, `value="Счёт"`) || strings.Contains(ed, "script>x") ||
 		!strings.Contains(ed, `value="1"`) {
 		t.Fatalf("the draft opened again: %.2000s", ed)
+	}
+	if ed := do(anna, "GET", "/mail/compose?draft="+id, nil, 200); !strings.Contains(ed, `<option value="confidential" selected>`) {
+		t.Fatal("the draft lost its sensitivity")
+	}
+	do(anna, "POST", "/mail/drafts/save", url.Values{"box": {box}, "sensitivity": {"secret"}}, 422)
+	// a letter marked «Частное»: the bar over it, the mark in the list, an answer keeps it
+	var inbox, priv string
+	if err := pool.QueryRow(ctx, `INSERT INTO mail_folders (mailbox_id, name, role, local) VALUES ($1, 'INBOX', 'inbox', true) RETURNING id::text`, box).Scan(&inbox); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, to_addr, subject, body, sent_at, sensitivity)
+		VALUES ($1, $2, 1, 'doc@x.test', 'anna@go24.test', 'Больничный', 'текст', now(), 'private') RETURNING id::text`, box, inbox).Scan(&priv); err != nil {
+		t.Fatal(err)
+	}
+	if l := do(anna, "GET", "/mail/letters/"+priv+"?folder="+inbox, nil, 200); !strings.Contains(l, `data-sens="private"`) || !strings.Contains(l, "mail.sens_bar.private") &&
+		!strings.Contains(l, "частным") {
+		t.Fatalf("no sensitivity bar: %.3000s", l)
+	}
+	if page := do(anna, "GET", "/mail?folder="+inbox, nil, 200); !strings.Contains(page, "msens") {
+		t.Fatal("no sensitivity mark in the list")
+	}
+	if ed := do(anna, "GET", "/mail/compose?letter="+priv, nil, 200); !strings.Contains(ed, `<option value="private" selected>`) {
+		t.Fatal("the answer lost the sensitivity")
 	}
 	f, _ := srv.Mail.Draft(ctx, anna, id)
 	drafts, _ := srv.Mail.Folders(ctx, anna, box)
@@ -158,6 +185,36 @@ func TestMailComposeHTTP(t *testing.T) {
 	draft.Set("send_at", "2001-01-01T10:00")
 	do(anna, "POST", "/mail/drafts/send", draft, 422)
 	do(anna, "POST", "/mail/drafts/"+id+"/delete", url.Values{}, 200)
+
+	// «Слияние»: the letter of each recipient, «Копия» refused, the draft goes in the background
+	pv := js(do(anna, "POST", "/mail/merge/preview", url.Values{"to": {"boss@client.test, Ева Смирнова <eve@go24.test>"}, "subject": {"Привет, {first}"},
+		"html": {"<p>{last} <script>x</script></p>"}, "i": {"3"}}, 200))
+	if pv["n"] != float64(2) || pv["i"] != float64(1) || pv["subject"] != "Привет, Ева" || !strings.HasPrefix(pv["html"].(string), "<p>Смирнова") ||
+		strings.Contains(pv["html"].(string), "script") || pv["to"] != "Ева Смирнова <eve@go24.test>" {
+		t.Fatalf("merge preview = %v", pv)
+	}
+	do(anna, "POST", "/mail/merge/preview", url.Values{"to": {""}}, 422)
+	merge := url.Values{"box": {box}, "to": {"boss@client.test, eve@go24.test"}, "cc": {"x@client.test"}, "subject": {"{first}"}, "html": {"<p>x</p>"}, "merge": {"1"}}
+	do(anna, "POST", "/mail/drafts/send", merge, 422)
+	merge.Del("cc")
+	r := js(do(anna, "POST", "/mail/drafts/send", merge, 200))
+	if r["merge"] == nil || r["undo"] != float64(5) {
+		t.Fatalf("merge send = %v", r)
+	}
+	if d, _ := srv.Mail.Draft(ctx, anna, r["id"].(string)); !d.Merge || d.SendAt == nil {
+		t.Fatalf("merge draft = %+v", d)
+	}
+	do(anna, "POST", "/mail/drafts/"+r["id"].(string)+"/cancel", url.Values{}, 200)
+	do(anna, "POST", "/mail/drafts/"+r["id"].(string)+"/delete", url.Values{}, 200)
+
+	// «Подсказки по почте»: eve's automatic reply, the address outside
+	if err := srv.Mail.SaveOOO(ctx, eve, mail.OOO{Mode: mail.OOOOn, Internal: "В отпуске", Outside: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	tips := js(do(anna, "POST", "/mail/tips", url.Values{"from": {"anna@go24.test"}, "addr": {"Ева <eve@go24.test>", "boss@client.test"}}, 200))
+	if ar, _ := tips["auto_replies"].([]any); len(ar) != 1 || ar[0].(map[string]any)["text"] != "В отпуске" || fmt.Sprint(tips["external"]) != "[boss@client.test]" {
+		t.Fatalf("tips = %v", tips)
+	}
 
 	// suggestions: go24's people
 	var got []map[string]string
@@ -230,4 +287,13 @@ func TestMailComposeHTTP(t *testing.T) {
 		t.Fatalf("settings = %+v", p)
 	}
 	do(anna, "POST", "/mail/settings", url.Values{"undo_seconds": {"60"}}, 422)
+	// «Диктовка» only where Whisper is
+	if ed := do(anna, "GET", "/mail/compose?box="+box, nil, 200); strings.Contains(ed, "data-dictate") {
+		t.Fatal("«Диктовка» without Whisper")
+	}
+	srv.Speech = speech.New("http://whisper.invalid")
+	if ed := do(anna, "GET", "/mail/compose?box="+box, nil, 200); !strings.Contains(ed, "data-dictate ") || !strings.Contains(ed, `<option value="de">`) {
+		t.Fatal("no «Диктовка» with its languages")
+	}
+	srv.Speech = nil
 }

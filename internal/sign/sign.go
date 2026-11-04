@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/i18n"
+	"go24/internal/qes"
 )
 
 var (
@@ -27,6 +29,7 @@ var (
 	ErrExpired  = i18n.E("sign.err.code_expired")
 	ErrTries    = i18n.E("sign.err.code_tries")
 	ErrAgain    = i18n.E("sign.err.code_again")
+	ErrQES      = i18n.E("sign.err.qes")
 )
 
 const (
@@ -39,8 +42,8 @@ const (
 )
 
 // Filters of the list of «Подпись»: all, waiting for my signature, mine to sign («Мои документы»), being signed,
-// signed, refused or cancelled; hr — the sendings of HR documents.
-var Filters = []string{"", "me", "mine", "signing", "done", "closed", "templates", "hr"}
+// signed, refused or cancelled; hr — the sendings of HR documents; safe — «Сейф», the signed HR documents (Safe).
+var Filters = []string{"", "me", "mine", "signing", "done", "closed", "templates", "hr", "safe"}
 
 type Store struct{ db *pgxpool.Pool }
 
@@ -50,10 +53,13 @@ func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 type Doc struct {
 	ID, Title, Entity, EntityID, CRMDocID string
 	FileID, Hash, PDFFileID, ResultFile   string
-	BatchID                               string // the sending of an HR document it is of
-	ProjectID                             string // the collab it was sent from
-	RemindDays                            int    // the signer is reminded every so many days (0 — never)
-	Status                                string // signing | done | refused | cancelled
+	ResultHash                            string     // SHA-256 of the signed document
+	VerifyCode                            string     // «Код проверки» of the signing sheet: the document is checked by it
+	BatchID                               string     // the sending of an HR document it is of
+	ProjectID                             string     // the collab it was sent from
+	RemindDays                            int        // the signer is reminded every so many days (0 — never)
+	Deadline                              *time.Time // «Подписать до»: the day, at UTC midnight (nil — none)
+	Status                                string     // signing | done | refused | cancelled | expired
 	AuthorID, Author                      string
 	CreatedAt                             time.Time
 	DoneAt                                *time.Time
@@ -64,11 +70,16 @@ type Doc struct {
 // Observer is an employee who sees the document without signing it.
 type Observer struct{ UserID, Name string }
 
-// Party is a signer: an employee (UserID) or the client (Email, Token).
+// Party is a signer: an employee (UserID) or the client (Email and/or Phone, Token).
 type Party struct {
 	ID, UserID, Name, Email, Token string
-	Side                           string // "" | employee (the employee an HR document is for)
-	Role                           string // "" — signs | reviewer — approves in turn, with no signature (an employee)
+	Phone                          string      // the client's: the link and the code by SMS
+	Chat                           string      // the client's dialogue of the open lines: the link and the code in it
+	CodeVia                        string      // how the client's last code went: mail | sms | chat
+	Side                           string      // "" | employee (the employee an HR document is for)
+	Role                           string      // "" — signs | reviewer — approves in turn, with no signature (an employee)
+	Method                         string      // "" — a simple signature (go24's login, a code) | qes — a qualified one (КЭП)
+	QES                            *qes.Signed // signed with КЭП: what the certificate says
 	Ord                            int
 	Status                         string // wait | ready | signed | refused
 	CodeSent                       bool
@@ -83,6 +94,9 @@ const SideMax = 10
 
 // Employee: the signer signs in go24, not by a link.
 func (p Party) Employee() bool { return p.UserID != "" }
+
+// Qualified: the signer signs with КЭП, their certificate, instead of a code.
+func (p Party) Qualified() bool { return p.Method == "qes" }
 
 // Reviewer: the employee approves the document in their turn instead of signing it.
 func (p Party) Reviewer() bool { return p.Role == "reviewer" }
@@ -147,7 +161,7 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 		return "", ErrParties
 	}
 	for _, p := range parties {
-		if strings.TrimSpace(p.Name) == "" || (p.UserID == "" && !strings.Contains(p.Email, "@")) || (p.Reviewer() && p.UserID == "") {
+		if strings.TrimSpace(p.Name) == "" || (p.UserID == "" && !strings.Contains(p.Email, "@") && p.Phone == "" && p.Chat == "") || (p.Reviewer() && p.UserID == "") {
 			return "", ErrParties
 		}
 	}
@@ -157,9 +171,9 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 	}
 	defer tx.Rollback(ctx)
 	var id string
-	if err := tx.QueryRow(ctx, `INSERT INTO sign_docs (title, entity, entity_id, crm_doc_id, file_id, hash, created_by, batch_id, remind_days, project_id)
-		VALUES ($1, nullif($2, ''), nullif($3, '')::uuid, nullif($4, '')::uuid, $5, $6, $7, nullif($8, '')::uuid, $9, nullif($10, '')::uuid) RETURNING id`,
-		d.Title, d.Entity, d.EntityID, d.CRMDocID, d.FileID, d.Hash, d.AuthorID, d.BatchID, RemindOf(d.RemindDays), d.ProjectID).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO sign_docs (title, entity, entity_id, crm_doc_id, file_id, hash, created_by, batch_id, remind_days, project_id, deadline)
+		VALUES ($1, nullif($2, ''), nullif($3, '')::uuid, nullif($4, '')::uuid, $5, $6, $7, nullif($8, '')::uuid, $9, nullif($10, '')::uuid, $11) RETURNING id`,
+		d.Title, d.Entity, d.EntityID, d.CRMDocID, d.FileID, d.Hash, d.AuthorID, d.BatchID, RemindOf(d.RemindDays), d.ProjectID, d.Deadline).Scan(&id); err != nil {
 		return "", err
 	}
 	for i, p := range parties {
@@ -170,9 +184,12 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 		if p.UserID == "" {
 			tok = token()
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status, side, role, ready_at)
-			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7, $8, $9, CASE WHEN $7 = 'ready' THEN now() END)`,
-			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status, p.Side, p.Role); err != nil {
+		if p.Reviewer() {
+			p.Method = "" // approves, with no signature
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO sign_parties (doc_id, ord, user_id, name, email, token, status, side, role, ready_at, phone, method, chat)
+			VALUES ($1, $2, nullif($3, '')::uuid, $4, $5, nullif($6, ''), $7, $8, $9, CASE WHEN $7 = 'ready' THEN now() END, $10, $11, $12)`,
+			id, i+1, p.UserID, strings.TrimSpace(p.Name), strings.TrimSpace(p.Email), tok, status, p.Side, p.Role, p.Phone, p.Method, p.Chat); err != nil {
 			return "", err
 		}
 	}
@@ -190,13 +207,15 @@ func (s *Store) Create(ctx context.Context, d Doc, parties []Party) (string, err
 
 const docCols = `d.id, d.title, coalesce(d.entity, ''), coalesce(d.entity_id::text, ''), coalesce(d.crm_doc_id::text, ''),
 	d.file_id::text, d.hash, coalesce(d.pdf_file_id::text, ''), coalesce(d.result_file_id::text, ''), d.status,
-	d.created_by::text, u.name, d.created_at, d.done_at, coalesce(d.batch_id::text, ''), d.remind_days, coalesce(d.project_id::text, '')
+	d.created_by::text, u.name, d.created_at, d.done_at, coalesce(d.batch_id::text, ''), d.remind_days, coalesce(d.project_id::text, ''),
+	d.result_hash, d.verify_code, d.deadline
 	FROM sign_docs d JOIN users u ON u.id = d.created_by`
 
 func scanDoc(r pgx.CollectableRow) (Doc, error) {
 	var d Doc
 	return d, r.Scan(&d.ID, &d.Title, &d.Entity, &d.EntityID, &d.CRMDocID, &d.FileID, &d.Hash, &d.PDFFileID, &d.ResultFile,
-		&d.Status, &d.AuthorID, &d.Author, &d.CreatedAt, &d.DoneAt, &d.BatchID, &d.RemindDays, &d.ProjectID)
+		&d.Status, &d.AuthorID, &d.Author, &d.CreatedAt, &d.DoneAt, &d.BatchID, &d.RemindDays, &d.ProjectID,
+		&d.ResultHash, &d.VerifyCode, &d.Deadline)
 }
 
 // parties puts the signers and the observers into the documents.
@@ -210,7 +229,8 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 		ids[i], at[d.ID] = d.ID, i
 	}
 	rows, err := s.db.Query(ctx, `SELECT doc_id::text, id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), side, role, ord,
-			status, code_until IS NOT NULL, signature IS NOT NULL, reminders, signed_at, reminded_at, ip, user_agent, reason
+			status, code_until IS NOT NULL, signature IS NOT NULL, reminders, signed_at, reminded_at, ip, user_agent, reason, phone, code_via,
+			method, qes, chat
 		FROM sign_parties WHERE doc_id::text = ANY($1) ORDER BY doc_id, ord`, ids)
 	if err != nil {
 		return err
@@ -220,7 +240,7 @@ func (s *Store) parties(ctx context.Context, docs []Doc) error {
 		var doc string
 		var p Party
 		if err := rows.Scan(&doc, &p.ID, &p.UserID, &p.Name, &p.Email, &p.Token, &p.Side, &p.Role, &p.Ord, &p.Status, &p.CodeSent, &p.HasSignature, &p.Reminders, &p.SignedAt,
-			&p.RemindedAt, &p.IP, &p.UserAgent, &p.Reason); err != nil {
+			&p.RemindedAt, &p.IP, &p.UserAgent, &p.Reason, &p.Phone, &p.CodeVia, &p.Method, &p.QES, &p.Chat); err != nil {
 			return err
 		}
 		docs[at[doc]].Parties = append(docs[at[doc]].Parties, p)
@@ -286,21 +306,63 @@ func (s *Store) ByToken(ctx context.Context, tok string) (Doc, *Party, error) {
 
 // List is the user's documents (sent, to sign or observed) by the filter, the newest first; admin — everyone's.
 func (s *Store) List(ctx context.Context, userID, filter string, admin bool) ([]Doc, error) {
+	return s.Find(ctx, userID, filter, admin, ListFilter{})
+}
+
+// ListFilter narrows the list of «Подпись», as the filter of the list: Q — in the title or of a signer (name, e-mail,
+// phone), Author — sent by the employee, created at From or later and before To (zero — any). Team are the people
+// whose documents the viewer sees besides their own (the right «docs» at the level «dept»; not a filter of the list).
+type ListFilter struct {
+	Q, Author string
+	From, To  time.Time
+	Team      []string
+}
+
+// Empty is whether the filter picks everything.
+func (f ListFilter) Empty() bool {
+	return strings.TrimSpace(f.Q) == "" && f.Author == "" && f.From.IsZero() && f.To.IsZero()
+}
+
+// Find is List narrowed by lf.
+func (s *Store) Find(ctx context.Context, userID, filter string, admin bool, lf ListFilter) ([]Doc, error) {
 	where := `(d.created_by = $1 OR EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1)
-		OR EXISTS (SELECT 1 FROM sign_observers o WHERE o.doc_id = d.id AND o.user_id = $1) OR $2)`
+		OR EXISTS (SELECT 1 FROM sign_observers o WHERE o.doc_id = d.id AND o.user_id = $1) OR $2
+		OR d.created_by::text = ANY($3))`
 	switch filter {
 	case "me":
-		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1 AND p.status = 'ready') AND d.status = 'signing' AND $2::bool IS NOT NULL`
+		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1 AND p.status = 'ready') AND d.status = 'signing' AND $2::bool IS NOT NULL AND $3::text[] IS NOT NULL`
 	case "mine":
-		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1) AND $2::bool IS NOT NULL`
+		where = `EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id AND p.user_id = $1) AND $2::bool IS NOT NULL AND $3::text[] IS NOT NULL`
 	case "signing", "done":
 		where += ` AND d.status = '` + filter + `'`
 	case "closed":
-		where += ` AND d.status IN ('refused', 'cancelled')`
-	case "hr", "templates":
-		return nil, nil // the sendings, Batches; the templates, Templates
+		where += ` AND d.status IN ('refused', 'cancelled', 'expired')`
+	case "hr", "templates", "safe":
+		return nil, nil // the sendings, Batches; the templates, Templates; «Сейф», Safe
 	}
-	rows, _ := s.db.Query(ctx, `SELECT `+docCols+` WHERE `+where+` ORDER BY d.created_at DESC LIMIT 500`, userID, admin)
+	if lf.Team == nil {
+		lf.Team = []string{}
+	}
+	args := []any{userID, admin, lf.Team}
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if q := strings.TrimSpace(lf.Q); q != "" {
+		like := `'%' || ` + arg(likeEscape(q)) + ` || '%'`
+		where += ` AND (d.title ILIKE ` + like + ` OR EXISTS (SELECT 1 FROM sign_parties p WHERE p.doc_id = d.id
+			AND (p.name ILIKE ` + like + ` OR p.email ILIKE ` + like + ` OR p.phone ILIKE ` + like + `)))`
+	}
+	if lf.Author != "" {
+		where += ` AND d.created_by::text = ` + arg(lf.Author)
+	}
+	if !lf.From.IsZero() {
+		where += ` AND d.created_at >= ` + arg(lf.From)
+	}
+	if !lf.To.IsZero() {
+		where += ` AND d.created_at < ` + arg(lf.To)
+	}
+	rows, _ := s.db.Query(ctx, `SELECT `+docCols+` WHERE `+where+` ORDER BY d.created_at DESC LIMIT 500`, args...)
 	docs, err := pgx.CollectRows(rows, scanDoc)
 	if err != nil {
 		return nil, err
@@ -333,9 +395,14 @@ func (s *Store) OfCard(ctx context.Context, entity, id string) (map[string]Doc, 
 
 func codeHash(partyID, code string) string { return Hash([]byte(partyID + ":" + code)) }
 
-// SetCode keeps the code sent to the client for CodeTTL; a new code ends the old one, not sooner than CodeAgain
-// after it.
+// SetCode keeps the code sent to the client by mail for CodeTTL; a new code ends the old one, not sooner than
+// CodeAgain after it.
 func (s *Store) SetCode(ctx context.Context, partyID, code string) error {
+	return s.SetCodeVia(ctx, partyID, code, "mail")
+}
+
+// SetCodeVia is SetCode with the way the code goes: mail | sms | chat.
+func (s *Store) SetCodeVia(ctx context.Context, partyID, code, via string) error {
 	var early bool
 	err := s.db.QueryRow(ctx, `SELECT coalesce(code_until > now() + $2::interval, false) FROM sign_parties
 		WHERE id::text = $1 AND status = 'ready'`, partyID, (CodeTTL - CodeAgain).String()).Scan(&early)
@@ -347,8 +414,8 @@ func (s *Store) SetCode(ctx context.Context, partyID, code string) error {
 	case early:
 		return ErrAgain
 	}
-	_, err = s.db.Exec(ctx, `UPDATE sign_parties SET code_hash = $2, code_until = now() + $3::interval, code_tries = 0
-		WHERE id::text = $1`, partyID, codeHash(partyID, code), CodeTTL.String())
+	_, err = s.db.Exec(ctx, `UPDATE sign_parties SET code_hash = $2, code_until = now() + $3::interval, code_tries = 0, code_via = $4
+		WHERE id::text = $1`, partyID, codeHash(partyID, code), CodeTTL.String(), via)
 	return err
 }
 
@@ -367,19 +434,24 @@ func (s *Store) Sign(ctx context.Context, docID, partyID, code, ip, ua string) (
 	}
 	defer tx.Rollback(ctx)
 	var ord, tries int
-	var employee, live bool
-	var hash, role string
-	err = tx.QueryRow(ctx, `SELECT p.ord, p.user_id IS NOT NULL, p.code_hash, coalesce(p.code_until > now(), false), p.code_tries, p.role
+	var employee, live, signedQES bool
+	var hash, role, method string
+	err = tx.QueryRow(ctx, `SELECT p.ord, p.user_id IS NOT NULL, p.code_hash, coalesce(p.code_until > now(), false), p.code_tries, p.role,
+			p.method, p.qes_sig IS NOT NULL
 		FROM sign_parties p JOIN sign_docs d ON d.id = p.doc_id
 		WHERE p.id::text = $1 AND d.id::text = $2 AND p.status = 'ready' AND d.status = 'signing' FOR UPDATE OF p, d`,
-		partyID, docID).Scan(&ord, &employee, &hash, &live, &tries, &role)
+		partyID, docID).Scan(&ord, &employee, &hash, &live, &tries, &role, &method, &signedQES)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrTurn
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	if !employee {
+	if method == "qes" { // КЭП, checked and kept by SetQES, is the signature: no code
+		if !signedQES {
+			return nil, false, ErrQES
+		}
+	} else if !employee {
 		switch {
 		case hash == "" || tries >= CodeTries:
 			return nil, false, ErrTries
@@ -411,8 +483,8 @@ func (s *Store) Sign(ctx context.Context, docID, partyID, code, ip, ua string) (
 	}
 	var n Party
 	err = tx.QueryRow(ctx, `UPDATE sign_parties SET status = 'ready', ready_at = now() WHERE doc_id::text = $1 AND ord = $2
-		RETURNING id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), ord, status`, docID, ord+1).
-		Scan(&n.ID, &n.UserID, &n.Name, &n.Email, &n.Token, &n.Ord, &n.Status)
+		RETURNING id, coalesce(user_id::text, ''), name, email, coalesce(token, ''), ord, status, phone, chat`, docID, ord+1).
+		Scan(&n.ID, &n.UserID, &n.Name, &n.Email, &n.Token, &n.Ord, &n.Status, &n.Phone, &n.Chat)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if _, err := tx.Exec(ctx, `UPDATE sign_docs SET status = 'done', done_at = now() WHERE id::text = $1`, docID); err != nil {
@@ -474,8 +546,8 @@ func (s *Store) SetPDF(ctx context.Context, id, fileID string) error {
 	return err
 }
 
-func (s *Store) SetResult(ctx context.Context, id, fileID string) error {
-	_, err := s.db.Exec(ctx, `UPDATE sign_docs SET result_file_id = $2 WHERE id::text = $1`, id, fileID)
+func (s *Store) SetResult(ctx context.Context, id, fileID, hash string) error {
+	_, err := s.db.Exec(ctx, `UPDATE sign_docs SET result_file_id = $2, result_hash = $3 WHERE id::text = $1`, id, fileID, hash)
 	return err
 }
 
@@ -514,7 +586,7 @@ const batchCols = `b.id, b.title, coalesce(b.template_id::text, ''), coalesce(b.
 	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id),
 	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'done'),
 	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'refused'),
-	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'cancelled'),
+	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status IN ('cancelled', 'expired')),
 	(SELECT count(*) FROM sign_docs d WHERE d.batch_id = b.id AND d.status = 'signing'),
 	(SELECT count(*) FROM sign_docs d JOIN sign_parties p ON p.doc_id = d.id AND p.status = 'ready' AND p.user_id = b.signer_id
 		WHERE d.batch_id = b.id AND d.status = 'signing')

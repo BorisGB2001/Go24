@@ -19,8 +19,8 @@ import (
 // «Таблица рабочего времени» and a working day with its changes: managers see their people's month,
 // an employee changes their own day with a reason (a manager approves), managers change their people's days at once.
 
-// sheetPeople are the people whose days the user sees: an administrator — everyone, a manager — themself and the
-// people below them; dept narrows to a department with its sub-departments.
+// sheetPeople are the people whose days the user sees: an administrator — everyone, others — themself and the people
+// «Права доступа» of working time let them see; dept narrows to a department with its sub-departments.
 func (s *Server) sheetPeople(ctx context.Context, sess auth.Session, dept string) ([]company.Person, error) {
 	var people []company.Person
 	if sess.Admin || dept != "" {
@@ -35,7 +35,7 @@ func (s *Server) sheetPeople(ctx context.Context, sess auth.Session, dept string
 			return people, nil
 		}
 	}
-	under, err := s.Company.Under(ctx, sess.UserID)
+	under, err := s.Company.WorktimePeople(ctx, sess.UserID, false, "view")
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,8 @@ func (s *Server) worksheetCSV(w http.ResponseWriter, r *http.Request, rows []com
 	cw.Flush()
 }
 
-// dayParams: the person and the day of /worktime/d/{user}/{day}; the user may see it — their own, or as a manager.
+// dayParams: the person and the day of /worktime/d/{user}/{day}; the user may see it — their own, or by the rights of
+// working time; manager — they may change it.
 func (s *Server) dayParams(r *http.Request, sess auth.Session) (string, time.Time, bool, error) {
 	userID := r.PathValue("user")
 	day, err := time.ParseInLocation(time.DateOnly, r.PathValue("day"), time.Local)
@@ -177,7 +178,13 @@ func (s *Server) dayParams(r *http.Request, sess auth.Session) (string, time.Tim
 	if err != nil {
 		return "", day, false, err
 	}
-	if !manager && userID != sess.UserID {
+	sees := manager
+	if !sees && userID != sess.UserID {
+		if sees, err = s.Company.Sees(r.Context(), sess.UserID, userID, sess.Admin); err != nil {
+			return "", day, false, err
+		}
+	}
+	if !sees && userID != sess.UserID {
 		return "", day, false, i18n.E("err.forbidden")
 	}
 	return userID, day, manager, nil
@@ -230,6 +237,11 @@ func (s *Server) workdayPage(w http.ResponseWriter, r *http.Request, sess auth.S
 			end = d.Ended.Local().Format("15:04")
 		}
 	}
+	idles, err := s.Company.Idles(r.Context(), []string{userID}, day, day.AddDate(0, 0, 1))
+	if err != nil {
+		s.taskErr(w, r, err, "/worktime")
+		return
+	}
 	var pending *company.WorkdayChange
 	for i := range changes {
 		if changes[i].Status == "pending" {
@@ -239,8 +251,9 @@ func (s *Server) workdayPage(w http.ResponseWriter, r *http.Request, sess auth.S
 	s.render(w, r, "workday", page{TitleKey: "workday.day_title", Nav: "timeman", Data: map[string]any{
 		"Person": prof, "Day": day, "D": d, "Tasks": dayTasks, "Flags": flags, "Changes": changes, "Pending": pending, "Manager": manager,
 		"Own": userID == sess.UserID, "Approval": !manager && !sched.FreeEdit, "Now": now,
-		"CanEdit": day.Format(time.DateOnly) <= now.Format(time.DateOnly),
+		"CanEdit": (manager || userID == sess.UserID) && day.Format(time.DateOnly) <= now.Format(time.DateOnly),
 		"Start":   start, "End": end, "Pause": pause, "Path": dayPath(userID, day), "Norm": norm, "Plan": norm.Plan(day),
+		"Idles": idles,
 	}})
 }
 

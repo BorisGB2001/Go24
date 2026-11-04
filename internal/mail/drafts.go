@@ -28,6 +28,10 @@ type Draft struct {
 	From                       string // the address it goes from (the mailbox's own, or one of its aliases)
 	To, CC, BCC, Subject, HTML string
 	Importance                 int
+	Sensitivity                string // «Конфиденциальность»: "", personal, private, confidential
+	NoForward                  bool   // «Не пересылать» (noforward.go)
+	RepliesTo                  string // «Направлять ответы на» (delivery.go)
+	ExpiresAt                  *time.Time
 	Voting, Vote               string // the voting buttons it asks for («A;B»); the choice an answer votes for (voting.go)
 	Receipt, Delivery          bool
 	Sign, Encrypt              bool   // S/MIME (smime.go)
@@ -36,6 +40,8 @@ type Draft struct {
 	Scheduled                  bool // SendAt is the user's time («Отправить позже»), not the undo delay
 	Error                      string
 	UpdatedAt                  time.Time
+	Merge                      bool // «Слияние» (merge.go): a letter of its own to each of «Кому»
+	MergeDone                  int  // how many of them it went to already
 }
 
 // Modes of a draft: a new letter, an answer to the sender, to everyone, a forward, a forward as an attachment, a
@@ -47,18 +53,23 @@ func checkDraft(d *Draft) error {
 	for _, m := range Modes {
 		ok = ok || d.Mode == m
 	}
-	if !ok || d.Importance < -1 || d.Importance > 1 {
+	if !ok || d.Importance < -1 || d.Importance > 1 || !ValidSensitivity(d.Sensitivity) {
 		return i18n.E("err.bad_form")
 	}
 	d.To, d.CC, d.BCC = clip(strings.TrimSpace(d.To), 4000), clip(strings.TrimSpace(d.CC), 4000), clip(strings.TrimSpace(d.BCC), 4000)
 	d.Subject = clip(strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(d.Subject)), 1000)
 	d.HTML = Sanitize(d.HTML)
 	d.Voting, d.Vote = Choices(d.Voting), clip(strings.TrimSpace(d.Vote), maxChoice)
-	return nil
+	var err error
+	d.RepliesTo, err = repliesTo(d.RepliesTo)
+	return err
 }
 
 // Check: can the draft go — someone to send it to, the addresses right?
 func (d Draft) Check() error {
+	if d.Merge {
+		return MergeCheck(d.To, d.CC, d.BCC)
+	}
 	n := 0
 	for _, list := range []string{d.To, d.CC, d.BCC} {
 		a, err := addresses(list)
@@ -106,18 +117,28 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 	text := HTMLText(d.HTML)
 	if d.ID != "" {
 		tag, err := s.db.Exec(ctx, `UPDATE mail_messages x SET mailbox_id = $3, folder_id = $4, from_addr = $5, to_addr = $6, cc_addr = $7,
-			bcc_addr = $8, subject = $9, body = $10, body_html = $11, importance = $12, voting = $13, vote = $14, sent_at = now()
-			FROM mail_drafts d WHERE d.id = x.id AND x.id::text = $1 AND d.user_id::text = $2 AND NOT d.sending`,
-			d.ID, userID, box.ID, folder, from.Address, d.To, d.CC, d.BCC, d.Subject, text, d.HTML, d.Importance, d.Voting, d.Vote)
+			bcc_addr = $8, subject = $9, body = $10, body_html = $11, importance = $12, voting = $13, vote = $14, sensitivity = $15,
+			no_forward = $16, replies_to = $17, expires_at = $18, sent_at = now() FROM mail_drafts d WHERE d.id = x.id AND x.id::text = $1 AND d.user_id::text = $2 AND NOT d.sending`,
+			d.ID, userID, box.ID, folder, from.Address, d.To, d.CC, d.BCC, d.Subject, text, d.HTML, d.Importance, d.Voting, d.Vote, d.Sensitivity, d.NoForward,
+			d.RepliesTo, d.ExpiresAt)
 		if err != nil {
 			return "", err
 		}
 		if tag.RowsAffected() == 0 {
 			return "", ErrNotFound
 		}
-		_, err = s.db.Exec(ctx, `UPDATE mail_drafts SET receipt = $2, delivery = $3, sign = $4, encrypt = $5, updated_at = now() WHERE id::text = $1`,
-			d.ID, d.Receipt, d.Delivery, d.Sign, d.Encrypt)
+		_, err = s.db.Exec(ctx, `UPDATE mail_drafts SET receipt = $2, delivery = $3, sign = $4, encrypt = $5, merge = $6, updated_at = now() WHERE id::text = $1`,
+			d.ID, d.Receipt, d.Delivery, d.Sign, d.Encrypt, d.Merge)
 		return d.ID, err
+	}
+	if d.Mode == "fwd" || d.Mode == "fwdatt" {
+		if m, err := s.message(ctx, userID, d.ReplyTo); err == nil && m.Locked() {
+			return "", ErrNoForward
+		}
+	} else if d.ReplyTo != "" && d.Mode != "resend" { // an answer to a letter «Не пересылать» is one too
+		if m, err := s.message(ctx, userID, d.ReplyTo); err == nil && m.Locked() {
+			d.NoForward = true
+		}
 	}
 	var refs []string
 	if d.Mode != "resend" { // a letter sent again is a new one, not an answer
@@ -133,16 +154,17 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 	defer tx.Rollback(ctx)
 	var id string
 	if err := tx.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, to_addr, cc_addr, bcc_addr, subject, body,
-		body_html, importance, sent_at, seen, message_id, thread, voting, vote) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15)
+		body_html, importance, sent_at, seen, message_id, thread, voting, vote, sensitivity, no_forward, replies_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id::text`, box.ID, folder, time.Now().UnixNano(), from.Address, d.To, d.CC, d.BCC, d.Subject, text, d.HTML, d.Importance,
-		own, threadOf(own, refs), d.Voting, d.Vote).Scan(&id); err != nil {
+		own, threadOf(own, refs), d.Voting, d.Vote, d.Sensitivity, d.NoForward, d.RepliesTo, d.ExpiresAt).Scan(&id); err != nil {
 		return "", err
 	}
 	if refs == nil {
 		refs = []string{}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO mail_drafts (id, user_id, reply_to, mode, refs, receipt, delivery, sign, encrypt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		id, userID, d.ReplyTo, d.Mode, refs, d.Receipt, d.Delivery, d.Sign, d.Encrypt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO mail_drafts (id, user_id, reply_to, mode, refs, receipt, delivery, sign, encrypt, merge)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, id, userID, d.ReplyTo, d.Mode, refs, d.Receipt, d.Delivery, d.Sign, d.Encrypt, d.Merge); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -184,7 +206,8 @@ func (s *Store) SaveDraft(ctx context.Context, userID string, d Draft) (string, 
 }
 
 const draftSQL = `SELECT x.id::text, x.mailbox_id::text, x.from_addr, x.to_addr, x.cc_addr, x.bcc_addr, x.subject, x.body_html, x.importance::int,
-		x.voting, x.vote, d.receipt, d.delivery, d.sign, d.encrypt, d.reply_to, d.mode, d.send_at, d.scheduled, d.error, d.updated_at
+		x.sensitivity, x.no_forward, x.replies_to, x.expires_at, x.voting, x.vote, d.receipt, d.delivery, d.sign, d.encrypt, d.reply_to, d.mode, d.send_at, d.scheduled, d.error, d.updated_at,
+		d.merge, cardinality(d.merge_done)
 	FROM mail_drafts d JOIN mail_messages x ON x.id = d.id`
 
 // Draft is a draft of the user.
@@ -337,8 +360,8 @@ func (s *Store) draftLetter(ctx context.Context, userID, id string) (d Draft, l 
 	if err := s.db.QueryRow(ctx, `SELECT refs FROM mail_drafts WHERE id::text = $1`, id).Scan(&refs); err != nil {
 		return d, l, err
 	}
-	l = Letter{From: d.From, To: d.To, CC: d.CC, BCC: d.BCC, Subject: d.Subject, HTML: d.HTML, Importance: d.Importance, Receipt: d.Receipt,
-		Delivery: d.Delivery, Sign: d.Sign, Encrypt: d.Encrypt, Refs: refs, Voting: d.Voting, Vote: d.Vote}
+	l = Letter{From: d.From, To: d.To, CC: d.CC, BCC: d.BCC, Subject: d.Subject, HTML: d.HTML, Importance: d.Importance, Sensitivity: d.Sensitivity,
+		NoForward: d.NoForward, RepliesTo: d.RepliesTo, ExpiresAt: d.ExpiresAt, Receipt: d.Receipt, Delivery: d.Delivery, Sign: d.Sign, Encrypt: d.Encrypt, Refs: refs, Voting: d.Voting, Vote: d.Vote}
 	if d.Voting != "" { // the choices in words too, for those who see no buttons
 		l.HTML += s.votingText(d.Voting)
 	}
@@ -414,7 +437,16 @@ func (s *Store) sendTaken(ctx context.Context, userID, id string) error {
 		if err != nil {
 			return err
 		}
-		if err := s.SendLetter(ctx, userID, d.MailboxID, l); err != nil {
+		if d.Merge {
+			done, err := s.sendMerge(ctx, userID, d, l)
+			if err != nil {
+				return err
+			}
+			if !done { // out of time: the rest a moment later
+				_, err := s.db.Exec(ctx, `UPDATE mail_drafts SET sending = false, send_at = now() WHERE id::text = $1`, id)
+				return err
+			}
+		} else if err := s.SendLetter(ctx, userID, d.MailboxID, l); err != nil {
 			return err
 		}
 		if d.ReplyTo != "" && d.Mode != "resend" {

@@ -18,13 +18,19 @@
       {{range $d.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>
     <span class="muted" style="flex:1;text-align:right">{{t "vacation.totals" $d.People $d.Days $d.NoPlan}}</span>
   </form>
+  {{if $d.CanSet}}<form method="post" action="/company/vacation-settings" class="row vacset">
+    <label class="row" style="gap:6px">{{t "vacation.default_days"}} <input type="number" name="days" min="0" max="366" value="{{$d.Settings.Days}}" style="width:5em"></label>
+    <button class="ghost small">{{t "common.save"}}</button><span class="muted small">{{t "vacation.default_hint"}}</span></form>{{end}}
   {{if $d.Report}}<table class="tlist vacreport">
-    <thead><tr><th>{{t "absence.who"}}</th><th>{{t "vacation.col.dates"}}</th><th class="num">{{t "vacation.col.days"}}</th></tr></thead>
-    {{range $d.Report}}<tbody><tr class="vacdept"><th colspan="3">{{indent .Depth}}{{icon "folders"}} {{if .ID}}{{.Name}}{{else}}{{t "profile.no_department"}}{{end}}
+    <thead><tr><th>{{t "absence.who"}}</th><th>{{t "vacation.col.dates"}}</th><th class="num">{{t "vacation.col.days"}}</th>
+      <th class="num" title="{{t "vacation.entitled_hint"}}">{{t "vacation.col.entitled"}}</th><th class="num">{{t "vacation.col.left"}}</th></tr></thead>
+    {{range $d.Report}}<tbody><tr class="vacdept"><th colspan="5">{{indent .Depth}}{{icon "folders"}} {{if .ID}}{{.Name}}{{else}}{{t "profile.no_department"}}{{end}}
       <span class="muted small">· {{t "vacation.dept_totals" (len .Lines) .Days .NoPlan}}</span></th></tr>
       {{range .Lines}}<tr{{if not .Vacations}} class="noplan"{{end}}><td><a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a></td>
-        <td>{{range $i, $a := .Vacations}}{{if $i}}, {{end}}<a href="/company/absences?from={{$a.From.Format "2006-01-02"}}">{{day $a.From}}{{if not ($a.From.Equal $a.To)}} — {{day $a.To}}{{end}}</a>{{else}}<span class="pill abs-sick">{{t "vacation.no_plan"}}</span>{{end}}</td>
-        <td class="num">{{if .Days}}{{.Days}}{{else}}<span class="muted">—</span>{{end}}</td></tr>{{end}}
+        <td>{{range $i, $a := .Vacations}}{{if $i}}, {{end}}<a href="/company/absences?from={{$a.From.Format "2006-01-02"}}">{{day $a.From}}{{if not ($a.From.Equal $a.To)}} — {{day $a.To}}{{end}}</a>{{else}}<span class="pill abs-red">{{t "vacation.no_plan"}}</span>{{end}}</td>
+        <td class="num">{{if .Days}}{{.Days}}{{else}}<span class="muted">—</span>{{end}}</td>
+        {{with index $d.Balances .ID}}<td class="num" title="{{t "salary.vac_entitled_title" .Days .Carried}}">{{add .Days .Carried}}</td>
+        <td class="num{{if lt .Left 0}} danger{{end}}">{{.Left}}</td>{{else}}<td></td><td></td>{{end}}</tr>{{end}}
     </tbody>{{end}}
   </table>{{else}}<div class="empty">{{icon "calendar-event"}} {{t "company.empty"}}</div>{{end}}
 </div>

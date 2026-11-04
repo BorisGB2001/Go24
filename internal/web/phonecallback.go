@@ -109,42 +109,48 @@ func (s *Server) callbackPublic(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// callbackSend: the client asks for a call. In the line's working hours go24 calls at once; out of them (or Asterisk
-// not answering) the employees are told to call back. A new number makes a lead «Обратный звонок» (the setting of
-// the calls' leads). A robot (the trap field filled, the form sent too fast) and a number that asked just now are
-// told it went well, and nothing is made.
+// callbackSend: the client asks for a call (the form of the address).
 func (s *Server) callbackSend(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	c, ok := s.publicCallback(w, r)
 	if !ok {
 		return
 	}
-	number := telephony.Dialable(r.FormValue("phone"))
 	name := strings.TrimSpace(r.FormValue("name"))
-	if len([]rune(name)) > 100 {
+	key, status, err := s.callbackRequest(r, c, r.FormValue("phone"), name, r.FormValue("page"), r.FormValue("website"), r.FormValue("t"))
+	switch {
+	case err != nil:
+		s.fail(w, "callback", err)
+	case key != "":
+		s.callbackForm(w, r, status, c, map[string]any{"Err": s.tr(r, key), "Phone": r.FormValue("phone"), "Name": name})
+	default:
+		s.callbackForm(w, r, http.StatusOK, c, map[string]any{"Sent": true})
+	}
+}
+
+// callbackRequest asks for a call by the form c (its address or a line's widget). In the line's working hours go24
+// calls at once; out of them (or Asterisk not answering) the employees are told to call back. A new number makes a lead
+// «Обратный звонок» (the setting of the calls' leads). A robot (the trap field filled, the form sent too fast — stamp,
+// sites.FormStamp) and a number that asked just now are told it went well, and nothing is made. A refusal the client
+// sees is its message key and HTTP status.
+func (s *Server) callbackRequest(r *http.Request, c telephony.Callback, phone, name, page, trap, stamp string) (string, int, error) {
+	ctx := r.Context()
+	number := telephony.Dialable(phone)
+	if name = strings.TrimSpace(name); len([]rune(name)) > 100 {
 		name = string([]rune(name)[:100])
 	}
-	done := func() { s.callbackForm(w, r, http.StatusOK, c, map[string]any{"Sent": true}) }
-	refuse := func(key string, status int) {
-		s.callbackForm(w, r, status, c, map[string]any{"Err": s.tr(r, key), "Phone": r.FormValue("phone"), "Name": name})
-	}
 	now := time.Now()
-	if !sites.Human(r.FormValue("website"), r.FormValue("t"), now) {
-		done()
-		return
+	if !sites.Human(trap, stamp, now) {
+		return "", 0, nil
 	}
 	if !callbackNumber.MatchString(number) {
-		refuse("err.callback_phone", http.StatusUnprocessableEntity)
-		return
+		return "err.callback_phone", http.StatusUnprocessableEntity, nil
 	}
 	if !callbackHits.Allow(clientIP(r), now) {
-		refuse("err.callback_often", http.StatusTooManyRequests)
-		return
+		return "err.callback_often", http.StatusTooManyRequests, nil
 	}
 	trunks, err := s.Telephony.Trunks(ctx)
 	if err != nil {
-		s.fail(w, "callback trunks", err)
-		return
+		return "", 0, err
 	}
 	var line telephony.Trunk
 	for _, t := range trunks {
@@ -154,25 +160,21 @@ func (s *Server) callbackSend(w http.ResponseWriter, r *http.Request) {
 	}
 	on, err := s.Telephony.Enabled(ctx)
 	if err != nil {
-		s.fail(w, "callback", err)
-		return
+		return "", 0, err
 	}
 	status := telephony.CallbackLater
 	if on && s.Telephony.Ready() && line.Working(now) {
 		status = telephony.CallbackCalling
 	}
-	page := r.FormValue("page")
 	if len(page) > 500 {
 		page = page[:500]
 	}
 	id, err := s.Telephony.AddCallbackRequest(ctx, c.ID, telephony.CallbackRequest{Number: number, Name: name, Page: page, Status: status})
 	if errors.Is(err, telephony.ErrCallbackRecent) {
-		done()
-		return
+		return "", 0, nil
 	}
 	if err != nil {
-		s.fail(w, "callback request", err)
-		return
+		return "", 0, err
 	}
 	if err := s.callbackLead(ctx, c, number, name); err != nil {
 		s.Log.Error("callback lead", "err", err, "form", c.ID)
@@ -193,7 +195,7 @@ func (s *Server) callbackSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.Log.Info("telephony callback", "form", c.ID, "status", status)
-	done()
+	return "", 0, nil
 }
 
 // callbackLead makes a lead «Обратный звонок» of a number no card has (when the calls' leads are on); its responsible

@@ -37,7 +37,8 @@ import (
 const maxTemplateSize = 20 << 20
 
 func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	perms := s.docPerms(r.Context(), sess)
+	if !perms.Can("templates") && !perms.Can("settings") {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -71,6 +72,15 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 		s.taskErr(w, r, err, "/crm")
 		return
 	}
+	types, err := s.CRM.Types(r.Context()) // a template may be of a smart process's cards
+	if err != nil {
+		s.taskErr(w, r, err, "/crm")
+		return
+	}
+	typeNames := map[string]string{}
+	for _, t := range types {
+		typeNames[t.ID] = t.Name
+	}
 	access := map[string][]tasks.User{} // the chips of the pickers
 	for tpl, list := range refs {
 		for _, ref := range list {
@@ -80,13 +90,13 @@ func (s *Server) docTemplatesPage(w http.ResponseWriter, r *http.Request, sess a
 	s.render(w, r, "documents", page{TitleKey: "docs.templates", Nav: "crm_deals", Data: map[string]any{"Templates": list,
 		"Fields": docFields, "PartyFields": partyFields, "ProductFields": productFields, "MyCompany": my, "Companies": companies, "Office": s.Office != nil,
 		"Access": access, "Builtins": docBuiltins, "Images": images, "ImageKinds": crm.DocImageKinds,
-		"Numerators": nums, "Resets": crm.NumeratorResets, "Now": time.Now()}})
+		"Numerators": nums, "Resets": crm.NumeratorResets, "Now": time.Now(), "Types": types, "TypeNames": typeNames,
+		"Perms": perms}})
 }
 
 // docMyCompany chooses «Моя компания» of the templates (administrators).
 func (s *Server) docMyCompany(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "settings") {
 		return
 	}
 	if err := s.CRM.SetMyCompany(r.Context(), sess.UserID, r.FormValue("company")); err != nil {
@@ -110,8 +120,7 @@ func docImageWidth(kind string) float64 {
 // docImage uploads a picture of «Моя компания» — the stamp or a facsimile signature, PNG or JPEG — or removes it
 // (remove=1); administrators.
 func (s *Server) docImage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "settings") {
 		return
 	}
 	back := "/crm/documents"
@@ -242,8 +251,7 @@ func (s *Server) storeTemplateFile(ctx context.Context, userID, name string, dat
 // docTemplateEdit opens a template in ONLYOFFICE (administrators): what is saved there becomes the template, as
 // «Редактировать» of a template.
 func (s *Server) docTemplateEdit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	if s.Office == nil {
@@ -326,15 +334,17 @@ func (s *Server) saveTemplate(ctx context.Context, id, userID, link string) erro
 		return err
 	}
 	fileID, err := s.storeTemplateFile(ctx, userID, t.FileName, data)
+	if err == nil {
+		err = s.CRM.SetDocTemplateFile(ctx, id, fileID)
+	}
 	if err != nil {
 		return err
 	}
-	return s.CRM.SetDocTemplateFile(ctx, id, fileID)
+	return s.CRM.DocTemplateChanged(ctx, id, userID)
 }
 
 func (s *Server) docTemplateAdd(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxTemplateSize+1<<16)
@@ -355,12 +365,13 @@ func (s *Server) docTemplateAdd(w http.ResponseWriter, r *http.Request, sess aut
 	http.Redirect(w, r, "/crm/documents", http.StatusSeeOther)
 }
 
-// addTemplate keeps a Word document as a template of the cards of the entity; its id.
+// addTemplate keeps a Word document as a template of the cards of the kind (an entity or a smart process's
+// crm.TypeKind); its id.
 func (s *Server) addTemplate(ctx context.Context, userID, name, entity, filename string, data []byte) (string, error) {
 	if _, err := docgen.Fill(data, nil); err != nil { // a Word document at all?
 		return "", i18n.E("err.doc_not_docx")
 	}
-	if !crm.Entities[entity] && entity != crm.TemplateEmployee && entity != crm.TemplateInvoice {
+	if !crm.Entities[entity] && entity != crm.TemplateEmployee && entity != crm.TemplateInvoice && !strings.HasPrefix(entity, "type:") {
 		return "", i18n.E("err.doc_template")
 	}
 	fileID, err := s.storeTemplateFile(ctx, userID, path.Base(strings.ReplaceAll(filename, "\\", "/")), data)
@@ -385,8 +396,7 @@ var docBuiltins = []string{"invoice", "contract", "act"}
 
 // docTemplateBuiltin adds a ready-made template in the viewer's language (administrators).
 func (s *Server) docTemplateBuiltin(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	name := s.tr(r, "docs.builtin."+r.FormValue("kind"))
@@ -414,8 +424,7 @@ func (s *Server) addBuiltin(r *http.Request, sess auth.Session, kind string) (st
 }
 
 func (s *Server) docTemplateDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	if err := s.CRM.DeleteDocTemplate(r.Context(), r.PathValue("id")); err != nil {
@@ -644,7 +653,7 @@ func (s *Server) cardValues(r *http.Request, kind, id string) (values map[string
 	if !ok {
 		return values, title, known, nil
 	}
-	fields, err := s.Tasks.FieldValuesOf(r.Context(), set, id)
+	fields, err := s.crmFieldValuesOf(r, set, id)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -660,9 +669,10 @@ func (s *Server) cardValues(r *http.Request, kind, id string) (values map[string
 	return values, title, known, nil
 }
 
-// docTemplateAllowed: the template is one the user may make documents by («Кому доступен»; administrators — any).
+// docTemplateAllowed: the template is one the user may make documents by («Кому доступен»; those who change the
+// templates — any).
 func (s *Server) docTemplateAllowed(r *http.Request, sess auth.Session, id string) error {
-	if sess.Admin {
+	if s.docPerms(r.Context(), sess).Can("templates") {
 		return nil
 	}
 	ok, err := s.CRM.MayUseDocTemplate(r.Context(), id, sess.UserID)
@@ -672,15 +682,23 @@ func (s *Server) docTemplateAllowed(r *http.Request, sess auth.Session, id strin
 	return err
 }
 
-// docTemplateFile is the DOCX of a template of the card's kind.
-func (s *Server) docTemplateFile(r *http.Request, kind, id string) (crm.DocTemplate, []byte, error) {
-	return s.docTemplateOf(r, docEntity(kind), id)
+// docTemplateFile is the DOCX of a template of the card's kind (a smart process's card — of its type).
+func (s *Server) docTemplateFile(r *http.Request, kind, cardID, id string) (crm.DocTemplate, []byte, error) {
+	entity := docEntity(kind)
+	if entity == "deal" {
+		d, err := s.CRM.Deal(r.Context(), cardID)
+		if err != nil {
+			return crm.DocTemplate{}, nil, err
+		}
+		entity = crm.DocKind(entity, d.TypeID)
+	}
+	return s.docTemplateOf(r, entity, id)
 }
 
-// docTemplateOf is the DOCX of a template of the entity (employee — of an HR document).
+// docTemplateOf is the DOCX of a template of the kind (employee — of an HR document; crm.TypeKind — of a smart process).
 func (s *Server) docTemplateOf(r *http.Request, entity, id string) (crm.DocTemplate, []byte, error) {
 	t, err := s.CRM.DocTemplate(r.Context(), id)
-	if err == nil && (entity == "" || t.Entity != entity) {
+	if err == nil && (entity == "" || t.Kind() != entity) {
 		err = crm.ErrNotFound
 	}
 	if err != nil {
@@ -711,16 +729,33 @@ func docFormValues(r *http.Request) map[string]string {
 	return values
 }
 
+// docFormStamps is «С печатями и подписями» of the form: whether it is ticked; nil — the form has none (as the template).
+func docFormStamps(r *http.Request) *bool {
+	if r.FormValue("stamps_set") == "" {
+		return nil
+	}
+	on := r.FormValue("stamps") != ""
+	return &on
+}
+
 const docxType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-// storeDocument fills the template and keeps the document as a file of go24.
-func (s *Server) storeDocument(r *http.Request, sess auth.Session, tpl []byte, values map[string]string, lists docgen.Rows, name string) (string, error) {
+// storeDocument fills the template and keeps the document as a file of go24; with no stamps the stamp and the
+// facsimile signatures of «Моя компания» leave nothing («С печатями и подписями» off); the rows of the empty fields
+// of hide go («Скрывать строку, если пусто»).
+func (s *Server) storeDocument(r *http.Request, sess auth.Session, tpl []byte, values map[string]string, lists docgen.Rows, name string, stamps bool, hide map[string]bool) (string, error) {
 	images, err := s.docImages(r)
 	if err != nil {
 		return "", err
 	}
+	if !stamps {
+		for k, img := range images {
+			img.Data = nil
+			images[k] = img
+		}
+	}
 	images["PaymentQR"] = s.docPayQR(r, values)
-	doc, err := docgen.Make(tpl, values, lists, images)
+	doc, err := docgen.MakeHiding(tpl, values, lists, images, hide)
 	if err != nil {
 		return "", i18n.E("err.doc_not_docx")
 	}
@@ -737,11 +772,16 @@ func (s *Server) storeDocument(r *http.Request, sess auth.Session, tpl []byte, v
 func (s *Server) crmDocument(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "read", "modify"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
-	doc, err := s.makeDocument(r, sess, kind, id, r.FormValue("template"), docFormValues(r))
+	doc, err := s.makeDocument(r, sess, kind, id, r.FormValue("template"), docFormValues(r), docFormStamps(r))
+	var ie *i18n.Error
+	if errors.As(err, &ie) && ie.Key == "err.doc_fields_required" { // to fill them in «Изменить значения»
+		http.Redirect(w, r, back+"/document?"+url.Values{"template": {r.FormValue("template")}, "msg": {s.tr(r, ie.Key, ie.Args...)}}.Encode(), http.StatusSeeOther)
+		return
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
@@ -750,24 +790,56 @@ func (s *Server) crmDocument(w http.ResponseWriter, r *http.Request, sess auth.S
 }
 
 // makeDocument makes the document of a card the user sees by a template they may use; the values given go over
-// those of the card. The pages and the REST API make documents by it.
-func (s *Server) makeDocument(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string) (crm.Document, error) {
+// those of the card; stamps — «С печатями и подписями» (nil — as the template says). The pages and the REST API make
+// documents by it; an inactive template («Активен» off) makes none, nor one with a required field left empty.
+func (s *Server) makeDocument(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string, stamps *bool) (crm.Document, error) {
 	if err := s.docTemplateAllowed(r, sess, tplID); err != nil {
 		return crm.Document{}, err
 	}
-	return s.makeDocumentBy(r, sess, kind, id, tplID, over)
+	if t, err := s.CRM.DocTemplate(r.Context(), tplID); err != nil {
+		return crm.Document{}, err
+	} else if !t.Active {
+		return crm.Document{}, i18n.E("err.doc_template_inactive")
+	}
+	return s.makeDoc(r, sess, kind, id, tplID, over, stamps, true)
 }
 
-// makeDocumentBy makes the document of the card by the template, whoever may use it: the step «Создание документа» of
-// a business process makes it so.
-func (s *Server) makeDocumentBy(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string) (crm.Document, error) {
-	t, tpl, err := s.docTemplateFile(r, kind, tplID)
+// makeDocumentBy makes the document of the card by the template, whoever may use it and its required fields filled
+// or not: the step «Создание документа» of a business process makes it so.
+func (s *Server) makeDocumentBy(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string, stamps *bool) (crm.Document, error) {
+	return s.makeDoc(r, sess, kind, id, tplID, over, stamps, false)
+}
+
+// makeDoc makes the document; strict — not when a required field of the template is left empty.
+func (s *Server) makeDoc(r *http.Request, sess auth.Session, kind, id, tplID string, over map[string]string, stamps *bool, strict bool) (crm.Document, error) {
+	t, tpl, err := s.docTemplateFile(r, kind, id, tplID)
 	if err != nil {
 		return crm.Document{}, err
+	}
+	fields, err := s.CRM.DocTemplateFields(r.Context(), t.ID)
+	if err != nil {
+		return crm.Document{}, err
+	}
+	withStamps := t.WithStamps
+	if stamps != nil {
+		withStamps = *stamps
 	}
 	values, title, _, err := s.cardValues(r, kind, id)
 	if err != nil {
 		return crm.Document{}, err
+	}
+	crm.FieldDefaults(fields, values)
+	if strict {
+		names, err := docgen.Names(tpl)
+		if err != nil {
+			return crm.Document{}, i18n.E("err.doc_not_docx")
+		}
+		v := maps.Clone(values)
+		v["DocumentDate"] = "-" // given when it is made
+		maps.Copy(v, over)
+		if missing := crm.MissingFields(fields, slices.DeleteFunc(names, func(n string) bool { return n == "DocumentNumber" }), v); len(missing) > 0 {
+			return crm.Document{}, i18n.E("err.doc_fields_required", strings.Join(missing, ", "))
+		}
 	}
 	now := time.Now()
 	number, err := s.CRM.NextDocNumber(r.Context(), t.ID, now)
@@ -781,23 +853,27 @@ func (s *Server) makeDocumentBy(r *http.Request, sess auth.Session, kind, id, tp
 		return crm.Document{}, err
 	}
 	doc := crm.Document{TemplateID: t.ID, TemplateName: t.Name, Entity: docEntity(kind), EntityID: id, Number: number,
-		Values: values, AuthorID: sess.UserID}
-	doc.FileID, err = s.storeDocument(r, sess, tpl, values, lists, t.Name+" № "+number+" — "+title)
+		Values: values, AuthorID: sess.UserID, Stamps: withStamps}
+	doc.FileID, err = s.storeDocument(r, sess, tpl, values, lists, t.Name+" № "+number+" — "+title, withStamps, crm.HiddenFields(fields))
 	if err == nil {
 		doc.ID, err = s.CRM.AddDocument(r.Context(), doc)
 	}
 	return doc, err
 }
 
-// docField is a placeholder of the template with the value it gets.
-type docField struct{ Name, Value string }
+// docField is a placeholder of the template with the value it gets and its setting (title, required, hidden when
+// empty).
+type docField struct {
+	Name, Value string
+	crm.DocField
+}
 
 // crmDocumentForm is «Изменить значения»: the template's fields with the card's values (?template=) or those the
 // document was made with (?doc=), to change before making it.
 func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "read", "modify"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
@@ -817,7 +893,7 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 		s.taskErr(w, r, err, back)
 		return
 	}
-	t, tpl, err := s.docTemplateFile(r, kind, tplID)
+	t, tpl, err := s.docTemplateFile(r, kind, id, tplID)
 	var names []string
 	if err == nil {
 		names, err = docgen.Names(tpl)
@@ -826,6 +902,10 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 	if err == nil {
 		err = err2
 	}
+	var settings map[string]crm.DocField
+	if err == nil {
+		settings, err = s.CRM.DocTemplateFields(r.Context(), t.ID)
+	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
@@ -833,29 +913,35 @@ func (s *Server) crmDocumentForm(w http.ResponseWriter, r *http.Request, sess au
 	if doc.ID != "" {
 		values = doc.Values
 	} else {
+		crm.FieldDefaults(settings, values)
 		values["DocumentDate"] = time.Now().Format(s.tr(r, "format.date"))
 	}
-	fields := make([]docField, 0, len(names))
+	fields, stamps := make([]docField, 0, len(names)), false
 	for _, n := range names {
+		stamps = stamps || docImageField(n)
 		if n == "DocumentNumber" && doc.ID == "" || strings.HasPrefix(n, "Product.") || docImageField(n) {
 			continue // given when it is made; the products are the card's; the pictures are «Моя компания»'s
 		}
-		fields = append(fields, docField{n, values[n]})
+		fields = append(fields, docField{n, values[n], settings[n]})
 	}
 	s.render(w, r, "crmdocvalues", page{Title: t.Name, Nav: "crm_" + kind, Data: map[string]any{"Kind": kind, "ID": id,
-		"CardTitle": title, "Template": t, "Doc": doc, "Fields": fields, "Back": back}})
+		"CardTitle": title, "Template": t, "Doc": doc, "Fields": fields, "Back": back,
+		"Stamps": stamps, "StampsOn": doc.ID == "" && t.WithStamps || doc.ID != "" && doc.Stamps}})
 }
 
 // crmDocumentRemake makes the document again with the values sent; its number stays.
 func (s *Server) crmDocumentRemake(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "write", "modify"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
 	doc, err := s.CRM.Document(r.Context(), docEntity(kind), id, r.PathValue("doc"))
 	if err == nil {
+		if on := docFormStamps(r); on != nil {
+			doc.Stamps = *on
+		}
 		err = s.remakeDocument(r, sess, doc, docFormValues(r))
 	}
 	if err != nil {
@@ -879,13 +965,17 @@ func crmKind(entity string) string {
 }
 
 // remakeDocument makes the document again with the values given over those it was made with; its number stays,
-// the products are the card's as they are now.
+// the products are the card's as they are now, the stamps — as doc.Stamps.
 func (s *Server) remakeDocument(r *http.Request, sess auth.Session, doc crm.Document, over map[string]string) error {
 	if doc.TemplateID == "" {
 		return crm.ErrNotFound
 	}
 	kind := crmKind(doc.Entity)
-	_, tpl, err := s.docTemplateFile(r, kind, doc.TemplateID)
+	_, tpl, err := s.docTemplateFile(r, kind, doc.EntityID, doc.TemplateID)
+	if err != nil {
+		return err
+	}
+	fields, err := s.CRM.DocTemplateFields(r.Context(), doc.TemplateID)
 	if err != nil {
 		return err
 	}
@@ -899,9 +989,9 @@ func (s *Server) remakeDocument(r *http.Request, sess auth.Session, doc crm.Docu
 	if err != nil {
 		return err
 	}
-	fileID, err := s.storeDocument(r, sess, tpl, values, lists, strings.TrimSuffix(doc.FileName, ".docx"))
+	fileID, err := s.storeDocument(r, sess, tpl, values, lists, strings.TrimSuffix(doc.FileName, ".docx"), doc.Stamps, crm.HiddenFields(fields))
 	if err == nil {
-		err = s.CRM.RemakeDocument(r.Context(), doc.ID, fileID, values)
+		err = s.CRM.RemakeDocument(r.Context(), doc.ID, fileID, values, doc.Stamps)
 	}
 	return err
 }
@@ -910,7 +1000,7 @@ func (s *Server) remakeDocument(r *http.Request, sess auth.Session, doc crm.Docu
 func (s *Server) crmDocumentFile(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "read", "view"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
@@ -939,7 +1029,7 @@ func (s *Server) crmDocumentFile(w http.ResponseWriter, r *http.Request, sess au
 func (s *Server) crmDocumentDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "write", "modify"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
@@ -956,8 +1046,7 @@ func (s *Server) crmDocumentDelete(w http.ResponseWriter, r *http.Request, sess 
 
 // docTemplateNumerator chooses the numerator of a template (numerator_id) or changes the format of its numbers.
 func (s *Server) docTemplateNumerator(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	var err error
@@ -965,6 +1054,9 @@ func (s *Server) docTemplateNumerator(w http.ResponseWriter, r *http.Request, se
 		err = s.CRM.SetDocTemplateNumerator(r.Context(), r.PathValue("id"), num)
 	} else {
 		err = s.CRM.SetDocNumerator(r.Context(), r.PathValue("id"), r.FormValue("numerator"))
+	}
+	if err == nil {
+		err = s.CRM.DocTemplateChanged(r.Context(), r.PathValue("id"), sess.UserID)
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/crm/documents")
@@ -984,8 +1076,7 @@ func numeratorForm(r *http.Request) crm.Numerator {
 
 // docNumeratorSave adds a numerator (no id) or saves its settings («Нумераторы».
 func (s *Server) docNumeratorSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "settings") {
 		return
 	}
 	if _, err := s.CRM.SaveNumerator(r.Context(), numeratorForm(r)); err != nil {
@@ -997,8 +1088,7 @@ func (s *Server) docNumeratorSave(w http.ResponseWriter, r *http.Request, sess a
 
 // docNumeratorDelete deletes a numerator no template numbers by.
 func (s *Server) docNumeratorDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "settings") {
 		return
 	}
 	if err := s.CRM.DeleteNumerator(r.Context(), r.FormValue("id")); err != nil {
@@ -1010,13 +1100,39 @@ func (s *Server) docNumeratorDelete(w http.ResponseWriter, r *http.Request, sess
 
 // docTemplateAccess is «Кому доступен» of a template: people and departments; nobody chosen — everybody.
 func (s *Server) docTemplateAccess(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
-		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+	if !s.docRightOr403(w, r, sess, "templates") {
 		return
 	}
 	err := r.ParseForm()
 	if err == nil {
 		err = s.CRM.SetDocTemplateAccess(r.Context(), r.PathValue("id"), r.Form["to"])
+	}
+	if err == nil {
+		err = s.CRM.DocTemplateChanged(r.Context(), r.PathValue("id"), sess.UserID)
+	}
+	if err != nil {
+		s.taskErr(w, r, err, "/crm/documents")
+		return
+	}
+	http.Redirect(w, r, "/crm/documents?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
+}
+
+// docTemplateSettings saves a template's name, «Активен», «Сортировка» and «С печатями и подписями».
+func (s *Server) docTemplateSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !s.docRightOr403(w, r, sess, "templates") {
+		return
+	}
+	id := r.PathValue("id")
+	sort, err := strconv.Atoi(strings.TrimSpace(r.FormValue("sort")))
+	if err != nil {
+		err = i18n.E("err.doc_template_sort")
+	}
+	if err == nil {
+		err = s.CRM.RenameDocTemplate(r.Context(), id, r.FormValue("name"))
+	}
+	if err == nil {
+		err = s.CRM.SetDocTemplateSettings(r.Context(), id, sess.UserID, crm.DocTemplateSettings{Active: r.FormValue("active") != "",
+			Sort: sort, WithStamps: r.FormValue("with_stamps") != ""})
 	}
 	if err != nil {
 		s.taskErr(w, r, err, "/crm/documents")
@@ -1128,7 +1244,7 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request, m storages.Fil
 func (s *Server) crmDocumentPDF(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "read"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "read", "view"); err != nil {
 		s.taskErr(w, r, err, "/crm/"+kind)
 		return
 	}
@@ -1156,7 +1272,7 @@ func (s *Server) crmDocumentPDF(w http.ResponseWriter, r *http.Request, sess aut
 func (s *Server) crmDocumentPublic(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	back := "/crm/" + kind + "/" + id
-	if err := s.docCheck(r, sess, kind, id, "write"); err != nil {
+	if err := s.docAllowed(r, sess, kind, id, "write", "modify"); err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
@@ -1182,6 +1298,11 @@ func (s *Server) publicDocument(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		s.render(w, r, "share", page{TitleKey: "share.gone", Data: map[string]any{"Gone": true}})
 		return
+	}
+	if _, err := s.Sessions.Get(r); err != nil { // the client, not one of the portal checking the link
+		if _, err := s.CRM.DocumentViewed(r.Context(), doc); err != nil {
+			s.Log.Warn("document viewed", "doc", doc.ID, "err", err)
+		}
 	}
 	title := doc.TemplateName
 	if doc.Number != "" {
@@ -1259,6 +1380,6 @@ func (s *Server) BPDocument(ctx context.Context, userID, entity, entityID, tplID
 	if err != nil {
 		return "", err
 	}
-	doc, err := s.makeDocumentBy(r, auth.Session{UserID: userID}, kind, entityID, tplID, values)
+	doc, err := s.makeDocumentBy(r, auth.Session{UserID: userID}, kind, entityID, tplID, values, nil)
 	return doc.ID, err
 }

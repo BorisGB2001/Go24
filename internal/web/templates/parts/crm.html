@@ -9,17 +9,29 @@
 {{define "crmdictsel"}}{{$v := .Value}}<label>{{t (print "crm.f." .Name)}}</label><select name="{{.Name}}"><option value=""></option>
   {{range index .Dicts .Kind}}<option value="{{.ID}}" {{if eq .ID $v}}selected{{end}}>{{template "crmdict" .}}</option>{{end}}</select>{{end}}
 
-{{define "crmtabs"}}{{$k := .Kind}}{{$type := .Type}}
-  {{range list "deals" "leads" "contacts" "companies"}}<a href="/crm/{{.}}" {{if and (eq . $k) (not $type)}}class="on"{{end}}>{{t (print "crm." .)}}</a>{{end}}
+{{/* «Скоринг сделок»: the probability of a deal to be won, coloured by how high it is */}}
+{{define "crmscore"}}<span class="pill crmscore {{if ge .Percent 60}}hi{{else if ge .Percent 30}}mid{{else}}lo{{end}}" title="{{t "crm.score.hint"}}">{{icon "chart-line"}} {{.Percent}}%</span>{{end}}
+
+{{/* a reason of a deal's probability: ↑ raises it, ↓ lowers it */}}
+{{define "crmscorefactor"}}<li class="{{if .Up}}up{{else}}down{{end}}">{{if .Up}}↑{{else}}↓{{end}} {{t (print "crm.score.f." .Feature)}}:
+  <b>{{if eq .Feature "responsible"}}{{.Name}}{{else if or (eq .Feature "origin") (eq .Feature "deal_type")}}{{if eq .Value "none"}}{{t "crm.score.v.none"}}{{else}}{{template "crmdict" .Dict}}{{end}}{{else}}{{t (print "crm.score.v." .Feature "." .Value)}}{{end}}</b></li>{{end}}
+
+{{define "crmtabs"}}{{$k := .Kind}}{{$type := .Type}}{{$simple := .Simple}}
+  {{range list "deals" "leads" "contacts" "companies"}}{{if not (and $simple (eq . "leads") (ne $k "leads"))}}<a href="/crm/{{.}}" {{if and (eq . $k) (not $type)}}class="on"{{end}}>{{t (print "crm." .)}}</a>{{end}}{{end}}
   {{range .Types}}<a href="/crm/deals?type={{.ID}}" {{if and $type (eq .ID $type.ID)}}class="on"{{end}}><span style="color:#{{.Color}}">●</span> {{.Name}}</a>{{end}}
   <a href="/crm/products" {{if eq $k "products"}}class="on"{{end}}>{{t "crm.products"}}</a>
   <a href="/crm/invoices" {{if eq $k "invoices"}}class="on"{{end}}>{{t "crm.invoices"}}</a>
   <a href="/crm/analytics" {{if eq $k "analytics"}}class="on"{{end}}>{{t "crm.analytics"}}</a>
   <a href="/crm/plan" {{if eq $k "plan"}}class="on"{{end}}>{{t "crm.plan"}}</a>
+  <a href="/crm/scoring" {{if eq $k "scoring"}}class="on"{{end}} title="{{t "crm.score.tab_hint"}}">{{t "crm.score.tab"}}</a>
+  <a href="/marketing/salesgen" title="{{t "mkt.sg_hint"}}">{{t "mkt.salesgen"}}</a>
   <a href="/crm/bi" {{if eq $k "bi"}}class="on"{{end}}>{{t "bi.title"}}</a>
   <a href="/crm/activities" {{if eq $k "activities"}}class="on"{{end}}>{{t "crm.activities"}}{{with .ActCount}} <span class="badge">{{.}}</span>{{end}}</a>
   <a href="/crm/types" {{if eq $k "types"}}class="on"{{end}} title="{{t "crm.types_hint"}}">{{t "crm.types"}}</a>
   <a href="/crm/currencies" {{if eq $k "currencies"}}class="on"{{end}}>{{t "crm.currencies"}}</a>
+  <a href="/crm/contact-center" {{if eq $k "contact-center"}}class="on"{{end}} title="{{t "crm.cc.tab_hint"}}">{{t "crm.cc.tab"}}</a>
+  <a href="/crm/sms" {{if eq $k "sms"}}class="on"{{end}} title="{{t "crm.sms.hint"}}">{{t "crm.sms.tab"}}</a>
+  <a href="/crm/paysystems" {{if eq $k "paysystems"}}class="on"{{end}} title="{{t "crm.pay.hint"}}">{{t "crm.pay.tab"}}</a>
   <a href="/crm/dicts" {{if eq $k "dicts"}}class="on"{{end}} title="{{t "crm.dicts_hint"}}">{{t "crm.dicts"}}</a>
   <a href="/crm/forms" {{if eq $k "forms"}}class="on"{{end}} title="{{t "crm.forms_hint"}}">{{t "crm.forms"}}</a>
   <a href="/crm/duplicates" {{if eq $k "duplicates"}}class="on"{{end}} title="{{t "crm.dups_hint"}}">{{icon "copy"}} {{t "crm.dups"}}</a>
@@ -95,7 +107,7 @@
   {{with .Director}}<br>{{t (print "crm.req.director." $.Preset)}}: {{.}}{{end}}{{end}}
 
 {{/* the form of a requisite (.R; a new one has no ID) posted to .Action */}}
-{{define "crmreqform"}}{{$q := .R}}<form method="post" action="{{.Action}}" class="crmreqform"><input type="hidden" name="op" value="save"><input type="hidden" name="req" value="{{$q.ID}}">
+{{define "crmreqform"}}{{$q := .R}}<form method="post" action="{{.Action}}" class="crmreqform"{{with .Entity}} data-dupcheck="{{.}}" data-dup-only="inn" data-dup-id="{{$.Card}}"{{end}}><input type="hidden" name="op" value="save"><input type="hidden" name="req" value="{{$q.ID}}">
   <label>{{t "crm.req.preset"}}</label><select name="preset">{{range .Presets}}<option value="{{.}}" {{if eq . $q.Preset}}selected{{end}}>{{t (print "crm.req.preset." .)}}</option>{{end}}</select>
   <label>{{t "crm.req.name"}}</label><input type="text" name="name" value="{{$q.Name}}" required maxlength="300">
   <div class="row"><div><label>{{t "crm.req.inn"}}</label><input type="text" name="inn" value="{{$q.INN}}" inputmode="numeric" maxlength="14"></div>
@@ -127,6 +139,15 @@
 <textarea name="html" hidden data-html>{{.}}</textarea>{{end}}
 
 {{/* «Письмо» of a card's timeline (web.crmMailSend): from, to the client, copy, a template, subject, text, files */}}
+{{/* «SMS» of the card: a phone of the client (or any other), the text with the count of its parts */}}
+{{define "crmsms"}}{{$m := .M}}<details class="crmmailform crmsmsform"><summary class="button ghost">{{icon "message-circle"}} {{t "crm.sms.send_title"}}</summary>
+  <form method="post" action="{{.Path}}/sms">
+    <label>{{t "crm.sms.to"}}</label><input type="tel" name="phone" required maxlength="50" list="crmsms-to" value="{{with $m.Phones}}{{(index . 0).Phone}}{{end}}" autocomplete="off">
+    <datalist id="crmsms-to">{{range $m.Phones}}<option value="{{.Phone}}">{{.Name}}</option>{{end}}</datalist>
+    <textarea name="text" rows="3" required maxlength="{{$m.Max}}" placeholder="{{t "crm.sms.text"}}" data-smscount></textarea>
+    <p class="row"><button class="primary">{{icon "send"}} {{t "crm.sms.send"}}</button><span class="muted small" data-smsparts data-tpl="{{t "crm.sms.parts"}}"></span></p>
+  </form></details><script src="{{asset "js/crmsms.js"}}"></script>{{end}}
+
 {{define "crmmail"}}{{$m := .M}}{{$inv := .Inv}}<details class="crmmailform" data-crmmail="{{.Path}}"{{if $inv}} id="send"{{end}}><summary class="button ghost">{{icon "mail"}} {{if $inv}}{{t "crm.inv_send"}}{{else}}{{t "crm.mailsend.title"}}{{end}}</summary>
   <form method="post" action="{{.Path}}/mail" enctype="multipart/form-data" data-snippet-editor data-native>{{with $inv}}<input type="hidden" name="inv" value="{{.ID}}">{{end}}
     <div class="grid">

@@ -4,6 +4,7 @@
 <div class="pagehead"><h1>{{t "mkt.title"}}</h1>
   {{if eq $d.Tab "campaigns"}}<a class="button create" href="/marketing/templates">{{icon "plus"}} {{t "mkt.new_campaign"}}</a>
   {{else if eq $d.Tab "calls"}}<a class="button create" href="/marketing/calls/new">{{icon "plus"}} {{t "mkt.new_calls"}}</a>
+  {{else if eq $d.Tab "salesgen"}}<a class="button create" href="/marketing/salesgen/new">{{icon "plus"}} {{t "mkt.new_salesgen"}}</a>
   {{else if eq $d.Tab "templates"}}<a class="button create" href="/marketing/templates?edit=new#edit">{{icon "plus"}} {{t "mkt.new_template"}}</a>
   {{else if eq $d.Tab "segments"}}<a class="button create" href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a>
   {{else if and (eq $d.Tab "ads") $d.Admin}}<a class="button create" href="/marketing/ads?edit=new#edit">{{icon "plus"}} {{t "mkt.new_ad"}}</a>{{end}}</div>
@@ -30,6 +31,18 @@
     <td>{{if .Total}}{{.Done}} / {{.Total}}<div class="progress"><span style="width:{{pct .Done .Total}}%"></span></div>{{else}}—{{end}}</td>
     <td class="small nowrap">{{date .Deadline}}</td><td class="small">{{.AuthorName}}</td></tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">{{icon "phone"}} {{t "mkt.no_calls"}}</div>{{end}}</div>
+
+{{else if eq $d.Tab "salesgen"}}
+<div class="sub">{{t "mkt.sg_hint"}}</div>
+<div class="card flush">{{if $d.Gens}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.sg_one"}}</th><th>{{t "mkt.status"}}</th><th>{{t "mkt.segment"}}</th><th>{{t "mkt.sg_made"}}</th><th>{{t "mkt.sg_won"}}</th><th>{{t "mkt.sg_lost"}}</th><th>{{t "crm.mailtpl.author"}}</th></tr></thead>
+  <tbody>{{range $d.Gens}}<tr><td><a href="/marketing/salesgen/{{.ID}}" class="ttitle">{{.Title}}</a><div class="small muted">{{t (print "mkt.sg_target." .Target)}}{{with .PipelineName}} · {{.}}{{end}}</div></td>
+    <td><span class="pill mkt-{{if .Editable}}draft{{else if eq .Status "done"}}done{{else}}sending{{end}}">{{t (print "mkt.sg_st." .Status)}}</span></td>
+    <td class="small">{{.SegmentName}}</td>
+    <td>{{if .Total}}{{.Made}} / {{.Total}}<div class="progress"><span style="width:{{pct .Made .Total}}%"></span></div>{{else}}—{{end}}</td>
+    <td>{{if .Made}}{{.Won}} <span class="muted small">({{pct .Won .Made}}%)</span>{{else}}—{{end}}</td>
+    <td>{{if .Lost}}{{.Lost}}{{else}}—{{end}}</td><td class="small">{{.AuthorName}}</td></tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">{{icon "refresh"}} {{t "mkt.no_salesgen"}}</div>{{end}}</div>
 
 {{else if eq $d.Tab "templates"}}
 <div class="sub">{{t "mkt.templates_hint"}} <a href="/marketing/campaigns/new">{{t "mkt.no_template"}}</a></div>

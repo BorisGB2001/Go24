@@ -137,7 +137,7 @@ func (s *Store) recallFrom(ctx context.Context, userID string, m Message, addr s
 			}
 			continue
 		}
-		if err := s.purge(ctx, copies); err != nil {
+		if err := s.purge(ctx, copies, false); err != nil {
 			return "", err
 		}
 		status = RecallDone

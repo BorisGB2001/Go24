@@ -108,7 +108,7 @@ func TestMailHandling(t *testing.T) {
 
 	// the defaults, as in Outlook: read when opened, ask about receipts, the next letter after
 	page, _ := do("GET", "/mail/settings?tab=handling", nil, 200)
-	for _, want := range []string{`action="/mail/settings/handling"`, `value="0" selected`, `value="ask" checked`, `value="next" checked`} {
+	for _, want := range []string{`action="/mail/settings/handling"`, `value="0" selected`, `value="ask" checked`, `value="next" checked`, `name="nudges" value="1" checked`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the settings have no %s", want)
 		}
@@ -158,5 +158,53 @@ func TestMailHandling(t *testing.T) {
 	pane, _ = do("GET", "/mail/letters/"+a+"?folder="+inbox, nil, 200)
 	if !seen(a) || strings.Contains(pane, "data-read-after") {
 		t.Error("not read when opened")
+	}
+
+	// «Очистка беседы»: in the same form, Outlook's defaults; the letter's «Очистить беседу» and the folder's
+	// «Очистить папку» say there was nothing to clean (no conversations here)
+	page, _ = do("GET", "/mail/settings?tab=handling", nil, 200)
+	for _, want := range []string{`name="cleanup_target" value="delete" checked`, `name="cleanup_unread" value="1" checked`, `name="cleanup_signed" value="1" checked`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the settings have no %s", want)
+		}
+	}
+	do("POST", "/mail/settings/handling", url.Values{"read_after": {"0"}, "receipts": {"ask"}, "after_move": {"next"}, "cleanup_target": {"archive"},
+		"cleanup_flagged": {"1"}}, 303)
+	if c, _ := srv.Mail.Cleanup(ctx, anna); c != (mail.Cleanup{Target: "archive", KeepFlagged: true}) {
+		t.Errorf("clean up kept: %+v", c)
+	}
+	page, _ = do("GET", "/mail?folder="+inbox+"&letter="+a, nil, 200)
+	if !strings.Contains(page, `action="/mail/folders/`+inbox+`/cleanup"`) || !strings.Contains(page, `name="do" value="cleanup"`) {
+		t.Error("no «Очистить» on the page")
+	}
+	_, hdr = do("POST", "/mail/act", url.Values{"letter": {a}, "do": {"cleanup"}, "back": {"/mail?folder=" + inbox + "&letter=" + a}}, 303)
+	if loc := hdr.Get("Location"); !strings.Contains(loc, "letter="+a) || !strings.Contains(loc, "msg=") {
+		t.Errorf("after «Очистить беседу»: %s", loc)
+	}
+	_, hdr = do("POST", "/mail/folders/"+inbox+"/cleanup", url.Values{"sub": {"1"}}, 303)
+	if loc := hdr.Get("Location"); !strings.Contains(loc, "folder="+inbox) || !strings.Contains(loc, "msg=") {
+		t.Errorf("after «Очистить папку»: %s", loc)
+	}
+	do("POST", "/mail/folders/00000000-0000-0000-0000-000000000000/cleanup", url.Values{}, 404)
+
+	// «Напоминания»: a question of 4 days ago comes up over the inbox (when on), «Закрыть» puts it away
+	var ask string
+	must(pool.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, from_name, to_addr, subject, body, sent_at, message_id, thread)
+		VALUES ($1, $2, 9, 'boss@client.test', 'Шеф', 'anna@go24.test', 'Отчёт', 'Когда будет отчёт?', now() - interval '4 days', 'q1', 'q1') RETURNING id`,
+		box, inbox).Scan(&ask))
+	if page, _ = do("GET", "/mail?folder="+inbox, nil, 200); strings.Contains(page, `data-nudge=`) {
+		t.Error("a nudge though turned off")
+	}
+	do("POST", "/mail/settings/handling", url.Values{"read_after": {"0"}, "receipts": {"ask"}, "after_move": {"next"}, "nudges": {"1"}}, 303)
+	page, _ = do("GET", "/mail?folder="+inbox, nil, 200)
+	if !strings.Contains(page, `data-nudge="`+ask+`"`) || !strings.Contains(page, `action="/mail/nudges/`+ask+`/off"`) || !strings.Contains(page, "mode=reply") {
+		t.Error("no nudge over the inbox")
+	}
+	if page, _ = do("GET", "/mail?folder="+inbox+"&q=отчёт", nil, 200); strings.Contains(page, `data-nudge=`) {
+		t.Error("a nudge over the search")
+	}
+	_, hdr = do("POST", "/mail/nudges/"+ask+"/off", url.Values{"back": {"/mail?folder=" + inbox}}, 303)
+	if page, _ = do("GET", hdr.Get("Location"), nil, 200); strings.Contains(page, `data-nudge=`) {
+		t.Error("the nudge stays after «Закрыть»")
 	}
 }

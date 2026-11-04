@@ -38,6 +38,10 @@ type Letter struct {
 	Text, HTML        string       // HTML "" — a plain text letter; Text "" — made of the HTML
 	Files             []Attachment // the files; those with a ContentID are pictures of the HTML
 	Importance        int          // -1 low, 0 normal, 1 high
+	Sensitivity       string       // «Конфиденциальность»: "", personal, private, confidential
+	NoForward         bool         // «Не пересылать» (noforward.go)
+	RepliesTo         string       // «Направлять ответы на»: the Reply-To address list (delivery.go)
+	ExpiresAt         *time.Time   // «Срок действия истекает»: Expiry-Date (delivery.go)
 	Receipt, Delivery bool         // ask for a read receipt, a delivery receipt
 	Voting, Vote      string       // the voting buttons it asks for («A;B»), the choice an answer votes for (voting.go)
 	Refs              []string     // the letters it answers: the conversation's root first, the answered one last
@@ -176,7 +180,12 @@ func (s *Store) SendLetter(ctx context.Context, userID, mailboxID string, l Lett
 		e.From.Name = l.fromName
 	}
 	e.Host, e.Now = a.Email[strings.LastIndex(a.Email, "@")+1:], time.Now()
-	e.Auto, e.ReplyTo, e.ResentFrom = l.auto, l.replyTo, l.resentFrom
+	e.Auto, e.ResentFrom = l.auto, l.resentFrom
+	if l.replyTo != nil {
+		e.ReplyTo = []*mail.Address{l.replyTo}
+	} else if e.ReplyTo, err = addresses(l.RepliesTo); err != nil {
+		return i18n.E("err.mail_replies_to")
+	}
 	msg, own := compose(e, l)
 	var rcpts []string
 	for _, list := range [][]*mail.Address{e.To, e.CC, e.BCC} {
@@ -201,8 +210,8 @@ func (s *Store) SendLetter(ctx context.Context, userID, mailboxID string, l Lett
 		return nil
 	}
 	return s.keepSent(ctx, a, copyMsg, sentCopy{From: e.From.Address, To: joinAddrs(e.To), CC: joinAddrs(e.CC), BCC: joinAddrs(e.BCC), Subject: l.Subject,
-		Body: l.Text, HTML: l.HTML, Own: own, Thread: threadOf(own, l.Refs), Importance: l.Importance, Voting: l.Voting, Vote: l.Vote, CRM: l.CRM,
-		Sign: sec.sign, Signer: sec.signer, Enc: sec.enc}, l.Files)
+		Body: l.Text, HTML: l.HTML, Own: own, Thread: threadOf(own, l.Refs), Importance: l.Importance, Sensitivity: l.Sensitivity, NoForward: l.NoForward, Voting: l.Voting, Vote: l.Vote,
+		RepliesTo: readable(e.ReplyTo), ExpiresAt: l.ExpiresAt, CRM: l.CRM, Sign: sec.sign, Signer: sec.signer, Enc: sec.enc}, l.Files)
 }
 
 // SendBulk sends a letter of a campaign («Маркетинг») from the user's mailbox: no copy in «Отправленные», the
@@ -216,6 +225,10 @@ func (s *Store) SendBulk(ctx context.Context, userID, mailboxID string, l Letter
 type sentCopy struct {
 	From, To, CC, BCC, Subject, Body, HTML, Own, Thread string
 	Importance                                          int
+	Sensitivity                                         string
+	NoForward                                           bool
+	RepliesTo                                           string
+	ExpiresAt                                           *time.Time
 	Voting, Vote                                        string
 	CRM                                                 []CRMRef
 	Sign, Signer, Enc                                   string // S/MIME (smime.go)
@@ -247,10 +260,11 @@ func (s *Store) keepSent(ctx context.Context, a account, msg []byte, c sentCopy,
 	}
 	var id string
 	err = s.db.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, to_addr, cc_addr, bcc_addr, subject, body,
-		body_html, importance, sent_at, seen, message_id, thread, voting, vote, smime_sign, smime_signer, smime_enc)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15, $16, $17, $18)
+		body_html, importance, sent_at, seen, message_id, thread, voting, vote, smime_sign, smime_signer, smime_enc, sensitivity, no_forward,
+		replies_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), true, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id`, a.ID, f.ID, time.Now().UnixNano(), c.From, clip(c.To, 2000), clip(c.CC, 2000), clip(c.BCC, 2000), c.Subject, c.Body,
-		c.HTML, c.Importance, c.Own, c.Thread, c.Voting, c.Vote, c.Sign, c.Signer, c.Enc).Scan(&id)
+		c.HTML, c.Importance, c.Own, c.Thread, c.Voting, c.Vote, c.Sign, c.Signer, c.Enc, c.Sensitivity, c.NoForward, c.RepliesTo, c.ExpiresAt).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -278,7 +292,7 @@ type envelope struct {
 	Now          time.Time
 	ID           string // the Message-ID ("" — made of Now and Host)
 	Notification bool   // a read receipt (multipart/report)
-	ReplyTo      *mail.Address
+	ReplyTo      []*mail.Address
 	Auto         string        // Auto-Submitted: auto-replied (an automatic reply), auto-forwarded (a rule's)
 	ResentFrom   *mail.Address // a letter redirected by a rule: who sent it on
 }
@@ -306,8 +320,8 @@ func compose(e envelope, l Letter) ([]byte, string) {
 		h("Resent-Date", e.Now.Format(time.RFC1123Z))
 	}
 	h("From", e.From.String())
-	if e.ReplyTo != nil {
-		h("Reply-To", e.ReplyTo.String())
+	if len(e.ReplyTo) > 0 {
+		h("Reply-To", addrHeader(e.ReplyTo))
 	}
 	if len(e.To) > 0 {
 		h("To", addrHeader(e.To))
@@ -337,6 +351,15 @@ func compose(e envelope, l Letter) ([]byte, string) {
 	case -1:
 		h("Importance", "Low")
 		h("X-Priority", "5 (Lowest)")
+	}
+	if v := sensitivityHeader[l.Sensitivity]; v != "" {
+		h("Sensitivity", v)
+	}
+	if l.NoForward {
+		h(noForwardHeader, noForwardValue)
+	}
+	if l.ExpiresAt != nil {
+		h("Expiry-Date", l.ExpiresAt.Format(time.RFC1123Z))
 	}
 	if l.Receipt {
 		h("Disposition-Notification-To", e.From.String())

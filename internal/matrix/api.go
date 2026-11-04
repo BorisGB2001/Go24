@@ -131,6 +131,11 @@ func (c *Client) Kick(ctx context.Context, roomID, mxid, reason string) error {
 	return c.Do(ctx, http.MethodPost, "/_matrix/client/v3/rooms/"+esc(roomID)+"/kick", map[string]string{"user_id": mxid, "reason": reason}, nil)
 }
 
+// DeleteRoom deletes a room with its history (Synapse's admin API): everyone in it is put out, the room is purged.
+func (c *Client) DeleteRoom(ctx context.Context, roomID string) error {
+	return c.Do(ctx, http.MethodDelete, "/_synapse/admin/v1/rooms/"+esc(roomID), map[string]any{"purge": true}, nil)
+}
+
 var txn atomic.Int64
 
 // Send posts a message (as the bot, or as an employee with their token) and returns its event ID.

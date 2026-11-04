@@ -133,6 +133,7 @@ func (s *Server) presenceSet(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.fail(w, "presence", err)
 		return
 	}
+	s.Telephony.Kick() // «Не беспокоить»: the clients' calls may pass them by now (or not)
 	back := "/my"
 	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && ref.Path != "" {
 		back = ref.RequestURI()

@@ -71,7 +71,7 @@ func (s *Server) crmSaveLayout(w http.ResponseWriter, r *http.Request, sess auth
 	var ids []string
 	if err == nil {
 		var fields []tasks.FieldValue
-		if fields, err = s.Tasks.FieldValuesOf(r.Context(), tasks.CRMFieldSets[entity], id); err == nil {
+		if fields, err = s.crmFieldValuesOf(r, tasks.CRMFieldSets[entity], id); err == nil {
 			for _, f := range fields {
 				ids = append(ids, f.ID)
 			}

@@ -75,6 +75,14 @@
     {{with $p.About}}<p style="margin-bottom:0">{{nl2br .}}</p>{{end}}
   </div>
 
+  {{if and (not $d.Tab) (or $p.Interests $d.CanEdit)}}<div class="card" id="pinterests">
+    <h2>{{icon "tag"}} {{t "interest.title"}}</h2>
+    <div class="row tags">{{range $p.Interests}}<span class="tag"><a href="/company?interest={{.}}" title="{{t "interest.who"}}">#{{.}}</a>{{if $d.CanEdit}}<form method="post" action="/u/{{$p.ID}}/interests"><input type="hidden" name="op" value="remove"><input type="hidden" name="tag" value="{{.}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form>{{end}}</span>{{else}}<span class="muted">{{t "interest.none"}}</span>{{end}}
+      {{if $d.CanEdit}}<form method="post" action="/u/{{$p.ID}}/interests" class="tagadd"><input type="hidden" name="op" value="add"><input type="text" name="tag" list="interestlist" maxlength="300" placeholder="{{t "interest.add"}}" title="{{t "interest.add_hint"}}" required></form>
+      <datalist id="interestlist">{{range $d.Popular}}<option value="{{.Tag}}">{{end}}</datalist>{{end}}</div>
+    {{if $d.CanEdit}}{{with $d.Popular}}<div class="row tags pipopular"><span class="muted small">{{t "interest.popular"}}:</span>{{range $i, $x := .}}{{if lt $i 12}}<form method="post" action="/u/{{$p.ID}}/interests" class="inline"><input type="hidden" name="op" value="add"><button class="tag ghost" name="tag" value="{{$x.Tag}}" title="{{t "interest.add_this" $x.Count}}">{{icon "plus"}} {{$x.Tag}}</button></form>{{end}}{{end}}</div>{{end}}{{end}}
+  </div>{{end}}
+
   {{with $d.Fields}}<div class="card" id="pfields">
     <h2>{{icon "adjustments"}} {{t "profile.fields"}}</h2>
     <div class="props">{{range .}}<span class="k">{{.Name}}</span>
@@ -151,6 +159,38 @@
     {{range $d.Subordinates}}<a href="/u/{{.ID}}" class="person">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{end}}{{end}}
   </div>
   {{end}}
+  {{if not $d.Tab}}{{with $d.Salary}}<div class="card" id="psalary">
+    <h2>{{icon "cash"}} {{t "salary.title"}}</h2>
+    {{with .Balance}}<div class="vacleft"><b class="{{if lt .Left 0}}danger{{end}}">{{.Left}}</b>
+      <span>{{t "salary.vac_left" $.Data.Salary.Year}}</span></div>
+    <div class="props">
+      <span class="k">{{t "salary.vac_entitled"}}</span><span>{{.Days}}{{if not .Own}} <span class="muted small">{{t "salary.vac_default"}}</span>{{end}}</span>
+      {{if .Carried}}<span class="k">{{t "salary.vac_carried"}}</span><span>{{.Carried}}</span>{{end}}
+      <span class="k">{{t "salary.vac_taken"}}</span><span>{{.Taken}}</span>
+      <span class="k">{{t "salary.vac_planned"}}</span><span>{{.Planned}}{{if .Planned}} <a class="small" href="/company/absences?view=list">{{t "salary.vac_plan_link"}}</a>{{end}}</span>
+      {{if .Planned}}<span class="k">{{t "salary.vac_left_now"}}</span><span>{{.LeftNow}}</span>{{end}}
+    </div>
+    {{if $.Data.Salary.CanVacation}}<details><summary class="link small">{{icon "edit"}} {{t "salary.vac_change"}}</summary>
+      <form method="post" action="/u/{{$p.ID}}/vacation" class="stack">
+        <input type="hidden" name="year" value="{{.Year}}">
+        <label>{{t "salary.vac_days_of" .Year}} <input type="number" name="days" min="0" max="366" value="{{if .Own}}{{.Days}}{{end}}" placeholder="{{t "salary.vac_days_default"}}" style="width:7em"></label>
+        <label>{{t "salary.vac_carried"}} <input type="number" name="carried" min="-366" max="366" value="{{.Carried}}" style="width:7em"></label>
+        <p class="muted small">{{t "salary.vac_hint"}}</p>
+        <div><button class="primary">{{t "common.save"}}</button></div>
+      </form></details>{{end}}{{end}}
+    {{if or .Own .CanSalary}}<h3>{{t "payslip.title"}}</h3>
+    <ul class="payslips">{{range .Payslips}}<li class="row"><a href="/company/payslips/{{.ID}}/file" target="_blank">{{icon "file-text"}} {{monthyear .Month}}</a>
+      {{if and (not $.Data.Me) (not .Seen)}}<span class="muted small">{{t "payslip.not_seen"}}</span>{{end}}
+      {{if $.Data.Salary.CanSalary}}<span style="flex:1"></span><form method="post" action="/company/payslips/{{.ID}}/delete" data-confirm="{{t "payslip.delete_confirm"}}">
+        <input type="hidden" name="back" value="/u/{{$p.ID}}#psalary"><button class="link danger small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</li>
+      {{else}}<li class="muted small">{{t "payslip.none"}}</li>{{end}}</ul>{{end}}
+    {{if .CanSalary}}<details><summary class="link small">{{icon "file-plus"}} {{t "payslip.upload"}}</summary>
+      <form method="post" action="/u/{{$p.ID}}/payslips" enctype="multipart/form-data" class="stack">
+        <label>{{t "payslip.month"}} <input type="month" name="month" value="{{.Month}}" required></label>
+        <input type="file" name="file" accept="application/pdf,.pdf" required>
+        <div><button class="primary">{{t "payslip.upload_do"}}</button> <a class="small" href="/company/payslips">{{t "payslip.all"}}</a></div>
+      </form></details>{{end}}
+  </div>{{end}}{{end}}
   {{with $d.Phone}}{{$l := .Line}}<div class="card" id="ptel">
     <h2>{{icon "phone"}} {{t "tel.title"}}</h2>
     <div class="props">

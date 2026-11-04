@@ -212,4 +212,43 @@ func TestWorkSchedules(t *testing.T) {
 	if ids, _ = s.ScheduleIDs(ctx, []string{anna}); ids[anna] != office.ID {
 		t.Errorf("after delete %v", ids)
 	}
+
+	// «Отчёт о рабочем дне» and «Устройства для отметки»: by default optional and every device
+	if office.ReportReq != "optional" || !slices.Equal(office.Devices, WorkDevices) {
+		t.Errorf("defaults %q %v", office.ReportReq, office.Devices)
+	}
+	if err := s.SaveWorkSchedule(ctx, boss, &WorkSchedule{Name: "x", Kind: "flexible", ReportReq: "maybe"}); err == nil {
+		t.Error("an unknown report kind saved")
+	}
+	if err := s.SaveWorkSchedule(ctx, boss, &WorkSchedule{Name: "x", Kind: "flexible", Devices: []string{"phone"}}); err == nil {
+		t.Error("only an unknown device saved")
+	}
+	office.ReportReq, office.Devices = "required", []string{"app", "terminal", "app"}
+	must(s.SaveWorkSchedule(ctx, boss, office))
+	rules, err := s.DayRulesOf(ctx, anna)
+	must(err)
+	if rules.Report != "required" || !slices.Equal(rules.Devices, []string{"terminal", "app"}) {
+		t.Errorf("rules %+v", rules)
+	}
+	if rules, _ = s.DayRulesOf(ctx, boss); rules.Report != "optional" || !rules.Allows("browser") { // no schedule
+		t.Errorf("boss's rules %+v", rules)
+	}
+	now := time.Now()
+	if err := s.WorkAction(ctx, anna, "start", "", now, Place{Device: "browser"}); err == nil || err.Error() != "err.workday_device" {
+		t.Fatalf("started from a browser: %v", err)
+	}
+	must(s.WorkAction(ctx, anna, "start", "", now, Place{Device: "terminal"}))
+	if err := s.WorkAction(ctx, anna, "finish", "  ", now, Place{Device: "app"}); err == nil || err.Error() != "err.workday_report_required" {
+		t.Fatalf("finished without the report: %v", err)
+	}
+	must(s.WorkAction(ctx, anna, "finish", "", now, Place{})) // a workflow: not checked
+	office.ReportReq = "none"
+	must(s.SaveWorkSchedule(ctx, boss, office))
+	must(s.WorkAction(ctx, anna, "reopen", "", now, Place{Device: "app"}))
+	must(s.WorkAction(ctx, anna, "finish", "ignored", now, Place{Device: "app"}))
+	var report string
+	must(pool.QueryRow(ctx, `SELECT report FROM workdays WHERE user_id = $1`, anna).Scan(&report))
+	if report != "" {
+		t.Errorf("a report not asked is kept: %q", report)
+	}
 }

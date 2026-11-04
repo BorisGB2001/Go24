@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -243,7 +244,7 @@ func (s *Store) SetSharePerson(ctx context.Context, userID, mailboxID, personID,
 func (s *Store) SharedCan(ctx context.Context, userID, letterID string) bool {
 	var box string
 	if err := s.db.QueryRow(ctx, `SELECT x.mailbox_id::text FROM mail_messages x JOIN mail_shares sh ON sh.mailbox_id = x.mailbox_id
-		WHERE x.id::text = $1`, letterID).Scan(&box); err != nil {
+		WHERE x.id::text = $1 AND x.sensitivity <> 'private'`, letterID).Scan(&box); err != nil { // «Частное» — the owner's only
 		return false
 	}
 	level, err := s.SharedLevel(ctx, userID, box)
@@ -282,12 +283,12 @@ type TicketFilter struct {
 const threadKey = `coalesce(nullif(x.thread, ''), x.id::text)`
 
 // ticketSQL: the conversations of the mailbox that have letters from outside (not in the trash, the junk, the
-// drafts), each with its newest letter, its state and who answers it.
+// drafts), each with its newest letter, its state and who answers it; %s narrows the letters (see ticketQuery).
 const ticketSQL = `WITH c AS (
 	SELECT ` + threadKey + ` AS thread, x.id, x.subject, x.from_addr, x.from_name, left(x.body, 300) AS preview, x.sent_at, x.seen,
 		f.role IN ('sent', 'drafts') AS outgoing
 	FROM mail_messages x JOIN mail_folders f ON f.id = x.folder_id LEFT JOIN mail_drafts d ON d.id = x.id
-	WHERE x.mailbox_id::text = $1 AND f.role NOT IN ('trash', 'junk') AND d.id IS NULL),
+	WHERE x.mailbox_id::text = $1 AND f.role NOT IN ('trash', 'junk') AND d.id IS NULL%s),
 g AS (SELECT thread, count(*)::int AS n, count(*) FILTER (WHERE NOT seen AND NOT outgoing)::int AS unread,
 	max(sent_at) FILTER (WHERE NOT outgoing) AS last_in, max(sent_at) AS last_at FROM c GROUP BY thread HAVING bool_or(NOT outgoing)),
 l AS (SELECT DISTINCT ON (thread) * FROM c ORDER BY thread, sent_at DESC),
@@ -311,9 +312,19 @@ func scanTickets(rows pgx.Rows, err error) ([]Ticket, error) {
 	})
 }
 
+// ticketQuery is ticketSQL for the user: as Outlook keeps private items from delegates, a letter marked «Частное»
+// is seen by the mailbox's owner only.
+func ticketQuery(sh Share, userID string) string {
+	if sh.OwnerID == userID {
+		return fmt.Sprintf(ticketSQL, "")
+	}
+	return fmt.Sprintf(ticketSQL, " AND x.sensitivity <> 'private'")
+}
+
 // Tickets are the requests of a shared mailbox the user may read, the newest first.
 func (s *Store) Tickets(ctx context.Context, userID, mailboxID string, f TicketFilter) ([]Ticket, error) {
-	if _, err := s.sharedCheck(ctx, userID, mailboxID, "read"); err != nil {
+	sh, err := s.sharedCheck(ctx, userID, mailboxID, "read")
+	if err != nil {
 		return nil, err
 	}
 	where := []string{"true"}
@@ -335,24 +346,26 @@ func (s *Store) Tickets(ctx context.Context, userID, mailboxID string, f TicketF
 		p := args.add("%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(q) + "%")
 		where = append(where, "(subject ILIKE "+p+" OR from_addr ILIKE "+p+" OR from_name ILIKE "+p+")")
 	}
-	sql := `SELECT * FROM (` + ticketSQL + `) z WHERE ` + strings.Join(where, " AND ") + ` ORDER BY last_at DESC LIMIT ` + args.add(MaxList)
+	sql := `SELECT * FROM (` + ticketQuery(sh, userID) + `) z WHERE ` + strings.Join(where, " AND ") + ` ORDER BY last_at DESC LIMIT ` + args.add(MaxList)
 	return scanTickets(s.db.Query(ctx, sql, args...))
 }
 
 // LetterTicket is the request of a letter of a shared mailbox (and the mailbox's owner, whose mailbox it is).
 func (s *Store) LetterTicket(ctx context.Context, userID, mailboxID, letterID string) (Ticket, error) {
-	if _, err := s.sharedCheck(ctx, userID, mailboxID, "read"); err != nil {
+	sh, err := s.sharedCheck(ctx, userID, mailboxID, "read")
+	if err != nil {
 		return Ticket{}, err
 	}
 	var thread string
-	err := s.db.QueryRow(ctx, `SELECT `+threadKey+` FROM mail_messages x WHERE x.id::text = $1 AND x.mailbox_id::text = $2`, letterID, mailboxID).Scan(&thread)
+	err = s.db.QueryRow(ctx, `SELECT `+threadKey+` FROM mail_messages x WHERE x.id::text = $1 AND x.mailbox_id::text = $2
+		AND (x.sensitivity <> 'private' OR $3)`, letterID, mailboxID, sh.OwnerID == userID).Scan(&thread)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Ticket{}, ErrNotFound
 	}
 	if err != nil {
 		return Ticket{}, err
 	}
-	list, err := scanTickets(s.db.Query(ctx, ticketSQL+` WHERE g.thread = $2`, mailboxID, thread))
+	list, err := scanTickets(s.db.Query(ctx, ticketQuery(sh, userID)+` WHERE g.thread = $2`, mailboxID, thread))
 	if err != nil {
 		return Ticket{}, err
 	}

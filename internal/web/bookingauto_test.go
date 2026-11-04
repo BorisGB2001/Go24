@@ -92,10 +92,10 @@ func TestBookingTriggersHTTP(t *testing.T) {
 	pipes, err := srv.CRM.Pipelines(ctx)
 	must(err)
 	st := pipes[0].Stages // new, preparation, prepayment, executing, final_invoice, won, lose
-	must(srv.CRM.AddTrigger(ctx, boss, st[1].ID, "booking"))
-	must(srv.CRM.AddTrigger(ctx, boss, st[2].ID, "booking_confirmed"))
-	must(srv.CRM.AddTrigger(ctx, boss, st[3].ID, "booking_came"))
-	must(srv.CRM.AddTrigger(ctx, boss, st[4].ID, "booking_cancelled"))
+	must(srv.CRM.AddTrigger(ctx, boss, st[1].ID, "booking", crm.TriggerParams{}))
+	must(srv.CRM.AddTrigger(ctx, boss, st[2].ID, "booking_confirmed", crm.TriggerParams{}))
+	must(srv.CRM.AddTrigger(ctx, boss, st[3].ID, "booking_came", crm.TriggerParams{}))
+	must(srv.CRM.AddTrigger(ctx, boss, st[4].ID, "booking_cancelled", crm.TriggerParams{}))
 	stageOf := func(id string) string {
 		t.Helper()
 		d, err := srv.CRM.Deal(ctx, id)
@@ -131,7 +131,7 @@ func TestBookingTriggersHTTP(t *testing.T) {
 		t.Fatal("«Клиент подтвердил запись» does not move the deal")
 	}
 	// saved again with the same deal and status — nothing fires again
-	must(srv.CRM.AddTrigger(ctx, boss, st[5].ID, "booking"))
+	must(srv.CRM.AddTrigger(ctx, boss, st[5].ID, "booking", crm.TriggerParams{}))
 	post("/booking/item/"+b.ID, url.Values{"date": {day}, "time": {"10:30"}, "minutes": {"30"}, "resource": {room},
 		"deal_id": {deal}, "status": {"confirmed"}}, true)
 	if stageOf(deal) != st[2].ID {

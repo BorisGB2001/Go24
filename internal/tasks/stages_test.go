@@ -195,6 +195,24 @@ func TestStages(t *testing.T) {
 	if c := info[id]; c.ChecklistTotal != 2 || c.ChecklistDone != 0 || c.Comments != 1 {
 		t.Fatalf("card info = %+v", c)
 	}
+	// the cover is the first attached picture; files of checklist items are neither counted nor the cover
+	var item string
+	must(s.db.QueryRow(ctx, `SELECT id::text FROM task_checklist_items WHERE task_id = $1 LIMIT 1`, id).Scan(&item))
+	must2 := func(q string, args ...any) { _, err := s.db.Exec(ctx, q, args...); must(err) }
+	must2(`INSERT INTO files (object_key, name, content_type, size, task_id, checklist_item_id, created_at)
+		VALUES ('cv-0', 'item.png', 'image/png', 1, $1, $2, now() - interval '1 hour')`, id, item)
+	must2(`INSERT INTO files (object_key, name, content_type, size, task_id, created_at)
+		VALUES ('cv-1', 'a.txt', 'text/plain', 1, $1, now() - interval '30 minutes')`, id)
+	must2(`INSERT INTO files (object_key, name, content_type, size, task_id) VALUES ('cv-2', 'b.jpg', 'image/jpeg', 1, $1)`, id)
+	must2(`INSERT INTO files (object_key, name, content_type, size, task_id, created_at)
+		VALUES ('cv-3', 'c.png', 'image/png', 1, $1, now() + interval '1 minute')`, id)
+	var cover string
+	must(s.db.QueryRow(ctx, `SELECT id::text FROM files WHERE object_key = 'cv-2'`).Scan(&cover))
+	info, err = s.CardInfo(ctx, []string{id})
+	must(err)
+	if c := info[id]; c.Files != 3 || c.Cover != cover {
+		t.Fatalf("card files = %d, cover %q, want 3 and %q", c.Files, c.Cover, cover)
+	}
 
 	// list columns: defaults, saving, unknown names refused
 	lc, err := s.Columns(ctx, resp)

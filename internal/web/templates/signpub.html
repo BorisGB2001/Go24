@@ -2,17 +2,25 @@
 <div class="share pubdoc">
   <div class="row diskhead"><h2 style="flex:1">{{icon "signature"}} {{$doc.Title}}</h2>
     {{if $doc.ResultFile}}<a class="button primary" href="/sg/{{$t}}/file/result">{{icon "download"}} {{t "sign.download_signed"}}</a>{{end}}
-    <a class="button ghost" href="/sg/{{$t}}/file/docx">{{icon "download"}} DOCX</a></div>
-  <div class="muted small">{{t "sign.pub_from" $doc.Author}} · {{$d.Party.Name}}</div>
+    <a class="button ghost" href="/sg/{{$t}}/file/docx">{{icon "download"}} {{t "sign.download_src"}}</a></div>
+  <div class="muted small">{{t "sign.pub_from" $doc.Author}} · {{$d.Party.Name}}{{if and $d.Turn $doc.Deadline}} · {{t "sign.deadline"}} {{$doc.Deadline.Format "02.01.2006"}}{{end}}</div>
   {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
   {{if $d.Turn}}<div class="card sgturn">
-    {{if $d.Code}}<form method="post" action="/sg/{{$t}}/sign" data-native>{{template "sgpad" (list "" $d.Party.Name)}}
+    {{if $d.Party.Qualified}}<form method="post" action="/sg/{{$t}}/sign" data-native>{{template "sgfields" $d.Fields}}{{template "sgqes" (list (print "/sg/" $t "/file/pdf"))}}
+      <div class="row"><label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
+      <button class="primary">{{icon "certificate"}} {{t "sign.qes.do_sign"}}</button></div></form>
+    {{else if $d.Code}}<form method="post" action="/sg/{{$t}}/sign" data-native>{{template "sgfields" $d.Fields}}{{template "sgpad" (list "" $d.Party.Name)}}
       <div class="row"><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="{{t "sign.code"}}" autofocus style="width:10em">
       <label class="small"><input type="checkbox" name="agree" value="1" required> {{t "sign.agree"}}</label>
       <button class="primary">{{icon "signature"}} {{t "sign.do_sign"}}</button></div></form>
-      <form method="post" action="/sg/{{$t}}/code" data-native><button class="ghost small">{{t "sign.code_again"}}</button></form>
-    {{else}}<p>{{t "sign.pub_hint" $d.Email}}</p>
-      <form method="post" action="/sg/{{$t}}/code" data-native><button class="primary">{{icon "mail"}} {{t "sign.get_code"}}</button></form>{{end}}
+      <form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="{{$d.Party.CodeVia}}"><button class="ghost small">{{t "sign.code_again"}}</button></form>
+    {{else if $d.Chat}}<p>{{t "sign.pub_hint_chat"}}</p>
+      <div class="row"><form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="chat"><button class="primary">{{icon "message-circle"}} {{t "sign.get_code_chat"}}</button></form>
+      {{if $d.Party.Email}}<form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="mail"><button class="ghost">{{icon "mail"}} {{t "sign.get_code_mail"}}</button></form>{{end}}
+      {{if $d.SMS}}<form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="sms"><button class="ghost">{{icon "phone"}} {{t "sign.get_code_sms"}}</button></form>{{end}}</div>
+    {{else}}<p>{{if and $d.Party.Email $d.SMS}}{{t "sign.pub_hint_both" $d.Email $d.Phone}}{{else if $d.Party.Email}}{{t "sign.pub_hint" $d.Email}}{{else}}{{t "sign.pub_hint_sms" $d.Phone}}{{end}}</p>
+      <div class="row">{{if $d.Party.Email}}<form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="mail"><button class="primary">{{icon "mail"}} {{if $d.SMS}}{{t "sign.get_code_mail"}}{{else}}{{t "sign.get_code"}}{{end}}</button></form>{{end}}
+      {{if or $d.SMS (not $d.Party.Email)}}<form method="post" action="/sg/{{$t}}/code" data-native><input type="hidden" name="via" value="sms"><button class="{{if $d.Party.Email}}ghost{{else}}primary{{end}}">{{icon "phone"}} {{t "sign.get_code_sms"}}</button></form>{{end}}</div>{{end}}
     <details><summary class="small">{{t "sign.refuse"}}</summary><form method="post" action="/sg/{{$t}}/sign" data-native>
       <input type="hidden" name="refuse" value="1"><textarea name="reason" rows="2" maxlength="1000" placeholder="{{t "sign.reason"}}" required></textarea>
       <p><button class="danger">{{t "sign.refuse"}}</button></p></form></details></div>
@@ -25,4 +33,5 @@
   <p class="muted small share-foot">go24 · {{t "sign.pub_foot"}}</p>
 </div>
 <script src="{{asset "js/signpad.js"}}"></script>
+{{if and $d.Turn $d.Party.Qualified}}<script src="{{asset "vendor/cadesplugin/cadesplugin_api.js"}}"></script><script src="{{asset "js/qes.js"}}"></script>{{end}}
 {{end}}

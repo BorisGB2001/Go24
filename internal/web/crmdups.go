@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"go24/internal/auth"
 	"go24/internal/crm"
@@ -87,4 +88,34 @@ func (s *Server) crmDuplicatesAction(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	http.Redirect(w, r, back+"&msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// crmDupCheck: «Контроль дубликатов» while a card's form is filled (GET /crm/dupcheck?entity=…&id=…&name=…&company=…
+// &phone=…&email=…&inn=…) — the cards the viewer may read alike, for the «Найдены совпадения» bar of the form.
+func (s *Server) crmDupCheck(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	q := r.URL.Query()
+	entity := q.Get("entity")
+	if entity != "lead" && entity != "contact" && entity != "company" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": s.tr(r, "err.bad_form")})
+		return
+	}
+	hits, err := s.CRM.DupCheck(r.Context(), sess.UserID, entity, q.Get("id"), crm.DupInput{Name: q.Get("name"),
+		Company: q.Get("company"), Phones: q["phone"], Emails: q["email"], INN: q.Get("inn")})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": s.tr(r, "err.internal")})
+		return
+	}
+	type item struct {
+		URL, Title, Kind, Responsible, By string
+	}
+	items := []item{}
+	for _, h := range hits {
+		by := []string{}
+		for _, b := range h.By {
+			by = append(by, s.tr(r, "crm.dup_by."+b))
+		}
+		items = append(items, item{URL: h.Path(), Title: h.Title, Kind: s.tr(r, "crm."+h.Entity), Responsible: h.Responsible,
+			By: strings.Join(by, ", ")})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(items), "title": s.tr(r, "crm.dupcheck.found", len(items)), "items": items})
 }

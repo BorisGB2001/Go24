@@ -170,6 +170,9 @@ func TestTelAPI(t *testing.T) {
 	if c := list(adminKey, "?q=0002&limit=1", true); len(c) != 1 || c[0].ID != callOf("u2") {
 		t.Fatalf("by number: %+v", c)
 	}
+	if c := list(adminKey, "?line=%2B70000000000", true); len(c) != 0 {
+		t.Fatalf("another line's calls: %+v", c)
+	}
 	do(bobKey, "GET", "/api/v1/telephony/calls?from=yesterday", "", http.StatusUnprocessableEntity)
 
 	// a call, its record and comment: not someone else's
@@ -244,11 +247,17 @@ func TestTelAPI(t *testing.T) {
 
 	// the statistics: the employee's own
 	var st struct {
-		Total apiTelStatRow
-		Users []apiTelStatRow
+		Total    apiTelStatRow
+		Users    []apiTelStatRow
+		Hours    []struct{ Weekday, Hour, In int }
+		Previous struct{ From, To string }
+		Missed   struct {
+			Missed, Recalled int
+			Waiting          []struct{ Number string }
+		}
 	}
 	must(json.Unmarshal(do(bobKey, "GET", "/api/v1/telephony/stats", "", http.StatusOK), &st))
-	if st.Total.Out != 1 || st.Total.In != 0 {
+	if st.Total.Out != 1 || st.Total.In != 0 || st.Hours == nil || len(st.Hours) != 0 || st.Missed.Missed != 0 || st.Previous.From == "" {
 		t.Fatalf("bob's stats: %+v", st)
 	}
 

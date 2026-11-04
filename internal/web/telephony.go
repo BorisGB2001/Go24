@@ -11,10 +11,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"go24/internal/auth"
+	"go24/internal/calendar"
 	"go24/internal/company"
 	"go24/internal/i18n"
+	"go24/internal/marketing"
+	"go24/internal/openlines"
 	"go24/internal/telephony"
 )
 
@@ -45,7 +49,32 @@ func (s *Server) telephonySettings(w http.ResponseWriter, r *http.Request, sess 
 			s.taskErr(w, r, err, "/settings/telephony")
 			return
 		}
+		if err := s.Telephony.SetRecalling(ctx, sess.UserID, r.FormValue("recall") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
+		if err := s.Telephony.SetRecordDrive(ctx, sess.UserID, r.FormValue("drive") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
+		if err := s.Telephony.SetPicking(ctx, sess.UserID, r.FormValue("pickup") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
+		skip := telephony.Skip{DND: r.FormValue("skip_dnd") == "1", Absent: r.FormValue("skip_absent") == "1", Workday: r.FormValue("skip_workday") == "1"}
+		if err := s.Telephony.SetSkipping(ctx, sess.UserID, skip); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
 		if err := s.Telephony.SetTranscribing(ctx, sess.UserID, r.FormValue("transcribe") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
+		if err := s.Telephony.SetSummarizing(ctx, sess.UserID, r.FormValue("summary") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/telephony")
+			return
+		}
+		if err := s.Telephony.SetFilling(ctx, sess.UserID, r.FormValue("fill") == "1"); err != nil {
 			s.taskErr(w, r, err, "/settings/telephony")
 			return
 		}
@@ -73,9 +102,54 @@ func (s *Server) telephonySettings(w http.ResponseWriter, r *http.Request, sess 
 		s.fail(w, "telephony leads", err)
 		return
 	}
+	recall, err := s.Telephony.Recalling(ctx)
+	if err != nil {
+		s.fail(w, "telephony recall", err)
+		return
+	}
+	toDrive, err := s.Telephony.RecordDrive(ctx)
+	if err != nil {
+		s.fail(w, "telephony record drive", err)
+		return
+	}
+	pickup, err := s.Telephony.Picking(ctx)
+	if err != nil {
+		s.fail(w, "telephony pickup", err)
+		return
+	}
+	skip, err := s.Telephony.Skipping(ctx)
+	if err != nil {
+		s.fail(w, "telephony skipping", err)
+		return
+	}
+	away, err := s.Telephony.Unavailable(ctx, time.Now())
+	if err != nil {
+		s.fail(w, "telephony unavailable", err)
+		return
+	}
 	transcribe, err := s.Telephony.Transcribing(ctx)
 	if err != nil {
 		s.fail(w, "telephony transcribing", err)
+		return
+	}
+	summary, err := s.Telephony.Summarizing(ctx)
+	if err != nil {
+		s.fail(w, "telephony summary", err)
+		return
+	}
+	fill, err := s.Telephony.Filling(ctx)
+	if err != nil {
+		s.fail(w, "telephony fill", err)
+		return
+	}
+	scripts, err := s.Telephony.Scripts(ctx)
+	if err != nil {
+		s.fail(w, "telephony scripts", err)
+		return
+	}
+	sales, err := s.Telephony.SalesScripts(ctx, "")
+	if err != nil {
+		s.fail(w, "telephony sales scripts", err)
 		return
 	}
 	trunks, err := s.Telephony.Trunks(ctx)
@@ -110,6 +184,13 @@ func (s *Server) telephonySettings(w http.ResponseWriter, r *http.Request, sess 
 			return
 		}
 	}
+	var ads []marketing.AdSource // «Колл-трекинг»: the channels a line may be the number of
+	if s.Marketing != nil {
+		if ads, err = s.Marketing.AdSources(ctx); err != nil {
+			s.fail(w, "telephony ad sources", err)
+			return
+		}
+	}
 	users, err := s.Tasks.ListUsers(ctx)
 	if err != nil {
 		s.fail(w, "telephony users", err)
@@ -128,10 +209,15 @@ func (s *Server) telephonySettings(w http.ResponseWriter, r *http.Request, sess 
 	if aerr != nil {
 		s.Log.Warn("telephony: asterisk", "err", aerr)
 	}
+	var holidays string // «Из производственного календаря»: the company's holidays for a line
+	if sched, err := s.Tasks.Schedule(ctx); err == nil {
+		holidays = strings.Join(openlines.HolidaysDM(sched.Holidays), ",")
+	}
 	s.render(w, r, "telephony", page{TitleKey: "tel.title", Nav: "telephony", Data: map[string]any{
-		"Enabled": on, "Record": record, "Lead": lead, "Transcribe": transcribe, "Speech": s.Speech != nil, "Trunks": trunks, "Menus": menus, "Blacklist": black,
+		"Zones": calendar.Zones(time.Now(), ""), "PortalTZ": portalTZ(), "CompanyHolidays": holidays,
+		"Enabled": on, "Record": record, "Lead": lead, "Recall": recall, "Drive": toDrive, "Pickup": pickup, "Skip": skip, "Away": away, "Transcribe": transcribe, "Summary": summary, "Fill": fill, "AI": s.AI != nil, "Scripts": scripts, "NewScript": telephony.Script{Calls: "all", Auto: true, Low: 50}, "Sales": salesViews(sales), "NewSales": telephony.SalesScript{Calls: "all", Active: true}, "Speech": s.Speech != nil, "Trunks": trunks, "Menus": menus, "Blacklist": black,
 		"Groups": groups, "NewGroup": telephony.Group{Strategy: "all", Ring: 20, Wait: 120},
-		"Callbacks": callbacks, "Requests": requests, "NewCallback": telephony.Callback{RingMode: "all"}, "Root": strings.TrimRight(s.BaseURL, "/"),
+		"Callbacks": callbacks, "Requests": requests, "AdSources": ads, "NewCallback": telephony.Callback{RingMode: "all"}, "Root": strings.TrimRight(s.BaseURL, "/"),
 		"NewMenu":  telephony.Menu{Wait: 5, Repeats: 2, Direct: true, Timeout: telephony.MenuItem{Act: telephony.ActHangup}},
 		"NewTrunk": telephony.Trunk{Register: true, OutAll: true, WorkDays: []int{1, 2, 3, 4, 5}}, "CRM": s.CRM != nil, "Lines": lines, "Users": users, "Online": online, "Version": version, "Down": aerr != nil,
 		"SIPHost": s.Telephony.SIPHost}})
@@ -345,9 +431,19 @@ func (s *Server) phoneWindow(w http.ResponseWriter, r *http.Request, sess auth.S
 			people = append(people, telephony.Line{Name: c.Name, Number: c.Number})
 		}
 	}
+	pickup, err := s.Telephony.Picking(r.Context())
+	if err != nil {
+		s.fail(w, "phone pickup", err)
+		return
+	}
+	away, err := s.Telephony.Unavailable(r.Context(), time.Now())
+	if err != nil {
+		s.fail(w, "phone unavailable", err)
+		return
+	}
 	s.render(w, r, "phone", page{TitleKey: "phone.title", Bare: true, Data: map[string]any{
 		"ID": id, "Number": l.Number, "Login": l.WebLogin(), "Password": l.WebPassword, "SIPHost": s.Telephony.SIPHost,
-		"Dial": telephony.Dialable(r.URL.Query().Get("dial")), "People": people}})
+		"Dial": telephony.Dialable(r.URL.Query().Get("dial")), "People": people, "Pickup": pickup, "Away": away[sess.UserID]}})
 }
 
 func validPhoneID(id string) bool {
@@ -516,9 +612,14 @@ func (s *Server) trunkSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	t := telephony.Trunk{ID: r.PathValue("id"), Name: r.FormValue("name"), Host: r.FormValue("host"), Username: r.FormValue("username"),
 		Password: r.FormValue("password"), AuthUser: r.FormValue("auth_user"), Number: r.FormValue("number"), Register: r.FormValue("register") == "1",
 		RingMode: r.FormValue("ring_mode"), Ring: r.Form["ring"], OutAll: r.FormValue("out_all") == "1", Out: r.Form["out"],
-		WorkOn: r.FormValue("work_on") == "1", WorkFrom: r.FormValue("work_from"), WorkTo: r.FormValue("work_to"),
+		WorkOn: r.FormValue("work_on") == "1", WorkFrom: r.FormValue("work_from"), WorkTo: r.FormValue("work_to"), WorkTZ: r.FormValue("work_tz"),
 		NoAnswer: r.FormValue("noanswer"), NoAnswerTo: r.FormValue("noanswer_to"), OffHours: r.FormValue("offhours"), OffHoursTo: r.FormValue("offhours_to"),
 		DropGreeting: r.FormValue("greeting_drop") == "1", Menu: r.FormValue("menu")}
+	var err error
+	if t.Holidays, err = openlines.Holidays(strings.FieldsFunc(r.FormValue("holidays"), func(c rune) bool { return c == ',' || c == ';' || unicode.IsSpace(c) })); err != nil {
+		s.taskErr(w, r, err, "/settings/telephony#trunks")
+		return
+	}
 	for _, d := range r.Form["work_days"] {
 		if n, err := strconv.Atoi(d); err == nil {
 			t.WorkDays = append(t.WorkDays, n)
@@ -544,20 +645,22 @@ func (s *Server) trunkSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.taskErr(w, r, err, "/settings/telephony#trunks")
 		return
 	}
-	var prompt []byte
-	if f, _, err := r.FormFile("rate_prompt"); err == nil {
-		prompt, err = io.ReadAll(io.LimitReader(f, 16<<20))
-		f.Close()
-		if err != nil || len(prompt) == 0 {
-			prompt = nil
-		}
+	err = s.Telephony.SetTrunkRating(r.Context(), id, r.FormValue("rate_on") == "1", formWAV(r, "rate_prompt"), r.FormValue("rate_drop") == "1")
+	if nerr := s.Telephony.SetTrunkRecordNotice(r.Context(), id, r.FormValue("rec_note_on") == "1", formWAV(r, "rec_note"),
+		r.FormValue("rec_note_drop") == "1"); nerr != nil && err == nil {
+		err = nerr
 	}
-	err = s.Telephony.SetTrunkRating(r.Context(), id, r.FormValue("rate_on") == "1", prompt, r.FormValue("rate_drop") == "1")
 	if gerr := s.Telephony.SetTrunkGroup(r.Context(), id, r.FormValue("ring_group")); gerr != nil && err == nil {
 		err = gerr
 	}
 	if oerr := s.Telephony.SetTrunkOwner(r.Context(), id, r.FormValue("to_owner") == "1"); oerr != nil && err == nil {
 		err = oerr
+	}
+	if aerr := s.Telephony.SetTrunkAdSource(r.Context(), id, r.FormValue("ad_source")); aerr != nil && err == nil {
+		err = aerr
+	}
+	if cerr := s.Telephony.SetTrunkCRM(r.Context(), id, r.FormValue("crm_create"), r.FormValue("crm_create_type")); cerr != nil && err == nil {
+		err = cerr
 	}
 	s.Telephony.Kick()
 	if err != nil {
@@ -567,8 +670,22 @@ func (s *Server) trunkSave(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	http.Redirect(w, r, "/settings/telephony?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#trunks", http.StatusSeeOther)
 }
 
-// trunkGreeting gives the greeting of a line's voicemail (what=rate: the invitation to rate the conversation) to listen
-// to (administrators).
+// formWAV is the sound file uploaded in the form's field name; nil — none.
+func formWAV(r *http.Request, name string) []byte {
+	f, _, err := r.FormFile(name)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 16<<20))
+	if err != nil || len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
+// trunkGreeting gives the greeting of a line's voicemail (what=rate: the invitation to rate the conversation, what=note:
+// the notice of recording) to listen to (administrators).
 func (s *Server) trunkGreeting(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if !s.telAdmin(r.Context(), sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
@@ -579,8 +696,11 @@ func (s *Server) trunkGreeting(w http.ResponseWriter, r *http.Request, sess auth
 		return
 	}
 	get := s.Telephony.TrunkGreeting
-	if r.URL.Query().Get("what") == "rate" {
+	switch r.URL.Query().Get("what") {
+	case "rate":
 		get = s.Telephony.TrunkRatePrompt
+	case "note":
+		get = s.Telephony.TrunkRecordNotice
 	}
 	g, err := get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, telephony.ErrNotFound) || (err == nil && g == nil) {
@@ -709,4 +829,45 @@ func (s *Server) ivrDelete(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	s.Telephony.Kick()
 	http.Redirect(w, r, "/settings/telephony#menus", http.StatusSeeOther)
+}
+
+// scriptSave adds or changes a script of CoPilot's call assessment (administrators).
+func (s *Server) scriptSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !s.telAdmin(r.Context(), sess) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if s.Telephony == nil {
+		s.taskErr(w, r, i18n.E("err.telephony_off"), "/settings")
+		return
+	}
+	sc := telephony.Script{ID: r.PathValue("id"), Name: r.FormValue("name"), Body: r.FormValue("body"), Calls: r.FormValue("calls"),
+		Auto: r.FormValue("auto") == "1"}
+	sc.Low, _ = strconv.Atoi(r.FormValue("low"))
+	if _, err := s.Telephony.SaveScript(r.Context(), sess.UserID, sc); err != nil {
+		if errors.Is(err, telephony.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.taskErr(w, r, err, "/settings/telephony#scripts")
+		return
+	}
+	http.Redirect(w, r, "/settings/telephony?msg="+url.QueryEscape(s.tr(r, "common.saved"))+"#scripts", http.StatusSeeOther)
+}
+
+// scriptDelete removes a script of the call assessment (administrators); the scores it gave stay.
+func (s *Server) scriptDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !s.telAdmin(r.Context(), sess) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if s.Telephony == nil {
+		s.taskErr(w, r, i18n.E("err.telephony_off"), "/settings")
+		return
+	}
+	if err := s.Telephony.DeleteScript(r.Context(), r.PathValue("id")); err != nil && !errors.Is(err, telephony.ErrNotFound) {
+		s.taskErr(w, r, err, "/settings/telephony#scripts")
+		return
+	}
+	http.Redirect(w, r, "/settings/telephony#scripts", http.StatusSeeOther)
 }

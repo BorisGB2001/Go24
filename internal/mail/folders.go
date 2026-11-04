@@ -25,6 +25,7 @@ type Folder struct {
 	ID, MailboxID, Name, Delim, Role string
 	Selectable, Local                bool
 	Unseen, Total                    int
+	Policy                           string // «Назначить политику»: its retention policy ("" — none; retention.go)
 }
 
 // Title is the folder's own name (the last part of its path).
@@ -50,7 +51,7 @@ func (f Folder) Own() bool { return f.Role == "" && !f.Local && !strings.EqualFo
 
 const folderSQL = `SELECT f.id::text, f.mailbox_id::text, f.name, f.delim, f.role, f.selectable, f.local,
 		(SELECT count(*) FROM mail_messages x WHERE x.folder_id = f.id AND NOT x.seen)::int,
-		(SELECT count(*) FROM mail_messages x WHERE x.folder_id = f.id)::int
+		(SELECT count(*) FROM mail_messages x WHERE x.folder_id = f.id)::int, f.retention
 	FROM mail_folders f JOIN mailboxes m ON m.id = f.mailbox_id`
 
 const folderOrder = ` ORDER BY m.email, coalesce(array_position(ARRAY['inbox','drafts','sent','trash','junk','archive'], nullif(f.role, '')), 99), lower(f.name)`

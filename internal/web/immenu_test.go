@@ -28,7 +28,7 @@ func TestIMMessageMenu(t *testing.T) {
 	menu := out[strings.Index(out, `class="im-menu"`):]
 	menu = menu[:strings.Index(menu, "</details>")]
 	order := []string{`class="im-menu-reacts"`, `data-react="👍"`, `data-react-more`, `data-act="reply"`, `data-act="quote"`, `data-act="forward"`,
-		`data-act="mail"`, "Переслать по почте", `data-act="share"`, "Поделиться картинкой", "/tasks/new?im_room="}
+		`data-act="mail"`, "Переслать по почте", `data-act="share"`, "Поделиться картинкой", "/tasks/new?im_room=", `data-act="select"`, "Выбрать"}
 	at := 0
 	for _, want := range order {
 		i := strings.Index(menu[at:], want)

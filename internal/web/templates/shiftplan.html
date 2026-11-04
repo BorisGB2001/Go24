@@ -17,7 +17,7 @@
     {{range $d.Dates}}{{$k := .Format "2006-01-02"}}<th class="{{if ge (wdnum .) 6}}off{{end}}{{if eq $k $d.Today}} today{{end}}">{{.Day}}<br><span class="muted">{{t (print "wd." (wdnum .))}}</span></th>{{end}}</tr></thead>
   <tbody>{{range $p := $d.People}}{{$can := index $d.Can $p.ID}}<tr><td class="who"><a href="/u/{{$p.ID}}">{{$p.Name}}</a>{{with $p.Position}}<div class="muted small">{{.}}</div>{{end}}</td>
     {{range $d.Dates}}{{$k := .Format "2006-01-02"}}{{$key := print $p.ID "|" $k}}{{$cur := index $d.Plan $key}}{{$abs := index $d.Absent $key}}
-    <td class="{{if $abs}}ws-absence{{else if $cur}}ws-set{{end}}" title="{{with $abs}}{{t (print "absence.kind." .)}}{{end}}">
+    <td class="{{if $abs}}ws-absence{{else if $cur}}ws-set{{end}}" title="{{with $abs}}{{absKind .}}{{end}}">
       {{if $can}}<select name="c|{{$key}}" aria-label="{{$p.Name}} {{$k}}"><option value=""></option>{{range $ws.Shifts}}<option value="{{.ID}}" {{if eq .ID $cur}}selected{{end}}>{{.Name}}</option>{{end}}</select>
       {{else}}<span>{{range $ws.Shifts}}{{if eq .ID $cur}}{{.Name}}{{end}}{{end}}</span>{{end}}</td>{{end}}</tr>{{end}}</tbody></table></div>
   {{if $d.Editable}}<p class="row" style="padding:0 16px 12px"><button class="primary">{{t "common.save"}}</button><span class="small muted">{{t "wschedule.plan_hint"}}</span></p>{{end}}

@@ -29,7 +29,7 @@ func (s *Server) guestLinkURL(token string) string {
 // callGuestQuery is the call of the request as /call?… has it (task=, event= or room=, and video=).
 func callGuestQuery(r *http.Request) string {
 	q := url.Values{}
-	for _, k := range []string{"task", "event", "room", "video"} {
+	for _, k := range []string{"task", "event", "room", "conf", "video"} {
 		if v := r.URL.Query().Get(k); v != "" {
 			q.Set(k, v)
 		}
@@ -188,6 +188,13 @@ func (s *Server) guestPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	conf, _ := url.ParseQuery(l.Query)
+	if id := conf.Get("conf"); id != "" && g.ID == "" { // the link of a conference: an employee signed in joins as one
+		if _, err := s.session(r); err == nil {
+			http.Redirect(w, r, "/call?conf="+url.QueryEscape(id), http.StatusSeeOther)
+			return
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	data := map[string]any{"Token": l.Token, "Title": l.Title, "Password": l.Password, "Expires": l.Expires}
@@ -202,7 +209,12 @@ func (s *Server) guestPage(w http.ResponseWriter, r *http.Request) {
 		data["Left"] = true
 	default:
 		name := g.Name + " (" + s.tr(r, "call.guest") + ")"
-		token, err := s.Calls.Token(calls.GuestIdentity(g.ID), name, l.Room, false, time.Now())
+		speaks := true
+		if id := conf.Get("conf"); id != "" && s.Conferences != nil { // a guest of a broadcast watches
+			c, err := s.Conferences.Get(r.Context(), id)
+			speaks = err == nil && !c.Broadcast
+		}
+		token, err := s.Calls.TokenAs(calls.GuestIdentity(g.ID), name, l.Room, false, speaks, time.Now())
 		if err != nil {
 			s.fail(w, "call token", err)
 			return
@@ -210,7 +222,8 @@ func (s *Server) guestPage(w http.ResponseWriter, r *http.Request) {
 		s.Log.Info("call guest joined", "guest", g.ID, "room", l.Room)
 		video := !strings.Contains(l.Query, "video=0")
 		s.render(w, r, "call", page{Title: s.tr(r, "call.title") + " · " + l.Title, Data: map[string]any{
-			"URL": s.Calls.URL, "Token": token, "Name": l.Title, "Back": "/call/g/" + l.Token + "?left=1", "Video": video, "Guest": true}})
+			"URL": s.Calls.URL, "Token": token, "Name": l.Title, "Back": "/call/g/" + l.Token + "?left=1", "Video": video, "Guest": true,
+			"Viewer": !speaks, "Broadcast": !speaks}})
 		return
 	}
 	s.render(w, r, "callguest", page{Title: s.tr(r, "call.title") + " · " + l.Title, Data: data})

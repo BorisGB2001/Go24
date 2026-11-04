@@ -38,7 +38,8 @@ func (s *Server) reportItems(ctx context.Context, userID string, from, to time.T
 	return items, nil
 }
 
-// myPeople are the ids of those whose reports the viewer checks: the people under them, everyone for an administrator.
+// myPeople are the ids of those whose reports the viewer sees: by «Права доступа» of working time, everyone for an
+// administrator.
 func (s *Server) myPeople(ctx context.Context, sess auth.Session) ([]string, error) {
 	var ids []string
 	if sess.Admin {
@@ -48,7 +49,7 @@ func (s *Server) myPeople(ctx context.Context, sess auth.Session) ([]string, err
 		}
 		ids = all
 	} else {
-		people, err := s.Company.Under(ctx, sess.UserID)
+		people, err := s.Company.WorktimePeople(ctx, sess.UserID, false, "view")
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +98,7 @@ func (s *Server) workReports(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	var names []company.Person
 	if tab == "team" {
-		under, err := s.Company.Under(r.Context(), sess.UserID)
+		under, err := s.Company.WorktimePeople(r.Context(), sess.UserID, false, "view")
 		if err != nil {
 			s.taskErr(w, r, err, "/worktime")
 			return
@@ -223,8 +224,13 @@ func (s *Server) workReport(w http.ResponseWriter, r *http.Request, sess auth.Se
 		s.taskErr(w, r, err, "/worktime/reports")
 		return
 	}
+	canMark, err := s.Company.Manages(r.Context(), sess.UserID, rep.UserID, sess.Admin)
+	if err != nil {
+		s.taskErr(w, r, err, "/worktime/reports")
+		return
+	}
 	s.render(w, r, "workreport", page{TitleKey: "wreport.one", Nav: "workreports", Data: map[string]any{
-		"Report": rep, "CanMark": rep.UserID != sess.UserID, "Marks": company.ReportMarks, "Items": rep.Items, "Worked": rep.Worked,
+		"Report": rep, "CanMark": canMark && rep.UserID != sess.UserID, "Marks": company.ReportMarks, "Items": rep.Items, "Worked": rep.Worked,
 		"Period": company.ReportPeriod{From: rep.From, To: rep.To},
 	}})
 }
@@ -261,9 +267,10 @@ func (s *Server) commentWorkReport(w http.ResponseWriter, r *http.Request, sess 
 }
 
 // saveReportRules: POST /settings/worktime/reports — the company's rule (period, weekday, monthday) and departments'
-// own (dept_id[], dept_period[], dept_weekday[], dept_monthday[]; an empty department is skipped). Administrators only.
+// own (dept_id[], dept_period[], dept_weekday[], dept_monthday[]; an empty department is skipped). Those with the
+// settings of working time.
 func (s *Server) saveReportRules(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if !sess.Admin {
+	if !s.worktimeSettings(r, sess) {
 		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
 		return
 	}

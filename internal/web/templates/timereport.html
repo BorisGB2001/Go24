@@ -1,0 +1,38 @@
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{icon "clock"}} {{t "ttr.title"}}</h1>
+  <a href="{{$d.CSV}}" class="button ghost">{{icon "download"}} {{t "tasks.export"}}</a></div>
+<form method="get" action="/tasks/time" class="row eff-period">
+  <a href="{{$d.Prev}}" class="button ghost" title="{{t "eff.prev"}}">{{icon "chevron-left"}}</a>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.From}}"></span> <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}"></span></span>
+  <select name="project" style="width:auto" aria-label="{{t "ttr.project"}}"><option value="">{{t "ttr.all_projects"}}</option>
+    {{range $d.Projects}}<option value="{{.ID}}" {{if eq .ID $d.Project}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  {{if $d.Depts}}<select name="dept" style="width:auto" aria-label="{{t "ttr.dept"}}"><option value="">{{t "ttr.all_depts"}}</option>
+    {{range $d.Depts}}<option value="{{.ID}}" {{if eq .ID $d.Dept}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>{{end}}
+  {{with $d.Who}}<input type="hidden" name="user" value="{{.UserID}}">{{end}}
+  <button>{{t "eff.show"}}</button>
+  <a href="{{$d.Next}}" class="button ghost" title="{{t "eff.next"}}">{{icon "chevron-right"}}</a>
+</form>
+{{if $d.Rows}}
+<div class="card flush tlist-wrap"><table class="tlist">
+  <thead><tr><th>{{t "eff.employee"}}</th><th class="right">{{t "ttr.tasks"}}</th><th class="right">{{t "ttr.spent"}}</th><th class="right">{{t "ttr.over"}}</th></tr></thead>
+  <tbody>{{range $d.Rows}}
+  <tr{{if and $d.Who (eq .UserID $d.Who.UserID)}} class="on"{{end}}><td><a href="/tasks/time?{{$d.Query}}&amp;user={{.UserID}}">{{person .Name}}</a></td>
+    <td class="right">{{.Tasks}}</td><td class="right"><b>{{dur .Seconds}}</b></td>
+    <td class="right">{{if .Over}}<span class="badge red" title="{{t "ttr.over_hint"}}">{{.Over}}</span>{{else}}<span class="muted">0</span>{{end}}</td></tr>
+  {{end}}</tbody>
+  {{if gt (len $d.Rows) 1}}<tfoot><tr><th>{{t "ttr.total"}}</th><th></th><th class="right">{{dur $d.Total}}</th><th></th></tr></tfoot>{{end}}
+</table></div>
+{{else}}<div class="card empty">{{icon "clock"}} {{t "ttr.empty"}}</div>{{end}}
+
+{{with $d.Who}}
+<h2>{{t "ttr.tasks_of" .Name}}</h2>
+<div class="card flush tlist-wrap"><table class="tlist">
+  <thead><tr><th>{{t "col.list.title"}}</th><th>{{t "col.status"}}</th><th class="right">{{t "ttr.spent"}}</th><th class="right">{{t "ttr.task_total"}}</th><th class="right">{{t "ttr.planned"}}</th></tr></thead>
+  <tbody>{{range $d.List}}
+  <tr><td><a href="/t/{{.Key}}"><span class="muted">{{.Key}}</span> {{.Title}}</a></td><td>{{t (print "status." .Status)}}</td>
+    <td class="right"><b>{{dur .Seconds}}</b></td><td class="right">{{dur .TotalSeconds}}</td>
+    <td class="right">{{with durm .EstimateMinutes}}{{.}}{{else}}<span class="muted">—</span>{{end}}{{if .Over}} <span class="badge red">{{t "ttr.over_badge"}}</span>{{end}}</td></tr>
+  {{end}}</tbody></table></div>
+{{end}}
+<p class="muted small">{{t "ttr.hint"}}</p>
+{{end}}

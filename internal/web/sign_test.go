@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -167,6 +168,23 @@ func TestSignHTTP(t *testing.T) {
 	if code, body, _ := do(eve, "GET", "/sign", nil); code != http.StatusOK || strings.Contains(body, "/sign/"+id) {
 		t.Fatalf("eve's list: %d", code)
 	}
+	// the search and the filter of the list, the kanban (GO24DEV-953)
+	today := time.Now().Format(time.DateOnly)
+	for q, found := range map[string]bool{"q=договор": true, "q=ivan@client": true, "q=Боб": true, "q=nothing": false,
+		"author=" + anna: true, "author=" + bob: false, "from=" + today + "&to=" + today: true, "to=2000-01-01": false,
+		"f=signing&q=7&view=kanban": true, "f=done&view=kanban": false} {
+		code, body, _ := do(bob, "GET", "/sign?"+q, nil)
+		if code != http.StatusOK || strings.Contains(body, "/sign/"+id+`"`) != found {
+			t.Fatalf("list %s: %d, found %v", q, code, !found)
+		}
+	}
+	if _, body, _ := do(bob, "GET", "/sign?q=договор&view=kanban", nil); !strings.Contains(body, "sgcol-signing") ||
+		!strings.Contains(body, `href="/sign?f=me&amp;q=%D0%B4%D0%BE%D0%B3%D0%BE%D0%B2%D0%BE%D1%80&amp;view=kanban"`) {
+		t.Fatal("kanban: no columns or the tabs lose the filter")
+	}
+	if _, body, _ := do(bob, "GET", "/sign?q=nothing", nil); !strings.Contains(body, "sign.nothing") && !strings.Contains(body, "Ничего не найдено") {
+		t.Fatal("nothing found: no message")
+	}
 	// how often the signer is reminded: the sender changes it, the signer cannot
 	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, `action="/sign/`+id+`/remind"`) {
 		t.Fatalf("anna's reminders: %d", code)
@@ -183,6 +201,28 @@ func TestSignHTTP(t *testing.T) {
 	do(anna, "POST", "/sign/"+id+"/remind", url.Values{"remind": {"3"}})
 	if d, _ := srv.Sign.Get(ctx, id); d.RemindDays != 3 {
 		t.Fatalf("reminders changed: %d", d.RemindDays)
+	}
+	// «Подписать до»: the sender sets and extends it, not before today; the signer cannot
+	if code, body, _ := do(anna, "GET", "/sign/"+id, nil); code != http.StatusOK || !strings.Contains(body, `action="/sign/`+id+`/deadline"`) {
+		t.Fatalf("anna's deadline: %d", code)
+	}
+	if code, _, _ := do(bob, "POST", "/sign/"+id+"/deadline", url.Values{"deadline": {"2099-01-01"}}); code != http.StatusNotFound {
+		t.Fatalf("bob changes the deadline: %d", code)
+	}
+	do(anna, "POST", "/sign/"+id+"/deadline", url.Values{"deadline": {"2000-01-01"}})
+	if d, _ := srv.Sign.Get(ctx, id); d.Deadline != nil {
+		t.Fatalf("a past deadline: %v", d.Deadline)
+	}
+	do(anna, "POST", "/sign/"+id+"/deadline", url.Values{"deadline": {"2099-01-01"}})
+	if d, _ := srv.Sign.Get(ctx, id); d.Deadline == nil || d.Deadline.Format("2006-01-02") != "2099-01-01" {
+		t.Fatalf("deadline: %v", d.Deadline)
+	}
+	if code, body, _ := do(bob, "GET", "/sign?f=me", nil); code != http.StatusOK || !strings.Contains(body, "01.01.2099") {
+		t.Fatalf("deadline in the list: %d", code)
+	}
+	do(anna, "POST", "/sign/"+id+"/deadline", url.Values{"deadline": {""}})
+	if d, _ := srv.Sign.Get(ctx, id); d.Deadline != nil {
+		t.Fatalf("deadline removed: %v", d.Deadline)
 	}
 	if _, _, loc := do(anna, "POST", "/sign/"+id+"/sign", url.Values{"agree": {"1"}}); !strings.Contains(loc, "msg=") {
 		t.Fatalf("anna signs for bob: %s", loc)
@@ -253,6 +293,11 @@ func TestSignHTTP(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("anna notified: %d", n)
 	}
+	// the deal's history: «Документ подписан» (its trigger moves it)
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM crm_timeline WHERE entity = 'deal' AND entity_id = $1 AND kind = 'doc_signed'`, deal).Scan(&n))
+	if n != 1 {
+		t.Fatalf("the deal's history has %d «signed»", n)
+	}
 	// the history: the employee told, opened it, signed; the client told, opened the link, asked for a code, signed
 	evs, err := srv.Sign.Events(ctx, id)
 	must(err)
@@ -289,6 +334,43 @@ func TestSignHTTP(t *testing.T) {
 	}
 	if code, _, _ := do(eve, "GET", "/sign/"+id+"/file/result", nil); code != http.StatusNotFound {
 		t.Fatalf("eve downloads: %d", code)
+	}
+	// «Проверка подлинности»: the code and the QR code on the signing sheet; the public page by the code or by the file
+	done, _ := srv.Sign.Get(ctx, id)
+	show := sign.ShowCode(done.VerifyCode)
+	if len(done.VerifyCode) != 12 || done.ResultHash != sign.Hash([]byte(result)) || !strings.Contains(string(x), show) ||
+		!strings.Contains(string(x), "/sg/check/"+show) || !strings.Contains(string(x), `r:embed="rIdGo24Check"`) {
+		t.Fatalf("check code %q, result hash %q: %s", done.VerifyCode, done.ResultHash, x)
+	}
+	if code, page, _ := do("", "GET", "/sg/check/"+strings.ToLower(show), nil); code != http.StatusOK ||
+		!strings.Contains(page, "Договор № 7") || !strings.Contains(page, "Иван Петров") || strings.Contains(page, "ivan@client.test") {
+		t.Fatalf("check by code: %d %s", code, page)
+	}
+	if code, _, loc := do("", "GET", "/sg/check?code="+done.VerifyCode, nil); code != http.StatusSeeOther || loc != "/sg/check/"+show {
+		t.Fatalf("check form: %d %s", code, loc)
+	}
+	if code, _, _ := do("", "GET", "/sg/check/ZZZZ-ZZZZ-ZZZZ", nil); code != http.StatusNotFound {
+		t.Fatalf("unknown code: %d", code)
+	}
+	checkFile := func(data []byte) string {
+		var b bytes.Buffer
+		mw := multipart.NewWriter(&b)
+		fw, _ := mw.CreateFormFile("file", "doc.docx")
+		fw.Write(data)
+		mw.Close()
+		req, _ := http.NewRequest("POST", hs.URL+"/sg/check", &b)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		code, page, _ := send("", req)
+		if code != http.StatusOK {
+			t.Fatalf("check file: %d", code)
+		}
+		return page
+	}
+	if page := checkFile([]byte(result)); !strings.Contains(page, "sgcheck-done") || !strings.Contains(page, "sign.check.match.signed") && !strings.Contains(page, "файл не изменён") {
+		t.Fatalf("check the signed file: %s", page)
+	}
+	if page := checkFile([]byte(result + "x")); strings.Contains(page, "sgcheck-") {
+		t.Fatal("a changed file passed the check")
 	}
 
 	// a Word file uploaded, signed by the employee alone; then recalled one
@@ -444,5 +526,28 @@ func TestSignHTTP(t *testing.T) {
 	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id IN ($1, $2) AND kind = 'sign_refused' AND url = $3`, anna, bob, "/sign/"+d5.ID).Scan(&n))
 	if d5.Status != "refused" || d5.Parties[0].Reason != "не та цена" || n != 2 {
 		t.Fatalf("rejected: %d %+v", n, d5)
+	}
+	// with a deadline; not signed by it — expired, the sender and the observer told
+	tomorrow := time.Now().AddDate(0, 0, 1).Format(time.DateOnly)
+	code, _, loc = do(anna, "POST", "/sign", url.Values{"tpl": {tpls[0].ID}, "signer": {anna}, "observer": {bob}, "deadline": {tomorrow}})
+	if m = regexp.MustCompile(`^/sign/([0-9a-f-]{36})\?msg=`).FindStringSubmatch(loc); m == nil {
+		t.Fatalf("with a deadline: %d %s", code, loc)
+	}
+	if d6, _ := srv.Sign.Get(ctx, m[1]); d6.Deadline == nil || d6.Deadline.Format(time.DateOnly) != tomorrow {
+		t.Fatalf("the deadline kept: %v", d6.Deadline)
+	}
+	if code, _, loc := do(anna, "POST", "/sign", url.Values{"tpl": {tpls[0].ID}, "signer": {anna}, "deadline": {"2000-01-01"}}); code != http.StatusSeeOther || !strings.HasPrefix(loc, "/sign/new?tpl=") {
+		t.Fatalf("a past deadline: %d %s", code, loc)
+	}
+	_, err = pool.Exec(ctx, `UPDATE sign_docs SET deadline = current_date - 1 WHERE id::text = $1`, m[1])
+	must(err)
+	must(srv.signExpire(ctx, time.Now()))
+	d6, _ := srv.Sign.Get(ctx, m[1])
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id IN ($1, $2) AND kind = 'sign_expired' AND url = $3`, anna, bob, "/sign/"+d6.ID).Scan(&n))
+	if d6.Status != "expired" || n != 2 {
+		t.Fatalf("expired: %d %+v", n, d6)
+	}
+	if code, body, _ := do(anna, "GET", "/sign/"+d6.ID, nil); code != http.StatusOK || strings.Contains(body, `/deadline"`) || !strings.Contains(body, "sgev-expired") {
+		t.Fatalf("the expired page: %d", code)
 	}
 }

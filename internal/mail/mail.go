@@ -238,6 +238,12 @@ type Message struct {
 	Unsubscribed                                                                                             *time.Time // when the user left it
 	Voting, Vote                                                                                             string     // the voting buttons it asks for («A;B»), the choice it votes for (voting.go)
 	SMIMESign, SMIMESigner, SMIMEEnc                                                                         string     // its S/MIME signature and encryption (smime.go)
+	Sensitivity                                                                                              string     // «Конфиденциальность»: "", personal, private, confidential
+	SenderAuth, SenderVia                                                                                    string     // the sender's check: "", pass, fail; the domain it came «через» (senderauth.go)
+	NoForward                                                                                                bool       // «Не пересылать» (noforward.go)
+	RepliesTo                                                                                                string     // «Направлять ответы на»: Reply-To, "" — the sender (delivery.go)
+	ExpiresAt                                                                                                *time.Time // «Срок действия истекает» (delivery.go)
+	Look                                                                                                     *Look      `db:"-"` // «Условное форматирование» of the list (formats.go; Dress)
 }
 
 // From is how the sender is shown.
@@ -271,7 +277,7 @@ const messageCols = `x.id::text, x.mailbox_id::text, m.email, f.id::text, f.name
 
 // messageExtra are a letter's columns after IDs; html is the column of its HTML
 const messageExtra = `, %s, x.bcc_addr, x.importance::int, x.receipt_to, x.receipt_done, d.id IS NOT NULL, d.send_at, coalesce(d.error, ''), x.other, x.answered, x.answered_at, x.flag_remind,
-	x.unsubscribe <> '', x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc`
+	x.unsubscribe <> '', x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc, x.sensitivity, x.sender_auth, x.sender_via, x.no_forward, x.replies_to, x.expires_at`
 
 const messageFrom = ` FROM mail_messages x JOIN mail_folders f ON f.id = x.folder_id JOIN mailboxes m ON m.id = f.mailbox_id
 	LEFT JOIN mail_drafts d ON d.id = x.id`
@@ -279,7 +285,8 @@ const messageFrom = ` FROM mail_messages x JOIN mail_folders f ON f.id = x.folde
 var messageSQL = `SELECT ` + fmt.Sprintf(messageCols, "x.body") + `, 1, (NOT x.seen)::int, ARRAY[x.id::text]` + fmt.Sprintf(messageExtra, "x.body_html") + messageFrom
 
 // The virtual folders: «Все входящие» (the inboxes of all the user's mailboxes), «С флажком», «Отложенные», a
-// category's letters (CategoryFolder + its id) and a search folder (SearchFolder + the saved search's id).
+// category's letters (CategoryFolder + its id), a search folder (SearchFolder + the saved search's id) and a person's
+// letters (PersonFolder + the e-mail).
 const (
 	AllInboxes     = "all"
 	FlaggedFolder  = "flagged"
@@ -290,7 +297,7 @@ const (
 // Virtual: is the folder one of the virtual ones?
 func Virtual(folderID string) bool {
 	return folderID == AllInboxes || folderID == FlaggedFolder || folderID == SnoozedFolder || strings.HasPrefix(folderID, CategoryFolder) ||
-		strings.HasPrefix(folderID, SearchFolder)
+		strings.HasPrefix(folderID, SearchFolder) || strings.HasPrefix(folderID, PersonFolder)
 }
 
 // MaxList bounds a folder's letters shown at once.
@@ -377,6 +384,8 @@ func (s *Store) ListBy(ctx context.Context, userID string, o ListOpts) ([]Messag
 			return nil, err
 		}
 		where = "x.categories @> ARRAY[" + args.add(folderID[len(CategoryFolder):]) + "::uuid] AND f.role NOT IN ('trash', 'junk')"
+	case strings.HasPrefix(folderID, PersonFolder):
+		where = "lower(x.from_addr) = " + args.add(strings.ToLower(folderID[len(PersonFolder):])) + " AND f.role NOT IN ('trash', 'junk')"
 	default:
 		where = "f.id::text = " + args.add(folderID)
 	}
@@ -423,7 +432,7 @@ func (s *Store) ListBy(ctx context.Context, userID string, o ListOpts) ([]Messag
 	if o.Conv { // the newest letter of each conversation stands for it; it is read, flagged, pinned when any of its letters is
 		sql = `SELECT id, mailbox_id, email, folder_id, name, role, from_addr, from_name, to_addr, cc_addr, subject, body, message_id, thread,
 			sent_at, unread = 0, flagged_any, flag_done, pinned_any, flag_due, snooze_until, categories, lead_id, attached_all, n, unread, ids,
-				body_html, bcc_addr, importance, receipt_to, receipt_done, is_draft, send_at, draft_error, other_, answered, answered_at, flag_remind, unsub, unsubscribed_at, voting, vote, smime_sign, smime_signer, smime_enc FROM (
+				body_html, bcc_addr, importance, receipt_to, receipt_done, is_draft, send_at, draft_error, other_, answered, answered_at, flag_remind, unsub, unsubscribed_at, voting, vote, smime_sign, smime_signer, smime_enc, sensitivity, sender_auth, sender_via, no_forward, replies_to, expires_at FROM (
 			SELECT ` + strings.NewReplacer("f.id::text,", "f.id::text AS folder_id,", "x.id::text,", "x.id::text AS id,",
 			"x.mailbox_id::text,", "x.mailbox_id::text AS mailbox_id,", "x.flag_due::timestamptz", "x.flag_due::timestamptz AS flag_due",
 			"x.categories::text[]", "x.categories::text[] AS categories", "coalesce(x.lead_id::text, '')", "coalesce(x.lead_id::text, '') AS lead_id", "= '')::int", "= '')::int AS attached").Replace(cols) + `,
@@ -431,7 +440,7 @@ func (s *Store) ListBy(ctx context.Context, userID string, o ListOpts) ([]Messag
 				bool_or(x.flagged) OVER w AS flagged_any, bool_or(x.pinned) OVER w AS pinned_any, coalesce(x.woke_at, x.sent_at) AS at,
 				max(coalesce(x.woke_at, x.sent_at)) OVER w AS last_at, sum(` + sizeExpr + `) OVER w AS size_all, '' AS body_html, x.bcc_addr,
 				x.importance::int AS importance, x.receipt_to, x.receipt_done, d.id IS NOT NULL AS is_draft, d.send_at, coalesce(d.error, '') AS draft_error,
-				x.other AS other_, x.answered, x.answered_at, x.flag_remind, x.unsubscribe <> '' AS unsub, x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc, row_number() OVER (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text) ORDER BY coalesce(x.woke_at, x.sent_at) DESC) AS rn` +
+				x.other AS other_, x.answered, x.answered_at, x.flag_remind, x.unsubscribe <> '' AS unsub, x.unsubscribed_at, x.voting, x.vote, x.smime_sign, x.smime_signer, x.smime_enc, x.sensitivity, x.sender_auth, x.sender_via, x.no_forward, x.replies_to, x.expires_at, row_number() OVER (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text) ORDER BY coalesce(x.woke_at, x.sent_at) DESC) AS rn` +
 			messageFrom + where + `
 			WINDOW w AS (PARTITION BY x.mailbox_id, coalesce(nullif(x.thread, ''), x.id::text))) c
 			WHERE rn = 1 ORDER BY ` + outerPinned + sort[1] + ` ` + dir + ` NULLS LAST, last_at DESC LIMIT ` + limit

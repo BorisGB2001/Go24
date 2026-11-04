@@ -40,7 +40,8 @@
   }
 
   // checklists: «Скрыть выполненные» (remembered), a list renamed in place, an item edited on a double click,
-  // Enter adds an item (a pasted list — many), items dragged within a list or to another one
+  // Enter adds an item (a pasted list — many), Tab / Shift+Tab while editing shifts it right / left, items dragged
+  // within a list or to another one — with their nested items
   const cl = card.querySelector('[data-checklist]');
   if (cl) {
     const hideBtn = cl.querySelector('[data-ck-hide]');
@@ -67,14 +68,25 @@
       const form = t.parentElement.querySelector('.ck-edit'), input = form.elements.title;
       t.hidden = true; form.hidden = false; input.focus(); input.select();
       const back = () => { input.value = t.textContent; form.hidden = true; t.hidden = false; };
-      input.onkeydown = k => { if (k.key === 'Escape') back(); };
+      input.onkeydown = async k => {
+        if (k.key === 'Escape') back();
+        if (k.key !== 'Tab') return;
+        k.preventDefault();
+        input.onblur = null;
+        const body = new URLSearchParams({ op: k.shiftKey ? 'outdent' : 'indent' });
+        try { await fetch(form.getAttribute('action'), { method: 'POST', headers: { 'X-Go24-Form': '1' }, body }); } catch {}
+        if (input.value.trim() && input.value.trim() !== t.textContent) form.requestSubmit(); else location.reload();
+      };
       input.onblur = () => { if (input.value.trim() && input.value.trim() !== t.textContent) form.requestSubmit(); else back(); };
     });
-    let dragged = null;
+    let dragged = null, block = [];
+    const level = i => +(i?.dataset.level || 0);
     cl.addEventListener('dragstart', e => {
       dragged = e.target.closest?.('.ck-item[draggable="true"]');
       if (!dragged) return;
-      dragged.classList.add('dragging');
+      block = [dragged];
+      for (let n = dragged.nextElementSibling; n && level(n) > level(dragged); n = n.nextElementSibling) block.push(n);
+      block.forEach(i => i.classList.add('dragging'));
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', dragged.dataset.item);
     });
@@ -86,20 +98,22 @@
         const r = i.getBoundingClientRect();
         return e.clientY < r.top + r.height / 2;
       });
-      if (after) box.insertBefore(dragged, after); else box.append(dragged);
+      block.forEach(i => { if (after) box.insertBefore(i, after); else box.append(i); });
     });
     cl.addEventListener('dragend', async () => {
       if (!dragged) return;
-      const item = dragged, from = item.dataset.from;
+      const item = dragged, from = item.dataset.from, last = block[block.length - 1];
       dragged = null;
-      item.classList.remove('dragging');
-      const list = item.closest('[data-list]').dataset.list, before = item.nextElementSibling?.dataset.item || '';
+      block.forEach(i => i.classList.remove('dragging'));
+      const list = item.closest('[data-list]').dataset.list, before = last.nextElementSibling?.dataset.item || '';
+      // with nested items the levels and the counts of parents may change: the page as the server has it
+      const nested = !!cl.querySelector('.ck-item:not([data-level="0"])');
       const form = item.querySelector('form');
       const body = new URLSearchParams({ op: 'move', list, before });
       let ok = false;
       try { ok = (await fetch(form.getAttribute('action'), { method: 'POST', headers: { 'X-Go24-Form': '1' }, body })).ok; } catch {}
       // another list's progress changed, or the move failed: the page as the server has it
-      if (!ok || list !== from) location.reload();
+      if (!ok || list !== from || nested) location.reload();
     });
     cl.querySelectorAll('.ck-item').forEach(i => { i.dataset.from = i.closest('[data-list]').dataset.list; });
   }

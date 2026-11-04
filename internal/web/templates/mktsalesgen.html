@@ -1,0 +1,68 @@
+{{define "content"}}
+{{$d := .Data}}{{$g := $d.G}}
+<div class="crumbs"><a href="/marketing/salesgen">{{t "mkt.title"}}</a> {{icon "chevron-right"}} {{t "mkt.salesgen"}}</div>
+<div class="pagehead"><h1>{{if $g.ID}}{{$g.Title}}{{else}}{{t "mkt.new_salesgen"}}{{end}}</h1>
+  {{if and $g.ID $d.Mine}}<span class="spacer"></span>
+  <form method="post" action="/marketing/salesgen/{{$g.ID}}/delete" data-confirm="{{t "mkt.sg_delete_confirm" $g.Title}}"><button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</div>
+
+{{if $g.Editable}}
+{{if $d.Mine}}<form method="post" action="/marketing/salesgen/{{if $g.ID}}{{$g.ID}}{{else}}new{{end}}">
+<div class="mkt-cols">
+<div>
+<div class="card">
+  <label>{{t "mkt.sg_title"}}</label><input type="text" name="title" required maxlength="200" value="{{$g.Title}}" placeholder="{{t "mkt.sg_title_hint"}}">
+  <h3>{{icon "refresh"}} {{t "mkt.sg_what"}}</h3>
+  <label><input type="radio" name="target" value="deal" {{if ne $g.Target "lead"}}checked{{end}}> {{t "mkt.sg_target.deal"}}</label>
+  <select name="place" aria-label="{{t "mkt.sg_place"}}">{{range $d.Pipelines}}{{$p := .}}<optgroup label="{{if .Name}}{{.Name}}{{else}}{{t (print "crm.pipeline." .Code)}}{{end}}">
+    {{range .Stages}}{{if eq .Semantic "process"}}<option value="{{$p.ID}}:{{.ID}}" {{if and (eq $p.ID $g.PipelineID) (eq .ID $g.StageID)}}selected{{end}}>{{if $p.Name}}{{$p.Name}}{{else}}{{t (print "crm.pipeline." $p.Code)}}{{end}} · {{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}{{end}}</optgroup>{{end}}</select>
+  <label><input type="radio" name="target" value="lead" {{if eq $g.Target "lead"}}checked{{end}}> {{t "mkt.sg_target.lead"}}</label>
+  <p class="small muted">{{t "mkt.sg_lead_note"}}</p>
+  <label>{{t "mkt.sg_card_title"}}</label><input type="text" name="card_title" maxlength="250" value="{{$g.CardTitle}}" placeholder="{{t "mkt.sg_card_title_hint"}}">
+  <label>{{t "crm.f.comment"}}</label><textarea name="comment" rows="5" maxlength="10000" placeholder="{{t "mkt.sg_comment_hint"}}">{{$g.Comment}}</textarea>
+  <p class="small muted">{{t "mkt.sg_robots_note"}}</p>
+</div>
+</div>
+<div>
+<div class="card">
+  <h3>{{icon "users"}} {{t "mkt.sg_whom"}}</h3>
+  {{if $d.Segments}}<select name="segment" aria-label="{{t "mkt.segment"}}"><option value="">—</option>{{range $d.Segments}}<option value="{{.ID}}" {{if eq .ID $g.SegmentID}}selected{{end}}>{{.Name}} · {{t (print "mkt.ent." .Entity)}}</option>{{end}}</select>
+  {{else}}<p class="muted">{{t "mkt.no_segments"}}</p>{{end}}
+  <p class="small"><a href="/marketing/segments?edit=new#edit">{{icon "plus"}} {{t "mkt.new_segment"}}</a></p>
+  <label><input type="checkbox" name="skip_open" value="1" {{if $g.SkipOpen}}checked{{end}}> {{t "mkt.sg_skip_open"}}</label>
+  {{with $d.CountErr}}<div class="form-error">{{.}}</div>{{else}}{{if $g.SegmentID}}<p><b>{{t "mkt.sg_will" $d.Count}}</b></p>{{end}}{{end}}
+  <p class="small muted">{{t "mkt.sg_segment_note"}}</p>
+</div>
+<div class="card">
+  <h3>{{icon "user"}} {{t "crm.f.responsible"}}</h3>
+  <label><input type="radio" name="assign" value="owner" {{if ne $g.Assign "staff"}}checked{{end}}> {{t "mkt.sg_owner"}}</label>
+  <label><input type="radio" name="assign" value="staff" {{if eq $g.Assign "staff"}}checked{{end}}> {{t "mkt.calls_staff"}}</label>
+  <select name="staff" multiple size="6" aria-label="{{t "mkt.calls_staff"}}">{{range $d.Users}}<option value="{{.ID}}" {{if index $d.Staff .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+</div>
+<p class="row"><button class="ghost" name="go" value="save">{{t "common.save"}}</button>
+  <button class="primary" name="go" value="start" data-confirm="{{t "mkt.sg_start_confirm"}}">{{icon "player-play"}} {{t "mkt.sg_start"}}</button>
+  <a class="button ghost" href="/marketing/salesgen">{{t "common.cancel"}}</a></p>
+</div>
+</div>
+</form>
+{{else}}<div class="card"><p class="muted">{{t "mkt.not_yours" $g.AuthorName}}</p></div>{{end}}
+
+{{else}}
+<div class="mkt-stats">
+  {{template "mktsgstat" (dict "N" $g.Total "L" "mkt.sg_clients" "S" "" "ID" $g.ID "On" $d.State)}}
+  {{template "mktsgstat" (dict "N" $g.InWork "L" "mkt.sg_work" "S" "work" "ID" $g.ID "On" $d.State)}}
+  {{template "mktsgstat" (dict "N" $g.Won "L" "mkt.sg_won" "S" "won" "ID" $g.ID "On" $d.State)}}
+  {{template "mktsgstat" (dict "N" $g.Lost "L" "mkt.sg_lost" "S" "lost" "ID" $g.ID "On" $d.State)}}
+  {{if $g.Failed}}{{template "mktsgstat" (dict "N" $g.Failed "L" "mkt.sg_failed" "S" "failed" "ID" $g.ID "On" $d.State)}}{{end}}
+</div>
+<div class="progress"><span style="width:{{pct $g.Made $g.Total}}%"></span></div>
+<div class="small muted">{{t (print "mkt.sg_st." $g.Status)}}: {{t "mkt.sg_made_of" $g.Made $g.Total}} · {{with $g.StartedAt}}{{t "mkt.started_at" (date .)}} · {{end}}{{t (print "mkt.sg_target." $g.Target)}}{{with $g.PipelineName}} · {{.}}{{end}} · {{$g.SegmentName}} · {{$g.AuthorName}}</div>
+<div class="card flush">{{if $d.Items}}<table class="tlist">
+  <thead><tr><th>{{t "mkt.sg_client"}}</th><th>{{t (print "mkt.sg_target." $g.Target)}}</th><th>{{t "crm.f.stage"}}</th><th>{{t "crm.f.responsible"}}</th></tr></thead>
+  <tbody>{{range $d.Items}}<tr><td><a href="/crm/{{if eq .Entity "company"}}companies{{else}}contacts{{end}}/{{.EntityID}}">{{.Name}}</a><div class="small muted">{{t (print "mkt.ent." .Entity)}}</div></td>
+    <td>{{if .CardTitle}}<a href="/crm/{{$g.Target}}s/{{.CardID}}">{{.CardTitle}}</a>{{else if .Error}}<span class="pill mkt-r-held" title="{{.Error}}">{{icon "alert-triangle"}} {{t "mkt.sg_not_made"}}</span>{{else if .CardID}}<span class="muted">{{t "mkt.sg_removed"}}</span>{{else}}<span class="pill mkt-r-pending">{{t "mkt.sg_waiting"}}</span>{{end}}</td>
+    <td>{{if .Stage}}<span class="pill mkt-sg-{{.Semantic}}">{{crmStage .Stage}}</span>{{end}}</td><td class="small">{{.ResponsibleName}}</td></tr>{{end}}</tbody>
+</table>
+{{if gt (len $d.Pages) 1}}<div class="row pager" style="padding:10px">{{range $i := $d.Pages}}<a class="chip{{if eq $i $d.Page}} on{{end}}" href="?state={{$d.State}}&page={{$i}}">{{$i}}</a>{{end}}</div>{{end}}
+{{else}}<div class="empty">{{t "mkt.no_recipients"}}</div>{{end}}</div>
+{{end}}
+{{end}}

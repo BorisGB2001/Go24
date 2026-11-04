@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"slices"
@@ -18,7 +19,8 @@ import (
 //
 // The lines (read), the dialogues (the list with the page's tabs and search, one with its messages, the messages after
 // an id), an operator's answer, close and reopen, transfer, spam, a CRM lead, the head's rating; «Быстрые ответы»;
-// «Статистика». The rights are those of the pages: an operator's statistics are their own, the company's quick
+// «Статистика»; CoPilot — the dialogue's summary (summary) and a draft of the next answer (suggest → {"text"}), through
+// the AI of the key's owner. The rights are those of the pages: an operator's statistics are their own, the company's quick
 // answers and others' statistics are an administrator's. The events — webhooks openline.started, openline.message,
 // openline.closed.
 
@@ -28,6 +30,7 @@ func (s *Server) apiOpenLinesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/openlines/dialogs/{id}", s.api("openlines:read", s.apiOLDialog))
 	mux.HandleFunc("GET /api/v1/openlines/dialogs/{id}/messages", s.api("openlines:read", s.apiOLMessages))
 	mux.HandleFunc("POST /api/v1/openlines/dialogs/{id}/messages", s.api("openlines:write", s.apiOLReply))
+	mux.HandleFunc("POST /api/v1/openlines/messages/{msg}/transcribe", s.api("openlines:read", s.apiOLTranscribe))
 	for _, op := range olOps {
 		mux.HandleFunc("POST /api/v1/openlines/dialogs/{id}/"+op, s.api("openlines:write", s.apiOLAction))
 	}
@@ -36,6 +39,7 @@ func (s *Server) apiOpenLinesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/openlines/quick/{id}", s.api("openlines:write", s.apiOLQuickSave))
 	mux.HandleFunc("DELETE /api/v1/openlines/quick/{id}", s.api("openlines:write", s.apiOLQuickDelete))
 	mux.HandleFunc("GET /api/v1/openlines/stats", s.api("openlines:read", s.apiOLStats))
+	mux.HandleFunc("GET /api/v1/openlines/stats/dialogs", s.api("openlines:read", s.apiOLDetail))
 	mux.HandleFunc("GET /api/v1/openlines/pause", s.api("openlines:read", s.apiOLPause))
 	mux.HandleFunc("POST /api/v1/openlines/pause", s.api("openlines:write", s.apiOLPause))
 }
@@ -62,7 +66,7 @@ func (s *Server) apiOLPause(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 }
 
 // olOps are a dialogue's actions: POST /api/v1/openlines/dialogs/{id}/<op>.
-var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept", "form", "booking"}
+var olOps = []string{"close", "reopen", "transfer", "spam", "lead", "rate", "pin", "unpin", "intercept", "form", "booking", "invite", "uninvite", "summary", "suggest"}
 
 type apiOLLine struct {
 	ID         string    `json:"id"`
@@ -79,9 +83,12 @@ type apiOLLine struct {
 	HoursDays    []int32 `json:"hours_days,omitempty"` // 0 Sunday … 6 Saturday
 	HoursFrom    string  `json:"hours_from,omitempty"`
 	HoursTo      string  `json:"hours_to,omitempty"`
-	Autoclose    int     `json:"autoclose_hours"`
-	VoteOn       bool    `json:"vote_on"`
-	CRMAuto      bool    `json:"crm_auto"`
+	HoursTZ      string  `json:"hours_tz,omitempty"` // the time zone of the hours ("" — go24's)
+	// «Праздничные дни»: "MM-DD" every year or "YYYY-MM-DD"
+	Holidays  []string `json:"holidays,omitempty"`
+	Autoclose int      `json:"autoclose_hours"`
+	VoteOn    bool     `json:"vote_on"`
+	CRMAuto   bool     `json:"crm_auto"`
 	// KPI of the answer time, minutes (0 — off), and who is told of a late dialogue
 	KPIFirst    int  `json:"kpi_first_minutes"`
 	KPIFurther  int  `json:"kpi_further_minutes"`
@@ -93,6 +100,12 @@ type apiOLLine struct {
 	BotText   string              `json:"bot_text,omitempty"`
 	BotMenu   []openlines.BotItem `json:"bot_menu,omitempty"`
 	BotOther  string              `json:"bot_other,omitempty"`
+	AISummary bool                `json:"ai_summary"`            // «CoPilot: итоги диалога» — the AI sums a closed dialogue up by itself
+	Callback  string              `json:"callback_id,omitempty"` // the form of «Обратный звонок» the widget offers
+	AIBot     bool                `json:"ai_bot"`                // the AI bot on the knowledge base answers new dialogues first
+	AISpace   string              `json:"ai_space_id,omitempty"` // the knowledge base space it answers from
+	// «Автоматические сообщения»: what the client gets after_minutes since their dialogue was closed
+	AutoMsgs  []openlines.AutoMsg `json:"auto_messages,omitempty"`
 	Origins   []string            `json:"origins"`
 	CreatedAt time.Time           `json:"created_at"`
 }
@@ -123,6 +136,8 @@ type apiOLDialog struct {
 	Pinned    bool       `json:"pinned"`               // «Закрепить за собой»: not passed on to another operator
 	KPILate   int        `json:"kpi_late"`             // how many times the visitor waited longer than the line's KPI
 	Bot       bool       `json:"bot"`                  // the client is with the line's chat bot
+	Invited   []apiUser  `json:"invited"`              // the colleagues invited into the dialogue
+	Summary   string     `json:"summary,omitempty"`    // CoPilot's summary of the dialogue
 }
 
 type apiOLMessage struct {
@@ -150,6 +165,8 @@ type apiOLFile struct {
 	Type string `json:"type"`
 	Size int64  `json:"size"`
 	URL  string `json:"url"`
+	// the text of a sound file, once asked for (POST /api/v1/openlines/messages/{id}/transcribe)
+	Transcript string `json:"transcript,omitempty"`
 }
 
 type apiOLQuickAnswer struct {
@@ -187,7 +204,10 @@ func apiOLDialogOf(x openlines.Session) apiOLDialog {
 	d := apiOLDialog{ID: x.ID, Line: apiUser{x.WidgetID, x.Widget}, Status: x.Status, Spam: x.Spam, Waiting: x.Waiting, Unread: x.Unread,
 		Name: x.Name, Phone: x.Phone, Email: x.Email, Page: x.Page, LeadID: x.LeadID, ContactID: x.ContactID, Last: x.Last,
 		Vote: x.Vote, VoteText: x.VoteComment, HeadVote: x.HeadVote, HeadText: x.HeadComment, CreatedAt: x.CreatedAt, LastAt: x.LastAt,
-		URL: "/openlines?s=" + x.ID, ConsentAt: x.ConsentAt, Pinned: x.Pinned, KPILate: x.KPILate, Bot: x.Bot}
+		URL: "/openlines?s=" + x.ID, ConsentAt: x.ConsentAt, Pinned: x.Pinned, KPILate: x.KPILate, Bot: x.Bot, Invited: []apiUser{}, Summary: x.Summary}
+	for i, id := range x.InvitedIDs {
+		d.Invited = append(d.Invited, apiUser{id, x.InvitedNames[i]})
+	}
 	if x.OperatorID != "" {
 		d.Operator = &apiUser{x.OperatorID, x.Operator}
 	}
@@ -199,7 +219,7 @@ func apiOLMessagesOf(list []openlines.Message) []apiOLMessage {
 	for _, m := range list {
 		x := apiOLMessage{ID: m.ID, From: "visitor", Text: m.Body, At: m.At, Buttons: m.Buttons}
 		if m.FileName != "" {
-			x.File = &apiOLFile{m.FileName, m.FileType, m.FileSize, "/openlines/file/" + strconv.FormatInt(m.ID, 10)}
+			x.File = &apiOLFile{m.FileName, m.FileType, m.FileSize, "/openlines/file/" + strconv.FormatInt(m.ID, 10), m.Transcript}
 		}
 		switch {
 		case m.Kind == "note":
@@ -251,12 +271,13 @@ func (s *Server) apiOLLines(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 		l := apiOLLine{ID: x.ID, Name: x.Name, Active: x.Active, Operators: []apiUser{}, QueueMode: x.QueueMode, AnswerWait: x.AnswerWait,
 			MaxChats: x.MaxChats, MaxChatsType: x.MaxChatsType, CRMForward: x.CRMForward,
 			HoursOn: x.HoursOn, Autoclose: x.Autoclose, VoteOn: x.VoteOn, CRMAuto: x.CRMAuto, Origins: x.Origins, CreatedAt: x.CreatedAt,
-			KPIFirst: x.KPIFirst, KPIFurther: x.KPIFurther, KPIOperator: x.KPIOperator, KPIHeads: x.KPIHeads, BotOn: x.BotOn}
+			KPIFirst: x.KPIFirst, KPIFurther: x.KPIFurther, KPIOperator: x.KPIOperator, KPIHeads: x.KPIHeads, BotOn: x.BotOn, AISummary: x.AISummary, Callback: x.CallbackID,
+			AIBot: x.AIBot, AISpace: x.AISpace, AutoMsgs: x.AutoMsgs}
 		if x.BotOn {
 			l.BotText, l.BotMenu, l.BotOther = x.BotText, x.BotMenu, x.BotOther
 		}
 		if x.HoursOn {
-			l.HoursDays, l.HoursFrom, l.HoursTo = x.HoursDays, x.HoursFrom, x.HoursTo
+			l.HoursDays, l.HoursFrom, l.HoursTo, l.HoursTZ, l.Holidays = x.HoursDays, x.HoursFrom, x.HoursTo, x.HoursTZ, x.Holidays
 		}
 		for _, id := range x.Operators {
 			l.Operators = append(l.Operators, apiUser{id, names[id]})
@@ -393,17 +414,20 @@ func (s *Server) apiOLDialogNow(w http.ResponseWriter, r *http.Request, id strin
 	return nil
 }
 
-// apiOLAction: close, reopen, spam, pin, unpin, intercept (no body); transfer {"to": user id} or {"line": line id}; rate {"vote": 1|-1, "comment"} — the head's
+// apiOLAction: close, reopen, spam, pin, unpin, intercept (no body); transfer {"to": user id} or {"line": line id};
+// invite {"user_id"} — a colleague into the dialogue; uninvite {"user_id"} — out of it (none — oneself leaves); rate {"vote": 1|-1, "comment"} — the head's
 // rating (administrators and the operator's managers); lead — a CRM lead of the dialogue or its binding to the client
 // with the visitor's phone or e-mail: {"kind": "lead"|"contact", "id", "url"}.
 func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	if _, err := s.apiOLWho(ctx, p, id); err != nil {
+	who, err := s.apiOLWho(ctx, p, id)
+	if err != nil {
 		return err
 	}
 	var in struct {
 		To      string `json:"to"`
+		User    string `json:"user_id"`
 		Line    string `json:"line"`
 		Vote    int    `json:"vote"`
 		Comment string `json:"comment"`
@@ -415,7 +439,6 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 			return err
 		}
 	}
-	var err error
 	switch op := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]; op {
 	case "close", "reopen":
 		err = s.OpenLines.SetStatus(ctx, p.UserID, id, op == "reopen")
@@ -425,6 +448,19 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		err = s.OpenLines.Pin(ctx, p.UserID, id, op == "pin")
 	case "intercept":
 		err = s.OpenLines.Intercept(ctx, p.UserID, id)
+	case "invite":
+		err = s.OpenLines.Invite(ctx, p.UserID, id, in.User)
+	case "uninvite":
+		err = s.OpenLines.Uninvite(ctx, who, id, cmp.Or(in.User, p.UserID))
+	case "summary":
+		err = s.olSummarize(ctx, id, p.UserID)
+	case "suggest":
+		text, err := s.olSuggest(ctx, id, p.UserID)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+		return nil
 	case "form":
 		err = s.OpenLines.SendForm(ctx, p.UserID, id, in.Form, s.olFormLink)
 	case "booking":
@@ -448,7 +484,7 @@ func (s *Server) apiOLAction(w http.ResponseWriter, r *http.Request, p apikeys.P
 		if !p.Can("crm:write") {
 			return i18n.E("err.api_no_scope", "crm:write")
 		}
-		if err := s.CRM.Check(ctx, p.UserID, "lead", "write", p.UserID); err != nil {
+		if err := s.CRM.Check(ctx, p.UserID, "lead", "add", p.UserID); err != nil {
 			return err
 		}
 		card, err := s.OpenLines.MakeLead(ctx, p.UserID, id, s.apiTr(r)("widget.source"))
@@ -511,26 +547,9 @@ func (s *Server) apiOLQuickDelete(w http.ResponseWriter, r *http.Request, p apik
 
 // apiOLStats: ?from=&to= (2006-01-02; by default — this month), line, operator (an operator — only their own).
 func (s *Server) apiOLStats(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	q := r.URL.Query()
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	f := openlines.StatsFilter{From: today.AddDate(0, 0, 1-today.Day()), To: today, Widget: q.Get("line"), OperatorID: q.Get("operator")}
-	for k, t := range map[string]*time.Time{"from": &f.From, "to": &f.To} {
-		if v := q.Get(k); v != "" {
-			d := formDay(v)
-			if d == nil {
-				return i18n.E("err.bad_form")
-			}
-			*t = *d
-		}
-	}
-	if f.To.Before(f.From) || f.To.Sub(f.From) > 366*24*time.Hour {
-		return i18n.E("err.bad_form")
-	}
-	if who, err := s.apiOLWho(r.Context(), p, ""); err != nil {
+	f, err := s.apiOLStatsFilter(r, p)
+	if err != nil {
 		return err
-	} else if !who.All {
-		f.OperatorID = p.UserID
 	}
 	st, err := s.OpenLines.Stats(r.Context(), f)
 	if err != nil {
@@ -546,4 +565,58 @@ func (s *Server) apiOLStats(w http.ResponseWriter, r *http.Request, p apikeys.Pr
 	writeJSON(w, http.StatusOK, map[string]any{"from": f.From.Format(time.DateOnly), "to": f.To.Format(time.DateOnly),
 		"total": apiOLStatsOf(st.Total), "lines": rows(st.Lines), "operators": rows(st.Operators), "days": rows(st.Days)})
 	return nil
+}
+
+// apiOLDetail is «Детальная статистика»: GET /api/v1/openlines/stats/dialogs — the dialogues started from ?from= to
+// ?to=, of ?line=, ?operator=, ?status= (open, closed, noanswer, spam), ?channel=, ?vote= (up, down, none), sorted by
+// ?sort= (num, started, answer, close, messages; "-" — descending); "more": there are more than are listed.
+func (s *Server) apiOLDetail(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	f, err := s.apiOLStatsFilter(r, p)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	df := openlines.DetailFilter{StatsFilter: f, Status: q.Get("status"), Channel: q.Get("channel"), Vote: q.Get("vote"), Sort: q.Get("sort")}
+	list, more, err := s.OpenLines.Detail(r.Context(), df)
+	if err != nil {
+		return err
+	}
+	out := []map[string]any{}
+	for _, x := range list {
+		out = append(out, map[string]any{"id": x.ID, "num": x.Num, "line": x.Line, "channel": x.Channel, "client": x.Client(),
+			"phone": x.Phone, "email": x.Email, "operator_id": x.OperatorID, "operator": x.Operator, "status": x.Status,
+			"started_at": x.Started, "answered_at": x.Answered, "closed_at": x.Closed,
+			"first_answer_s": int(x.FirstAnswer() / time.Second), "to_close_s": int(x.ToClose() / time.Second),
+			"messages": x.Messages, "vote": x.Vote, "head_vote": x.HeadVote, "kpi_late": x.KPILate, "spam": x.Spam,
+			"lead_id": x.LeadID, "contact_id": x.ContactID})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": f.From.Format(time.DateOnly), "to": f.To.Format(time.DateOnly), "dialogs": out, "more": more})
+	return nil
+}
+
+// apiOLStatsFilter reads the period (the month's first day to today by default), the line and the operator of the
+// statistics; an operator who is not a head of the lines gets their own.
+func (s *Server) apiOLStatsFilter(r *http.Request, p apikeys.Principal) (openlines.StatsFilter, error) {
+	q := r.URL.Query()
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	f := openlines.StatsFilter{From: today.AddDate(0, 0, 1-today.Day()), To: today, Widget: q.Get("line"), OperatorID: q.Get("operator")}
+	for k, t := range map[string]*time.Time{"from": &f.From, "to": &f.To} {
+		if v := q.Get(k); v != "" {
+			d := formDay(v)
+			if d == nil {
+				return f, i18n.E("err.bad_form")
+			}
+			*t = *d
+		}
+	}
+	if f.To.Before(f.From) || f.To.Sub(f.From) > 366*24*time.Hour {
+		return f, i18n.E("err.bad_form")
+	}
+	if who, err := s.apiOLWho(r.Context(), p, ""); err != nil {
+		return f, err
+	} else if !who.All {
+		f.OperatorID = p.UserID
+	}
+	return f, nil
 }

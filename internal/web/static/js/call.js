@@ -3,7 +3,8 @@
 // cameras, the choice of devices, «Сетка» or «Докладчик» (a shared screen is shown large by itself), full screen,
 // ringing the chat's people who are not in the call yet, «Поднять руку», reactions and the chat of the call,
 // «Шумоподавление», the host of the call turning off others' microphones and cameras and putting people out; the
-// background of one's video — callbg.js.
+// background of one's video — callbg.js. In a broadcast («Трансляция» of a conference) only the presenters speak and
+// show: the others (data-viewer) turn nothing on and have no tile, they watch and write in the chat.
 (() => {
   const box = document.querySelector('[data-call]');
   if (!box || !window.LivekitClient) return;
@@ -20,7 +21,9 @@
   const isScreen = track => track.source === LK.Track?.Source?.ScreenShare || track.source === 'screen_share';
   // one tile per participant (video of the camera, or their name), and one more for a screen they share; sound plays
   // without a tile of its own
+  const watches = p => p.permissions ? p.permissions.canPublish === false : p.isLocal && box.dataset.viewer === 'true';
   const tile = (p, screen) => {
+    if (watches(p) && !screen) return null; // a viewer of a broadcast has no tile
     const sid = p.identity + (screen ? ':screen' : '');
     let t = grid.querySelector(`[data-sid="${CSS.escape(sid)}"]`);
     if (!t) {
@@ -40,6 +43,7 @@
     const el = track.attach();
     if (track.kind === 'video') {
       const t = tile(p, isScreen(track));
+      if (!t) return;
       t.querySelectorAll('video').forEach(v => v.remove());
       t.prepend(el);
     } else if (!p.isLocal) {
@@ -421,7 +425,8 @@
       people();
       status.textContent = ring && !room.remoteParticipants.size ? box.dataset.ringing : '';
       status.hidden = !status.textContent; // connected: no empty bar
-      if (box.dataset.video === 'false') await room.localParticipant.setMicrophoneEnabled(true).catch(() => {}); // a call with sound only
+      if (box.dataset.viewer === 'true') { /* a viewer of a broadcast turns nothing on */ }
+      else if (box.dataset.video === 'false') await room.localParticipant.setMicrophoneEnabled(true).catch(() => {}); // a call with sound only
       else try { await room.localParticipant.enableCameraAndMicrophone(); } catch (err) {
         await room.localParticipant.setMicrophoneEnabled(true).catch(() => {}); // no camera: sound only
       }

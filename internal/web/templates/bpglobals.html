@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="crumbs"><a href="/bp">{{t "bp.title"}}</a> {{icon "chevron-right"}} <a href="/bp/templates">{{t "bp.templates"}}</a></div>
+<h1>{{icon "world"}} {{t "bp.globals"}}</h1>
+<div class="card">
+  <p class="small muted">{{t "bp.globals_hint"}}</p>
+  <form method="post" action="/bp/globals">
+    {{template "bpfields" (dict "P" "g" "Rows" $d.Rows "Kinds" $d.FieldKinds "Scopes" $d.Scopes)}}
+    <p><button class="primary">{{t "common.save"}}</button></p>
+  </form>
+</div>
+{{with $d.Globals}}<div class="card flush"><table class="tlist"><thead><tr><th>{{t "bp.globals_code"}}</th><th>{{t "bp.f.label"}}</th><th>{{t "bp.f.scope"}}</th></tr></thead><tbody>
+  {{range .}}<tr><td><code>{{print "{global." .Key "}"}}</code></td><td>{{.Label}}</td><td class="small">{{t (print "bp.scope." .Scope)}}</td></tr>{{end}}</tbody></table></div>{{end}}
+{{end}}

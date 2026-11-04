@@ -1,0 +1,33 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1 style="flex:1">{{icon "chart-bar"}} {{t "enps.title"}}</h1>
+  {{if $d.Can}}<button type="button" class="primary" data-show="enpsform">{{icon "plus"}} {{t "enps.new"}}</button>{{end}}</div>
+<p class="muted">{{t "enps.subtitle"}}</p>
+{{if $d.Can}}<div class="card" id="enpsform" style="max-width:640px" hidden>
+  <h2 class="row">{{icon "chart-bar"}} {{t "enps.new"}}<span style="flex:1"></span><button type="button" class="link" data-hide="enpsform">{{icon "x"}}</button></h2>
+  <form method="post" action="/company/enps" data-ajax data-failed="{{t "common.save_failed"}}">
+    <div class="form-error" data-error hidden></div>
+    <label>{{t "enps.question"}} <span class="req">*</span></label>
+    <textarea name="question" rows="2" maxlength="300" required>{{t "enps.question_default"}}</textarea>
+    <div class="row evwhen"><span>{{t "period.from"}} <input type="date" name="from" value="{{$d.Today.Format "2006-01-02"}}" required></span>
+      <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To.Format "2006-01-02"}}" required></span></div>
+    <label>{{t "enps.who"}}</label>
+    <select name="dept" multiple size="6">{{range $d.Departments}}<option value="{{.ID}}">{{indent .Depth}}{{.Name}}</option>{{end}}</select>
+    <p class="muted small">{{t "enps.form_hint" $d.Min}}</p>
+    <p class="row"><button class="primary">{{t "enps.start"}}</button><button type="button" class="ghost" data-hide="enpsform">{{t "common.cancel"}}</button></p>
+  </form>
+</div>{{end}}
+{{if $d.List}}<div class="card flush"><div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "enps.question"}}</th><th>{{t "enps.period"}}</th><th>{{t "enps.status"}}</th>
+    {{if $d.Can}}<th class="right">{{t "enps.answered"}}</th><th class="right">eNPS</th>{{else}}<th></th>{{end}}</tr></thead>
+  <tbody>{{range $d.List}}{{$st := .Status $d.Today}}<tr>
+    <td><a href="/company/enps/{{.ID}}">{{.Question}}</a>{{if $d.Can}}<br><span class="muted small">{{range $i, $x := .Departments}}{{if $i}}, {{end}}{{$x.Name}}{{else}}{{t "enps.whole_company"}}{{end}}</span>{{end}}</td>
+    <td class="small">{{day .From}} — {{day .To}}</td>
+    <td><span class="pill enps-{{$st}}">{{t (print "enps.status." $st)}}</span></td>
+    {{if $d.Can}}<td class="right">{{.Answers}} <span class="muted small">{{t "enps.of" .Audience}} · {{.Rate}}%</span></td>
+      <td class="right">{{if .Shown}}<b class="enps-index{{if lt .Value 0}} neg{{end}}">{{.Value}}</b>{{else}}<span class="muted">—</span>{{end}}</td>
+    {{else}}<td>{{if .Answered}}<span class="muted small">{{icon "check"}} {{t "enps.done"}}</span>{{else if eq $st "open"}}<a class="button primary" href="/company/enps/{{.ID}}">{{t "enps.answer"}}</a>{{end}}</td>{{end}}
+  </tr>{{end}}</tbody>
+</table></div></div>
+{{else}}<p class="muted">{{if $d.Can}}{{t "enps.empty_keeper"}}{{else}}{{t "enps.empty"}}{{end}}</p>{{end}}
+{{end}}

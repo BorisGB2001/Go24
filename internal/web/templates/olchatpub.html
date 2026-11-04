@@ -1,0 +1,14 @@
+{{/* A line's «Живой чат» by a link (/online/{id}): a page of its own, the widget's chat on all of it. */}}
+{{define "layout.html"}}{{$w := .Data}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{$w.Name}}</title>
+<style>html,body{margin:0;height:100%;background:#eef1f4}</style>
+</head>
+<body>
+<script src="/w/{{$w.ID}}/widget.js?page=1" async></script>
+</body>
+</html>{{end}}

@@ -18,12 +18,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"go24/internal/apps"
 	"go24/internal/calendar"
 	"go24/internal/company"
 	"go24/internal/crm"
+	"go24/internal/drive"
 	"go24/internal/feed"
 	"go24/internal/hooks"
 	"go24/internal/i18n"
+	"go24/internal/sms"
 	"go24/internal/tasks"
 )
 
@@ -33,12 +36,72 @@ var (
 )
 
 // StepKinds in the order the constructor offers them.
-var StepKinds = []string{"approve", "review", "request", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "pick", "start",
-	"stage", "update", "create", "comment", "activity", "document", "absence", "event", "wait", "log", "end", "webhook"}
+var StepKinds = []string{"approve", "review", "request", "commands", "status", "task", "notify", "chat", "mail", "post", "if", "goto", "loop", "parallel", "set", "userinfo", "pick", "start",
+	"stage", "update", "create", "crmupdate", "crmread", "crmconvert", "crmdelete", "crmmove", "crmcopy", "crmobservers", "crmclose", "crmresponsible", "crmproduct", "comment", "activity", "document", "listadd", "listupdate", "listread", "listdelete", "diskfolder", "diskcopy", "diskread", "diskdelete",
+	"foreach", "absence", "event", "sms", "workday", "workdayinfo", "random", "wait", "log", "end", "webhook", "app"}
+
+// ListKinds are the steps on the elements of a list («Списки» of the designer): add, change, read, delete.
+var ListKinds = []string{"listadd", "listupdate", "listread", "listdelete"}
+
+// ListReadPrefix begins the keys of the fields «Чтение элемента списка» (listread) puts into the process: el_name and
+// el_<the list's key>.
+const ListReadPrefix = "el_"
+
+// CRMKinds are the steps on any CRM card («CRM» of the designer): «Получить информацию об элементе CRM»
+// (crmread), «Конвертация лида» (crmconvert), «Удалить элемент CRM» (crmdelete), «Смена воронки» (crmmove — a deal
+// to the Stage of another pipeline), «Копирование сделки» (crmcopy — into the Stage, the copy's fields of Sets),
+// «Изменение наблюдателей» (crmobservers — Users added, removed or set by Mode of crm.ObserverModes), «Завершение
+// дел» (crmclose — the open deeds of the kind Deed, "" — all), «Смена ответственного» (crmresponsible — one of Users,
+// as «Выбор сотрудника» picks), «Добавление товара» (crmproduct — a row of the catalog's Product on a deal or a lead),
+// «Изменить элемент CRM» (crmupdate — the fields of Sets, as «Изменение документа» of the process's own card does).
+// A smart process's element is a deal (Entity "deal"). The card is the step's Value (an id or a link /crm/…; {…} filled) of the kind Entity, or else the process's card, or
+// else the one it made last.
+var CRMKinds = []string{"crmupdate", "crmread", "crmconvert", "crmdelete", "crmmove", "crmcopy", "crmobservers", "crmclose", "crmresponsible", "crmproduct"}
+
+// CRMInfo are the fields «Получить информацию об элементе CRM» (crmread) puts into the process, as crm_<…>: those of
+// the card's kind are filled, the others emptied; the responsible is a user field, the contact and the company — links.
+var CRMInfo = []string{"id", "link", "title", "name", "company_title", "position", "phone", "email", "website", "address", "amount",
+	"stage", "close_date", "responsible", "contact", "company", "comment"}
+
+// CRMInfoPrefix begins the keys of the fields of CRMInfo.
+const CRMInfoPrefix = "crm_"
+
+// ConvertInto: what «Конвертация лида» may make of a lead (none chosen — as the dialog of the lead offers).
+var ConvertInto = []string{"deal", "contact", "company"}
+
+// DiskKinds are the steps on the drives («Диск» of the designer): «Создать папку» (diskfolder; Folder
+// — its path on Drive), «Копирование и перемещение» (diskcopy; into Folder of Drive, made when not there), «Информация
+// об объекте Диска» (diskread), «Удаление объекта Диска» (diskdelete). The file or folder is the step's Value (an id or
+// a link; {…} filled), or else the process's file, or else the folder it made last; the steps go of From.
+var DiskKinds = []string{"diskfolder", "diskcopy", "diskread", "diskdelete"}
+
+// DiskInfo are the fields «Информация об объекте Диска» (diskread) puts into the process, as disk_<…>: who uploaded
+// (made) it is a user field, the time — a datetime one.
+var DiskInfo = []string{"id", "name", "type", "link", "size", "content_type", "folder", "folder_link", "drive", "by", "created"}
+
+// DiskInfoPrefix begins the keys of the fields of DiskInfo.
+const DiskInfoPrefix = "disk_"
 
 // UserInfo are the fields «Информация о сотруднике» (userinfo) puts into the process, as user_<…>: the employee's
 // card; the manager is a user field (a step may go to them), the departments — their names.
 var UserInfo = []string{"name", "last_name", "first_name", "email", "position", "work_phone", "mobile", "inner_phone", "department", "manager"}
+
+// WorkdayActs of «Управление рабочим днём» (workday), as the robots of the «Рабочее время»: start, pause,
+// continue after a pause, finish the employee's working day of today.
+var WorkdayActs = []string{"start", "pause", "resume", "finish"}
+
+// WorkdayInfo are the fields «Статус рабочего дня» (workdayinfo) puts into the process, as workday_<…>: the state
+// (running, paused, done or none — not started), when it started and ended, the minutes worked, the report.
+var WorkdayInfo = []string{"status", "started", "ended", "worked", "report"}
+
+// WorkdayInfoPrefix begins the keys of the fields of WorkdayInfo.
+const WorkdayInfoPrefix = "workday_"
+
+// RandomChars of «Генерация случайной строки» (random), as the step: lowercase and capital Latin
+// letters, digits, signs (none chosen — the letters and the digits); MaxRandom — the string's length at most.
+var RandomChars = []string{"lower", "upper", "digits", "signs"}
+
+const MaxRandom = 100
 
 // MaxLoops: a loop step sends a process back this many times at most, then the process fails («Цикл»
 // has such a limit too); MaxDepth: processes started by a step of another, one by another, at most.
@@ -47,8 +110,15 @@ const (
 	MaxDepth = 5
 )
 
-// Modes of an approval by several people: the first decision decides, everyone must approve, or the majority.
-var Modes = []string{"any", "all", "majority"}
+// Modes of an approval by several people: the first decision decides, everyone must approve, the majority, or a vote —
+// approved by the step's Percent of the people at least (as «голосованием» of the approval).
+var Modes = []string{"any", "all", "majority", "vote"}
+
+// Remarks: when the person must write a comment to their decision, as «Обязательный комментарий» of the // approval: always, to approve (to read, to answer) or to reject; "" — never.
+var Remarks = []string{"yes", "approve", "reject"}
+
+// MaxTimeout of an approval, a review or a request, in minutes: a year.
+const MaxTimeout = 365 * 24 * 60
 
 // Delegations: whom the person given an approval, a review or a request may hand it to («Делегировать»), as the
 // delegation type of the activities: their subordinates ("" too, the default), anyone or nobody.
@@ -58,8 +128,9 @@ var Delegations = []string{"sub", "all", "none"}
 // one after the person the step picked last time, over the processes of the template.
 var PickModes = []string{"random", "queue"}
 
-// Ops of a condition.
-var Ops = []string{"eq", "ne", "gt", "lt", "contains", "empty", "filled"}
+// Ops of a condition: "between" — the value is «from; to», "in" — one of the values given by «,» or «;»
+// (of a user field — the employees and departments, with the sub-ones, as «Условие группы пользователей»).
+var Ops = []string{"eq", "ne", "gt", "ge", "lt", "le", "between", "in", "contains", "notcontains", "empty", "filled"}
 
 // FieldKinds of a template's form, as the parameters' types: a bool is "Y" or "N", a select — one of
 // the field's options, a user — an employee's id, a datetime — YYYY-MM-DDTHH:MM.
@@ -71,9 +142,33 @@ type Field struct {
 	Label    string   `json:"label"`
 	Kind     string   `json:"kind"`
 	Required bool     `json:"required,omitempty"`
-	Options  []string `json:"options,omitempty"` // select: what to choose from
-	Default  string   `json:"default,omitempty"` // what the form shows at first; an autostarted process gets it
-	Scope    string   `json:"scope,omitempty"`   // of a template's fields: one of FieldScopes ("" — "param")
+	Options  []string `json:"options,omitempty"`  // select: what to choose from
+	Default  string   `json:"default,omitempty"`  // what the form shows at first; an autostarted process gets it
+	Scope    string   `json:"scope,omitempty"`    // of a template's fields: one of FieldScopes ("" — "param")
+	Multiple bool     `json:"multiple,omitempty"` // «Множественный»: the values one a line (Multi); not of a text or a bool
+}
+
+// Picked: the option is among the field's defaults (a multiple select of the form).
+func (f Field) Picked(o string) bool { return slices.Contains(f.List(f.Default), o) }
+
+// Multi parts the values of a multiple field as kept.
+const Multi = "\n"
+
+// List is a value of the field as its values: one, none when empty, of a multiple field — each on its line.
+func (f Field) List(v string) []string {
+	if !f.Multiple {
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	}
+	var out []string
+	for _, p := range strings.Split(v, Multi) {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // FieldScopes of a template's fields designer has them: a parameter is asked at the start, a variable
@@ -86,7 +181,10 @@ func (f Field) Asked() bool { return f.Scope == "" }
 // Shown is a value of the field as the page shows it when it is not a bool or a user's id: a datetime without «T».
 func (f Field) Shown(v string) string {
 	if f.Kind == "datetime" {
-		return strings.Replace(v, "T", " ", 1)
+		v = strings.ReplaceAll(v, "T", " ")
+	}
+	if f.Multiple {
+		return strings.Join(f.List(v), ", ")
 	}
 	return v
 }
@@ -95,43 +193,90 @@ func (f Field) Shown(v string) string {
 const FieldPrefix = "field:"
 
 // Step of a template. To: "starter", "manager" (the starter's manager), "responsible" (of the CRM card) or a user id.
-type Step struct {
-	Kind     string   `json:"kind"`
-	Text     string   `json:"text,omitempty"`     // approval question, task title, notification
-	To       string   `json:"to,omitempty"`       // approve, task, notify
-	Project  string   `json:"project,omitempty"`  // task
-	Days     int      `json:"days,omitempty"`     // task deadline, pause length
-	Stage    string   `json:"stage,omitempty"`    // stage: the CRM stage id
-	URL      string   `json:"url,omitempty"`      // webhook: where the process's data go (n8n's Webhook node)
-	Users    []string `json:"users,omitempty"`    // approve, review: more people besides To; post: its addressees (none — all employees); event: whose calendars
-	Mode     string   `json:"mode,omitempty"`     // approve: one of Modes ("" — any)
-	Field    string   `json:"field,omitempty"`    // if, loop, set: the form's field; wait: the date (time) field to wait till instead of Days
-	Op       string   `json:"op,omitempty"`       // if: one of Ops
-	Value    string   `json:"value,omitempty"`    // if: compared with; set: the new value ({…} filled)
-	Goto     int      `json:"goto,omitempty"`     // if (when false), goto, approve and request (when rejected): the step's number from 1; 0 — the end; parallel: the join; loop: back to (while the condition holds)
-	Branches []int    `json:"branches,omitempty"` // parallel: the numbers of the steps the 2nd, 3rd… branches start with (the 1st — the next step)
-	Fields   []Field  `json:"fields,omitempty"`   // request: what the person fills in; the values join the process's form
-	Reject   bool     `json:"reject,omitempty"`   // request: the person may reject instead of answering, as an approval
-	Delegate string   `json:"delegate,omitempty"` // approve, review, request: one of Delegations ("" — "sub")
-	From     string   `json:"from,omitempty"`     // chat, mail, post, comment, document: who writes (as To; "" — the starter), mail — from their mailbox
-	Email    string   `json:"email,omitempty"`    // mail: more addresses ({…} filled)
-	Subject  string   `json:"subject,omitempty"`  // mail; post: the title
-	Entity   string   `json:"entity,omitempty"`   // create: the kind of card
-	Sets     []Assign `json:"sets,omitempty"`     // update, create: the card's fields; start: the fields of the process started; document: the template's placeholders
-	Template string   `json:"template,omitempty"` // start: the template of the process started
-	Absence  string   `json:"absence,omitempty"`  // absence: the reason, one of company.AbsenceKinds
-	Start    string   `json:"start,omitempty"`    // absence: the form's date field it begins on; event: the date or date-and-time field
-	End      string   `json:"end,omitempty"`      // absence: … and ends on; event: as Start ("" — an hour, a date — the day)
-	Deed     string   `json:"deed,omitempty"`     // activity: one of crm.ActivityKinds
-	Note     string   `json:"note,omitempty"`     // activity, event: the description ({…} filled)
-	Doc      string   `json:"doc,omitempty"`      // document: the template of the document generator (of the card's kind)
-	Skip     bool     `json:"skip,omitempty"`     // pick: not the people absent today (To — the reserve when all are)
-	Watchers []string `json:"watchers,omitempty"` // task: its observers (Users — the accomplices)
-	High     bool     `json:"high,omitempty"`     // task: «Важная задача»
-	Control  bool     `json:"control,omitempty"`  // task: «Принять работу после завершения»
-	Wait     bool     `json:"wait,omitempty"`     // task: «Ожидать завершения задачи» — the process stays on the step till then
-	Items    []string `json:"items,omitempty"`    // task: its checklist
+// Cond is one more condition of an «if» or a loop step: the field compared with the value, as the step's own; Or joins
+// it to the ones before with «или» instead of «и» («и» binds first: a и b или c — (a и b) или c).
+type Cond struct {
+	Or    bool   `json:"or,omitempty"`
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	Value string `json:"value,omitempty"`
 }
+
+// MaxConds is how many conditions a step has at most, its own one too.
+const MaxConds = 20
+
+type Step struct {
+	Kind     string    `json:"kind"`
+	Text     string    `json:"text,omitempty"`     // approval question, task title, notification
+	To       string    `json:"to,omitempty"`       // approve, task, notify
+	Project  string    `json:"project,omitempty"`  // task
+	Days     int       `json:"days,omitempty"`     // task deadline, pause length
+	Stage    string    `json:"stage,omitempty"`    // stage: the CRM stage id
+	URL      string    `json:"url,omitempty"`      // webhook: where the process's data go (n8n's Webhook node)
+	Users    []string  `json:"users,omitempty"`    // approve, review: more people besides To; post: its addressees (none — all employees); event: whose calendars
+	Mode     string    `json:"mode,omitempty"`     // approve: one of Modes ("" — any)
+	Field    string    `json:"field,omitempty"`    // if, loop, set: the form's field; wait: the date (time) field to wait till instead of Days
+	Op       string    `json:"op,omitempty"`       // if: one of Ops
+	Value    string    `json:"value,omitempty"`    // if: compared with; set: the new value ({…} filled)
+	More     []Cond    `json:"more,omitempty"`     // if, loop: the conditions after the first (Field, Op, Value) «и» / «или»
+	Goto     int       `json:"goto,omitempty"`     // if (when false), goto, approve and request (when rejected): the step's number from 1; 0 — the end; parallel: the join; loop: back to (while the condition holds); commands: where to when no one pressed in Timeout, as a Command's
+	Branches []int     `json:"branches,omitempty"` // parallel: the numbers of the steps the 2nd, 3rd… branches start with (the 1st — the next step)
+	Fields   []Field   `json:"fields,omitempty"`   // request: what the person fills in; the values join the process's form
+	Reject   bool      `json:"reject,omitempty"`   // request: the person may reject instead of answering, as an approval
+	Delegate string    `json:"delegate,omitempty"` // approve, review, request: one of Delegations ("" — "sub")
+	From     string    `json:"from,omitempty"`     // chat, mail, post, comment, document: who writes (as To; "" — the starter), mail — from their mailbox
+	Email    string    `json:"email,omitempty"`    // mail: more addresses ({…} filled)
+	Subject  string    `json:"subject,omitempty"`  // mail; post: the title
+	Entity   string    `json:"entity,omitempty"`   // create: the kind of card
+	Type     string    `json:"type,omitempty"`     // create: the smart process of the element (Entity "deal"; Stage — its stage, "" — the first one)
+	Sets     []Assign  `json:"sets,omitempty"`     // update, create, crmupdate: the card's fields; start: the fields of the process started; document: the template's placeholders
+	Template string    `json:"template,omitempty"` // start: the template of the process started
+	Absence  string    `json:"absence,omitempty"`  // absence: the reason, a key of company «Типы отсутствий»
+	Start    string    `json:"start,omitempty"`    // absence: the form's date field it begins on; event: the date or date-and-time field
+	End      string    `json:"end,omitempty"`      // absence: … and ends on; event: as Start ("" — an hour, a date — the day)
+	Deed     string    `json:"deed,omitempty"`     // activity: one of crm.ActivityKinds
+	Note     string    `json:"note,omitempty"`     // activity, event: the description ({…} filled)
+	Doc      string    `json:"doc,omitempty"`      // document: the template of the document generator (of the card's kind)
+	Skip     bool      `json:"skip,omitempty"`     // pick, crmresponsible: not the people absent today (To — the reserve when all are)
+	Watchers []string  `json:"watchers,omitempty"` // task: its observers (Users — the accomplices)
+	High     bool      `json:"high,omitempty"`     // task: «Важная задача»
+	Control  bool      `json:"control,omitempty"`  // task: «Принять работу после завершения»
+	Wait     bool      `json:"wait,omitempty"`     // task: «Ожидать завершения задачи» — the process stays on the step till then
+	Items    []string  `json:"items,omitempty"`    // task: its checklist
+	List     string    `json:"list,omitempty"`     // listadd, listupdate, listread, listdelete: the list (Value — the element, "" — of the process or the one added last)
+	Commands []Command `json:"commands,omitempty"` // commands: the buttons the people (To and Users) choose from
+	Into     []string  `json:"into,omitempty"`     // crmconvert: of ConvertInto
+	Drive    string    `json:"drive,omitempty"`    // diskfolder, diskcopy: the drive — company, my (From's), a project's key
+	Folder   string    `json:"folder,omitempty"`   // diskfolder: the path of the folder made; diskcopy: of the folder to put into ("" — the top)
+	Move     bool      `json:"move,omitempty"`     // diskcopy: move instead of copying
+	Sender   string    `json:"sender,omitempty"`   // sms: the SMS provider ("" — the default one); the phone is Value ("" — the client's of the card)
+	Act      string    `json:"act,omitempty"`      // workday: one of WorkdayActs (To — whose day, Text — the report of «finish»)
+	Size     int       `json:"size,omitempty"`     // random: the length of the string put into Field
+	Chars    []string  `json:"chars,omitempty"`    // random: of RandomChars
+	Timeout  int       `json:"timeout,omitempty"`  // approve, review, request: «Время на выполнение», minutes; then the step is over without them; commands: «Ожидать не дольше»; wait: the pause, minutes (Days — of old templates)
+	WorkTime bool      `json:"worktime,omitempty"` // wait: «Учитывать рабочее время» — only the company's working hours count, a day is a working day
+	Percent  int       `json:"percent,omitempty"`  // approve, Mode "vote": the share of the people to approve, %
+	WaitAll  bool      `json:"wait_all,omitempty"` // approve, Mode "vote": «Ожидать голосования всех» — no result till everyone votes
+	Remark   string    `json:"remark,omitempty"`   // approve, review, request: one of Remarks — the comment is required
+	Yes      string    `json:"yes,omitempty"`      // approve, review, request: the text of the button to approve (read, answer)
+	No       string    `json:"no,omitempty"`       // approve, request: … to reject
+	Item     string    `json:"item,omitempty"`     // foreach: the field each value of the multiple Field is put into in turn
+	Product  string    `json:"product,omitempty"`  // crmproduct: the catalog's product (or a variation)
+	Price    string    `json:"price,omitempty"`    // crmproduct: the row's price ({…} filled, a formula; "" — the catalog's)
+	Quantity string    `json:"quantity,omitempty"` // crmproduct: … quantity ("" — 1)
+	Discount string    `json:"discount,omitempty"` // crmproduct: … discount, % ("" — none)
+	App      string    `json:"app,omitempty"`      // app: the action of an application (Sets — its properties, Fields — the values it returns, Timeout — minutes to wait for them, 0 — no limit)
+}
+
+// Command is a button of a «Команды» step (commands), as a command of a status of the state-machine processes:
+// one of the step's people presses it and the process goes to the command's step — back as well, to a status before.
+type Command struct {
+	Title string `json:"title"`
+	Goto  int    `json:"goto,omitempty"` // the step's number from 1; 0 — the next step
+}
+
+// MaxCommands of a «Команды» step.
+const MaxCommands = 10
 
 // Assign is a field of a CRM card a step sets: a key of CardFields or the name of an own field, and the value ({…} filled).
 type Assign struct {
@@ -172,10 +317,19 @@ func Ranges(steps []Step, p int) [][2]int {
 // UserInfoPrefix begins the keys of the fields of UserInfo.
 const UserInfoPrefix = "user_"
 
-// UserInfoLabel is the locale key of a field of UserInfo by the field's key ("" — not one of them).
+// UserInfoLabel is the locale key of a field of UserInfo, CRMInfo, DiskInfo or WorkdayInfo by the field's key ("" — not one of them).
 func UserInfoLabel(key string) string {
 	if k, ok := strings.CutPrefix(key, UserInfoPrefix); ok && contains(UserInfo, k) {
 		return "bp.userinfo." + k
+	}
+	if k, ok := strings.CutPrefix(key, CRMInfoPrefix); ok && contains(CRMInfo, k) {
+		return "bp.crminfo." + k
+	}
+	if k, ok := strings.CutPrefix(key, DiskInfoPrefix); ok && contains(DiskInfo, k) {
+		return "bp.diskinfo." + k
+	}
+	if k, ok := strings.CutPrefix(key, WorkdayInfoPrefix); ok && contains(WorkdayInfo, k) {
+		return "bp.workdayinfo." + k
 	}
 	return ""
 }
@@ -184,15 +338,43 @@ func UserInfoLabel(key string) string {
 // once): everything a process may hold.
 func AllFields(form []Field, steps []Step) []Field {
 	out := append([]Field(nil), form...)
-	info := false
+	info, crmInfo, diskRead, workday := false, false, false, false
 	for _, st := range steps {
 		if st.Kind == "request" {
 			out = append(out, st.Fields...)
+		}
+		if st.Kind == "listread" || st.Kind == "app" { // the list's (the action's) fields as of the template's saving; a list read twice — once
+			for _, f := range st.Fields {
+				if !slices.ContainsFunc(out, func(o Field) bool { return o.Key == f.Key }) {
+					out = append(out, f)
+				}
+			}
 		}
 		if st.Kind == "userinfo" && !info { // labels of their own: the pages put them (UserInfoLabel)
 			info = true
 			for _, k := range UserInfo {
 				out = append(out, Field{Key: UserInfoPrefix + k, Kind: map[bool]string{true: "user", false: "string"}[k == "manager"]})
+			}
+		}
+		if st.Kind == "crmread" && !crmInfo {
+			crmInfo = true
+			for _, k := range CRMInfo {
+				kind := map[string]string{"responsible": "user", "amount": "number", "close_date": "date"}[k]
+				out = append(out, Field{Key: CRMInfoPrefix + k, Kind: cmp.Or(kind, "string")})
+			}
+		}
+		if st.Kind == "diskread" && !diskRead {
+			diskRead = true
+			for _, k := range DiskInfo {
+				kind := map[string]string{"by": "user", "size": "number", "created": "datetime"}[k]
+				out = append(out, Field{Key: DiskInfoPrefix + k, Kind: cmp.Or(kind, "string")})
+			}
+		}
+		if st.Kind == "workdayinfo" && !workday {
+			workday = true
+			for _, k := range WorkdayInfo {
+				kind := map[string]string{"started": "datetime", "ended": "datetime", "worked": "number"}[k]
+				out = append(out, Field{Key: WorkdayInfoPrefix + k, Kind: cmp.Or(kind, "string")})
 			}
 		}
 	}
@@ -240,6 +422,15 @@ type Store struct {
 	Calendar *calendar.Store
 	// Files are the documents of «Общий диск» a template of files is about (nil — its processes do not start)
 	Files Files
+	// Drive is «Диск» of the steps of DiskKinds (nil — they fail), CopyBytes copies a file's bytes for «Копирование»
+	Drive     *drive.Store
+	CopyBytes drive.CopyBytes
+	// SMS sends «Отправка SMS» of a process without a CRM card (a card's goes through its timeline; nil — the step fails)
+	SMS *sms.Store
+	// Apps hold the actions of applications (app; nil — the steps fail), AppCall posts a step to the action's handler:
+	// the employee whose tokens go (but the action's own), the process, the token of the answer ("" — none waited)
+	Apps    *apps.Store
+	AppCall func(ctx context.Context, act apps.Activity, userID string, x Instance, token string, props map[string]any) error
 	// Tr translates in the portal's language: «Да»/«Нет» of a bool field in texts (nil — "Y"/"N")
 	Tr func(key string, args ...any) string
 }
@@ -288,7 +479,7 @@ func (s *Store) Template(ctx context.Context, id string) (Template, error) {
 	return list[0], nil
 }
 
-func checkTemplate(t *Template) error {
+func checkTemplate(t *Template, globals []Field) error {
 	t.Name, t.Description = strings.TrimSpace(t.Name), strings.TrimSpace(t.Description)
 	if t.Name == "" || len([]rune(t.Name)) > 200 || len([]rune(t.Description)) > 5000 {
 		return i18n.E("err.bp_name")
@@ -303,9 +494,12 @@ func checkTemplate(t *Template) error {
 	if t.Entity == "none" { // a standalone process has no card to start by
 		t.AutoCreate, t.AutoChange = false, false
 	}
-	seen, consts := map[string]bool{}, map[string]bool{}
+	seen, consts, multi := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	kinds := map[string]string{} // the fields' kinds
-	for i := range t.Fields {    // a variable and a constant are not asked, so not required
+	for _, g := range globals {  // of the company, GlobalPrefix+KEY
+		seen[g.Key], kinds[g.Key], consts[g.Key], multi[g.Key] = true, g.Kind, g.Scope == "const", g.Multiple
+	}
+	for i := range t.Fields { // a variable and a constant are not asked, so not required
 		if t.Fields[i].Scope == "param" {
 			t.Fields[i].Scope = ""
 		}
@@ -319,23 +513,23 @@ func checkTemplate(t *Template) error {
 				return i18n.E("err.bp_field")
 			}
 			consts[f.Key] = f.Scope == "const"
-			if seen[f.Key] {
+			if seen[f.Key] || strings.HasPrefix(f.Key, GlobalPrefix) {
 				return i18n.E("err.bp_field")
 			}
 			if err := checkField(f); err != nil {
 				return err
 			}
-			seen[f.Key], kinds[f.Key] = true, f.Kind
+			seen[f.Key], kinds[f.Key], multi[f.Key] = true, f.Kind, f.Multiple
 		}
 		return nil
 	}
 	if err := addFields(t.Fields, true); err != nil {
 		return err
 	}
-	info := false
+	read := map[string]bool{} // userinfo, crmread, diskread, workdayinfo: their fields are of the process from the first such step on, as a request's
 	for i, st := range t.Steps {
-		if st.Kind == "userinfo" && !info { // its fields are of the process from this step on, as a request's
-			info = true
+		if (st.Kind == "userinfo" || st.Kind == "crmread" || st.Kind == "diskread" || st.Kind == "workdayinfo") && !read[st.Kind] {
+			read[st.Kind] = true
 			for _, f := range AllFields(nil, []Step{st}) {
 				if seen[f.Key] {
 					return i18n.E("err.bp_field")
@@ -344,22 +538,34 @@ func checkTemplate(t *Template) error {
 			}
 		}
 		// a request's fields are of the process from this step on: a condition after it may check them
-		if st.Kind == "request" && len(st.Fields) == 0 || st.Kind != "request" && (len(st.Fields) > 0 || st.Reject) ||
-			st.Kind == "request" && st.Goto != 0 && !st.Reject {
+		if st.Kind == "request" && len(st.Fields) == 0 || st.Kind != "request" && st.Kind != "listread" && st.Kind != "app" && len(st.Fields) > 0 || st.Kind != "request" && st.Reject ||
+			st.Kind == "request" && st.Goto != 0 && !st.Reject || contains(ListKinds, st.Kind) != (st.List != "") {
 			return i18n.E("err.bp_step")
 		}
-		if err := addFields(st.Fields, false); err != nil {
+		fields := st.Fields
+		if st.Kind == "listread" || st.Kind == "app" { // the fields of a list read (an action answered) before stay; others' keys may not be its
+			fields = nil
+			for _, f := range st.Fields {
+				if !strings.HasPrefix(f.Key, map[bool]string{true: AppPrefix, false: ListReadPrefix}[st.Kind == "app"]) || f.Scope != "" {
+					return i18n.E("err.bp_field")
+				}
+				if !seen[f.Key] || kinds[f.Key] != f.Kind {
+					fields = append(fields, f)
+				}
+			}
+		}
+		if err := addFields(fields, false); err != nil {
 			return err
 		}
 		if !contains(StepKinds, st.Kind) || len([]rune(st.Text)) > 1000 || st.Days < 0 || st.Days > 365 {
 			return i18n.E("err.bp_step")
 		}
-		if (st.Kind == "task" && st.Project == "") || (st.Kind == "stage" && (st.Stage == "" || t.Entity != "deal" && t.Entity != "lead")) ||
-			(st.Kind == "wait" && (st.Days == 0) == (st.Field == "")) || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo", "pick", "end"}, st.Kind)) ||
+		if (st.Kind == "task" && st.Project == "") || (st.Kind == "stage" && (st.Stage == "" || t.Entity != "deal" && t.Entity != "lead")) || (st.Kind == "crmmove" || st.Kind == "crmcopy") && st.Stage == "" ||
+			(st.Kind == "wait" && (st.Days == 0 && st.Timeout == 0) == (st.Field == "")) || st.WorkTime && st.Kind != "wait" || st.Kind == "wait" && st.Field != "" && kinds[st.Field] != "date" && kinds[st.Field] != "datetime" || (st.Text == "" && !contains([]string{"wait", "stage", "webhook", "if", "goto", "loop", "parallel", "set", "start", "update", "mail", "absence", "document", "userinfo", "pick", "end", "commands", "workday", "workdayinfo", "random", "foreach", "app"}, st.Kind) && !contains(ListKinds, st.Kind) && !contains(CRMKinds, st.Kind) && !contains(DiskKinds, st.Kind)) ||
 			(st.Kind == "webhook" && hooks.CheckURL(st.URL) != nil) {
 			return i18n.E("err.bp_step")
 		}
-		if st.Kind == "absence" && (!contains(company.AbsenceKinds, st.Absence) || kinds[st.Start] != "date" || kinds[st.End] != "date") {
+		if st.Kind == "absence" && (!company.IsAbsenceKind(st.Absence) || kinds[st.Start] != "date" || kinds[st.End] != "date") {
 			return i18n.E("err.bp_step")
 		}
 		// «Событие календаря»: in the calendars of Users, from a date (time) field till another or for an hour (the day)
@@ -382,13 +588,39 @@ func checkTemplate(t *Template) error {
 		}
 		// «Выбор сотрудника»: of Users, into a user variable (To — the reserve, none when "")
 		if st.Kind == "pick" && (len(st.Users) == 0 || kinds[st.Field] != "user" || consts[st.Field] || st.Mode != "" && !contains(PickModes, st.Mode)) ||
-			st.Kind != "pick" && st.Skip {
+			st.Kind == "crmresponsible" && (len(st.Users) == 0 || st.Mode != "" && !contains(PickModes, st.Mode)) || st.Kind != "pick" && st.Kind != "crmresponsible" && st.Skip {
 			return i18n.E("err.bp_step")
+		}
+		if err := checkMore(st, kinds, consts); err != nil {
+			return err
+		}
+		// «Итератор»: over a multiple field, each value into a single field of its kind (not a constant); the steps
+		// till a «Перейти к шагу» back to it are done for each
+		if st.Kind == "foreach" && (!multi[st.Field] || !seen[st.Item] || multi[st.Item] || consts[st.Item] ||
+			kinds[st.Item] != kinds[st.Field] && kinds[st.Item] != "string" && kinds[st.Item] != "text" || st.Goto != 0 || EachEnd(t.Steps, i) < 0) ||
+			st.Kind != "foreach" && st.Item != "" {
+			return i18n.E("err.bp_foreach", i+1)
 		}
 		cond := st.Kind == "if" || st.Kind == "loop"
 		if (cond || st.Kind == "set") && !seen[st.Field] || st.Kind == "set" && consts[st.Field] || cond && !contains(Ops, st.Op) ||
-			st.Mode != "" && st.Kind != "pick" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 ||
+			st.Mode != "" && st.Kind != "pick" && st.Kind != "crmobservers" && st.Kind != "crmresponsible" && !contains(Modes, st.Mode) || len(st.Users) > 50 || len([]rune(st.Value)) > 1000 ||
 			st.Delegate != "" && (!contains(Delegations, st.Delegate) || !contains([]string{"approve", "review", "request"}, st.Kind)) {
+			return i18n.E("err.bp_step")
+		}
+		if !cond && len(st.More) > 0 || len(st.More) >= MaxConds {
+			return i18n.E("err.bp_step")
+		}
+		for _, c := range st.More {
+			if !seen[c.Field] || !contains(Ops, c.Op) || len([]rune(c.Value)) > 1000 {
+				return i18n.E("err.bp_step")
+			}
+		}
+		// an approval's time, vote, required comment and buttons
+		asks := contains([]string{"approve", "review", "request"}, st.Kind)
+		if (st.Kind == "app") != (st.App != "") || !asks && (st.Timeout != 0 && st.Kind != "commands" && st.Kind != "app" && st.Kind != "wait" || st.Remark != "" || st.Yes != "" || st.No != "") ||
+			st.Timeout < 0 || st.Timeout > MaxTimeout ||
+			st.Remark != "" && !contains(Remarks, st.Remark) || len([]rune(st.Yes)) > 50 || len([]rune(st.No)) > 50 || st.Kind == "review" && st.No != "" ||
+			(st.Kind == "approve" && st.Mode == "vote") != (st.Percent != 0) || st.Percent < 0 || st.Percent > 100 || st.WaitAll && st.Percent == 0 {
 			return i18n.E("err.bp_step")
 		}
 		// jumps go forward only; a loop goes back, to a step before it, over steps without a parallel one
@@ -401,11 +633,18 @@ func checkTemplate(t *Template) error {
 					return i18n.E("err.bp_loop", i+1)
 				}
 			}
-		} else if st.Goto != 0 && (st.Goto <= i+1 || st.Goto > len(t.Steps)) || st.Kind == "goto" && st.Goto == 0 && i == len(t.Steps)-1 {
+		} else if st.Kind == "goto" && st.Goto >= 1 && st.Goto <= i && t.Steps[st.Goto-1].Kind == "foreach" { // back to an iterator
+			if EachEnd(t.Steps, st.Goto-1) != i+1 {
+				return i18n.E("err.bp_foreach", st.Goto)
+			}
+		} else if st.Kind != "commands" && st.Goto != 0 && (st.Goto <= i+1 || st.Goto > len(t.Steps)) || st.Kind == "goto" && st.Goto == 0 && i == len(t.Steps)-1 {
 			return i18n.E("err.bp_goto", i+1)
 		}
 		if (st.Kind == "start") != (st.Template != "") {
 			return i18n.E("err.bp_step")
+		}
+		if err := checkCommands(t.Steps, i); err != nil {
+			return err
 		}
 	}
 	if len(t.Steps) == 0 {
@@ -414,11 +653,86 @@ func checkTemplate(t *Template) error {
 	return checkParallel(t.Steps)
 }
 
+// EachEnd is the index of the step after the body of the iterator f — after the first «Перейти к шагу» back to it;
+// -1 — there is none, or a parallel step is in between.
+func EachEnd(steps []Step, f int) int {
+	for j := f + 1; j < len(steps); j++ {
+		if steps[j].Kind == "parallel" {
+			return -1
+		}
+		if steps[j].Kind == "goto" && steps[j].Goto == f+1 {
+			return j + 1
+		}
+	}
+	return -1
+}
+
+// checkMore: the fields of «Отправка SMS», «Управление рабочим днём» and «Генерация случайной строки» are of their
+// steps only; a random string goes into a text or number variable (not a constant).
+func checkMore(st Step, kinds map[string]string, consts map[string]bool) error {
+	if st.Kind != "sms" && st.Sender != "" || len(st.Sender) > 64 || (st.Kind == "workday") != (st.Act != "") || st.Act != "" && !contains(WorkdayActs, st.Act) ||
+		(st.Kind == "random") != (st.Size != 0) || st.Size < 0 || st.Size > MaxRandom || st.Kind != "random" && len(st.Chars) > 0 {
+		return i18n.E("err.bp_step")
+	}
+	for _, c := range st.Chars {
+		if !contains(RandomChars, c) {
+			return i18n.E("err.bp_step")
+		}
+	}
+	if st.Kind == "random" && (consts[st.Field] || !contains([]string{"string", "text", "number"}, kinds[st.Field])) {
+		return i18n.E("err.bp_step")
+	}
+	return nil
+}
+
+// checkCommands: a «Команды» step has its buttons (titles different), a jump of its own only with «Ожидать не дольше»
+// (as a button's — where to when no one pressed); a button goes to any step but its own — back over steps without a
+// parallel one, as a loop.
+func checkCommands(steps []Step, i int) error {
+	st := steps[i]
+	if (st.Kind == "commands") != (len(st.Commands) > 0) || len(st.Commands) > MaxCommands || st.Kind == "commands" && st.Goto != 0 && st.Timeout == 0 {
+		return i18n.E("err.bp_step")
+	}
+	if st.Kind == "commands" {
+		if err := checkCommandGoto(steps, i, st.Goto); err != nil {
+			return err
+		}
+	}
+	seen := map[string]bool{}
+	for k, c := range st.Commands {
+		c.Title = strings.TrimSpace(c.Title)
+		if c.Title == "" || len([]rune(c.Title)) > 100 || seen[c.Title] {
+			return i18n.E("err.bp_step")
+		}
+		seen[c.Title] = true
+		steps[i].Commands[k].Title = c.Title
+		if err := checkCommandGoto(steps, i, c.Goto); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkCommandGoto: a command of the step i goes to a step but i (0 — the next one), back over steps without a
+// parallel one.
+func checkCommandGoto(steps []Step, i, to int) error {
+	if to < 0 || to > len(steps) || to == i+1 {
+		return i18n.E("err.bp_goto", i+1)
+	}
+	for j := to - 1; j >= 0 && j < i; j++ {
+		if steps[j].Kind == "parallel" {
+			return i18n.E("err.bp_goto", i+1)
+		}
+	}
+	return nil
+}
+
 // checkField: a field of a form (or of a list) has a key without spaces and braces, a label, a kind, a select's
 // options and a default right for it.
 func checkField(f Field) error {
 	if f.Key == "" || strings.ContainsAny(f.Key, " {}:") || f.Label == "" || !contains(FieldKinds, f.Kind) ||
-		f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 {
+		f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 ||
+		f.Multiple && (f.Kind == "text" || f.Kind == "bool") {
 		return i18n.E("err.bp_field")
 	}
 	for _, o := range f.Options {
@@ -460,14 +774,21 @@ func checkParallel(steps []Step) error {
 		}
 		for _, r := range Ranges(steps, p) {
 			for j := r[0]; j < r[1]; j++ {
-				if steps[j].Kind == "parallel" || steps[j].Goto > r[1]+1 || // a jump to 0 or past it ends the branch
-					steps[j].Kind == "loop" && steps[j].Goto-1 < r[0] { // a loop stays in its branch
+				if steps[j].Kind == "parallel" || steps[j].Kind == "commands" || steps[j].Goto > r[1]+1 || // a jump to 0 or past it ends the branch
+					steps[j].Kind == "loop" && steps[j].Goto-1 < r[0] || // a loop stays in its branch, an iterator's steps too
+					steps[j].Kind == "foreach" && EachEnd(steps, j) > r[1] {
 					return i18n.E("err.bp_parallel", j+1)
 				}
 			}
 		}
 		for j := 0; j < p; j++ {
 			if steps[j].Goto > p+1 && steps[j].Goto < join {
+				return i18n.E("err.bp_parallel", j+1)
+			}
+		}
+		for j := range steps { // a command (or its «no one pressed») does not go into a branch
+			if slices.ContainsFunc(steps[j].Commands, func(c Command) bool { return c.Goto > p+1 && c.Goto < join }) ||
+				steps[j].Kind == "commands" && steps[j].Goto > p+1 && steps[j].Goto < join {
 				return i18n.E("err.bp_parallel", j+1)
 			}
 		}
@@ -499,10 +820,50 @@ func contains(list []string, v string) bool {
 
 // SaveTemplate creates (ID "") or changes a template (administrators; checked by the web layer).
 func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (string, error) {
-	if err := checkTemplate(&t); err != nil {
+	for i, st := range t.Steps { // «Чтение элемента списка»: the list's fields become the process's, as they are now
+		if st.Kind == "listread" {
+			l, err := s.list(ctx, st.List)
+			if err != nil {
+				return "", i18n.E("err.bp_step")
+			}
+			name := "name"
+			if s.Tr != nil {
+				name = s.Tr("lists.el_name")
+			}
+			t.Steps[i].Fields = ListReadFields(l, name)
+		}
+		if st.Kind == "app" { // an application's action: its properties; the values it returns become the process's, as they are now
+			if err := s.checkAppStep(ctx, i+1, &t.Steps[i]); err != nil {
+				return "", err
+			}
+		}
+	}
+	globals, err := s.GlobalFields(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := checkTemplate(&t, globals); err != nil {
 		return "", err
 	}
 	for i, st := range t.Steps { // own fields are the CRM's: a name not among them is a mistake now, not when the process runs
+		if contains(ListKinds, st.Kind) { // a list's steps: the name or the list's fields; an element is added with a name
+			l, err := s.list(ctx, st.List)
+			if err != nil {
+				return "", i18n.E("err.bp_step")
+			}
+			named := false
+			for _, a := range st.Sets {
+				key, ok := listField(l, a.Field)
+				if !ok {
+					return "", i18n.E("err.bp_list_field", i+1, l.Name, a.Field)
+				}
+				named = named || key == "name"
+			}
+			if st.Kind == "listadd" && !named {
+				return "", i18n.E("err.bp_list_name", i+1)
+			}
+			continue
+		}
 		if st.Kind == "start" { // another process's fields, of a template it may start
 			other, err := s.Template(ctx, st.Template)
 			if err != nil {
@@ -518,9 +879,12 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 			}
 			continue
 		}
+		if st.Kind == "app" { // checked before
+			continue
+		}
 		if st.Kind == "document" { // a template of the card's kind; its placeholders are free
 			d, err := s.CRM.DocTemplate(ctx, st.Doc)
-			if err != nil || d.Entity != t.Entity {
+			if err != nil || d.Kind() != crm.DocKind(t.Entity, t.TypeID) {
 				return "", i18n.E("err.bp_step")
 			}
 			continue
@@ -538,8 +902,16 @@ func (s *Store) SaveTemplate(ctx context.Context, userID string, t Template) (st
 			continue
 		}
 		entity := t.Entity
-		if st.Kind == "create" {
+		switch st.Kind {
+		case "create":
 			entity = st.Entity
+			if st.Entity == "deal" && (st.Type != "" || st.Stage != "") { // a stage of the smart process's (the deals') pipelines
+				if _, err := s.createPipeline(ctx, st.Type, st.Stage); err != nil {
+					return "", i18n.E("err.bp_step")
+				}
+			}
+		case "crmupdate":
+			entity = cmp.Or(st.Entity, t.Entity)
 		}
 		for _, a := range st.Sets {
 			if _, err := s.cardField(ctx, entity, a.Field); err != nil {
@@ -583,8 +955,10 @@ type Instance struct {
 	FinishedAt                                     *time.Time
 	Branches                                       []int  // in a parallel step: the step of each branch, its end when it is over
 	Parent, ParentName                             string // the process a step of which started this one
+	Label                                          string // the status «Установить статус» set last ("" — none)
 
-	branch, end int // the step's branch running (from 1; 0 — none) and where it ends (len(Steps) — the process's end)
+	branch, end int     // the step's branch running (from 1; 0 — none) and where it ends (len(Steps) — the process's end)
+	globals     []Field // of the company while the process runs (withGlobals)
 }
 
 // Current: the process runs or waits on the step (of a branch when parallel).
@@ -615,8 +989,11 @@ func (x Instance) Form(form []Field) []Field {
 	return AllFields(form, x.Steps)
 }
 
-// Field of the process by its key: of the form or of a request among the steps.
+// Field of the process by its key: of the form or of a request among the steps, a global while it runs.
 func (x Instance) Field(key string) (Field, bool) {
+	if strings.HasPrefix(key, GlobalPrefix) {
+		return fieldOf(x.globals, key)
+	}
 	return fieldOf(AllFields(x.Fields, x.Steps), key)
 }
 
@@ -664,21 +1041,29 @@ type Approval struct {
 	User                                                company.Person
 	StartedBy                                           string
 	CreatedAt                                           time.Time
-	Fields                                              []Field // request: what to fill in
-	CanReject                                           bool    // request: «Отклонить» too
-	Delegate                                            string  // whom the person may hand it to: one of Delegations
+	DecidedAt                                           *time.Time // when the person decided (Decision is set)
+	Fields                                              []Field    // request: what to fill in
+	CanReject                                           bool       // request: «Отклонить» too
+	Delegate                                            string     // whom the person may hand it to: one of Delegations
+	Due                                                 *time.Time // «Время на выполнение»: decided by then, or the step goes on without the person
+	Remark, Yes, No                                     string     // of the step: the comment required (one of Remarks), the buttons' texts
+}
+
+// NeedsComment says whether the person's decision ("approve", "reject", "seen" or "answer") must have a comment.
+func NeedsComment(remark, decision string) bool {
+	return remark == "yes" || remark == "reject" && decision == "reject" || remark == "approve" && decision != "reject" && decision != ""
 }
 
 const instanceSQL = `SELECT i.id, i.template_id::text, i.name, i.entity, coalesce(i.entity_id::text, ''), i.status, i.steps, i.fields, i.values,
 		i.step, i.wake_at, u.id, u.name, i.created_at, i.finished_at, ARRAY(SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id ORDER BY b.n),
-		coalesce(i.parent_id::text, ''), coalesce((SELECT p.name FROM bp_instances p WHERE p.id = i.parent_id), '')
+		coalesce(i.parent_id::text, ''), coalesce((SELECT p.name FROM bp_instances p WHERE p.id = i.parent_id), ''), i.label
 	FROM bp_instances i JOIN users u ON u.id = i.started_by`
 
 func scanInstance(r pgx.CollectableRow) (Instance, error) {
 	var x Instance
 	var st, fields, vals []byte
 	if err := r.Scan(&x.ID, &x.TemplateID, &x.Name, &x.Entity, &x.EntityID, &x.Status, &st, &fields, &vals, &x.Step, &x.WakeAt,
-		&x.StartedBy.ID, &x.StartedBy.Name, &x.CreatedAt, &x.FinishedAt, &x.Branches, &x.Parent, &x.ParentName); err != nil {
+		&x.StartedBy.ID, &x.StartedBy.Name, &x.CreatedAt, &x.FinishedAt, &x.Branches, &x.Parent, &x.ParentName, &x.Label); err != nil {
 		return x, err
 	}
 	if err := json.Unmarshal(st, &x.Steps); err != nil {
@@ -706,7 +1091,7 @@ func (s *Store) instance(ctx context.Context, id string) (Instance, error) {
 	return list[0], nil
 }
 
-// Instance is a process the user may see: they started it, decide in it, or administer.
+// Instance is a process the user may see: they started it, decide in it (press a command of it), or administer.
 func (s *Store) Instance(ctx context.Context, userID, id string) (Instance, error) {
 	x, err := s.instance(ctx, id)
 	if err != nil {
@@ -714,10 +1099,11 @@ func (s *Store) Instance(ctx context.Context, userID, id string) (Instance, erro
 	}
 	var ok bool
 	if err := s.db.QueryRow(ctx, `SELECT $3 OR $2 = (SELECT started_by::text FROM bp_instances WHERE id::text = $1)
-		OR EXISTS (SELECT 1 FROM bp_approvals WHERE instance_id::text = $1 AND user_id::text = $2)`, id, userID, tasks.IsAdmin(ctx)).Scan(&ok); err != nil {
+		OR EXISTS (SELECT 1 FROM bp_approvals WHERE instance_id::text = $1 AND user_id::text = $2)
+		OR EXISTS (SELECT 1 FROM bp_log WHERE instance_id::text = $1 AND actor_id::text = $2 AND kind = 'command')`, id, userID, tasks.IsAdmin(ctx)).Scan(&ok); err != nil {
 		return x, err
 	}
-	if !ok {
+	if !ok && len(s.Commands(ctx, userID, x)) == 0 { // one of the people of the «Команды» step it waits on
 		return x, ErrForbidden
 	}
 	return x, nil
@@ -837,14 +1223,14 @@ func (s *Store) Log(ctx context.Context, id string) ([]Line, error) {
 const currentSQL = `(a.step = i.step OR a.step IN (SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id AND b.waiting))`
 
 const approvalSQL = `SELECT a.id, a.instance_id::text, i.name, a.kind, a.text, coalesce(a.decision, ''), a.comment, a.step, u.id, u.name, s.name, a.created_at,
-		i.steps -> a.step
+		i.steps -> a.step, a.due_at, a.decided_at
 	FROM bp_approvals a JOIN bp_instances i ON i.id = a.instance_id JOIN users u ON u.id = a.user_id JOIN users s ON s.id = i.started_by`
 
 func scanApproval(r pgx.CollectableRow) (Approval, error) {
 	var a Approval
 	var step []byte
 	if err := r.Scan(&a.ID, &a.InstanceID, &a.Name, &a.Kind, &a.Text, &a.Decision, &a.Comment, &a.Step, &a.User.ID, &a.User.Name, &a.StartedBy,
-		&a.CreatedAt, &step); err != nil {
+		&a.CreatedAt, &step, &a.Due, &a.DecidedAt); err != nil {
 		return a, err
 	}
 	if step != nil {
@@ -853,6 +1239,7 @@ func scanApproval(r pgx.CollectableRow) (Approval, error) {
 			return a, err
 		}
 		a.Fields, a.CanReject, a.Delegate = st.Fields, st.Reject, cmp.Or(st.Delegate, "sub")
+		a.Remark, a.Yes, a.No = st.Remark, st.Yes, st.No
 	}
 	return a, nil
 }
@@ -860,6 +1247,39 @@ func scanApproval(r pgx.CollectableRow) (Approval, error) {
 // MyApprovals wait for the user's decision.
 func (s *Store) MyApprovals(ctx context.Context, userID string) ([]Approval, error) {
 	rows, err := s.db.Query(ctx, approvalSQL+` WHERE a.user_id::text = $1 AND a.decision IS NULL AND i.status = 'running' AND `+currentSQL+` ORDER BY a.created_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanApproval)
+}
+
+// TaskFilter selects a person's tasks of processes, as the list «Задания».
+type TaskFilter struct {
+	UserID        string
+	State         string // "" — waiting for the person (as MyApprovals), "done" — decided, "all" — both
+	Query         string // in the process's name or the task's text
+	Limit, Offset int
+}
+
+// TaskStates are TaskFilter's states.
+var TaskStates = []string{"", "done", "all"}
+
+// UserApprovals are the person's tasks the filter selects: the waiting ones first (the oldest first), then the decided ones
+// (the latest first). A task left undecided by a step gone on is not one.
+func (s *Store) UserApprovals(ctx context.Context, f TaskFilter) ([]Approval, error) {
+	open := `a.decision IS NULL AND i.status = 'running' AND ` + currentSQL
+	where := map[string]string{"": open, "done": "a.decision IS NOT NULL", "all": "(a.decision IS NOT NULL OR " + open + ")"}[f.State]
+	if where == "" {
+		return nil, i18n.E("err.bad_form")
+	}
+	q := approvalSQL + ` WHERE a.user_id::text = $1 AND ` + where + ` AND ($2 = '%%' OR i.name ILIKE $2 OR a.text ILIKE $2)
+		ORDER BY a.decision IS NOT NULL, CASE WHEN a.decision IS NULL THEN a.created_at END, a.decided_at DESC, a.id`
+	args := []any{f.UserID, "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.TrimSpace(f.Query)) + "%"}
+	if f.Limit > 0 {
+		q += ` LIMIT $3 OFFSET $4`
+		args = append(args, f.Limit, f.Offset)
+	}
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -977,6 +1397,25 @@ func cleanValues(fields []Field, values map[string]string, strict bool) (map[str
 // cleanValue is a field's value checked and as kept: a number, a date or a time right, a select's one of the
 // options, a bool "Y" or "N" (empty — "N"; the form's box is followed by a hidden "N", so it is always sent).
 func cleanValue(f Field, v string) (string, error) {
+	if f.Multiple { // each value on its own, the empty ones left out
+		one := f
+		one.Multiple = false
+		var out []string
+		for _, p := range f.List(v) {
+			p, err := cleanValue(one, p)
+			if err != nil {
+				return "", err
+			}
+			if p != "" && !contains(out, p) {
+				out = append(out, p)
+			}
+		}
+		v = strings.Join(out, Multi)
+		if len([]rune(v)) > 10000 {
+			return "", i18n.E("err.bp_field")
+		}
+		return v, nil
+	}
 	v = strings.TrimSpace(v)
 	if len([]rune(v)) > 10000 {
 		return "", i18n.E("err.bp_field")
@@ -1133,40 +1572,63 @@ func (s *Store) Decide(ctx context.Context, userID, approvalID, decision, commen
 	if err != nil {
 		return err
 	}
-	mode := ""
+	var st Step
 	if step < len(x.Steps) {
-		mode = x.Steps[step].Mode
+		st = x.Steps[step]
 	}
-	if kind == "request" && (step >= len(x.Steps) || !x.Steps[step].Reject) {
+	if kind == "request" && !st.Reject {
 		return i18n.E("err.bad_form")
 	}
-	outcome := "" // the step goes on waiting
-	switch {
-	case kind == "review":
-		if seen == total {
-			outcome = "approved"
-		}
-	case mode == "all":
-		if no > 0 {
-			outcome = "rejected"
-		} else if yes == total {
-			outcome = "approved"
-		}
-	case mode == "majority":
-		if yes*2 > total {
-			outcome = "approved"
-		} else if no*2 >= total {
-			outcome = "rejected"
-		}
-	default:
-		outcome = map[string]string{"approve": "approved", "reject": "rejected"}[decision]
+	if NeedsComment(st.Remark, decision) && comment == "" {
+		return i18n.E("err.bp_comment_required")
 	}
+	outcome := Verdict(kind, st, total, yes, no, seen, decision)
 	s.log(ctx, instance, step, userID, map[string]string{"approve": "approved", "reject": "rejected", "seen": "seen"}[decision], comment)
 	if outcome == "" {
 		return tx.Commit(ctx)
 	}
-	// the step is over: the others need not decide any more
-	if _, err := tx.Exec(ctx, `DELETE FROM bp_approvals WHERE instance_id::text = $1 AND step = $2 AND decision IS NULL`, instance, step); err != nil {
+	return s.conclude(ctx, tx, x, step, outcome, userID)
+}
+
+// Verdict is the outcome of an approval step (a review) after a decision: "approved", "rejected" or "" — the step
+// goes on waiting. total people take part, yes approved, no rejected, seen have read it so far.
+func Verdict(kind string, st Step, total, yes, no, seen int, decision string) string {
+	switch {
+	case kind == "review":
+		if seen == total {
+			return "approved"
+		}
+	case st.Mode == "all":
+		if no > 0 {
+			return "rejected"
+		} else if yes == total {
+			return "approved"
+		}
+	case st.Mode == "majority":
+		if yes*2 > total {
+			return "approved"
+		} else if no*2 >= total {
+			return "rejected"
+		}
+	case st.Mode == "vote": // as soon as the share is reached or cannot be any more; with WaitAll — when everyone votes
+		if st.WaitAll && yes+no < total {
+			return ""
+		}
+		if yes*100 >= st.Percent*total {
+			return "approved"
+		} else if (total-no)*100 < st.Percent*total || st.WaitAll {
+			return "rejected"
+		}
+	default:
+		return map[string]string{"approve": "approved", "reject": "rejected"}[decision]
+	}
+	return ""
+}
+
+// conclude ends the step of the process x the people decided on (or whose time is over) with outcome: the others need
+// not decide any more; approved — the process goes on, rejected — to the step's Goto or ends as rejected. It commits tx.
+func (s *Store) conclude(ctx context.Context, tx pgx.Tx, x Instance, step int, outcome, actor string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM bp_approvals WHERE instance_id::text = $1 AND step = $2 AND decision IS NULL`, x.ID, step); err != nil {
 		return err
 	}
 	next := step + 1
@@ -1175,18 +1637,62 @@ func (s *Store) Decide(ctx context.Context, userID, approvalID, decision, commen
 			if err := tx.Commit(ctx); err != nil {
 				return err
 			}
-			s.notify(ctx, x.StartedBy.ID, userID, instance, "❌ "+x.Name)
-			return s.finish(ctx, instance, "rejected")
+			s.notify(ctx, x.StartedBy.ID, actor, x.ID, "❌ "+x.Name)
+			return s.finish(ctx, x.ID, "rejected")
 		}
 		next = x.Steps[step].Goto - 1
 	}
-	if err := advance(ctx, tx, instance, step, next); err != nil {
+	if err := advance(ctx, tx, x.ID, step, next); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.run(ctx, instance)
+	return s.run(ctx, x.ID)
+}
+
+// expire ends the step of a process whose approvals' time is over, as «Время на выполнение»: an approval
+// by a vote — by the votes given (the share of those who voted), any other — not approved; a review and a request —
+// the process goes on. The history says so.
+func (s *Store) expire(ctx context.Context, instance string, step int, now time.Time) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var kind string
+	var total, yes, no int
+	err = tx.QueryRow(ctx, `SELECT a.kind, (SELECT count(*) FROM bp_approvals WHERE instance_id = i.id AND step = a.step),
+			(SELECT count(*) FROM bp_approvals WHERE instance_id = i.id AND step = a.step AND decision = 'approve'),
+			(SELECT count(*) FROM bp_approvals WHERE instance_id = i.id AND step = a.step AND decision = 'reject')
+		FROM bp_approvals a JOIN bp_instances i ON i.id = a.instance_id
+		WHERE a.instance_id::text = $1 AND a.step = $2 AND a.decision IS NULL AND a.due_at <= $3 AND i.status = 'running' AND `+currentSQL+`
+		LIMIT 1 FOR NO KEY UPDATE OF i`, instance, step, now).Scan(&kind, &total, &yes, &no)
+	if errors.Is(err, pgx.ErrNoRows) { // decided meanwhile
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	x, err := s.instance(ctx, instance)
+	if err != nil || step >= len(x.Steps) {
+		return err
+	}
+	outcome := "approved"
+	if kind == "approve" {
+		outcome = "rejected"
+		if st := x.Steps[step]; st.Mode == "vote" && yes > 0 && yes*100 >= st.Percent*(yes+no) {
+			outcome = "approved"
+		}
+	}
+	logKind := "timeout" // a review, a request
+	if kind == "approve" {
+		logKind += "_" + outcome
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO bp_log (instance_id, step, kind, text) VALUES ($1, $2, $3, '')`, instance, step, logKind); err != nil {
+		return err
+	}
+	return s.conclude(ctx, tx, x, step, outcome, "")
 }
 
 // Delegate hands the person's approval (a review, a request) of the step a process waits on to another employee, as
@@ -1273,7 +1779,7 @@ func advance(ctx context.Context, tx pgx.Tx, instance string, step, next int) er
 	if err != nil || tag.RowsAffected() > 0 {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE bp_instances SET step = $2 WHERE id::text = $1`, instance, next)
+	_, err = tx.Exec(ctx, `UPDATE bp_instances SET step = $2, wake_at = NULL WHERE id::text = $1`, instance, next) // a command pressed in time
 	return err
 }
 
@@ -1310,6 +1816,9 @@ func (s *Store) Answer(ctx context.Context, userID, approvalID string, values ma
 	clean, err := cleanValues(x.Steps[step].Fields, values, true)
 	if err != nil {
 		return err
+	}
+	if NeedsComment(x.Steps[step].Remark, "answer") && comment == "" {
+		return i18n.E("err.bp_comment_required")
 	}
 	if x.Values == nil {
 		x.Values = map[string]string{}
@@ -1358,14 +1867,30 @@ func (s *Store) notify(ctx context.Context, to, actor, instance, text string) {
 // WakeDue goes on with the processes whose pause (or a parallel branch's) is over or whose task waited for is done (the
 // worker calls it).
 func (s *Store) WakeDue(ctx context.Context, now time.Time) []error {
-	rows, err := s.db.Query(ctx, `UPDATE bp_instances SET wake_at = NULL, step = step + 1
-		WHERE status = 'running' AND wake_at IS NOT NULL AND wake_at <= $1 RETURNING id::text`, now)
+	// a «Команды» step no one pressed in time goes to its step (Goto; 0 — the next one), a pause — to the next one
+	rows, err := s.db.Query(ctx, `WITH due AS (SELECT id, step, steps -> step AS st FROM bp_instances
+			WHERE status = 'running' AND wake_at IS NOT NULL AND wake_at <= $1 FOR NO KEY UPDATE)
+		UPDATE bp_instances i SET wake_at = NULL, wait_app = NULL, step = CASE WHEN due.st ->> 'kind' = 'commands' AND (due.st ->> 'goto')::int > 0
+			THEN (due.st ->> 'goto')::int - 1 ELSE due.step + 1 END
+		FROM due WHERE i.id = due.id RETURNING i.id::text, due.step, due.st ->> 'kind' = 'commands'`, now)
 	if err != nil {
 		return []error{err}
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	type woke struct {
+		ID       string
+		Step     int
+		Commands bool
+	}
+	waked, err := pgx.CollectRows(rows, pgx.RowToStructByPos[woke])
 	if err != nil {
 		return []error{err}
+	}
+	var ids []string
+	for _, w := range waked {
+		ids = append(ids, w.ID)
+		if w.Commands {
+			s.log(ctx, w.ID, w.Step, "", "timeout_commands", "")
+		}
 	}
 	// «Ожидать завершения задачи»: the task is completed or deleted
 	rows, err = s.db.Query(ctx, `UPDATE bp_instances i SET wait_task = NULL, step = step + 1
@@ -1379,7 +1904,7 @@ func (s *Store) WakeDue(ctx context.Context, now time.Time) []error {
 		return []error{err}
 	}
 	ids = append(ids, done...)
-	rows, err = s.db.Query(ctx, `UPDATE bp_branches b SET wake_at = NULL, wait_task = NULL, waiting = false, step = b.step + 1 FROM bp_instances i
+	rows, err = s.db.Query(ctx, `UPDATE bp_branches b SET wake_at = NULL, wait_task = NULL, wait_app = NULL, waiting = false, step = b.step + 1 FROM bp_instances i
 		WHERE i.id = b.instance_id AND i.status = 'running' AND (b.wake_at IS NOT NULL AND b.wake_at <= $1
 			OR b.wait_task IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = b.wait_task AND t.status <> 'completed'))
 		RETURNING i.id::text`, now)
@@ -1396,6 +1921,25 @@ func (s *Store) WakeDue(ctx context.Context, now time.Time) []error {
 		}
 	}
 	var errs []error
+	// «Время на выполнение» of approvals is over: each step ends (and the process goes on) by itself
+	rows, err = s.db.Query(ctx, `SELECT DISTINCT a.instance_id::text, a.step FROM bp_approvals a JOIN bp_instances i ON i.id = a.instance_id
+		WHERE a.decision IS NULL AND a.due_at <= $1 AND i.status = 'running'`, now)
+	if err != nil {
+		return []error{err}
+	}
+	type due struct {
+		ID   string
+		Step int
+	}
+	expired, err := pgx.CollectRows(rows, pgx.RowToStructByPos[due])
+	if err != nil {
+		return []error{err}
+	}
+	for _, d := range expired {
+		if err := s.expire(ctx, d.ID, d.Step, now); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, id := range ids {
 		if err := s.run(ctx, id); err != nil {
 			errs = append(errs, err)

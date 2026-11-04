@@ -1,11 +1,12 @@
 // The softphone of go24 (/phone, a window of its own): JsSIP registers the employee's account "w<number>" on go24's
-// Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking), transfer — at once (REFER)
+// Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking), «Перехватить» (*8: a
+// colleague's ringing call), transfer — at once (REFER)
 // or after talking to the colleague first (a second call, then REFER with Replaces). Pages of go24 send it
 // their «Позвонить», «Ответить», «Отклонить» (/telephony/live), and it tells them what the line does
 // (/telephony/state) — they show an incoming call too. The call card (/telephony/card): the client of
-// CRM with their open deals, or «Создать лид / контакт», the calls before and «Комментарий к звонку» (/telephony/note),
-// kept after the call till the next one. One window per browser: a second one hands its number to the
-// first and closes.
+// CRM with their open deals, or «Создать лид / контакт», the calls before, «Скрипт продаж» of the call's direction
+// (salescript.js) and «Комментарий к звонку» (/telephony/note), kept after the call till the next one. One window per
+// browser: a second one hands its number to the first and closes.
 (() => {
   const root = document.querySelector('[data-softphone]');
   if (!root || !window.JsSIP) return;
@@ -14,7 +15,7 @@
   const input = $('[data-sp-input]'), status = $('[data-sp-status]'), dot = $('[data-sp-dot]'), audio = $('[data-sp-audio]');
   const who = $('[data-sp-who]'), photo = $('[data-sp-photo]'), name = $('[data-sp-name]'), link = $('[data-sp-link]'), num = $('[data-sp-num]'), timer = $('[data-sp-timer]');
   const callBtn = $('[data-sp-call]'), callText = $('[data-sp-call-text]'), hangBtn = $('[data-sp-hang]'), hangText = $('[data-sp-hang-text]');
-  const muteBtn = $('[data-sp-mute]'), holdBtn = $('[data-sp-hold]');
+  const muteBtn = $('[data-sp-mute]'), holdBtn = $('[data-sp-hold]'), pickBtn = $('[data-sp-pick]');
   const xferBtn = $('[data-sp-xfer]'), xfer = $('[data-sp-xfer-panel]'), xferAsk = $('[data-sp-xfer-ask]'), xferTalk = $('[data-sp-xfer-talk]');
   const xferTo = $('[data-sp-xfer-to]'), xferWho = $('[data-sp-xfer-who]'), completeBtn = $('[data-sp-complete]'), audio2 = $('[data-sp-audio2]');
   const host = t.host || location.hostname;
@@ -103,13 +104,14 @@
     }));
   };
   const load = (number, dir, again) => {
-    fetch('/telephony/card?number=' + encodeURIComponent(number), { headers: { Accept: 'application/json' } })
+    fetch('/telephony/card?number=' + encodeURIComponent(number) + '&dir=' + encodeURIComponent(dir || ''), { headers: { Accept: 'application/json' } })
       .then(r => r.ok ? r.json() : null).catch(() => null).then(d => {
         if (!d || d.colleague) { if (!again) card.hidden = true; return; }
         if (!again) {
           cardFor = { number, at: d.at, saved: d.comment || '' };
           noteBox.value = d.comment || '';
           noteState.textContent = '';
+          if (window.go24SalesScript) window.go24SalesScript($('[data-sp-sales]'), d.scripts || []);
         }
         fill(d, number, dir);
         card.hidden = false;
@@ -119,6 +121,7 @@
     saveNote(); // the comment of the call before
     cardFor = null;
     card.hidden = true;
+    if (number.startsWith('*')) return; // a code of the PBX (*8, **101): no client
     load(number, dir, false);
   };
   $('[data-sp-note-save]').addEventListener('click', saveNote);
@@ -140,6 +143,7 @@
     muteBtn.hidden = holdBtn.hidden = state !== 'talking';
     xferBtn.hidden = state !== 'talking' || !!consult;
     if (state !== 'talking') xfer.hidden = true;
+    if (pickBtn) pickBtn.hidden = !!session;
   };
   const startTimer = () => {
     since = Date.now();
@@ -240,6 +244,7 @@
   // ---- the controls ----
   callBtn.addEventListener('click', () => { if (session) answer(); else dial(input.value); });
   hangBtn.addEventListener('click', hangup);
+  pickBtn?.addEventListener('click', () => dial('*8')); // «Перехватить»: the call ringing for a colleague of the person's groups
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); if (session) answer(); else dial(input.value); } });
   $('[data-sp-back]').addEventListener('click', () => { input.value = input.value.slice(0, -1); input.focus(); });
   $('[data-sp-keys]').addEventListener('click', e => {

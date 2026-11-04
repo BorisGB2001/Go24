@@ -65,7 +65,7 @@ func (s *Server) bookingMail(ctx context.Context, d booking.Due, subject, body s
 	}
 }
 
-// bookingNotify tells the one responsible of the booking (kind: booking_late, booking_unconfirmed, booking_confirmed, booking_cancelled).
+// bookingNotify tells the one responsible of the booking (kind: booking_late, booking_unconfirmed, booking_confirmed, booking_cancelled, booking_moved).
 func (s *Server) bookingNotify(ctx context.Context, d booking.Due, kind string) {
 	body := d.B.ClientName + " · " + d.B.Start.Local().Format("02.01.2006 15:04") + " · " + d.Resource
 	if _, err := s.DB.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url) VALUES ($1, $2, $3, $4)`,

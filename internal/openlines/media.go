@@ -176,3 +176,23 @@ func CleanName(name string) string {
 	}
 	return name
 }
+
+// Transcript is the kept text of a message's sound file ("" — not made yet).
+func (s *Store) Transcript(ctx context.Context, msgID int64) (string, error) {
+	var t string
+	err := s.db.QueryRow(ctx, `SELECT transcript FROM ol_messages WHERE id = $1`, msgID).Scan(&t)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return t, err
+}
+
+// SetTranscript keeps the text of a message's sound file; the operators' pages of the dialogue show it.
+func (s *Store) SetTranscript(ctx context.Context, msgID int64, text string) error {
+	if len([]rune(text)) > 20000 {
+		text = string([]rune(text)[:20000])
+	}
+	_, err := s.db.Exec(ctx, `WITH u AS (UPDATE ol_messages SET transcript = $2 WHERE id = $1 AND file_key <> '' RETURNING session_id)
+		SELECT pg_notify('go24_openlines', 'ol:' || session_id::text) FROM u`, msgID, text)
+	return err
+}

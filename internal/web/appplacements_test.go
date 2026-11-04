@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,6 +164,47 @@ func TestAppPlacementsHTTP(t *testing.T) {
 	must(err)
 	has(send(anna, "GET", "/t/"+tk, "", "", 200), true, `data-src="/apps/tab/`+taskTab+`?id=`+tk+`"`)
 	has(send(anna, "GET", "/apps/tab/"+taskTab+"?id="+tk, "", "", 200), true, `{&#34;taskId&#34;:&#34;`+tk+`&#34;}`, app.URL+"/task?")
+
+	// the widgets of the messenger (GO24DEV-977): OPTIONS by role, guests and the kind of chat
+	has(send(bossTok, "POST", "/api/v1/placements", js, `{"placement": "IM_NAVIGATION", "handler": "`+app.URL+`/nav", "options": {"role": "boss"}}`, 422), true, "role")
+	send(bossTok, "POST", "/api/v1/placements", js, `{"placement": "IM_NAVIGATION", "handler": "`+app.URL+`/nav", "title": "Склад", "options": {"iconName": "fa-cloud", "role": "ADMIN"}}`, 201)
+	send(bossTok, "POST", "/api/v1/placements", js, `{"placement": "IM_SIDEBAR", "handler": "`+app.URL+`/sb", "options": {"context": "CRM;CHAT", "extranet": true}}`, 201)
+	send(bossTok, "POST", "/api/v1/placements", js, `{"placement": "IM_TEXTAREA", "handler": "`+app.URL+`/ta", "options": {"width": 300, "height": 2000}}`, 201)
+	send(bossTok, "POST", "/api/v1/placements", js, `{"placement": "IM_CONTEXT_MENU", "handler": "`+app.URL+`/cm", "options": {"context": "USER"}}`, 201)
+	places := func(sess auth.Session, guest bool, kind string) string {
+		r := httptest.NewRequest("GET", "/im", nil)
+		if guest {
+			r = r.WithContext(tasks.WithViewer(r.Context(), sess.UserID, true))
+		}
+		var out []string
+		for place, list := range srv.imApps(r, sess, kind) {
+			for _, p := range list {
+				out = append(out, place+":"+p.Tab())
+			}
+		}
+		slices.Sort(out)
+		return strings.Join(out, " ")
+	}
+	if got := places(auth.Session{UserID: boss}, false, ""); got != "IM_NAVIGATION:Склад" {
+		t.Errorf("the messenger without a chat, of the administrator: %s", got)
+	}
+	if got := places(auth.Session{UserID: anna}, false, "USER"); got != "IM_CONTEXT_MENU:Расчёт доставки IM_TEXTAREA:Расчёт доставки" {
+		t.Errorf("a private chat of an employee: %s", got)
+	}
+	if got := places(auth.Session{UserID: anna}, false, "CRM"); got != "IM_SIDEBAR:Расчёт доставки IM_TEXTAREA:Расчёт доставки" {
+		t.Errorf("a CRM chat: %s", got)
+	}
+	if got := places(auth.Session{UserID: anna}, true, "CHAT"); got != "IM_SIDEBAR:Расчёт доставки" {
+		t.Errorf("a guest's chat: %s", got)
+	}
+	var nav, ta string
+	must(pool.QueryRow(ctx, `SELECT id::text FROM app_placements WHERE placement = 'IM_NAVIGATION'`).Scan(&nav))
+	must(pool.QueryRow(ctx, `SELECT id::text FROM app_placements WHERE placement = 'IM_TEXTAREA'`).Scan(&ta))
+	has(send(boss, "GET", "/apps/tab/"+nav, "", "", 200), true, `name="PLACEMENT" value="IM_NAVIGATION"`, `name="PLACEMENT_OPTIONS" value="{}"`, app.URL+"/nav?")
+	send(anna, "GET", "/apps/tab/"+nav, "", "", 404) // for administrators
+	if p, _, err := srv.Apps.Placement(ctx, ta, anna); err != nil || p.Width() != 300 || p.Height() != 600 || p.Opt("context") != "ALL" {
+		t.Errorf("IM_TEXTAREA's size and context: %+v %v", p, err)
+	}
 
 	// «Кому доступно» — only Борис: Анна sees no tab and cannot open it
 	must(srv.Apps.SetAccess(ctx, a.ID, []string{boss}))

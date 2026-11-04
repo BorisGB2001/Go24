@@ -86,7 +86,10 @@ func (t *Telegram) Updates(ctx context.Context, b Bot, next int64) ([]Update, in
 	var list []struct {
 		UpdateID int64 `json:"update_id"`
 		Message  *struct {
-			Text string `json:"text"`
+			Text    string `json:"text"`
+			ReplyTo *struct {
+				ID int64 `json:"message_id"`
+			} `json:"reply_to_message"`
 			Chat struct {
 				ID   int64  `json:"id"`
 				Type string `json:"type"`
@@ -115,21 +118,37 @@ func (t *Telegram) Updates(ctx context.Context, b Bot, next int64) ([]Update, in
 		if m.From.Username != "" {
 			who = "@" + m.From.Username
 		}
-		out = append(out, Update{Chat: strconv.FormatInt(m.Chat.ID, 10), Account: who, Text: m.Text})
+		up := Update{Chat: strconv.FormatInt(m.Chat.ID, 10), Account: who, Text: m.Text}
+		if m.ReplyTo != nil {
+			up.ReplyTo = strconv.FormatInt(m.ReplyTo.ID, 10)
+		}
+		out = append(out, up)
 	}
 	return out, next, nil
 }
 
 func (t *Telegram) Send(ctx context.Context, b Bot, chat string, m Message) error {
+	_, err := t.SendID(ctx, b, chat, m)
+	return err
+}
+
+// SendID writes to the chat; the id of the message sent (a reply to it carries it).
+func (t *Telegram) SendID(ctx context.Context, b Bot, chat string, m Message) (string, error) {
 	args := map[string]any{"chat_id": chat, "text": m.Text, "link_preview_options": map[string]bool{"is_disabled": true}}
 	if m.Link != "" {
 		args["text"] = `<a href="` + html.EscapeString(m.Link) + `">` + html.EscapeString(m.Text) + `</a>`
 		args["parse_mode"] = "HTML"
 	}
-	err := t.call(ctx, b, "sendMessage", args, nil)
+	var sent struct {
+		ID int64 `json:"message_id"`
+	}
+	err := t.call(ctx, b, "sendMessage", args, &sent)
 	// 403: the person blocked the bot or deleted the chat; 400 «chat not found»: there is no such chat
 	if te, ok := err.(*telegramError); ok && (te.Code == 403 || te.Code == 400 && te.Description == "Bad Request: chat not found") {
-		return errors.Join(ErrGone, err)
+		return "", errors.Join(ErrGone, err)
 	}
-	return err
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatInt(sent.ID, 10), nil
 }

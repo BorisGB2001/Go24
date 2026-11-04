@@ -117,6 +117,15 @@ func (s *Store) RenamePipeline(ctx context.Context, id, name string) error {
 	return err
 }
 
+// SortPipeline sets a pipeline's SORT: the pipelines go in its order after the main one.
+func (s *Store) SortPipeline(ctx context.Context, id string, sort int) error {
+	tag, err := s.db.Exec(ctx, `UPDATE crm_pipelines SET sort = $2 WHERE id::text = $1`, id, sort)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = ErrNotFound
+	}
+	return err
+}
+
 // DeletePipeline removes a pipeline without deals; the last one stays.
 func (s *Store) DeletePipeline(ctx context.Context, id string) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
@@ -159,7 +168,7 @@ func stageOf(ctx context.Context, tx pgx.Tx, id string) (stageRow, error) {
 // siblings are the ids of the stages of the same list (leads, or a pipeline) in their order.
 func siblings(ctx context.Context, tx pgx.Tx, entity, pipeline string) ([]string, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text FROM crm_stages WHERE entity = $1 AND coalesce(pipeline_id::text, '') = $2
-		ORDER BY CASE semantic WHEN 'process' THEN 0 WHEN 'success' THEN 1 ELSE 2 END, sort FOR UPDATE`, entity, pipeline)
+		ORDER BY CASE semantic WHEN 'process' THEN 0 WHEN 'success' THEN 1 ELSE 2 END, sort, num FOR UPDATE`, entity, pipeline)
 	if err != nil {
 		return nil, err
 	}
@@ -179,12 +188,18 @@ func resort(ctx context.Context, tx pgx.Tx, ids []string) error {
 // AddStage adds a working stage (after the working ones) or a failure stage (at the end) to the leads (entity
 // "lead") or to a deal pipeline.
 func (s *Store) AddStage(ctx context.Context, entity, pipelineID, name, color, semantic string) error {
+	_, err := s.AddStageAt(ctx, entity, pipelineID, name, color, semantic, 0)
+	return err
+}
+
+// AddStageAt is AddStage at the place of SORT among the stages of its kind (0 — the last); its id.
+func (s *Store) AddStageAt(ctx context.Context, entity, pipelineID, name, color, semantic string, sort int) (string, error) {
 	name, err := stageName(name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if color, err = stageColor(color); err != nil {
-		return err
+		return "", err
 	}
 	if semantic != "failure" {
 		semantic = "process"
@@ -192,13 +207,16 @@ func (s *Store) AddStage(ctx context.Context, entity, pipelineID, name, color, s
 	if entity == "lead" {
 		pipelineID = ""
 	} else if entity != "deal" || pipelineID == "" {
-		return i18n.E("err.bad_form")
+		return "", i18n.E("err.bad_form")
 	}
-	return s.inTx(ctx, func(tx pgx.Tx) error {
-		var id string
+	if sort <= 0 {
+		sort = 100000
+	}
+	var id string
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `INSERT INTO crm_stages (entity, pipeline_id, name, color, semantic, sort)
-			SELECT $1, p.id, $3, $4, $5, 100000 FROM (SELECT NULL::uuid AS id WHERE $2 = '' UNION ALL SELECT id FROM crm_pipelines WHERE id::text = $2) p
-			RETURNING id::text`, entity, pipelineID, name, color, semantic).Scan(&id)
+			SELECT $1, p.id, $3, $4, $5, $6 FROM (SELECT NULL::uuid AS id WHERE $2 = '' UNION ALL SELECT id FROM crm_pipelines WHERE id::text = $2) p
+			RETURNING id::text`, entity, pipelineID, name, color, semantic, sort).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -211,6 +229,7 @@ func (s *Store) AddStage(ctx context.Context, entity, pipelineID, name, color, s
 		}
 		return resort(ctx, tx, ids)
 	})
+	return id, err
 }
 
 // UpdateStage renames and recolors a stage.
@@ -227,6 +246,24 @@ func (s *Store) UpdateStage(ctx context.Context, id, name, color string) error {
 		err = i18n.E("err.crm_stage")
 	}
 	return err
+}
+
+// SortStage puts a stage at the place of SORT among the stages of its kind, which are numbered again.
+func (s *Store) SortStage(ctx context.Context, id string, sort int) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		st, err := stageOf(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE crm_stages SET sort = $2 WHERE id::text = $1`, id, sort); err != nil {
+			return err
+		}
+		ids, err := siblings(ctx, tx, st.entity, st.pipeline)
+		if err != nil {
+			return err
+		}
+		return resort(ctx, tx, ids)
+	})
 }
 
 // ShiftStage moves a stage one place left (dir < 0) or right among the stages of its kind (working or failure).

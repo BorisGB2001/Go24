@@ -24,15 +24,16 @@ import (
 
 // Cond is what a rule looks for in a letter. Words and addresses are comma-separated; any of them will do.
 type Cond struct {
-	From       string `json:"from,omitempty"`       // the sender's address or name has one
-	To         string `json:"to,omitempty"`         // «Кому» or «Копия» has one
-	Subject    string `json:"subject,omitempty"`    // the subject has one
-	Body       string `json:"body,omitempty"`       // the text has one
-	Attach     bool   `json:"attach,omitempty"`     // the letter has files
-	Importance string `json:"importance,omitempty"` // high, normal, low
-	ToMe       bool   `json:"to_me,omitempty"`      // the mailbox is in «Кому»
-	CcMe       bool   `json:"cc_me,omitempty"`      // the mailbox is in «Копия»
-	OnlyMe     bool   `json:"only_me,omitempty"`    // sent to the mailbox only
+	From        string `json:"from,omitempty"`        // the sender's address or name has one
+	To          string `json:"to,omitempty"`          // «Кому» or «Копия» has one
+	Subject     string `json:"subject,omitempty"`     // the subject has one
+	Body        string `json:"body,omitempty"`        // the text has one
+	Attach      bool   `json:"attach,omitempty"`      // the letter has files
+	Importance  string `json:"importance,omitempty"`  // high, normal, low
+	Sensitivity string `json:"sensitivity,omitempty"` // «Конфиденциальность»: normal, personal, private, confidential
+	ToMe        bool   `json:"to_me,omitempty"`       // the mailbox is in «Кому»
+	CcMe        bool   `json:"cc_me,omitempty"`       // the mailbox is in «Копия»
+	OnlyMe      bool   `json:"only_me,omitempty"`     // sent to the mailbox only
 }
 
 // Do is what a rule does with a letter.
@@ -82,6 +83,7 @@ type facts struct {
 	from, name, to, cc, subject, body, me string
 	attach                                bool
 	importance                            int
+	sensitivity                           string
 }
 
 // terms are the words of a list, lower case.
@@ -148,6 +150,9 @@ func (c Cond) tests(f facts) []bool {
 	if c.Importance != "" {
 		out = append(out, importanceName(f.importance) == c.Importance)
 	}
+	if c.Sensitivity != "" {
+		out = append(out, f.sensitivity == c.Sensitivity || f.sensitivity == "" && c.Sensitivity == "normal")
+	}
 	if c.ToMe {
 		out = append(out, inAddrs(f.to, f.me))
 	}
@@ -198,7 +203,7 @@ func (s *Store) checkRule(ctx context.Context, userID string, r *Rule) error {
 		return i18n.E("err.mail_rule_do")
 	}
 	for _, c := range []*Cond{&r.If, &r.Except} {
-		if c.Importance != "" && !oneOf(c.Importance, Importances) {
+		if c.Importance != "" && !oneOf(c.Importance, Importances) || c.Sensitivity != "" && c.Sensitivity != "normal" && !ValidSensitivity(c.Sensitivity) {
 			return i18n.E("err.bad_form")
 		}
 	}
@@ -397,7 +402,8 @@ func (s *Store) applyRules(ctx context.Context, userID string, rules []Rule, let
 		return 0, nil
 	}
 	rows, err := s.db.Query(ctx, `SELECT x.id::text, x.mailbox_id::text, x.folder_id::text, x.from_addr, x.from_name, x.to_addr, x.cc_addr,
-			x.subject, x.body, m.email, EXISTS (SELECT 1 FROM files fl WHERE fl.mail_id = x.id AND fl.content_id = ''), x.importance::int
+			x.subject, x.body, m.email, EXISTS (SELECT 1 FROM files fl WHERE fl.mail_id = x.id AND fl.content_id = ''), x.importance::int,
+			x.sensitivity
 		FROM mail_messages x JOIN mailboxes m ON m.id = x.mailbox_id WHERE x.id::text = ANY($1) AND m.user_id::text = $2`, letterIDs, userID)
 	if err != nil {
 		return 0, err
@@ -405,7 +411,8 @@ func (s *Store) applyRules(ctx context.Context, userID string, rules []Rule, let
 	var list []facts
 	for rows.Next() {
 		var f facts
-		if err := rows.Scan(&f.id, &f.mailbox, &f.folder, &f.from, &f.name, &f.to, &f.cc, &f.subject, &f.body, &f.me, &f.attach, &f.importance); err != nil {
+		if err := rows.Scan(&f.id, &f.mailbox, &f.folder, &f.from, &f.name, &f.to, &f.cc, &f.subject, &f.body, &f.me, &f.attach, &f.importance,
+			&f.sensitivity); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -599,7 +606,7 @@ func letterAttachment(m Message, files []Attachment) Attachment {
 		Host: m.FromAddr[strings.LastIndex(m.FromAddr, "@")+1:]}
 	e.To, _ = addresses(m.To)
 	e.CC, _ = addresses(m.CC)
-	raw, _ := compose(e, Letter{Subject: m.Subject, Text: m.Body, HTML: m.HTML, Files: files, Importance: m.Importance})
+	raw, _ := compose(e, Letter{Subject: m.Subject, Text: m.Body, HTML: m.HTML, Files: files, Importance: m.Importance, Sensitivity: m.Sensitivity})
 	name := strings.Map(func(r rune) rune {
 		if strings.ContainsRune(`\/:*?"<>|`, r) {
 			return '_'
@@ -614,8 +621,12 @@ func letterAttachment(m Message, files []Attachment) Attachment {
 
 // ruleSend sends a letter of the user on by a rule: forward (with its files), attach (the letter as an attachment),
 // redirect (as it is, from the user's mailbox in its sender's name, answers going to its sender; no copy kept).
+// A letter «Не пересылать» is not sent on, without an error.
 func (s *Store) ruleSend(ctx context.Context, userID, letterID, how, to string) error {
-	return s.sendOn(ctx, userID, letterID, how, to, "auto-forwarded")
+	if err := s.sendOn(ctx, userID, letterID, how, to, "auto-forwarded"); !errors.Is(err, ErrNoForward) {
+		return err
+	}
+	return nil
 }
 
 // sendOn sends a letter of the user on (see ruleSend); auto: its Auto-Submitted ("" — the user's own, a quick step's).
@@ -623,6 +634,9 @@ func (s *Store) sendOn(ctx context.Context, userID, letterID, how, to, auto stri
 	m, err := s.message(ctx, userID, letterID)
 	if err != nil {
 		return err
+	}
+	if m.Locked() {
+		return ErrNoForward
 	}
 	files, err := s.letterFiles(ctx, userID, letterID)
 	if err != nil {
@@ -636,7 +650,7 @@ func (s *Store) sendOn(ctx context.Context, userID, letterID, how, to, auto stri
 		l.Subject, l.Text = fwdSubject(m.Subject), " "
 		l.Files = []Attachment{letterAttachment(m, files)}
 	case "redirect":
-		l.Subject, l.Text, l.HTML, l.Files, l.Importance = m.Subject, m.Body, m.HTML, files, m.Importance
+		l.Subject, l.Text, l.HTML, l.Files, l.Importance, l.Sensitivity = m.Subject, m.Body, m.HTML, files, m.Importance, m.Sensitivity
 		l.fromName, l.replyTo, l.noCopy = m.From(), &mail.Address{Name: m.FromName, Address: m.FromAddr}, true
 		l.resentFrom = &mail.Address{Address: m.MailboxEmail}
 	default:

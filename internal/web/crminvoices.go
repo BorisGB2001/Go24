@@ -124,12 +124,24 @@ func (s *Server) crmInvoiceData(r *http.Request, sess auth.Session) (map[string]
 		}
 	}
 	data["CanWrite"] = s.invoiceCheck(r, sess, v, "write") == nil
+	if s.Pay != nil && v.Kind == "invoice" { // «Платёжные системы»: payments the client started online
+		if data["Online"], err = s.Pay.Payments(r.Context(), v.ID); err != nil {
+			return nil, err
+		}
+		if data["PayOn"], err = s.payFor(r.Context(), v); err != nil {
+			return nil, err
+		}
+	}
 	if sess.Admin { // «Генератор документов»: the print forms of quotes and invoices
-		data["Docs"], err = s.CRM.DocTemplates(r.Context(), crm.TemplateInvoice)
+		data["Docs"], err = s.CRM.ActiveDocTemplates(r.Context(), crm.TemplateInvoice)
 	} else {
 		data["Docs"], err = s.CRM.DocTemplatesFor(r.Context(), crm.TemplateInvoice, sess.UserID)
 	}
-	if err == nil {
+	dp := s.docPerms(r.Context(), sess) // «Генератор документов → Права доступа»
+	if data["DocModify"] = dp.Can("modify"); !dp.Can("modify") {
+		data["Docs"] = nil
+	}
+	if err == nil && dp.Can("view") {
 		data["Documents"], err = s.CRM.Documents(r.Context(), crm.TemplateInvoice, v.ID)
 		data["PDF"] = s.Office != nil
 	}
@@ -253,8 +265,18 @@ func (s *Server) crmInvoicePrint(w http.ResponseWriter, r *http.Request, sess au
 func (s *Server) publicInvoice(w http.ResponseWriter, r *http.Request) {
 	v, err := s.CRM.PublicInvoice(r.Context(), r.PathValue("token"))
 	var data map[string]any
+	paid := ""
+	if err == nil { // back from a payment service: the payment is checked first, the invoice is read as it is then
+		if paid, err = s.payReturn(r, v); err == nil && paid != "" {
+			v, err = s.CRM.PublicInvoice(r.Context(), r.PathValue("token"))
+		}
+	}
 	if err == nil {
 		data, err = s.invoiceDoc(r, v)
+	}
+	if err == nil {
+		data["Token"], data["PayState"], data["PayError"] = r.PathValue("token"), paid, r.URL.Query().Get("payerr") != ""
+		data["PaySystems"], err = s.payFor(r.Context(), v)
 	}
 	if err != nil {
 		w.Header().Set("Cache-Control", "no-store")

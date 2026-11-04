@@ -95,4 +95,20 @@ func TestOpenLinesStatsHTTP(t *testing.T) {
 	if _, page = get(anna, "/openlines/stats"); strings.Contains(page, `name="operator"`) {
 		t.Fatal("an operator picks another operator")
 	}
+
+	// «Детальная статистика»: the dialogues themselves, the filters and the CSV; an operator — their own
+	code, page = get(boss, "/openlines/stats?by=dialogs&sort=-num")
+	if code != http.StatusOK || strings.Count(page, `href="/openlines?s=`) != 6 || !strings.Contains(page, `name="status"`) || !strings.Contains(page, "&amp;sort=num") {
+		t.Fatalf("the dialogues %d", code)
+	}
+	_, csv = get(boss, "/openlines/stats?by=dialogs&csv=1")
+	if strings.Count(csv, "\n") != 4 || !strings.Contains(csv, ";Сайт магазина;Онлайн-чат;#") {
+		t.Fatalf("the dialogues' csv %q", csv)
+	}
+	if _, csv = get(boss, "/openlines/stats?by=dialogs&status=closed&csv=1"); strings.Count(csv, "\n") != 1 {
+		t.Fatalf("closed ones %q", csv)
+	}
+	if _, csv = get(anna, "/openlines/stats?by=dialogs&operator="+eve+"&csv=1"); strings.Count(csv, "\n") != 3 || strings.Contains(csv, "Ева") {
+		t.Fatalf("the operator's dialogues %q", csv)
+	}
 }

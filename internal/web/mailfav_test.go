@@ -140,4 +140,33 @@ func TestMailFavoritesHTTP(t *testing.T) {
 	must(srv.Mail.DeleteCategory(ctx, anna, cat))
 	same(favs(anna))
 	do(anna, "/mail/favorites", url.Values{"ref": {""}}, 303) // back with the text of the error
+
+	// a favorite person, as Outlook's: «Добавить отправителя в избранное» of a letter; the name of the latest letter, the
+	// unread ones; the folder is the letters from the address in all folders but «Удалённые»
+	trash := folder("Trash", "trash")
+	var letter string
+	must(pool.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, from_name, subject, body, sent_at)
+		VALUES ($1, $2, 2, 'Boss@X.test', 'Начальник', 'План', 'текст', now()) RETURNING id::text`, box, inbox).Scan(&letter))
+	_, err = pool.Exec(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, subject, body, sent_at, seen) VALUES
+		($1, $2, 3, 'boss@x.test', 'Отчёт', 'текст', now() - interval '1 day', true), ($1, $3, 4, 'boss@x.test', 'Старое', 'текст', now(), false)`, box, projects, trash)
+	must(err)
+	if p := do(anna, "/mail?folder="+inbox+"&letter="+letter, nil, 200); !strings.Contains(p, "Добавить отправителя в избранное") ||
+		!strings.Contains(p, `value="person:boss@x.test"`) {
+		t.Fatal("no «Добавить отправителя в избранное» in the letter's menu")
+	}
+	do(anna, "/mail/favorites", url.Values{"ref": {"person:Boss@X.test"}, "on": {"1"}}, 303)
+	do(anna, "/mail/favorites", url.Values{"ref": {"person:not-an-address"}, "on": {"1"}}, 303)
+	same(favs(anna), "person:boss@x.test")
+	_, err = pool.Exec(ctx, `UPDATE mail_messages SET seen = false WHERE id::text = $1`, letter) // opened above
+	must(err)
+	p := do(anna, "/mail?folder=person:boss@x.test", nil, 200)
+	if !strings.Contains(p, `mfav-person on`) || !strings.Contains(p, `<span class="mf-name">Начальник</span><span class="cnt">1</span>`) ||
+		!strings.Contains(p, "План") || !strings.Contains(p, "Отчёт") || strings.Contains(p, "Старое") || strings.Contains(p, "Заказ") {
+		t.Fatalf("the person's folder: %.3000s", p)
+	}
+	if p := do(anna, "/mail?folder="+inbox+"&letter="+letter, nil, 200); !strings.Contains(p, "Удалить отправителя из избранного") {
+		t.Fatal("no «Удалить отправителя из избранного»")
+	}
+	do(anna, "/mail/favorites", url.Values{"ref": {"person:boss@x.test"}}, 303)
+	same(favs(anna))
 }

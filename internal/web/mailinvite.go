@@ -262,7 +262,7 @@ func (s *Server) eventMailData(r *http.Request, sess auth.Session, data map[stri
 		return
 	}
 	data["MailBoxes"] = boxes
-	if e.ID != "" {
+	if e.ID != "" && (!e.HideGuests || e.OwnerID == sess.UserID || tasks.IsAdmin(ctx)) {
 		ext, err := s.Calendar.Externals(ctx, e.ID)
 		if err != nil {
 			s.Log.Warn("event externals", "err", err)
@@ -349,14 +349,21 @@ func (s *Server) eventInvite(ctx context.Context, e calendar.Event, mi calendar.
 // the invitation to the new ones, an update to all when the meeting changed (before — as it was), a cancel to
 // those taken off. It gives what to tell the user ("" — nothing).
 func (s *Server) eventMailSend(r *http.Request, sess auth.Session, id string, before *calendar.Event) string {
-	if s.Mail == nil {
-		return ""
-	}
-	ctx := r.Context()
 	var want []calendar.External
 	for _, a := range splitAddrs(r.FormValue("external")) {
 		want = append(want, calendar.External{Email: a.Address, Name: a.Name})
 	}
+	return s.eventMailSendTo(r, sess.UserID, id, want, r.FormValue("mailbox"), r.FormValue("reply_to"), before)
+}
+
+// eventMailSendTo is eventMailSend of the user's meeting with these people from outside (want), from the mailbox
+// (boxID; "" — the one it went from before, else the first), in the conversation of the letter replyTo ("" — none).
+func (s *Server) eventMailSendTo(r *http.Request, userID, id string, want []calendar.External, boxID, replyTo string, before *calendar.Event) string {
+	if s.Mail == nil {
+		return ""
+	}
+	ctx := r.Context()
+	sess := auth.Session{UserID: userID}
 	if before == nil && len(want) == 0 {
 		return ""
 	}
@@ -375,7 +382,6 @@ func (s *Server) eventMailSend(r *http.Request, sess auth.Session, id string, be
 	if err != nil {
 		return s.errText(r, err)
 	}
-	boxID := r.FormValue("mailbox")
 	if boxID == "" {
 		boxID = mi.MailboxID
 	}
@@ -413,8 +419,8 @@ func (s *Server) eventMailSend(r *http.Request, sess auth.Session, id string, be
 	_ = s.DB.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, sess.UserID).Scan(&name)
 	in := s.eventInvite(ctx, e, mi, box, name, ext)
 	var refs []string
-	if reply := r.FormValue("reply_to"); reply != "" {
-		refs, _ = s.Mail.Refs(ctx, sess.UserID, reply)
+	if replyTo != "" {
+		refs, _ = s.Mail.Refs(ctx, sess.UserID, replyTo)
 	}
 	var to []string
 	if changed {

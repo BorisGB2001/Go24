@@ -266,17 +266,31 @@ func (in apiCRMInput) phoneEmail() (string, string) {
 
 // POST /api/v1/crm/{kind} — a new card (a deal goes to the first pipeline unless pipeline_id is given).
 func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
-	kind := r.PathValue("kind")
 	var in apiCRMInput
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
+	id, err := s.crmCreate(r, p, in)
+	if err != nil {
+		return err
+	}
+	r.SetPathValue("id", id)
+	item, err := s.apiCRMItem(r, p, "read")
+	if err != nil {
+		return err
+	}
+	return s.writeCRMCard(w, r, http.StatusCreated, item)
+}
+
+// crmCreate makes a card of the request's kind for the key's owner and says its id (REST of go24 and).
+func (s *Server) crmCreate(r *http.Request, p apikeys.Principal, in apiCRMInput) (string, error) {
+	kind := r.PathValue("kind")
 	resp := in.ResponsibleID
 	if resp == "" {
 		resp = p.UserID
 	}
-	if err := s.CRM.Check(r.Context(), p.UserID, crmEntities[kind], "write", resp); err != nil {
-		return err
+	if err := s.CRM.Check(r.Context(), p.UserID, crmEntities[kind], "add", resp); err != nil {
+		return "", err
 	}
 	var id string
 	var err error
@@ -287,7 +301,7 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 		if in.PipelineID == "" {
 			pipes, err := s.CRM.Pipelines(r.Context())
 			if err != nil || len(pipes) == 0 {
-				return i18n.E("err.crm_stage")
+				return "", i18n.E("err.crm_stage")
 			}
 			in.PipelineID = pipes[0].ID
 		}
@@ -299,7 +313,7 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 		}
 		for _, pid := range in.ParentIDs {
 			if err = s.apiCRMReadable(r, p, pid); err != nil {
-				return err
+				return "", err
 			}
 		}
 		if id, err = s.CRM.SaveDeal(r.Context(), p.UserID, d); err == nil && len(in.ParentIDs) > 0 {
@@ -316,20 +330,12 @@ func (s *Server) apiCRMCreate(w http.ResponseWriter, r *http.Request, p apikeys.
 		id, err = s.CRM.SaveCompany(r.Context(), p.UserID, crm.Company{Title: in.Title, Phone: phone, Email: email, Comms: in.comms(), Website: in.Website,
 			Address: in.Address, Responsible: ref, Comment: in.Comment, CompanyType: dictIn(in.CompanyType), Industry: dictIn(in.Industry)})
 	default:
-		return i18n.E("err.not_found")
+		return "", i18n.E("err.not_found")
 	}
 	if err == nil && in.UTM != nil {
 		err = s.setUTM(r.Context(), crmEntities[kind], id, in.UTM.utm())
 	}
-	if err != nil {
-		return err
-	}
-	r.SetPathValue("id", id)
-	item, err := s.apiCRMItem(r, p, "read")
-	if err != nil {
-		return err
-	}
-	return s.writeCRMCard(w, r, http.StatusCreated, item)
+	return id, err
 }
 
 func observerRefs(ids []string) []crm.Ref {
@@ -431,12 +437,66 @@ func (s *Server) apiCRMStage(w http.ResponseWriter, r *http.Request, p apikeys.P
 	var err error
 	switch crmEntities[r.PathValue("kind")] {
 	case "deal":
-		item, err = s.CRM.MoveDeal(r.Context(), p.UserID, r.PathValue("id"), in.StageID)
+		if err = s.CRM.CheckMove(r.Context(), p.UserID, r.PathValue("id"), in.StageID); err == nil {
+			item, err = s.CRM.MoveDeal(r.Context(), p.UserID, r.PathValue("id"), in.StageID)
+		}
 	case "lead":
 		item, err = s.CRM.MoveLead(r.Context(), p.UserID, r.PathValue("id"), in.StageID)
 	default:
 		return i18n.E("err.bad_form")
 	}
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, s.crmCardJSON(r.PathValue("kind"), item))
+	return nil
+}
+
+// POST /api/v1/crm/{kind}/{id}/copy — «Копировать»: a new card from the card (its fields, own fields, client,
+// observers, product rows), the responsible as on the site; gives the copy.
+func (s *Server) apiCRMCopy(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if _, err := s.apiCRMItem(r, p, "read"); err != nil {
+		return err
+	}
+	entity := crmEntities[r.PathValue("kind")]
+	resp, err := s.crmCopyResp(r, p.UserID, entity, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	id, err := s.CRM.Copy(r.Context(), p.UserID, entity, r.PathValue("id"), resp)
+	if err != nil {
+		return err
+	}
+	r.SetPathValue("id", id)
+	item, err := s.apiCRMItem(r, p, "read")
+	if err != nil {
+		return err
+	}
+	return s.writeCRMCard(w, r, http.StatusCreated, item)
+}
+
+// POST /api/v1/crm/{kind}/{id}/trigger {"code": …} — «Webhook» trigger (crm.automation.trigger): the
+// deal or lead goes to the stage of the trigger with the code, as the trigger allows; gives the card.
+func (s *Server) apiCRMTrigger(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	if _, err := s.apiCRMItem(r, p, "write"); err != nil {
+		return err
+	}
+	var in struct {
+		Code string `json:"code"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	entity := crmEntities[r.PathValue("kind")]
+	if entity != "deal" && entity != "lead" {
+		return i18n.E("err.bad_form")
+	}
+	if err := s.CRM.FireHook(r.Context(), entity, r.PathValue("id"), strings.TrimSpace(in.Code)); errors.Is(err, crm.ErrNotFound) {
+		return i18n.E("err.trigger_code")
+	} else if err != nil {
+		return err
+	}
+	item, err := s.apiCRMItem(r, p, "read")
 	if err != nil {
 		return err
 	}
@@ -475,7 +535,7 @@ func (s *Server) apiCRMConvert(w http.ResponseWriter, r *http.Request, p apikeys
 	}
 	for entity, made := range map[string]bool{"deal": to.Deal, "contact": to.Contact && to.ContactID == "", "company": to.Company && to.CompanyID == ""} {
 		if made {
-			if err := s.CRM.Check(r.Context(), p.UserID, entity, "write", p.UserID); err != nil {
+			if err := s.CRM.Check(r.Context(), p.UserID, entity, "add", p.UserID); err != nil {
 				return err
 			}
 		}

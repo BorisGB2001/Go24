@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -24,6 +25,7 @@ import (
 	"go24/internal/crm"
 	"go24/internal/db"
 	"go24/internal/i18n"
+	"go24/internal/openlines"
 	"go24/internal/sites"
 	"go24/internal/speech"
 	"go24/internal/tasks"
@@ -69,6 +71,10 @@ func TestPhone(t *testing.T) {
 	// Asterisk's http server: the WebSocket of SIP (it only says what it got)
 	got := make(chan *http.Request, 1)
 	ast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ws" { // ARI of the settings page
+			http.NotFound(w, r)
+			return
+		}
 		got <- r
 		c, buf, err := w.(http.Hijacker).Hijack()
 		if err != nil {
@@ -262,6 +268,18 @@ func TestPhone(t *testing.T) {
 	if _, p := do(eve, "GET", "/telephony/calls?user="+anna, nil, nil); strings.Contains(p, "Борис") {
 		t.Fatal("eve sees anna's calls")
 	}
+	// «Экспорт в Excel»: all the calls of the filter, by the same rights
+	res, csvOut := do(anna, "GET", "/telephony/calls?format=csv&q=102", nil, nil)
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/csv; charset=utf-8" || !strings.HasPrefix(csvOut, "\uFEFFДата;Тип;") ||
+		strings.Count(csvOut, "\n") != 3 || !strings.Contains(csvOut, ";Внутренний;") || !strings.Contains(csvOut, ";Не ответили;") || !strings.Contains(csvOut, ";1:00;60;") {
+		t.Fatalf("anna's export: %d\n%s", res.StatusCode, csvOut)
+	}
+	if _, csvOut := do(eve, "GET", "/telephony/calls?format=csv&user="+anna, nil, nil); strings.Contains(csvOut, "Борис") || strings.Count(csvOut, "\n") != 1 {
+		t.Fatalf("eve exports anna's calls:\n%s", csvOut)
+	}
+	if _, csvOut := do(anna, "GET", "/telephony/calls?format=csv&line=%2B74950000000", nil, nil); strings.Count(csvOut, "\n") != 1 {
+		t.Fatalf("another line's export:\n%s", csvOut)
+	}
 	// «Расшифровка»: the record's text by Whisper, for those who may listen; by itself after the call when switched on
 	heard := make(chan string, 4)
 	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +389,19 @@ func TestPhone(t *testing.T) {
 		}
 		return b.String()
 	}
+	// «Входящий звонок» moves the client's open deal, «Пропущенный звонок» the lead of the new number
+	pipes, err := srv.CRM.Pipelines(ctx)
+	must(err)
+	leadStages, err := srv.CRM.LeadStages(ctx)
+	must(err)
+	must(srv.CRM.AddTrigger(ctx, anna, pipes[0].Stages[1].ID, "call", crm.TriggerParams{}))
+	must(srv.CRM.AddTrigger(ctx, anna, leadStages[1].ID, "call_missed", crm.TriggerParams{}))
+	clientDeal, err := srv.CRM.SaveDeal(ctx, anna, crm.Deal{Title: "Ромашка: поставка", PipelineID: pipes[0].ID, Contacts: []crm.Ref{{ID: contact}}, Responsible: crm.Ref{ID: anna}})
+	must(err)
 	in("c.1", "89001112233", "101", "ANSWER", "r3.wav")
+	if d, _ := srv.CRM.Deal(ctx, clientDeal); d.Stage.ID != pipes[0].Stages[1].ID {
+		t.Fatalf("the client's call did not move their deal: %s", d.Stage.ID)
+	}
 	if tl := timeline("contact", contact); !strings.Contains(tl, `"dir":"in"`) || !strings.Contains(tl, `"sec":80`) || !strings.Contains(tl, `"rec":true`) {
 		t.Fatalf("the client's timeline: %q", tl)
 	}
@@ -383,6 +413,9 @@ func TestPhone(t *testing.T) {
 	}
 	if tl := timeline("lead", leads[0].ID); !strings.Contains(tl, `"dir":"missed"`) {
 		t.Fatalf("the lead's timeline: %q", tl)
+	}
+	if l, _ := srv.CRM.Lead(ctx, leads[0].ID); l.Stage.ID != leadStages[1].ID {
+		t.Fatalf("a missed call did not move the lead: %s", l.Stage.ID)
 	}
 	must(store.SetLeadAuto(ctx, anna, false))
 	in("c.3", "+7 495 000-00-02", "101", "NOANSWER", "")
@@ -531,6 +564,9 @@ func TestPhone(t *testing.T) {
 	mw.WriteField("work_days", "3")
 	fw, _ := mw.CreateFormFile("greeting", "hello.wav")
 	fw.Write(telephony.Beep())
+	mw.WriteField("rec_note_on", "1") // «Предупреждать о записи разговора» with its notice
+	fw, _ = mw.CreateFormFile("rec_note", "recorded.wav")
+	fw.Write(telephony.Beep())
 	mw.Close()
 	req3, _ := http.NewRequest("POST", hs.URL+"/telephony/trunks/"+trunks[0].ID, &form)
 	req3.Header.Set("Content-Type", mw.FormDataContentType())
@@ -541,7 +577,7 @@ func TestPhone(t *testing.T) {
 	trunks, err = store.Trunks(ctx)
 	must(err)
 	if l := trunks[0]; res3.StatusCode != http.StatusSeeOther || !l.WorkOn || len(l.WorkDays) != 2 || l.NoAnswer != telephony.ActVoicemail ||
-		l.OffHoursTo != "102" || l.GreetingSum == "" || l.Password != "pw" {
+		l.OffHoursTo != "102" || l.GreetingSum == "" || l.Password != "pw" || !l.RecNoteOn || l.RecNoteSum == "" {
 		t.Fatalf("the line's handling: %d %+v", res3.StatusCode, l)
 	}
 	req4, _ := http.NewRequest("GET", hs.URL+"/telephony/trunks/"+trunks[0].ID+"/greeting", nil)
@@ -551,6 +587,17 @@ func TestPhone(t *testing.T) {
 	res4.Body.Close()
 	if res4.StatusCode != http.StatusOK || res4.Header.Get("Content-Type") != "audio/wav" {
 		t.Fatalf("the greeting: %d", res4.StatusCode)
+	}
+	req4, _ = http.NewRequest("GET", hs.URL+"/telephony/trunks/"+trunks[0].ID+"/greeting?what=note", nil)
+	req4.AddCookie(rec.Result().Cookies()[0])
+	res4, err = client.Do(req4)
+	must(err)
+	res4.Body.Close()
+	if res4.StatusCode != http.StatusOK || res4.Header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("the notice of recording: %d", res4.StatusCode)
+	}
+	if res, _ := do(eve, "GET", "/telephony/trunks/"+trunks[0].ID+"/greeting?what=note", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve listens to the notice of recording: %d", res.StatusCode)
 	}
 	if res, _ := do(eve, "GET", "/telephony/trunks/"+trunks[0].ID+"/greeting", nil, nil); res.StatusCode != http.StatusForbidden {
 		t.Fatalf("eve listens to the greeting: %d", res.StatusCode)
@@ -589,6 +636,63 @@ func TestPhone(t *testing.T) {
 	if !strings.Contains(string(body), `action="/telephony/menus/`+menus[0].ID+`"`) || !strings.Contains(string(body), `<option value="`+menus[0].ID+`"`) {
 		t.Fatalf("the menu in the settings: %d", resP.StatusCode)
 	}
+	// «Скрипты продаж» (the administrators'): a script that does not parse is refused; the settings show the saved one
+	// with its walk, the call card of its direction has it, an inactive one or of the other direction — not
+	sales := url.Values{"name": {"Входящий"}, "calls": {"in"}, "active": {"1"},
+		"body": {"# Привет\nЗдравствуйте!\n- Интересно -> Предложение\n- Нет\n# Предложение\nКупите.\n- Да\n# Пока\nДо свидания."}}
+	if res, _ := do(eve, "POST", "/telephony/sales", sales, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("eve makes a sales script: %d", res.StatusCode)
+	}
+	bad := url.Values{"name": {"Плохой"}, "body": {"# А\n- Да -> Нет такого"}}
+	admin("/telephony/sales", bad)
+	if list, _ := store.SalesScripts(ctx, ""); len(list) != 0 {
+		t.Fatalf("a broken script saved: %+v", list)
+	}
+	if res := admin("/telephony/sales", sales); res.StatusCode != http.StatusSeeOther || !strings.HasSuffix(res.Header.Get("Location"), "#sales") {
+		t.Fatalf("the administrator's sales script: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	must2 := func(list []telephony.SalesScript, err error) []telephony.SalesScript { must(err); return list }
+	ss := must2(store.SalesScripts(ctx, ""))
+	if len(ss) != 1 || ss[0].Calls != "in" || !ss[0].Active {
+		t.Fatalf("the sales script: %+v", ss)
+	}
+	if len(must2(store.SalesScripts(ctx, "out"))) != 0 || len(must2(store.SalesScripts(ctx, "in"))) != 1 {
+		t.Fatal("the sales scripts of a direction")
+	}
+	walk := func(dir string) []any {
+		t.Helper()
+		_, body := do(anna, "GET", "/telephony/card?number=%2B74950000077&dir="+dir, nil, nil)
+		var m map[string]any
+		must(json.Unmarshal([]byte(body), &m))
+		list, _ := m["scripts"].([]any)
+		return list
+	}
+	if list := walk("in"); len(list) != 1 || !strings.Contains(fmt.Sprint(list), "label:Интересно next:1") || !strings.Contains(fmt.Sprint(list), "label:Нет next:1") ||
+		!strings.Contains(fmt.Sprint(list), "label:Да next:2") {
+		t.Fatalf("the card's sales script: %v", list)
+	}
+	if list := walk("out"); len(list) != 0 {
+		t.Fatalf("an incoming script in an outgoing call: %v", list)
+	}
+	reqS, _ := http.NewRequest("GET", hs.URL+"/settings/telephony", nil)
+	reqS.AddCookie(rec.Result().Cookies()[0])
+	resS, err := client.Do(reqS)
+	must(err)
+	bodyS, _ := io.ReadAll(resS.Body)
+	resS.Body.Close()
+	if !strings.Contains(string(bodyS), `action="/telephony/sales/`+ss[0].ID+`"`) || !strings.Contains(string(bodyS), `data-sales-try="sales-try-`+ss[0].ID+`"`) {
+		t.Fatalf("the sales script in the settings: %d", resS.StatusCode)
+	}
+	sales.Del("active")
+	if res := admin("/telephony/sales/"+ss[0].ID, sales); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the sales script off: %d", res.StatusCode)
+	}
+	if list := walk("in"); len(list) != 0 {
+		t.Fatalf("an inactive script in the card: %v", list)
+	}
+	if res := admin("/telephony/sales/"+ss[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther || len(must2(store.SalesScripts(ctx, ""))) != 0 {
+		t.Fatalf("the sales script deleted: %d", res.StatusCode)
+	}
 	if res := admin("/telephony/menus/"+menus[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the menu deleted: %d", res.StatusCode)
 	}
@@ -624,8 +728,8 @@ func TestPhone(t *testing.T) {
 	if res := admin("/telephony/trunks/"+trunks[0].ID, line); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the line asking for a rating: %d", res.StatusCode)
 	}
-	if got, _ := store.Trunks(ctx); got[0].RateOn {
-		t.Fatalf("rating on without an invitation: %+v", got[0])
+	if got, _ := store.Trunks(ctx); got[0].RateOn || got[0].RecNoteOn || got[0].RecNoteSum == "" {
+		t.Fatalf("rating on without an invitation, or the notice of recording unticked but on or gone: %+v", got[0])
 	}
 	line.Del("rate_on")
 	// «Обратный звонок»: the administrators' form; the client's request — out of reach of Asterisk it waits, the
@@ -684,6 +788,52 @@ func TestPhone(t *testing.T) {
 	if res, p := do(anna, "GET", "/settings/telephony", nil, nil); res.StatusCode == http.StatusOK && !strings.Contains(p, "/cb/"+cbs[0].Token) {
 		t.Fatal("the callback form not in the settings")
 	}
+	// the form in a line's widget (GO24DEV-874): a tab of the widget; the visitor's request goes as the form's own
+	srv.OpenLines = openlines.NewStore(pool, srv.CRM)
+	srv.OpenLines.Tr = func(key string, _ ...any) string { return key }
+	wid, err := srv.OpenLines.SaveWidget(ctx, anna, openlines.Widget{Name: "Сайт", Active: true, Operators: []string{anna}, CallbackID: cbs[0].ID})
+	must(err)
+	if _, err := srv.OpenLines.SaveWidget(ctx, anna, openlines.Widget{ID: wid, Name: "Сайт", Active: true, CallbackID: anna}); err == nil {
+		t.Fatal("a line with a callback form that is not one")
+	}
+	if res, p := do("", "GET", "/w/"+wid+"/widget.js", nil, nil); res.StatusCode != http.StatusOK || !strings.Contains(p, `"button":"Позвоните мне"`) {
+		t.Fatalf("the widget's callback: %d", res.StatusCode)
+	}
+	reqW, _ := http.NewRequest("GET", hs.URL+"/openlines/widgets", nil)
+	reqW.AddCookie(rec.Result().Cookies()[0])
+	resW, err := client.Do(reqW)
+	must(err)
+	body, _ = io.ReadAll(resW.Body)
+	resW.Body.Close()
+	if resW.StatusCode != http.StatusOK || !strings.Contains(string(body), `<option value="`+cbs[0].ID+`" selected>Сайт</option>`) {
+		t.Fatalf("the line's callback form in its settings: %d", resW.StatusCode)
+	}
+	wcall := func(body string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", hs.URL+"/w/"+wid+"/api/callback", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := client.Do(req)
+		must(err)
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(raw)
+	}
+	if st, p := wcall(`{"phone":"12","elapsed":30}`); st != http.StatusUnprocessableEntity || !strings.Contains(p, "Укажите номер телефона") {
+		t.Fatalf("a widget's callback to a bad number: %d %s", st, p)
+	}
+	if st, _ := wcall(`{"phone":"+79001112233","elapsed":0}`); st != http.StatusOK {
+		t.Fatalf("a robot's widget callback: %d", st)
+	}
+	if st, p := wcall(`{"phone":"+7 900 111-22-33","name":"Ира","page":"https://example.com/","elapsed":20}`); st != http.StatusOK {
+		t.Fatalf("a widget's callback: %d %s", st, p)
+	}
+	if reqs, _ = store.CallbackRequests(ctx, cbs[0].ID, 10); len(reqs) != 2 || reqs[0].Number != "+79001112233" || reqs[0].Name != "Ира" {
+		t.Fatalf("the widget's callback request: %+v", reqs)
+	}
+	must(srv.OpenLines.DeleteWidget(ctx, wid))
+	srv.OpenLines = nil
+	_, err = pool.Exec(ctx, `DELETE FROM notifications WHERE user_id = $1 AND kind = 'phone'`, anna) // the widget's callback told anna; the checks below count anew
+	must(err)
 	if res := admin("/telephony/callbacks/"+cbs[0].ID+"/delete", nil); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the callback form deleted: %d", res.StatusCode)
 	}

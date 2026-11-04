@@ -1,0 +1,26 @@
+{{define "content"}}
+<div class="crumbs"><a href="/projects?tab=all">{{t "groups.all"}}</a> {{icon "chevron-right"}} {{t "subjects.title"}}</div>
+<h1>{{t "subjects.title"}}</h1>
+<div class="sub">{{t "subjects.subtitle"}}</div>
+<div class="card flush">
+  {{if .Data}}<table>
+    <thead><tr><th>{{t "subjects.name"}}</th><th>{{t "subjects.sort"}}</th><th>{{t "subjects.groups"}}</th><th></th></tr></thead>
+    <tbody>{{range .Data}}<tr>
+      <td colspan="2"><form method="post" action="/projects/subjects" class="row"><input type="hidden" name="id" value="{{.ID}}">
+        <input type="text" name="name" value="{{.Name}}" maxlength="100" required style="flex:1" aria-label="{{t "subjects.name"}}">
+        <input type="number" name="sort" value="{{.Sort}}" style="width:80px" aria-label="{{t "subjects.sort"}}">
+        <button>{{t "common.save"}}</button></form></td>
+      <td><a href="/projects?tab=all&subject={{.ID}}">{{.Groups}}</a></td>
+      <td><form method="post" action="/projects/subjects" data-confirm="{{t "subjects.delete_confirm" .Name}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">
+        <button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">{{t "subjects.empty"}}</div>{{end}}
+</div>
+<div class="card">
+  <h2>{{icon "plus"}} {{t "subjects.add"}}</h2>
+  <form method="post" action="/projects/subjects" class="row">
+    <input type="text" name="name" maxlength="100" required placeholder="{{t "subjects.name"}}" style="flex:1">
+    <input type="number" name="sort" value="100" style="width:80px" aria-label="{{t "subjects.sort"}}">
+    <button class="primary">{{icon "plus"}} {{t "common.add"}}</button></form>
+</div>
+{{end}}

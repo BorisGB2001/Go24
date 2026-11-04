@@ -1,12 +1,15 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"crypto/subtle"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"go24/internal/ai"
 	"go24/internal/auth"
 	"go24/internal/company"
 	"go24/internal/i18n"
@@ -61,6 +65,9 @@ func (s *Server) phoneCDR(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.phoneEvents(r.Context(), id); err != nil {
 		s.Log.Error("telephony events", "err", err, "call", id)
+	}
+	if id != "" && s.phoneDriveOn(r.Context(), c) { // «Записанные звонки» on the company's drive
+		go s.phoneDriveLater(id)
 	}
 	if st := c.Status(); id != "" && c.Record != "" && (st == telephony.StatusAnswered || st == telephony.StatusVoicemail) && s.Speech != nil {
 		if on, err := s.Telephony.Transcribing(r.Context()); err != nil {
@@ -192,7 +199,8 @@ type phoneCallRow struct {
 }
 
 // phoneCalls is «Детализация звонков»: the calls the right «calls» shows — the employee's own, their departments'
-// or everyone's (or one's: user=); filters: kind (in, out, missed), the period, a number.
+// or everyone's (or one's: user=); filters: kind (in, out, missed), the period, a number, the line. ?format=csv — all
+// the calls of the filter for Excel.
 func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if s.Telephony == nil {
 		s.taskErr(w, r, i18n.E("err.telephony_off"), "/my")
@@ -204,7 +212,7 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 		return
 	}
 	q := r.URL.Query()
-	f := telephony.CallFilter{Kind: q.Get("kind"), Number: q.Get("q"), Limit: 50}
+	f := telephony.CallFilter{Kind: q.Get("kind"), Number: q.Get("q"), Line: q.Get("line"), Limit: 50}
 	var err error
 	if f.UserID, f.Users, err = s.telScope(r.Context(), sess, perms["calls"], q.Get("user")); err != nil {
 		s.fail(w, "telephony team", err)
@@ -224,6 +232,10 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	if t, err := time.Parse(time.RFC3339Nano, q.Get("before")); err == nil {
 		f.Before = t
+	}
+	if q.Get("format") == "csv" {
+		s.phoneCallsCSV(w, r, f)
+		return
 	}
 	list, err := s.Telephony.Calls(r.Context(), f)
 	if err != nil {
@@ -281,8 +293,26 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 		keep.Set("before", list[len(list)-1].Started.Format(time.RFC3339Nano))
 		more = "/telephony/calls?" + keep.Encode()
 	}
+	csvQuery := url.Values{"format": {"csv"}}
+	for k, v := range q {
+		if k != "before" {
+			csvQuery[k] = v
+		}
+	}
+	lines, err := s.phoneLines(r.Context())
+	if err != nil {
+		s.fail(w, "telephony lines", err)
+		return
+	}
 	data := map[string]any{"Calls": rows, "Filter": f, "From": q.Get("from"), "To": q.Get("to"), "More": more,
-		"Admin": admin, "CRM": s.CRM != nil, "Back": r.URL.RequestURI(), "Speech": s.Speech != nil}
+		"Admin": admin, "CRM": s.CRM != nil, "Back": r.URL.RequestURI(), "Speech": s.Speech != nil, "AI": s.aiOn(r.Context(), sess.UserID, "telephony"),
+		"Monitor": perms.Has("monitor", "dept"), "Lines": lines, "CSV": "/telephony/calls?" + csvQuery.Encode()}
+	if s.AI != nil {
+		if data["Scripts"], err = s.Telephony.Scripts(r.Context()); err != nil {
+			s.fail(w, "telephony scripts", err)
+			return
+		}
+	}
 	if perms["calls"] != "own" {
 		if data["Users"], err = s.telUsers(r.Context(), f.Users); err != nil {
 			s.fail(w, "telephony users", err)
@@ -291,6 +321,89 @@ func (s *Server) phoneCalls(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	s.render(w, r, "phonecalls", page{TitleKey: "tel.calls", Nav: "telephony_calls", Data: data})
 }
+
+// phoneLine is an external line of the filter «Линия»: go24's own (a SIP trunk) or an outside PBX's.
+type phoneLine struct{ Number, Name string }
+
+// phoneLines are the external lines with a number, go24's first.
+func (s *Server) phoneLines(ctx context.Context) ([]phoneLine, error) {
+	trunks, err := s.Telephony.Trunks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ext, err := s.Telephony.ExtLines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []phoneLine
+	seen := map[string]bool{}
+	add := func(number, name string) {
+		if number != "" && !seen[number] {
+			seen[number] = true
+			out = append(out, phoneLine{number, name})
+		}
+	}
+	for _, t := range trunks {
+		add(t.Number, t.Name)
+	}
+	for _, l := range ext {
+		add(l.Number, l.Name)
+	}
+	return out, nil
+}
+
+// phoneCallsCSV writes all the calls of the filter (newest first, up to phoneCSVMax) for Excel.
+func (s *Server) phoneCallsCSV(w http.ResponseWriter, r *http.Request, f telephony.CallFilter) {
+	var list []telephony.Call
+	f.Limit = 500
+	for len(list) < phoneCSVMax {
+		page, err := s.Telephony.Calls(r.Context(), f)
+		if err != nil {
+			s.fail(w, "telephony calls", err)
+			return
+		}
+		list = append(list, page...)
+		if len(page) < f.Limit {
+			break
+		}
+		f.Before = page[len(page)-1].Started
+	}
+	tr := func(k string) string { return s.tr(r, k) }
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=calls-"+time.Now().Format("2006-01-02")+".csv")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // the BOM: Excel reads the file as UTF-8
+	cw := csv.NewWriter(w)
+	cw.Comma = ';'
+	_ = cw.Write([]string{tr("tel.col.date"), tr("tel.col.kind"), tr("tel.col.from"), tr("tel.csv.from_number"), tr("tel.col.to"),
+		tr("tel.csv.to_number"), tr("tel.col.line"), tr("tel.col.status"), tr("tel.col.duration"), tr("tel.csv.seconds"),
+		tr("tel.csv.client"), tr("tel.csv.transferred"), tr("tel.comment"), tr("tel.csv.rating"), tr("tel.score")})
+	for _, c := range list {
+		kind := "inner"
+		if _, dir, _ := c.Outside(); dir != "" {
+			kind = dir
+			if dir == "in" && c.Missed() {
+				kind = "missed"
+			}
+		}
+		transferred, rating, score := "", "", ""
+		if c.XTo != "" {
+			transferred = cmp.Or(c.XFromName, c.XFrom) + " → " + cmp.Or(c.XToName, c.XTo)
+		}
+		if c.Rating > 0 {
+			rating = strconv.Itoa(c.Rating)
+		}
+		if c.Score >= 0 {
+			score = strconv.Itoa(c.Score) + "%"
+		}
+		_ = cw.Write([]string{c.Started.In(time.Local).Format("02.01.2006 15:04:05"), tr("tel.kind." + kind), c.FromUser.Name, c.From,
+			c.ToUser.Name, c.To, c.Line, tr("tel.status." + c.Status), c.Duration(), strconv.Itoa(c.Seconds),
+			c.CRMName, transferred, c.Comment, rating, score})
+	}
+	cw.Flush()
+}
+
+// phoneCSVMax bounds the calls of one export.
+const phoneCSVMax = 50000
 
 // phoneRecord gives the recorded conversation (to listen, or download=1) to its employees and administrators.
 func (s *Server) phoneRecord(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -315,9 +428,17 @@ func (s *Server) phoneRecord(w http.ResponseWriter, r *http.Request, sess auth.S
 	if r.URL.Query().Get("download") == "1" {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	}
-	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Type", recordType(name))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFile(w, r, filepath.Join(s.Telephony.Records, name))
+}
+
+// recordType is the type of a record's file: Asterisk's are wav, an outside PBX's may be mp3 or ogg.
+func recordType(name string) string {
+	if t := mime.TypeByExtension(filepath.Ext(name)); strings.HasPrefix(t, "audio/") {
+		return t
+	}
+	return "audio/wav"
 }
 
 // phoneHears tells whether the employee may listen to the call's record (and read its text) by the right «records»:
@@ -412,7 +533,225 @@ func (s *Server) phoneTranscribeLater(id string) {
 	}
 	if err != nil {
 		s.Log.Error("telephony transcript", "err", err, "call", id)
+		return
 	}
+	if s.AI == nil {
+		return
+	}
+	if on, err := s.Telephony.Summarizing(ctx); err == nil && on {
+		if c, err = s.Telephony.CallByID(ctx, id); err == nil {
+			err = s.phoneSummarize(ctx, c, "")
+		}
+		if err != nil && !errors.Is(err, ai.ErrNone) {
+			s.Log.Error("telephony summary", "err", err, "call", id)
+		}
+	}
+	s.phoneFillAuto(ctx, id)
+	if c, err = s.Telephony.CallByID(ctx, id); err != nil || c.Score >= 0 || strings.TrimSpace(c.Transcript) == "" || c.Transcript == s.portalTr("im.voice_silent") {
+		return
+	}
+	_, dir, _ := c.Outside()
+	sc, ok, err := s.Telephony.AutoScript(ctx, dir)
+	if err == nil && ok && dir != "" {
+		err = s.phoneScore(ctx, c, sc, "")
+	}
+	if err != nil && !errors.Is(err, ai.ErrNone) {
+		s.Log.Error("telephony score", "err", err, "call", id)
+	}
+}
+
+// phoneAssess: «Оценить» — CoPilot scores the conversation by the chosen script through the AI of the one who asks;
+// back to where the button was.
+func (s *Server) phoneAssess(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/telephony/calls"
+	if ref, err := url.Parse(r.Referer()); err == nil && strings.HasPrefix(ref.Path, "/") && !strings.HasPrefix(ref.Path, "//") {
+		back = ref.RequestURI()
+	}
+	if s.Telephony == nil || s.Telephony.Records == "" {
+		http.NotFound(w, r)
+		return
+	}
+	c, err := s.Telephony.CallByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, telephony.ErrNotFound) || (err == nil && c.Record == "") {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, "telephony score", err)
+		return
+	}
+	if !s.phoneHears(r.Context(), sess, c) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	sc, err := s.Telephony.ScriptByID(r.Context(), r.FormValue("script"))
+	if err == nil {
+		err = s.phoneScore(r.Context(), c, sc, sess.UserID)
+	} else if errors.Is(err, telephony.ErrNotFound) {
+		err = i18n.E("err.script_none")
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// phoneScore has the AI score the conversation by the script from the record's text (made first if there is none) and
+// keeps the score; the client's CRM card gets it in its timeline, a low score is told to the employee's managers. The
+// AI is that of userID, "" — of the employee who talked.
+func (s *Server) phoneScore(ctx context.Context, c telephony.Call, sc telephony.Script, userID string) error {
+	if s.AI == nil {
+		return ai.ErrNone
+	}
+	if c.Transcript == "" {
+		if err := s.phoneTranscribe(ctx, c); err != nil {
+			return err
+		}
+		var err error
+		if c, err = s.Telephony.CallByID(ctx, c.ID); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.Transcript) == "" || c.Transcript == s.portalTr("im.voice_silent") {
+		return i18n.E("err.tel_summary_silent")
+	}
+	number, dir, emp := c.Outside()
+	if emp == "" {
+		emp = cmp.Or(c.FromUser.UserID, c.ToUser.UserID)
+	}
+	if userID == "" {
+		userID = emp
+	}
+	if userID == "" {
+		return ai.ErrNone
+	}
+	lang := s.portalLang()
+	about := s.I18n.T(lang, "tel.summary_call", c.From, c.To, c.Duration())
+	if dir != "" {
+		about += "\n" + s.I18n.T(lang, "tel.score_dir."+dir)
+	}
+	reply, err := s.AI.Write(ctx, userID, "telephony", s.I18n.T(lang, "tel.score_prompt"),
+		s.I18n.T(lang, "tel.score_script", sc.Name)+"\n"+sc.Body+"\n\n"+about+"\n\n"+c.Transcript)
+	if err != nil {
+		return err
+	}
+	score, text, ok := telephony.ParseScore(reply)
+	if !ok {
+		return i18n.E("err.ai_call", "no score")
+	}
+	if err := s.Telephony.SetScore(ctx, c.ID, sc, score, text); err != nil {
+		return err
+	}
+	when := c.Started.Local().Format(s.I18n.T(lang, "format.datetime"))
+	if c.CRMEntity != "" && c.CRMID != "" && s.CRM != nil && c.Score < 0 {
+		body := s.I18n.T(lang, "tel.score_crm", when, number, sc.Name, score) + "\n" + text
+		if err := s.CRM.AddEvent(ctx, c.CRMEntity, c.CRMID, cmp.Or(emp, userID), "comment", body); err != nil {
+			s.Log.Warn("telephony score crm", "err", err, "call", c.ID)
+		}
+	}
+	if score < sc.Low && emp != "" && s.Company != nil {
+		heads, err := s.Company.Managers(ctx, emp)
+		if err != nil {
+			return err
+		}
+		name := ""
+		if p, err := s.Company.Profile(ctx, emp); err == nil {
+			name = cmp.Or(p.Name, p.Email)
+		}
+		body := s.I18n.T(lang, "tel.score_low", score, sc.Name, name, cmp.Or(number, c.To), when)
+		for _, h := range heads {
+			if _, err := s.DB.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url) VALUES ($1, 'phone_score', left($2, 300), $3)`,
+				h.ID, body, "/telephony/calls?user="+emp); err != nil {
+				s.Log.Warn("telephony score notify", "err", err, "call", c.ID)
+			}
+		}
+	}
+	return nil
+}
+
+// phoneSummary: «Подвести итоги» — CoPilot sums the conversation up from the record's text through the AI of the one
+// who asks; back to where the button was.
+func (s *Server) phoneSummary(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/telephony/calls"
+	if ref, err := url.Parse(r.Referer()); err == nil && strings.HasPrefix(ref.Path, "/") && !strings.HasPrefix(ref.Path, "//") {
+		back = ref.RequestURI()
+	}
+	if s.Telephony == nil || s.Telephony.Records == "" {
+		http.NotFound(w, r)
+		return
+	}
+	c, err := s.Telephony.CallByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, telephony.ErrNotFound) || (err == nil && c.Record == "") {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, "telephony summary", err)
+		return
+	}
+	if !s.phoneHears(r.Context(), sess, c) {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
+	if err := s.phoneSummarize(r.Context(), c, sess.UserID); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// phoneSummarize has the AI write the summary of the conversation from the record's text (made first if there is
+// none) and keeps it; the client's CRM card gets it in its timeline. The AI is that of userID, "" — of the employee
+// who talked.
+func (s *Server) phoneSummarize(ctx context.Context, c telephony.Call, userID string) error {
+	if s.AI == nil {
+		return ai.ErrNone
+	}
+	if c.Transcript == "" {
+		if err := s.phoneTranscribe(ctx, c); err != nil {
+			return err
+		}
+		var err error
+		if c, err = s.Telephony.CallByID(ctx, c.ID); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.Transcript) == "" || c.Transcript == s.portalTr("im.voice_silent") {
+		return i18n.E("err.tel_summary_silent")
+	}
+	number, dir, emp := c.Outside()
+	if emp == "" {
+		emp = cmp.Or(c.FromUser.UserID, c.ToUser.UserID)
+	}
+	if userID == "" {
+		userID = emp
+	}
+	if userID == "" {
+		return ai.ErrNone
+	}
+	lang := s.portalLang()
+	about := s.I18n.T(lang, "tel.summary_call", c.From, c.To, c.Duration())
+	if dir != "" && c.CRMName != "" {
+		about += "\n" + s.I18n.T(lang, "tel.summary_client", c.CRMName, number)
+	}
+	text, err := s.AI.Write(ctx, userID, "telephony", s.I18n.T(lang, "tel.summary_prompt"), about+"\n\n"+c.Transcript)
+	if err != nil {
+		return err
+	}
+	if text == "" {
+		return i18n.E("err.ai_call", "empty")
+	}
+	if err := s.Telephony.SetSummary(ctx, c.ID, text); err != nil {
+		return err
+	}
+	if c.CRMEntity != "" && c.CRMID != "" && s.CRM != nil && c.Summary == "" {
+		body := s.I18n.T(lang, "tel.summary_crm", c.Started.Local().Format(s.I18n.T(lang, "format.datetime")), number) + "\n" + text
+		if err := s.CRM.AddEvent(ctx, c.CRMEntity, c.CRMID, cmp.Or(emp, userID), "comment", body); err != nil {
+			s.Log.Warn("telephony summary crm", "err", err, "call", c.ID)
+		}
+	}
+	return nil
 }
 
 // maxRecord is the longest record go24 sends to Whisper (about an hour of 8 kHz WAV).

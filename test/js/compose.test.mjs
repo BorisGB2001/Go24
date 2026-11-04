@@ -2,7 +2,7 @@
 // (a size made the size chosen), pasted HTML is cleaned; addresses become chips (a wrong one marked), suggestions
 // come as typed and are picked with the keys; the draft is kept a few seconds after a change; Outlook's questions
 // before sending (no subject, a file mentioned); «Отправить» leaves «Отменить» for its seconds (kept in
-// localStorage), «Отменить» takes the letter back; the signature follows «От»; a reply opens under the letter; the address book (a tab per source, personal contacts kept, changed, deleted).
+// localStorage), «Отменить» takes the letter back; the signature follows «От»; a reply opens under the letter; the address book (a tab per source, personal contacts kept, changed, deleted); «Подсказки по почте» (MailTips); «Слияние» — the fields and the preview of each recipient's letter.
 // node test/js/compose.test.mjs
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { readFileSync } from 'node:fs';
@@ -13,9 +13,11 @@ const labels = `<template data-compose-labels><span data-l="saved">Сохран�
   <span data-l="no_subject">Без темы?</span><span data-l="forgot">Забыли вложение?</span><span data-l="words">вложен|attach</span><span data-l="discard">Удалить?</span>
   <span data-l="link">Адрес</span><span data-l="tpl_name">Название</span><span data-l="employee">Сотрудник</span><span data-l="crm">CRM</span><span data-l="history">Переписка</span>
   <span data-l="list">Список</span><span data-l="dept">Отдел</span><span data-l="list_name">Название списка</span><span data-l="list_saved">Список «%s» сохранён</span><span data-l="mention">%s в «Кому»</span>
-  <span data-l="contact">Личный контакт</span><span data-l="crm_company">CRM: компания</span><span data-l="book_kept">«%s» — в личных контактах</span><span data-l="cc">Копия</span>
+  <span data-l="contact">Личный контакт</span><span data-l="crm_company">CRM: компания</span><span data-l="book_kept">«%s» — в личных контактах</span><span data-l="book_imported">Добавлено: %d, обновлено: %d, пропущено: %d</span><span data-l="cc">Копия</span>
   <span data-l="book_delete_ask">Удалить «%s»?</span><span data-i="employee"><i class="i i-user"></i></span><span data-i="contact"><i class="i i-notebook"></i></span>
-  <span data-i="crm_company"><i class="i i-building-warehouse"></i></span></template>`;
+  <span data-i="crm_company"><i class="i i-building-warehouse"></i></span><span data-l="tip_auto">Автоматический ответ от %s</span><span data-l="tip_until">(до %s)</span>
+  <span data-l="tip_ext">Получателей вне вашей организации: %s.</span><span data-l="tip_ext_one">вне организации</span><span data-l="tip_large">Письмо получат %s адресатов.</span>
+  <span data-l="tip_invalid">Это не адреса:</span><span data-l="tip_nofwd">«Не пересылать» действует только в go24</span></template>`;
 const form = (id = '') => `<form class="mcompose inline" method="post" action="/mail/drafts/send" data-compose data-back="/mail?folder=f1"
     data-sigs='{"b1":{"New":"s1","Reply":""},"b2":{"New":"s2","Reply":"s2"}}'>
   <input type="hidden" name="draft" value="${id}"><input type="hidden" name="mode" value=""><input type="hidden" name="reply_to" value=""><input type="hidden" name="importance" value="0">
@@ -23,14 +25,20 @@ const form = (id = '') => `<form class="mcompose inline" method="post" action="/
   <button type="button" data-sig="s1" data-html="&lt;p&gt;Анна&lt;/p&gt;">Основная</button><button type="button" data-sig="s2" data-html="&lt;p&gt;Отдел продаж&lt;/p&gt;">Отдел</button>
   <button type="button" data-imp="1">!</button><button type="button" data-imp="-1">↓</button>
   <span data-status></span>
-  <select name="box" data-box><option value="b1" selected>a@x.ru</option><option value="b2">sales@x.ru</option></select>
+  <div class="mc-tips" data-tips hidden></div><input type="hidden" name="from" value="a@x.ru" data-from><input type="checkbox" name="no_forward" value="1" data-nofwd>
+  <select name="box" data-box><option value="b1" data-from="a@x.ru" selected>a@x.ru</option><option value="b2" data-from="sales@x.ru">sales@x.ru</option></select>
   <div class="mc-rcpt" data-rcpt><input type="text" id="to1" name="to" value='"Клиент" &lt;c@x.ru&gt;, bad'></div>
   <button type="button" data-show="cc">Копия</button><button type="button" data-list-save>Список</button>
   <div class="mc-field" data-field="cc" hidden><button type="button" class="mc-label" data-book="cc">Копия</button><div class="mc-rcpt" data-rcpt><input type="text" name="cc" value=""></div></div>
   <input type="text" name="subject" value="">
   <div class="mc-files" data-files></div>
   <div class="mc-tools" data-tools><select data-cmd="fontSize"><option value=""></option><option value="14pt">14pt</option></select>
-    <button type="button" data-cmd="bold">B</button><button type="button" data-cmd="insertOrderedList">1</button></div>
+    <button type="button" data-cmd="bold">B</button><button type="button" data-cmd="insertOrderedList">1</button>
+    <button type="button" data-cmd="superscript">x²</button><button type="button" data-painter aria-pressed="false">кисть</button>
+    <details><summary>инт</summary><div><button type="button" data-spacing="1.5">1.5</button></div></details>
+    <details><summary>эмодзи</summary><div data-chars="emoji" data-recent="Недавние" data-smileys="Смайлы"></div></details>
+    <details><summary>символ</summary><div data-chars="symbols"></div></details>
+    <details><summary>дата</summary><div data-dates></div></details></div>
   <div class="mc-editor" contenteditable="true" data-editor></div>
   <textarea name="html" hidden data-html>&lt;p&gt;Добрый день&lt;/p&gt;&lt;div data-signature="s1"&gt;&lt;p&gt;Анна&lt;/p&gt;&lt;/div&gt;&lt;hr&gt;&lt;div data-quote="1"&gt;От: Клиент&lt;/div&gt;&lt;div&gt;см. вложение&lt;/div&gt;</textarea>
   ${labels}
@@ -56,11 +64,18 @@ d.execCommand = (cmd, ui, v) => {
 d.queryCommandState = () => false;
 w.asked = [];
 w.confirm = text => { w.asked.push(text); return w.answer ?? true; };
-const asked = [];
+const asked = [], tipsAsked = [];
 w.fetch = async (url, opts = {}) => {
   const u = String(url);
-  asked.push({ url: u, method: opts.method || 'GET', body: opts.body instanceof w.URLSearchParams ? opts.body.toString() : opts.body });
   const json = data => ({ ok: true, status: 200, statusText: 'OK', json: async () => data, text: async () => '' });
+  if (u === '/mail/tips') { // apart: it comes 400 ms after the addresses change
+    const b = opts.body;
+    tipsAsked.push(b);
+    const addrs = b.getAll('addr');
+    return json({ recipients: addrs.length, large: false, external: addrs.filter(a => a.includes('@y.ru')).map(a => a.replace(/.*</, '').replace('>', '')),
+      invalid: [], auto_replies: addrs.some(a => a.includes('anna@go24.test')) ? [{ email: 'anna@go24.test', name: 'Анна Иванова', text: 'В отпуске' }] : [] });
+  }
+  asked.push({ url: u, method: opts.method || 'GET', body: opts.body instanceof w.URLSearchParams ? opts.body.toString() : opts.body });
   if (u.startsWith('/mail/rcpt?q=sales')) return json([{ name: 'Отдел продаж', email: '', kind: 'dept', members: [{ name: 'Пётр', email: 'p@go24.test' },
     { name: '', email: 'q@go24.test' }] }]);
   if (u.startsWith('/mail/rcpt?people=1')) return json([{ name: 'Борис Б', email: 'boris@go24.test', kind: 'employee' }]);
@@ -68,7 +83,13 @@ w.fetch = async (url, opts = {}) => {
   if (u.startsWith('/mail/book')) return json([{ name: 'Анна Иванова', email: 'anna@go24.test', kind: 'employee' },
     { id: 'k1', name: 'Сидоров', email: 'sid@ip.ru', kind: 'contact', company: 'ИП Сидоров' }, { name: 'ООО Ромашка', email: 'info@romashka.ru', kind: 'crm_company' }]);
   if (u === '/mail/contacts') return json({ id: 'k2', name: opts.body.get('name'), email: opts.body.get('email') });
+  if (u === '/mail/contacts/import') return json({ added: 2, updated: 1, skipped: 0 });
+  if (u === '/mail/contacts/phone') return json({ url: 'https://go24.test/carddav/' });
   if (u.startsWith('/mail/rcpt')) return json([{ name: 'Анна Иванова', email: 'anna@go24.test', kind: 'employee' }, { name: '', email: 'ann@c.ru', kind: 'history' }]);
+  if (u === '/mail/merge/preview') {
+    const i = Number(opts.body.get('i'));
+    return json({ i, n: 2, of: `${i + 1} из 2`, to: ['Анна <anna@go24.test>', 'Пётр <p@go24.test>'][i], subject: ['Привет, Анна', 'Привет, Пётр'][i], html: '<p>ООО Ромашка</p>' });
+  }
   if (u === '/mail/drafts/save') return json({ id: 'd1', saved: '12:03' });
   if (u === '/mail/drafts/send') return json({ id: 'd1', undo: 1 });
   if (u.endsWith('/cancel')) return json({ result: true, href: '/mail?new=1&draft=d1' });
@@ -192,6 +213,23 @@ const key = (el, k, o = {}) => { const e = new w.KeyboardEvent('keydown', { key:
   assert.ok(asked.some(a => a.url === '/mail/contacts/k1/delete' && a.method === 'POST'));
   key(rows()[0], 'Enter'); // Enter on a row — straight into the field the book was opened for
   assert.match(cc.value, /anna@go24\.test/);
+  // the personal contacts' tools, only on their tab: «Импорт» sends the file, «На телефоне» shows the CardDAV address
+  const tools = book.querySelector('.mc-book-tools');
+  assert.equal(tools.hidden, false);
+  assert.equal(tools.querySelector('a').getAttribute('href'), '/mail/contacts/export');
+  const file = tools.querySelector('input[type=file]');
+  Object.defineProperty(file, 'files', { value: [new w.File(['BEGIN:VCARD'], 'c.vcf')], configurable: true });
+  file.dispatchEvent(new w.Event('change'));
+  await wait(10);
+  assert.ok(asked.some(a => a.url === '/mail/contacts/import' && a.body.get('file').name === 'c.vcf'));
+  assert.match(book.querySelector('.mc-book-status').textContent, /Добавлено: 2, обновлено: 1, пропущено: 0/);
+  tools.querySelectorAll('button')[1].click(); // «На телефоне»
+  await wait(10);
+  assert.equal(book.querySelector('.mc-book-edit input').value, 'https://go24.test/carddav/');
+  assert.equal(book.querySelector('.mc-book-edit').hidden, false);
+  book.querySelector('[data-src=""]').click();
+  await wait(10);
+  assert.ok(tools.hidden, 'the tools are the personal contacts\' only');
   book.querySelector('.mc-book-foot button:last-child').click(); // «Готово»
   assert.equal(d.querySelector('dialog.mc-book'), null);
   assert.ok(d.activeElement.closest('[data-field=cc]'), 'back to the field');
@@ -256,6 +294,28 @@ const key = (el, k, o = {}) => { const e = new w.KeyboardEvent('keydown', { key:
   f().querySelector('[data-sig=""]')?.click();
 }
 
+{ // «Подсказки по почте»: asked a moment after the addresses change; a colleague's automatic reply, the ones outside marked
+  await wait(500);
+  const t = tipsAsked.at(-1);
+  assert.ok(t && t.get('from') === 'sales@x.ru' && t.getAll('addr').includes('"Анна Иванова" <anna@go24.test>'));
+  const box = f().querySelector('[data-tips]');
+  assert.equal(box.hidden, false);
+  assert.match(box.textContent, /Автоматический ответ от Анна Иванова: В отпуске/);
+  assert.match(box.textContent, /Получателей вне вашей организации: 2\. x@y\.ru, p@y\.ru/);
+  assert.deepEqual([...f().querySelectorAll('.mc-chip.ext')].map(c => c.firstChild.textContent), ['x@y.ru', 'Петров, И.']);
+  const n = tipsAsked.length;
+  await wait(500);
+  assert.equal(tipsAsked.length, n, 'the same addresses are not asked of again');
+  // «Не пересылать» with people outside: it does not hold for them
+  assert.doesNotMatch(box.textContent, /действует только в go24/);
+  const nofwd = f().querySelector('input[data-nofwd]');
+  nofwd.checked = true; nofwd.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.match(box.textContent, /«Не пересылать» действует только в go24/);
+  nofwd.checked = false; nofwd.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.doesNotMatch(box.textContent, /действует только в go24/);
+  assert.equal(tipsAsked.length, n, 'the option needs no new tips');
+}
+
 { // the draft is kept a few seconds after a change
   await wait(3200);
   const save = asked.filter(a => a.url === '/mail/drafts/save');
@@ -303,12 +363,138 @@ const key = (el, k, o = {}) => { const e = new w.KeyboardEvent('keydown', { key:
   const fresh = d.querySelector('[data-reply-box] form[data-compose]');
   assert.ok(fresh && fresh.dataset.ready, 'the editor is set up');
   assert.equal(fresh.querySelector('input[name=draft]').value, 'd9');
+  // a suggested answer (web.mailRepliesData) opens the reply with its text
+  const sug = d.createElement('a');
+  sug.dataset.reply = 'reply';
+  sug.href = '/mail?new=1&letter=m1&folder=f1&mode=reply&say=' + encodeURIComponent('Да, подходит');
+  d.querySelector('article').prepend(sug);
+  sug.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  await wait(20);
+  assert.equal(asked.at(-1).url, '/mail/compose?letter=m1&mode=reply&folder=f1&inline=1&say=%D0%94%D0%B0%2C+%D0%BF%D0%BE%D0%B4%D1%85%D0%BE%D0%B4%D0%B8%D1%82');
+  sug.remove();
   // an old toast left in another tab: shown for what is left of it, then gone
   w.localStorage.setItem('go24-mail-undo', JSON.stringify({ id: 'd2', until: Date.now() + 60 }));
   w.dispatchEvent(new w.StorageEvent('storage', { key: 'go24-mail-undo' }));
   assert.equal(d.querySelector('[data-undo-toast]').hidden, false);
   await wait(120);
   assert.equal(d.querySelector('[data-undo-text]').textContent, 'Отправлено');
+}
+{ // «Вставка» and «Формат текста», as Outlook's: superscript, Ctrl+= / Ctrl+Shift+= / Ctrl+J, smileys (the recent first),
+  // symbols, the date, the line spacing of the paragraphs selected, «Формат по образцу»
+  const form = d.querySelector('[data-reply-box] form[data-compose]'), ed = form.querySelector('[data-editor]');
+  const tools = form.querySelector('[data-tools]');
+  const select = (node, from, to) => {
+    const r = d.createRange();
+    r.setStart(node, from);
+    r.setEnd(node, to);
+    w.getSelection().removeAllRanges();
+    w.getSelection().addRange(r);
+    d.dispatchEvent(new w.Event('selectionchange'));
+  };
+  const open = sel => { const det = tools.querySelector(sel).closest('details'); det.open = true; det.dispatchEvent(new w.Event('toggle')); return det; };
+  cmds.length = 0;
+  tools.querySelector('[data-cmd=superscript]').click();
+  key(ed, '=', { ctrlKey: true, code: 'Equal' });
+  key(ed, '+', { ctrlKey: true, shiftKey: true, code: 'Equal' });
+  key(ed, 'j', { ctrlKey: true });
+  assert.deepEqual(cmds.filter(c => c[0] !== 'styleWithCSS').map(c => c[0]), ['superscript', 'subscript', 'superscript', 'justifyFull']);
+
+  ed.innerHTML = '<p>Первый абзац</p><p>Второй</p>';
+  let det = open('[data-chars=emoji]');
+  assert.equal(det.querySelector('b').textContent, 'Смайлы', 'nothing recent yet');
+  const pick = (el, c) => [...el.querySelectorAll('[data-char]')].find(b => b.dataset.char === c).click(); // jsdom's selectors miss smileys
+  pick(det, '👍');
+  assert.match(ed.innerHTML, /👍/);
+  assert.equal(det.open, false);
+  det = open('[data-chars=emoji]');
+  assert.equal(det.querySelector('b').textContent, 'Недавние');
+  assert.equal(det.querySelector('.mc-chars-row [data-char]').dataset.char, '👍');
+  pick(open('[data-chars=symbols]'), '©');
+  assert.match(ed.innerHTML, /©/);
+  det = open('[data-dates]');
+  const days = [...det.querySelectorAll('[data-date]')];
+  assert.equal(days.length, 6);
+  assert.ok(days.some(b => b.dataset.date.includes(String(new Date().getFullYear()))));
+  days[0].click();
+  assert.ok(ed.innerHTML.includes(days[0].dataset.date.replace(/&/g, '&amp;')));
+
+  ed.innerHTML = '<p>Первый абзац</p><p>Второй</p><p>Третий</p>';
+  const ps = ed.querySelectorAll('p');
+  const r = d.createRange();
+  r.setStart(ps[0].firstChild, 2);
+  r.setEnd(ps[1].firstChild, 3);
+  w.getSelection().removeAllRanges();
+  w.getSelection().addRange(r);
+  d.dispatchEvent(new w.Event('selectionchange'));
+  tools.querySelector('[data-spacing="1.5"]').click();
+  assert.deepEqual([...ps].map(p => p.style.lineHeight), ['1.5', '1.5', ''], 'the paragraphs touched');
+
+  ed.innerHTML = '<p><span style="color: red; font-weight: bold">образец</span> и <i>цель</i> дальше</p>';
+  select(ed.querySelector('span').firstChild, 1, 3);
+  const brush = tools.querySelector('[data-painter]');
+  brush.click();
+  assert.equal(brush.getAttribute('aria-pressed'), 'true');
+  select(ed.querySelector('i').firstChild, 0, 4);
+  ed.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true }));
+  await wait(5);
+  const painted = ed.querySelectorAll('span')[1];
+  assert.equal(painted.textContent, 'цель');
+  assert.match(painted.getAttribute('style'), /color: (red|rgb\(255, 0, 0\))/);
+  assert.match(painted.getAttribute('style'), /font-weight: (bold|700)/);
+  assert.equal(ed.querySelector('i')?.textContent || '', '', 'its own italics gave way');
+  assert.equal(brush.getAttribute('aria-pressed'), 'false', 'the brush is put down');
+  brush.click();
+  assert.equal(brush.getAttribute('aria-pressed'), 'true');
+  key(ed, 'Escape');
+  assert.equal(brush.getAttribute('aria-pressed'), 'false', 'Esc puts it down');
+}
+{ // «Слияние»: the option shows the bar; a field goes where the caret was — the subject or the text; «Просмотр» asks
+  // the server for each recipient's letter in turn
+  const box = d.createElement('div');
+  box.innerHTML = form('d7').replace('<input type="text" name="subject" value="">', `<input type="text" name="subject" value="Привет, ">
+    <input type="checkbox" name="merge" value="1" data-merge-on>
+    <div data-merge-bar hidden><details open><summary>Поле</summary><div><button type="button" data-merge-field="Имя">Имя</button>
+      <button type="button" data-merge-field="Компания">Компания</button></div></details><button type="button" data-merge-preview>Просмотр</button></div>
+    <dialog data-merge-dlg><button type="button" data-merge-step="-1">‹</button><span data-merge-of></span><button type="button" data-merge-step="1">›</button>
+      <button type="button" data-merge-close>×</button><span data-merge-to></span><b data-merge-subject></b><iframe data-merge-body></iframe></dialog>`);
+  d.body.append(box);
+  w.go24Compose(box);
+  const mf = box.querySelector('form[data-compose]');
+  const bar = mf.querySelector('[data-merge-bar]'), on = mf.querySelector('[data-merge-on]');
+  on.checked = true;
+  on.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.equal(bar.hidden, false, 'the bar shows with the option');
+  const subj = mf.querySelector('input[name=subject]');
+  subj.dispatchEvent(new w.FocusEvent('focusin', { bubbles: true }));
+  subj.setSelectionRange(8, 8);
+  bar.querySelector('[data-merge-field="Имя"]').click();
+  assert.equal(subj.value, 'Привет, {Имя}', 'into the subject at the caret');
+  assert.equal(bar.querySelector('details').open, false, 'the menu closes');
+  const med = mf.querySelector('[data-editor]');
+  med.dispatchEvent(new w.FocusEvent('focusin', { bubbles: true }));
+  bar.querySelector('[data-merge-field="Компания"]').click();
+  assert.deepEqual(cmds.at(-1), ['insertHTML', '{Компания}'], 'into the text');
+  const dlg = mf.querySelector('[data-merge-dlg]');
+  dlg.showModal = function () { this.open = true; };
+  dlg.close = function () { this.open = false; };
+  const n = asked.length;
+  mf.querySelector('[data-merge-preview]').click();
+  await wait(20);
+  const pv = asked.slice(n).find(a => a.url === '/mail/merge/preview');
+  assert.ok(pv, 'asked for the preview');
+  assert.match(pv.body, /i=0/);
+  assert.match(pv.body, /subject=%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82%2C\+%7B%D0%98%D0%BC%D1%8F%7D/);
+  assert.equal(dlg.open, true);
+  assert.equal(dlg.querySelector('[data-merge-of]').textContent, '1 из 2');
+  assert.equal(dlg.querySelector('[data-merge-subject]').textContent, 'Привет, Анна');
+  assert.match(dlg.querySelector('[data-merge-body]').srcdoc, /<p>ООО Ромашка<\/p>/);
+  dlg.querySelector('[data-merge-step="1"]').click();
+  await wait(20);
+  assert.match(asked.at(-1).body, /i=1/, 'the next recipient');
+  assert.equal(dlg.querySelector('[data-merge-of]').textContent, '2 из 2');
+  dlg.querySelector('[data-merge-close]').click();
+  assert.equal(dlg.open, false);
+  box.remove();
 }
 console.log('compose.test.mjs: ok');
 process.exit(0);

@@ -20,6 +20,7 @@
 .i-edit { --icon: url("../icons/edit.svg"); }
 .i-eye { --icon: url("../icons/eye.svg"); }
 .i-eye-off { --icon: url("../icons/eye-off.svg"); }
+.i-accessible { --icon: url("../icons/accessible.svg"); }
 .i-files { --icon: url("../icons/files.svg"); }
 .i-flag { --icon: url("../icons/flag.svg"); }
 .i-folders { --icon: url("../icons/folders.svg"); }
@@ -42,11 +43,14 @@
 .i-player-pause { --icon: url("../icons/player-pause.svg"); }
 .i-player-stop { --icon: url("../icons/player-stop.svg"); }
 .i-player-play { --icon: url("../icons/player-play.svg"); }
+.i-player-skip-back { --icon: url("../icons/player-skip-back.svg"); }
+.i-player-skip-forward { --icon: url("../icons/player-skip-forward.svg"); }
 .i-plus { --icon: url("../icons/plus.svg"); }
 .i-search { --icon: url("../icons/search.svg"); }
 .i-star { --icon: url("../icons/star.svg"); }
 .i-trash { --icon: url("../icons/trash.svg"); }
 .i-user { --icon: url("../icons/user.svg"); }
+.i-shopping-cart { --icon: url("../icons/shopping-cart.svg"); }
 .i-user-plus { --icon: url("../icons/user-plus.svg"); }
 .i-message-plus { --icon: url("../icons/message-plus.svg"); }
 .i-video { --icon: url("../icons/video.svg"); }
@@ -69,6 +73,7 @@
 .i-cloud-upload { --icon: url("../icons/cloud-upload.svg"); }
 .i-download { --icon: url("../icons/download.svg"); }
 .i-device-desktop { --icon: url("../icons/device-desktop.svg"); }
+.i-device-tablet { --icon: url("../icons/device-tablet.svg"); }
 .i-device-floppy { --icon: url("../icons/device-floppy.svg"); }
 .i-server-2 { --icon: url("../icons/server-2.svg"); }
 .i-link { --icon: url("../icons/link.svg"); }
@@ -81,6 +86,7 @@
 .i-news { --icon: url("../icons/news.svg"); }
 .i-mark-favorite { --icon: url("../icons/mark-favorite.svg"); }
 .i-mark-pin { --icon: url("../icons/mark-pin.svg"); }
+.i-map-pin { --icon: url("../icons/map-pin.svg"); }
 .i-mark-mute { --icon: url("../icons/mark-mute.svg"); }
 .i-inbox { --icon: url("../icons/inbox.svg"); }
 .i-folder { --icon: url("../icons/folder.svg"); }
@@ -104,6 +110,7 @@
 .i-arrow-back-up-double { --icon: url("../icons/arrow-back-up-double.svg"); }
 .i-mail-opened { --icon: url("../icons/mail-opened.svg"); }
 .i-messages { --icon: url("../icons/messages.svg"); }
+.i-messages-off { --icon: url("../icons/messages-off.svg"); }
 .i-bold { --icon: url("../icons/bold.svg"); }
 .i-italic { --icon: url("../icons/italic.svg"); }
 .i-underline { --icon: url("../icons/underline.svg"); }
@@ -161,6 +168,7 @@
 .i-backspace { --icon: url("../icons/backspace.svg"); }
 .i-box { --icon: url("../icons/box.svg"); }
 .i-building-warehouse { --icon: url("../icons/building-warehouse.svg"); }
+.i-shopping-cart { --icon: url("../icons/shopping-cart.svg"); }
 .i-tool { --icon: url("../icons/tool.svg"); }
 .i-presentation { --icon: url("../icons/presentation.svg"); }
 .i-thumb-up { --icon: url("../icons/thumb-up.svg"); }
@@ -168,3 +176,12 @@
 .i-cash { --icon: url("../icons/cash.svg"); }
 .i-robot { --icon: url("../icons/robot.svg"); }
 .i-address-book { --icon: url("../icons/address-book.svg"); }
+.i-language { --icon: url("../icons/language.svg"); }
+.i-volume { --icon: url("../icons/volume.svg"); }
+.i-superscript { --icon: url("../icons/superscript.svg"); }
+.i-subscript { --icon: url("../icons/subscript.svg"); }
+.i-align-justified { --icon: url("../icons/align-justified.svg"); }
+.i-line-height { --icon: url("../icons/line-height.svg"); }
+.i-mood-smile { --icon: url("../icons/mood-smile.svg"); }
+.i-omega { --icon: url("../icons/omega.svg"); }
+.i-paint { --icon: url("../icons/paint.svg"); }

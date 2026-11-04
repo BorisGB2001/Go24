@@ -119,9 +119,17 @@ func (s *Store) IsObserver(ctx context.Context, userID, entity, id string) (bool
 	return ok, err
 }
 
-// CheckCard is Check of an action on a card: reading it is allowed to its observers too.
+// CheckCard is Check of an action on a card (a deal — with the rights of its pipeline): reading it is allowed to
+// its observers too.
 func (s *Store) CheckCard(ctx context.Context, userID, entity, action, id, responsibleID string) error {
-	err := s.Check(ctx, userID, entity, action, responsibleID)
+	key := entity
+	if entity == "deal" {
+		var pipe string
+		if err := s.db.QueryRow(ctx, `SELECT pipeline_id::text FROM crm_deals WHERE id::text = $1`, id).Scan(&pipe); err == nil {
+			key = PipelineKey(pipe)
+		}
+	}
+	err := s.Check(ctx, userID, key, action, responsibleID)
 	if !errors.Is(err, ErrForbidden) || action != "read" {
 		return err
 	}

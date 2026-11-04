@@ -105,7 +105,8 @@
       if (!form.isConnected) return;
       form.querySelectorAll('[data-tools] button[data-cmd]').forEach(b => {
         let on = false;
-        try { on = ['bold', 'italic', 'underline', 'strikeThrough', 'insertUnorderedList', 'insertOrderedList', 'justifyCenter', 'justifyRight']
+        try { on = ['bold', 'italic', 'underline', 'strikeThrough', 'superscript', 'subscript', 'insertUnorderedList', 'insertOrderedList', 'justifyCenter',
+          'justifyRight', 'justifyFull']
           .includes(b.dataset.cmd) && document.queryCommandState(b.dataset.cmd); } catch { /* not supported */ }
         b.classList.toggle('on', !!on);
       });
@@ -148,8 +149,153 @@
         grid.closest('details')?.removeAttribute('open');
       });
     }
+    // «Вставка» of Outlook's ribbon: smileys (the recent ones first, shared with the messenger), symbols, the date
+    // and time in the formats of «Дата и время»; each goes where the cursor is
+    const text = v => insert(v.replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+    const CHARS = {
+      smileys: '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😋 😛 😜 🤪 🤨 🧐 🤓 😎 🥳 😏 😒 😞 😔 😟 🙁 😣 😫 😩 🥺 😢 😭 😤 😠 😡 🤯 😳 😱 😨 😰 😓 🤗 🤔 🤭 🤫 😶 😐 😑 😬 🙄 😮 😲 🥱 😴 🤤 😵 🤐 🥴 🤢 🤧 😷 🤒 🤕',
+      gestures: '👍 👎 👌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ ✋ 🖐️ 👋 🤝 🙏 💪 👏 🙌 👐 ✍️',
+      hearts: '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝',
+      objects: '🎉 🎊 🎁 🏆 🥇 🔥 ⭐ 🌟 ✨ ⚡ 💡 📌 📎 📅 📈 📉 ✅ ❌ ⚠️ ❓ ❗ 💯 🚀 ☕ 🍕 🍰 🎂',
+      symbols: '© ® ™ € ₽ $ £ ¥ ¢ § ¶ ° ± × ÷ ≈ ≠ ≤ ≥ ∞ √ ‰ µ ½ ¼ ¾ ¹ ² ³ « » „ “ ” ‘ ’ — – … • · № → ← ↑ ↓ ↔ ⇒ ✓ ✔ ✗ ★ ☆ ♥ ☎ ✉ α β γ δ π Σ Ω',
+    };
+    const recentKey = 'go24.emoji.recent';
+    const recent = () => { try { return JSON.parse(localStorage.getItem(recentKey) || '[]'); } catch { return []; } };
+    form.querySelectorAll('[data-chars]').forEach(pop => {
+      const draw = () => {
+        pop.innerHTML = '';
+        const groups = pop.dataset.chars === 'emoji' ? [['recent', recent()], ...['smileys', 'gestures', 'hearts', 'objects'].map(k => [k, CHARS[k].split(' ')])]
+          : [['', CHARS.symbols.split(' ')]];
+        groups.forEach(([k, list]) => {
+          if (!list.length) return;
+          if (k) {
+            const b = document.createElement('b');
+            b.className = 'small muted';
+            b.textContent = pop.dataset[k] || '';
+            pop.append(b);
+          }
+          const row = document.createElement('div');
+          row.className = 'mc-chars-row';
+          list.forEach(c => { const x = document.createElement('button'); x.type = 'button'; x.dataset.char = c; x.textContent = c; row.append(x); });
+          pop.append(row);
+        });
+      };
+      pop.closest('details')?.addEventListener('toggle', e => { if (e.target.open) draw(); });
+      pop.addEventListener('mousedown', e => e.preventDefault());
+      pop.addEventListener('click', e => {
+        const c = e.target.closest('[data-char]')?.dataset.char;
+        if (!c) return;
+        text(c);
+        if (pop.dataset.chars === 'emoji') try { localStorage.setItem(recentKey, JSON.stringify([c, ...recent().filter(x => x !== c)].slice(0, 16))); } catch { /* private mode */ }
+        pop.closest('details')?.removeAttribute('open');
+      });
+    });
+    const dates = form.querySelector('[data-dates]');
+    dates?.closest('details')?.addEventListener('toggle', e => {
+      if (!e.target.open) return;
+      const now = new Date(), lang = document.documentElement.lang || undefined;
+      dates.innerHTML = '';
+      [{}, { dateStyle: 'long' }, { dateStyle: 'full' }, { dateStyle: 'short', timeStyle: 'short' }, { dateStyle: 'long', timeStyle: 'short' }, { timeStyle: 'short' }]
+        .forEach(o => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'ghost small';
+          b.dataset.date = Object.keys(o).length ? now.toLocaleString(lang, o) : now.toLocaleDateString(lang);
+          b.textContent = b.dataset.date;
+          dates.append(b);
+        });
+    });
+    dates?.addEventListener('mousedown', e => e.preventDefault());
+    dates?.addEventListener('click', e => {
+      const v = e.target.closest('[data-date]')?.dataset.date;
+      if (!v) return;
+      text(v);
+      dates.closest('details')?.removeAttribute('open');
+    });
+
+    // «Междустрочный интервал»: the paragraphs the selection touches (the text outside any paragraph becomes one)
+    const BLOCKS = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th';
+    const blocks = () => {
+      if (!range) return [];
+      const inner = [...ed.querySelectorAll(BLOCKS)].filter(b => !b.querySelector(BLOCKS) && range.intersectsNode(b));
+      if (inner.length) return inner;
+      const at = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+      const b = at?.closest(BLOCKS);
+      return b && b !== ed && ed.contains(b) ? [b] : [];
+    };
+    form.querySelector('[data-tools]')?.addEventListener('click', e => {
+      const v = e.target.closest('[data-spacing]')?.dataset.spacing;
+      if (!v) return;
+      restore();
+      let list = blocks();
+      if (!list.length) { exec('formatBlock', 'div'); list = blocks(); }
+      list.forEach(b => { b.style.lineHeight = v; });
+      e.target.closest('details')?.removeAttribute('open');
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    // «Формат по образцу», as Outlook's: the look of the text where the selection starts goes onto the text selected
+    // next (its own formatting gives way); a second click or Esc puts the brush down
+    const painter = form.querySelector('[data-painter]');
+    const PAINT = ['font-family', 'font-size', 'font-weight', 'font-style', 'text-decoration-line', 'color', 'background-color'];
+    let brush = null;
+    const down = () => {
+      brush = null;
+      painter?.classList.remove('on');
+      painter?.setAttribute('aria-pressed', 'false');
+      ed.classList.remove('mc-painting');
+    };
+    painter?.addEventListener('click', () => {
+      if (brush) { down(); return; }
+      restore();
+      let at = range?.startContainer;
+      if (at?.nodeType !== 1) at = at?.parentElement;
+      if (!at || !ed.contains(at)) return;
+      const cs = getComputedStyle(at);
+      brush = {};
+      PAINT.forEach(k => { brush[k] = cs.getPropertyValue(k); });
+      painter.classList.add('on');
+      painter.setAttribute('aria-pressed', 'true');
+      ed.classList.add('mc-painting');
+    });
+    const paint = () => {
+      const s = document.getSelection?.();
+      if (!brush || !s || !s.rangeCount || s.isCollapsed) return;
+      const r = s.getRangeAt(0);
+      if (!ed.contains(r.commonAncestorContainer)) return;
+      const span = document.createElement('span');
+      for (const [k, v] of Object.entries(brush)) {
+        if (!v || (k === 'background-color' && /^(transparent|rgba\(0, 0, 0, 0\))$/.test(v))) continue;
+        span.style.setProperty(k === 'text-decoration-line' ? 'text-decoration' : k, v);
+      }
+      const INLINE = 'b, strong, i, em, u, s, strike, font, span, sub, sup, mark';
+      const part = r.extractContents();
+      part.querySelectorAll(INLINE).forEach(x => x.replaceWith(...x.childNodes));
+      span.append(part);
+      r.insertNode(span);
+      for (let p = span.parentElement; p && p !== ed && p.matches(INLINE); p = span.parentElement) { // out of the formatting around
+        const tail = p.cloneNode(false);
+        while (span.nextSibling) tail.append(span.nextSibling);
+        p.after(span, tail);
+        [p, tail].forEach(x => { if (!x.textContent) x.remove(); });
+      }
+      s.removeAllRanges();
+      const after = document.createRange();
+      after.selectNodeContents(span);
+      s.addRange(after);
+      keep();
+      down();
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    ed.addEventListener('mouseup', () => { if (brush) setTimeout(paint); });
+
     ed.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); keep(); link(); }
+      const k = e.key.toLowerCase();
+      if (e.key === 'Escape' && brush) { e.preventDefault(); down(); return; }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (k === 'k') { e.preventDefault(); keep(); link(); }
+      else if (k === 'j' && !e.shiftKey) { e.preventDefault(); keep(); exec('justifyFull'); }
+      else if (e.code === 'Equal' || k === '=' || k === '+') { e.preventDefault(); keep(); exec(e.shiftKey ? 'superscript' : 'subscript'); }
     });
     ed.addEventListener('paste', e => {
       const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
@@ -275,13 +421,14 @@
     hidden.type = 'hidden';
     box.append(input);
     const list = [];
+    let ext = new Set(); // outside the organization, by «Подсказки по почте»
     const sync = () => {
       hidden.value = list.map(format).join(', ');
       box.querySelectorAll('.mc-chip').forEach(c => c.remove());
       for (const [i, c] of list.entries()) {
         const chip = document.createElement('span');
-        chip.className = 'mc-chip' + (EMAIL.test(c.email) ? '' : ' bad');
-        chip.title = c.kind ? `${label(form, c.kind)}: ${c.email}` : c.email;
+        chip.className = 'mc-chip' + (EMAIL.test(c.email) ? '' : ' bad') + (ext.has(c.email.toLowerCase()) ? ' ext' : '');
+        chip.title = (c.kind ? `${label(form, c.kind)}: ${c.email}` : c.email) + (ext.has(c.email.toLowerCase()) ? ` (${label(form, 'tip_ext_one')})` : '');
         chip.textContent = c.name || c.email;
         if (c.kind) { // the source the address was picked from, as in its suggestion
           chip.dataset.kind = c.kind;
@@ -394,6 +541,7 @@
     return {
       commit: () => { if (input.value.trim()) { add(input.value); input.value = ''; } }, count: () => list.length, input, name: hidden.name,
       has: email => list.some(x => x.email.toLowerCase() === email.toLowerCase()), add: c => add(format(c), c.kind), all: () => list.map(format),
+      mark: set => { ext = set; sync(); },
     };
   };
 
@@ -419,7 +567,20 @@
     const head = el('div', 'mc-book-head');
     const add = btn('ghost small', L('book_new'), 'plus');
     const shut = btn('ghost small', '', 'x', L('book_done'));
-    head.append(el('h3', '', L('book_title')), add, shut);
+    // the personal contacts' own tools, as Outlook's «Импорт и экспорт»: a file in, a .vcf out, the phone's CardDAV
+    const tools = el('span', 'mc-book-tools');
+    const imp = btn('ghost small', L('book_import'), 'cloud-upload', L('book_import_hint'));
+    const file = el('input');
+    file.type = 'file';
+    file.accept = '.vcf,.vcard,.csv,text/vcard,text/csv';
+    file.hidden = true;
+    const exp = el('a', 'button ghost small', L('book_export'));
+    exp.href = '/mail/contacts/export';
+    exp.prepend(kindIcon(form, 'download'));
+    const phone = btn('ghost small', L('book_phone'), 'phone');
+    tools.append(imp, file, exp, phone);
+    tools.hidden = true;
+    head.append(el('h3', '', L('book_title')), add, tools, shut);
     const search = el('input');
     search.type = 'search';
     search.placeholder = L('book_search');
@@ -516,8 +677,39 @@
       save.addEventListener('click', send);
       edit.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } };
     };
+    // phoneSync shows how a phone or Outlook syncs the personal contacts over CardDAV
+    const phoneSync = async () => {
+      edit.replaceChildren();
+      let url = '';
+      try {
+        const res = await fetch('/mail/contacts/phone', { headers: { Accept: 'application/json' } });
+        if (res.ok) url = (await res.json()).url || '';
+      } catch { /* none */ }
+      if (!url) {
+        edit.append(el('p', 'small muted', L('book_phone_none')));
+      } else {
+        const addr = el('input');
+        addr.type = 'text';
+        addr.readOnly = true;
+        addr.value = url;
+        addr.addEventListener('focus', () => addr.select());
+        const copy = btn('ghost small', L('book_copy'), 'link');
+        copy.addEventListener('click', () => { addr.select(); navigator.clipboard?.writeText(url).catch(() => {}); });
+        const keys = el('a', 'button ghost small', L('book_keys'));
+        keys.href = '/settings/keys';
+        keys.target = '_blank';
+        const row = el('div', 'row');
+        row.append(addr, copy, keys);
+        edit.append(el('p', 'small muted', L('book_phone_hint')), row);
+      }
+      const ok = btn('small', L('book_done'));
+      ok.addEventListener('click', () => { edit.hidden = true; });
+      edit.append(ok);
+      edit.hidden = false;
+    };
     const render = () => {
       list.replaceChildren();
+      tools.hidden = src !== 'contact';
       tabs.querySelectorAll('[data-src]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.src === src)));
       if (!rows.length) list.append(el('div', 'muted small mc-book-empty', L('book_empty')));
       for (const r of rows) {
@@ -531,7 +723,9 @@
         const who = el('span', 'mc-book-who');
         who.append(el('b', '', r.name || r.email));
         const more = r.members ? r.members.slice(0, 3).map(x => x.name || x.email).join(', ') + (r.members.length > 3 ? ` +${r.members.length - 3}` : '')
-          : [r.name ? r.email : '', r.company, r.phone].filter(Boolean).join(' · ');
+          : [r.name ? r.email || L('book_no_email') : '', r.company, r.phone].filter(Boolean).join(' · ');
+        const pickable = !!(r.email || r.members); // a contact without an address is kept, never a recipient
+        if (!pickable) row.setAttribute('aria-disabled', 'true');
         if (more) who.append(el('span', 'small muted', more));
         const tag = el('span', 'tag small mc-kind-tag', L(r.kind));
         tag.dataset.kind = r.kind;
@@ -555,10 +749,10 @@
           });
           row.append(keep);
         }
-        row.addEventListener('click', e => { if (!e.target.closest('button')) toggle(row, r); });
-        row.addEventListener('dblclick', e => { if (e.target.closest('button')) return; chosen.set(keyOf(r), r); put(field); });
+        row.addEventListener('click', e => { if (pickable && !e.target.closest('button')) toggle(row, r); });
+        row.addEventListener('dblclick', e => { if (!pickable || e.target.closest('button')) return; chosen.set(keyOf(r), r); put(field); });
         row.addEventListener('keydown', e => {
-          if (e.target !== row) return;
+          if (e.target !== row || !pickable) return;
           if (e.key === ' ') { e.preventDefault(); toggle(row, r); }
           if (e.key === 'Enter') { e.preventDefault(); chosen.set(keyOf(r), r); put(field); }
         });
@@ -576,6 +770,21 @@
     search.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
     foot.addEventListener('click', e => { const b = e.target.closest('[data-to]'); if (b) put(b.dataset.to); });
     add.addEventListener('click', () => contactForm(null));
+    imp.addEventListener('click', () => file.click());
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      const body = new FormData();
+      body.set('file', f);
+      file.value = '';
+      status.textContent = L('uploading');
+      try {
+        const got = await post('/mail/contacts/import', body);
+        status.textContent = L('book_imported').replace('%d', got.added).replace('%d', got.updated).replace('%d', got.skipped);
+        load();
+      } catch (err) { status.textContent = err.message; }
+    });
+    phone.addEventListener('click', phoneSync);
     done.addEventListener('click', close);
     shut.addEventListener('click', close);
     dlg.addEventListener('cancel', e => { e.preventDefault(); close(); });
@@ -721,6 +930,226 @@
   };
   window.addEventListener('storage', e => { if (e.key === KEY) toast(); });
 
+  // ---------- «Проверка читаемости», as Outlook's Accessibility Checker ----------
+  // The letter's own text (not the quoted one) is looked through: errors — a picture without alternative text (or a
+  // file name for it), a table without a header row; warnings — merged cells, a link whose text says nothing («здесь»,
+  // a long address), text that blends with its background; tips — blank paragraphs in a row. A click on an issue
+  // selects its place; most are fixed right in the pane. It follows the text while open.
+  const rgb = c => {
+    let m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)$/i.exec(c || '');
+    if (m) return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : parseFloat(m[4]) / (m[4].endsWith('%') ? 100 : 1)];
+    m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((c || '').trim());
+    if (!m) return null;
+    const h = m[1].length === 3 ? [...m[1]].map(x => x + x).join('') : m[1];
+    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).concat(1);
+  };
+  const lum = ([r, g, b]) => {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const colorOf = (el, prop, attr) => {
+    const own = el.style?.[prop] || el.getAttribute(attr) || '';
+    if (!own || own === 'transparent' || own === 'inherit') return null;
+    return rgb(own) || rgb(getComputedStyle(el)[prop]); // a named colour is resolved by the browser
+  };
+  const FILE = /^[^\s]+\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
+  const EMPTY = el => /^(P|DIV)$/.test(el.tagName) && !el.textContent.replace(/[\s ​]/g, '') && !el.querySelector('img, table, hr');
+
+  const accessibility = (form, ed, changed) => {
+    const pane = form.querySelector('[data-a11y]');
+    const btn = form.querySelector('[data-a11y-check]');
+    if (!pane || !ed) return null;
+    const tpl = pane.querySelector('template[data-a11y-labels]');
+    const al = k => tpl?.content.querySelector(`[data-l="${k}"]`)?.textContent || k;
+    const words = new RegExp(`^(${al('link_words')})$`, 'i');
+    const own = el => !el.closest('[data-quote]');
+    const issues = () => {
+      const out = [], root = ed.ed;
+      const add = (level, kind, el, extra = {}) => out.push({ level, kind, el, ...extra });
+      for (const img of root.querySelectorAll('img')) {
+        if (!own(img) || img.getAttribute('width') === '1' || img.getAttribute('height') === '1') continue; // a tracking pixel
+        if (!img.hasAttribute('alt')) add('error', 'alt', img);
+        else if (FILE.test(img.alt.trim())) add('error', 'alt_file', img);
+      }
+      for (const t of root.querySelectorAll('table')) {
+        if (!own(t)) continue;
+        const first = t.rows?.[0];
+        if (first && !t.tHead && ![...first.cells].some(c => c.tagName === 'TH')) add('error', 'header', t);
+        if (t.querySelector('td[colspan]:not([colspan="1"]), td[rowspan]:not([rowspan="1"]), th[colspan]:not([colspan="1"]), th[rowspan]:not([rowspan="1"])')) add('warn', 'merged', t);
+      }
+      for (const a of root.querySelectorAll('a[href]')) {
+        if (!own(a)) continue;
+        const text = a.textContent.trim().replace(/[.!:…»«"]+$/g, '').replace(/^[«"]+/, '');
+        if (!text && !a.querySelector('img')) continue;
+        if (words.test(text) || (/^(https?:\/\/|www\.)/i.test(text) && text.length > 40)) add('warn', 'link', a);
+      }
+      for (const el of root.querySelectorAll('[style*="color"], font[color]')) {
+        if (!own(el) || !el.textContent.trim()) continue;
+        const fg = colorOf(el, 'color', 'color');
+        if (!fg) continue;
+        let bg = [255, 255, 255, 1];
+        for (let p = el; p && p !== root.parentElement; p = p.parentElement) {
+          const c = colorOf(p, 'backgroundColor', 'bgcolor');
+          if (c && c[3] > 0) { bg = c; break; }
+        }
+        const r = contrast(fg, bg);
+        if (r < 4.5) add('warn', 'contrast', el, { ratio: r });
+      }
+      let run = [];
+      const blank = () => { if (run.length > 2) add('tip', 'blank', run[0], { run }); run = []; };
+      for (const el of root.children) {
+        if (el.matches('[data-quote]')) break;
+        if (EMPTY(el)) run.push(el); else blank();
+      }
+      blank();
+      return out;
+    };
+    const go = el => {
+      el.scrollIntoView?.({ block: 'center' });
+      const s = document.getSelection?.();
+      if (!s) return;
+      const r = document.createRange();
+      r.selectNode(el);
+      s.removeAllRanges();
+      s.addRange(r);
+    };
+    const fixed = () => { ed.ed.dispatchEvent(new Event('input', { bubbles: true })); changed(); render(); };
+    const fixes = {
+      alt: (it, row) => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = al('alt_ph');
+        input.setAttribute('aria-label', al('alt_ph'));
+        input.value = it.kind === 'alt_file' ? '' : it.el.alt || '';
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.className = 'small';
+        ok.textContent = al('apply');
+        const save = () => { if (input.value.trim()) { it.el.alt = input.value.trim(); fixed(); } };
+        ok.addEventListener('click', save);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+        const deco = document.createElement('button');
+        deco.type = 'button';
+        deco.className = 'ghost small';
+        deco.textContent = al('decorative');
+        deco.addEventListener('click', () => { it.el.alt = ''; fixed(); }); // alt="" — a screen reader passes it by
+        row.append(input, ok, deco);
+      },
+      header: (it, row) => row.append(action(al('header_fix'), () => {
+        for (const td of [...it.el.rows[0].cells]) {
+          const th = document.createElement('th');
+          for (const a of td.attributes) th.setAttribute(a.name, a.value);
+          th.append(...td.childNodes);
+          td.replaceWith(th);
+        }
+      })),
+      link: (it, row) => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = al('link_ph');
+        input.setAttribute('aria-label', al('link_ph'));
+        const ok = document.createElement('button');
+        ok.type = 'button';
+        ok.className = 'small';
+        ok.textContent = al('apply');
+        const save = () => { if (input.value.trim()) { it.el.textContent = input.value.trim(); fixed(); } };
+        ok.addEventListener('click', save);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+        row.append(input, ok);
+      },
+      contrast: (it, row) => row.append(action(al('contrast_fix'), () => {
+        it.el.style.color = '';
+        if (it.el.hasAttribute('color')) it.el.removeAttribute('color');
+        if (!it.el.getAttribute('style')) it.el.removeAttribute('style');
+      })),
+      blank: (it, row) => row.append(action(al('blank_fix'), () => it.run.slice(1).forEach(el => el.remove()))),
+    };
+    fixes.alt_file = fixes.alt;
+    const action = (text, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost small';
+      b.textContent = text;
+      b.addEventListener('click', () => { fn(); fixed(); });
+      return b;
+    };
+    let body = null, timer = 0;
+    const render = () => {
+      if (pane.hidden) return;
+      const list = issues();
+      body?.remove();
+      body = document.createElement('div');
+      body.className = 'mc-a11y-body';
+      const head = document.createElement('div');
+      head.className = 'row mc-a11y-head';
+      const title = document.createElement('b');
+      title.textContent = al('title');
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'ghost small';
+      close.dataset.a11yClose = '';
+      close.textContent = '×';
+      close.title = al('close');
+      close.setAttribute('aria-label', al('close'));
+      close.addEventListener('click', () => toggle(false));
+      head.append(title, close);
+      body.append(head);
+      if (!list.length) {
+        const p = document.createElement('p');
+        p.className = 'small muted';
+        p.dataset.a11yNone = '';
+        p.textContent = al('none');
+        body.append(p);
+      }
+      for (const [level, name] of [['error', 'errors'], ['warn', 'warnings'], ['tip', 'tips']]) {
+        const of = list.filter(i => i.level === level);
+        if (!of.length) continue;
+        const h = document.createElement('div');
+        h.className = 'small mc-a11y-level';
+        h.dataset.level = level;
+        h.textContent = `${al(name)} (${of.length})`;
+        const ul = document.createElement('ul');
+        for (const it of of) {
+          const li = document.createElement('li');
+          li.dataset.issue = it.kind;
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'link';
+          b.textContent = al(it.kind);
+          b.addEventListener('click', () => go(it.el));
+          const why = document.createElement('div');
+          why.className = 'small muted';
+          why.textContent = al(it.kind === 'alt_file' ? 'alt_why' : it.kind + '_why').replace('%s', (it.ratio || 0).toFixed(1));
+          li.append(b, why);
+          if (fixes[it.kind]) {
+            const row = document.createElement('div');
+            row.className = 'row mc-a11y-fix';
+            fixes[it.kind](it, row);
+            li.append(row);
+          }
+          ul.append(li);
+        }
+        body.append(h, ul);
+      }
+      pane.append(body);
+    };
+    const toggle = on => {
+      pane.hidden = !on;
+      btn?.setAttribute('aria-pressed', String(on));
+      btn?.classList.toggle('on', on);
+      if (on) render();
+    };
+    btn?.addEventListener('click', () => toggle(pane.hidden));
+    ed.ed.addEventListener('input', () => { if (!pane.hidden) { clearTimeout(timer); timer = setTimeout(render, 300); } });
+    return {
+      open: () => toggle(true),
+      // the errors before sending, by kind: «Нет замещающего текста у рисунка, …»
+      errors: () => [...new Set(issues().filter(i => i.level === 'error').map(i => al(i.kind === 'alt_file' ? 'alt' : i.kind)))],
+      ask: list => al('ask').replace('%s', list.join(', ')),
+    };
+  };
+
   // ---------- the letter's editor ----------
   const init = form => {
     if (form.dataset.ready) return;
@@ -750,8 +1179,64 @@
       } catch (err) { error(err.message); }
     };
     const ed = editor(form, picture);
-    const rc = [...form.querySelectorAll('[data-rcpt]')].map(b => recipients(b, form, changed));
+    const rc = [...form.querySelectorAll('[data-rcpt]')].map(b => recipients(b, form, () => { changed(); tips(); }));
+    // «Подсказки по почте», as Outlook's MailTips: over the addresses — a colleague's automatic reply (away), the
+    // recipients outside the organization (their chips marked too), a large audience, what is not an address
+    const tipsBox = form.querySelector('[data-tips]');
+    const nofwd = form.querySelector('input[data-nofwd]');
+    let tipsKey = '', tipsTimer = 0, lastTips = null;
+    const showTips = t => {
+      lastTips = t;
+      const ext = new Set(t?.external || []);
+      rc.forEach(r => r.mark(ext));
+      if (!tipsBox) return;
+      tipsBox.replaceChildren();
+      const line = (icon, text, more) => {
+        const el = document.createElement('div');
+        el.className = 'mc-tip';
+        el.dataset.tip = icon;
+        const b = document.createElement('b');
+        b.textContent = text;
+        el.append(b);
+        if (more) {
+          const m = document.createElement('span');
+          m.className = 'mc-tip-more';
+          m.textContent = more.length > 300 ? more.slice(0, 300) + '…' : more;
+          if (more.length > 300) m.title = more;
+          el.append(' ', m);
+        }
+        tipsBox.append(el);
+      };
+      for (const a of t?.auto_replies || []) {
+        const until = a.until ? ' ' + label(form, 'tip_until').replace('%s', new Date(a.until).toLocaleDateString()) : '';
+        line('auto', label(form, 'tip_auto').replace('%s', a.name || a.email) + until + ':', a.text);
+      }
+      if (ext.size) line('ext', label(form, 'tip_ext').replace('%s', ext.size), [...ext].slice(0, 5).join(', ') + (ext.size > 5 ? ` +${ext.size - 5}` : ''));
+      if (ext.size && nofwd?.checked) line('nofwd', label(form, 'tip_nofwd')); // «Не пересылать» does not hold outside go24
+      if (t?.large) line('large', label(form, 'tip_large').replace('%s', t.recipients));
+      if (t?.invalid?.length) line('invalid', label(form, 'tip_invalid'), t.invalid.join(', '));
+      tipsBox.hidden = !tipsBox.childElementCount;
+    };
+    const tips = () => {
+      clearTimeout(tipsTimer);
+      tipsTimer = setTimeout(async () => {
+        const addrs = rc.flatMap(r => r.all());
+        const from = form.querySelector('input[data-from]')?.value || '';
+        const key = from + '\n' + addrs.join('\n');
+        if (key === tipsKey) return;
+        tipsKey = key;
+        if (!addrs.length) { showTips(null); return; }
+        const body = new URLSearchParams({ from });
+        addrs.forEach(a => body.append('addr', a));
+        let t;
+        try { t = await post('/mail/tips', body); } catch { return; } // no tips then
+        if (key === tipsKey) showTips(t);
+      }, 400);
+    };
+    tips();
+    nofwd?.addEventListener('change', () => showTips(lastTips));
     const fields = () => { ed?.sync(); rc.forEach(r => r.commit()); return new FormData(form); };
+    const a11y = accessibility(form, ed, () => changed());
     // «Сохранить адресатов как список»: To, Cc and Bcc become a contact list of the user
     form.querySelector('[data-list-save]')?.addEventListener('click', async () => {
       rc.forEach(r => r.commit());
@@ -789,7 +1274,7 @@
       })();
       try { return await saving; } catch (err) { dirty = true; if (status) status.textContent = label(form, 'failed'); throw err; } finally { saving = null; }
     };
-    form.addEventListener('input', e => { if (!e.target.closest('[data-tools]') && !e.target.matches('[data-send-at]')) changed(); });
+    form.addEventListener('input', e => { if (!e.target.closest('[data-tools], [data-a11y]') && !e.target.matches('[data-send-at]')) changed(); });
     form.addEventListener('change', e => { if (e.target.matches('input[type=checkbox], select[name=box]')) changed(); });
     // files: taken at once (a chip with ×)
     const chip = f => {
@@ -835,6 +1320,58 @@
     form.querySelector('[data-drive-pick]')?.addEventListener('click', () => {
       ed?.keep();
       document.dispatchEvent(new CustomEvent('go24:drivepick', { detail: { form } }));
+    });
+    // «Опрос о времени встречи» (mailpoll.js): the dialog gets the letter's fields, the poll's block comes back into the text
+    form.querySelector('[data-poll]')?.addEventListener('click', () => {
+      ed?.keep();
+      document.dispatchEvent(new CustomEvent('go24:pollpick', { detail: { form, fields } }));
+    });
+    // «Слияние»: a letter of its own to each of «Кому»; a field goes where the caret was (the subject or the text),
+    // «Просмотр» shows the letter of each recipient in turn
+    const mergeBar = form.querySelector('[data-merge-bar]');
+    const subj = form.querySelector('input[name=subject]');
+    let lastIn = null;
+    form.addEventListener('focusin', e => { if (e.target === subj || e.target === ed?.ed) lastIn = e.target; });
+    form.querySelector('[data-merge-on]')?.addEventListener('change', e => { if (mergeBar) mergeBar.hidden = !e.target.checked; });
+    mergeBar?.addEventListener('click', e => {
+      const b = e.target.closest('[data-merge-field]');
+      if (!b) return;
+      const text = `{${b.dataset.mergeField}}`;
+      b.closest('details')?.removeAttribute('open');
+      if (lastIn === subj && subj) {
+        const at = subj.selectionStart ?? subj.value.length;
+        subj.setRangeText(text, at, subj.selectionEnd ?? at, 'end');
+        subj.focus();
+      } else if (ed) {
+        ed.restore();
+        ed.insert(text.replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+      }
+      changed();
+    });
+    const dlg = form.querySelector('[data-merge-dlg]');
+    let mergeAt = 0;
+    const preview = async i => {
+      const body = fields();
+      const params = new URLSearchParams({ to: body.get('to') || '', subject: body.get('subject') || '', html: body.get('html') || '', i: String(i) });
+      let data;
+      try { data = await post('/mail/merge/preview', params); } catch (err) { error(err.message); return; }
+      mergeAt = data.i;
+      dlg.querySelector('[data-merge-of]').textContent = data.of;
+      dlg.querySelector('[data-merge-to]').textContent = data.to;
+      dlg.querySelector('[data-merge-subject]').textContent = data.subject;
+      dlg.querySelector('[data-merge-body]').srcdoc = `<meta charset="utf-8"><body style="font-family: sans-serif">${data.html}</body>`;
+      if (!dlg.open) dlg.showModal();
+    };
+    form.querySelector('[data-merge-preview]')?.addEventListener('click', () => { ed?.keep(); error(''); preview(0); });
+    dlg?.addEventListener('click', e => {
+      const step = e.target.closest('[data-merge-step]');
+      if (step) preview(mergeAt + Number(step.dataset.mergeStep));
+      else if (e.target.closest('[data-merge-close]') || e.target === dlg) dlg.close();
+    });
+    form.addEventListener('go24:insert', e => {
+      ed?.restore();
+      ed?.insert(e.detail.html);
+      changed();
     });
     form.addEventListener('go24:drive', async e => {
       const f = e.detail;
@@ -924,6 +1461,7 @@
     form.querySelector('select[data-box]')?.addEventListener('change', e => {
       const from = form.querySelector('input[data-from]');
       if (from) from.value = e.target.selectedOptions[0]?.dataset.from || '';
+      tips();
       const sg = sigs[e.target.value] || {};
       const id = mode() ? sg.Reply : sg.New;
       const b = id && form.querySelector(`[data-sig="${CSS.escape(id)}"]`);
@@ -1009,6 +1547,11 @@
         const words = label(form, 'words');
         if (words && new RegExp(words, 'i').test(own.textContent || '') && !confirm(label(form, 'forgot'))) return;
       }
+      // «Проверять читаемость перед отправкой»: the errors of «Проверка читаемости» are asked about, the pane opened
+      if (a11y && form.hasAttribute('data-a11y-send')) {
+        const errs = a11y.errors();
+        if (errs.length && !confirm(a11y.ask(errs))) { a11y.open(); return; }
+      }
       clearTimeout(timer);
       if (saving) await saving.catch(() => null);
       const params = new URLSearchParams(body);
@@ -1024,7 +1567,7 @@
       if (data.undo) {
         try { localStorage.setItem(KEY, JSON.stringify({ id: data.id, until: Date.now() + data.undo * 1000 })); } catch { /* no storage */ }
         toast();
-      } else flash(data.scheduled || tlabel('sent'), 4000);
+      } else flash(data.scheduled || data.merge || tlabel('sent'), 4000);
       close();
     };
     form.addEventListener('submit', e => {
@@ -1069,6 +1612,7 @@
     const u = new URL(a.href, location.href);
     const q = new URLSearchParams({ letter: u.searchParams.get('letter') || art.dataset.letter, mode: a.dataset.reply, folder: u.searchParams.get('folder') || '', inline: '1' });
     if (u.searchParams.get('vote')) q.set('vote', u.searchParams.get('vote')); // «Изменить ответ перед отправкой»
+    if (u.searchParams.get('say')) q.set('say', u.searchParams.get('say')); // «Предлагаемые ответы»
     busy(true);
     try {
       const res = await fetch('/mail/compose?' + q, { headers: { Accept: 'text/html' } });

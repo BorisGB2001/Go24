@@ -87,11 +87,21 @@
   // an HTML letter is a page of its own in a sandboxed frame, as tall as it is; pictures from elsewhere load only
   // when asked («Показать содержимое»: the frame's policy lets them in); «Макет → Размер текста» scales it too
   const zoom = { small: '0.9', large: '1.15' }[root.dataset.textSize] || '';
+  // a letter «Не пересылать» is read only: no selecting, copying or the context menu, as Outlook's
+  const block = e => { if (e.target.closest?.('.mnocopy') || e.currentTarget.nodeType === 9) e.preventDefault(); };
+  const nocopy = doc => {
+    if (doc.documentElement.dataset.nocopy) return;
+    doc.documentElement.dataset.nocopy = '1';
+    doc.documentElement.style.userSelect = 'none';
+    for (const k of ['copy', 'cut', 'contextmenu', 'dragstart']) doc.addEventListener(k, block);
+  };
+  for (const k of ['copy', 'cut', 'contextmenu', 'dragstart']) root.addEventListener(k, block);
   const fit = f => {
     try {
       const doc = f.contentDocument;
       if (!doc?.documentElement) return;
       doc.documentElement.style.zoom = zoom;
+      if (f.closest('.mnocopy')) nocopy(doc); // «Не пересылать»: its text is not copied
       f.style.height = Math.max(40, doc.documentElement.scrollHeight) + 'px';
       if (!f.dataset.watched && window.ResizeObserver && doc.body) {
         f.dataset.watched = '1';
@@ -104,6 +114,8 @@
     fit(f);
   });
   frames(root);
+  // the reading pane anew from the server (its letter translated or shown as it is: mailx.js)
+  window.go24MailShow = html => { if (!pane) return false; pane.innerHTML = html; frames(pane); return true; };
   later(rows().find(r => r.classList.contains('on')));
   root.addEventListener('toggle', e => { if (e.target.matches?.('details.mmsg')) e.target.querySelectorAll('iframe.mailhtml').forEach(fit); }, true);
   root.addEventListener('click', e => {
@@ -511,6 +523,7 @@
     if (one) {
       const href = mode => `/mail?box=${encodeURIComponent(row.dataset.box)}&new=1&letter=${encodeURIComponent(row.dataset.letter)}&folder=${encodeURIComponent(folder)}&mode=${mode}`;
       for (const [k, mode] of [['reply', 'reply'], ['all', 'all'], ['fwd', 'fwd'], ['fwdatt', 'fwdatt']]) {
+        if (mode.startsWith('fwd') && 'nofwd' in row.dataset) continue; // «Не пересылать»
         const a = document.createElement('a');
         a.href = href(mode);
         a.textContent = label(k);

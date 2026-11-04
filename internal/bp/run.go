@@ -40,6 +40,9 @@ func (s *Store) run(ctx context.Context, id string) error {
 	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtextextended($1, 57))`, id)
 	for i := 0; ; i++ {
 		x, err := s.instance(ctx, id)
+		if err == nil {
+			err = s.withGlobals(ctx, &x)
+		}
 		if err != nil {
 			return err
 		}
@@ -91,13 +94,36 @@ func (s *Store) run(ctx context.Context, id string) error {
 }
 
 // holds: the condition of an «if» or a loop step is true — the field's value compared with the step's ({…} filled, a
-// formula counted).
+// formula counted), and the step's more conditions, «и» before «или» joins them.
 func (s *Store) holds(ctx context.Context, x Instance, st Step) (bool, error) {
-	want, err := s.value(ctx, x, st.Value)
+	some, all := false, true
+	for i, c := range append([]Cond{{Field: st.Field, Op: st.Op, Value: st.Value}}, st.More...) {
+		if i > 0 && c.Or { // a group of «и» ends
+			some, all = some || all, true
+		}
+		if !all { // the group is false already
+			continue
+		}
+		ok, err := s.holdsOne(ctx, x, c)
+		if err != nil {
+			return false, err
+		}
+		all = ok
+	}
+	return some || all, nil
+}
+
+// holdsOne: the field's value compared with the condition's.
+func (s *Store) holdsOne(ctx context.Context, x Instance, c Cond) (bool, error) {
+	want, err := s.value(ctx, x, c.Value)
 	if err != nil {
 		return false, err
 	}
-	switch f, _ := x.Field(st.Field); f.Kind {
+	f, _ := x.Field(c.Field)
+	if f.Kind == "user" && c.Op == "in" { // «Условие группы пользователей»
+		return s.memberOf(ctx, x, f.List(x.Values[c.Field]), Alternatives(want))
+	}
+	switch f.Kind {
 	case "bool", "datetime": // «Y», «yes», «1»; a time with a space
 		if v, err := cleanValue(Field{Kind: f.Kind}, want); err == nil {
 			want = v
@@ -107,7 +133,54 @@ func (s *Store) holds(ctx context.Context, x Instance, st Step) (bool, error) {
 			want = id
 		}
 	}
-	return check(x.Values[st.Field], st.Op, want), nil
+	if f.Multiple && c.Op == "in" { // some of the values is one of the wanted
+		for _, v := range f.List(x.Values[c.Field]) {
+			if check(v, c.Op, want) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return check(x.Values[c.Field], c.Op, want), nil
+}
+
+// memberOf: some of the employees is one of refs — an employee (by id, name, e-mail, «starter»…) or a department (by
+// «dept:ID» or name), a member of it or of a sub-one, or its head.
+func (s *Store) memberOf(ctx context.Context, x Instance, users, refs []string) (bool, error) {
+	if len(users) == 0 {
+		return false, nil
+	}
+	var people, depts []string
+	for _, r := range refs {
+		if id, ok := strings.CutPrefix(r, "dept:"); ok {
+			depts = append(depts, id)
+		} else if id, err := s.person(ctx, x, r); err == nil {
+			people = append(people, id)
+		} else {
+			depts = append(depts, r) // a department by its name
+		}
+	}
+	if slices.ContainsFunc(users, func(u string) bool { return slices.Contains(people, u) }) {
+		return true, nil
+	}
+	if len(depts) == 0 {
+		return false, nil
+	}
+	var ok bool
+	err := s.db.QueryRow(ctx, `WITH RECURSIVE sub AS (SELECT id FROM departments WHERE id::text = ANY($2) OR lower(name) = ANY($3)
+			UNION SELECT d.id FROM departments d JOIN sub ON d.parent_id = sub.id)
+		SELECT EXISTS (SELECT 1 FROM user_departments WHERE user_id::text = ANY($1) AND department_id IN (SELECT id FROM sub))
+			OR EXISTS (SELECT 1 FROM departments WHERE head_id::text = ANY($1) AND id IN (SELECT id FROM sub))`,
+		users, depts, lower(depts)).Scan(&ok)
+	return ok, err
+}
+
+func lower(v []string) []string {
+	out := make([]string, len(v))
+	for i, s := range v {
+		out[i] = strings.ToLower(s)
+	}
+	return out
 }
 
 // startChild starts the process of the step's template for the starter of x: of the same CRM card when the template
@@ -185,7 +258,8 @@ func (s *Store) nextBranch(ctx context.Context, x Instance) (k int, joined bool,
 	return -1, true, nil
 }
 
-// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}, {created_document}, {created_task}.
+// fill puts the form's values and the process's names into a text: {field}, {starter}, {title}, {link}, {created_card}, {created_document}, {created_task},
+// {created_list_element}, {converted_deal}, {created_folder}.
 func (s *Store) fill(ctx context.Context, x Instance, text string) string {
 	return s.fillAs(ctx, x, text, true)
 }
@@ -212,8 +286,18 @@ func (s *Store) fillAs(ctx context.Context, x Instance, text string, shown bool)
 	return strings.NewReplacer(pairs...).Replace(text)
 }
 
-// show is a field's value as people read it: a bool «Да»/«Нет», a user — the name, a datetime without «T».
+// show is a field's value as people read it: a bool «Да»/«Нет», a user — the name, a datetime without «T»; the
+// values of a multiple field — parted by commas.
 func (s *Store) show(ctx context.Context, f Field, v string) string {
+	if f.Multiple {
+		one := f
+		one.Multiple = false
+		var out []string
+		for _, p := range f.List(v) {
+			out = append(out, s.show(ctx, one, p))
+		}
+		return strings.Join(out, ", ")
+	}
 	switch {
 	case v == "":
 	case f.Kind == "bool" && s.Tr != nil:
@@ -275,11 +359,12 @@ func (s *Store) cardTitle(ctx context.Context, entity, id string) string {
 // or a given user.
 func (s *Store) who(ctx context.Context, x Instance, to string) (string, error) {
 	if key, ok := strings.CutPrefix(to, FieldPrefix); ok {
-		if x.Values[key] == "" {
-			f, _ := x.Field(key)
+		f, _ := x.Field(key)
+		list := f.List(x.Values[key])
+		if len(list) == 0 {
 			return "", fmt.Errorf("the field %q is empty", f.Label)
 		}
-		return x.Values[key], nil
+		return list[0], nil // of a multiple field — the first; people() takes them all
 	}
 	switch to {
 	case "", "starter":
@@ -343,15 +428,42 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if _, err := s.db.Exec(ctx, `DELETE FROM bp_approvals WHERE instance_id = $1 AND step = $2`, x.ID, x.Step); err != nil {
 			return next, false, err
 		}
+		var due *time.Time // «Время на выполнение»
+		if st.Timeout > 0 {
+			t := time.Now().Add(time.Duration(st.Timeout) * time.Minute)
+			due = &t
+		}
 		for _, user := range users {
-			if _, err := s.db.Exec(ctx, `INSERT INTO bp_approvals (instance_id, step, user_id, text, kind) VALUES ($1, $2, $3, $4, $5)`,
-				x.ID, x.Step, user, text, st.Kind); err != nil {
+			if _, err := s.db.Exec(ctx, `INSERT INTO bp_approvals (instance_id, step, user_id, text, kind, due_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+				x.ID, x.Step, user, text, st.Kind, due); err != nil {
 				return next, false, err
 			}
 			s.notify(ctx, user, x.StartedBy.ID, x.ID, map[string]string{"approve": "📝 ", "review": "👁 ", "request": "❓ "}[st.Kind]+text)
 			s.feedReader(ctx, x, user)
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", st.Kind+":"+strings.Join(users, ","))
+		return next, true, nil
+	case "status": // «Установить статус»: the process's status, as a state of the state-machine processes
+		if _, err := s.db.Exec(ctx, `UPDATE bp_instances SET label = $2 WHERE id = $1`, x.ID, text); err != nil {
+			return next, false, err
+		}
+		s.log(ctx, x.ID, x.Step, "", "status", text)
+		return next, false, nil
+	case "commands": // «Команды»: the process waits till one of the people presses a button (Command)
+		users, err := s.people(ctx, x, st)
+		if err != nil {
+			return next, false, err
+		}
+		for _, user := range users {
+			s.notify(ctx, user, x.StartedBy.ID, x.ID, "🔘 "+cmp.Or(text, x.Name))
+			s.feedReader(ctx, x, user)
+		}
+		if st.Timeout > 0 { // «Ожидать не дольше»: «Обработчик событий» — a command or the time, which comes first
+			if _, err := s.db.Exec(ctx, `UPDATE bp_instances SET wake_at = $2 WHERE id = $1`, x.ID, time.Now().Add(time.Duration(st.Timeout)*time.Minute)); err != nil {
+				return next, false, err
+			}
+		}
+		s.log(ctx, x.ID, x.Step, "", "step", "commands:"+strings.Join(users, ","))
 		return next, true, nil
 	case "notify":
 		user, err := s.who(ctx, x, st.To)
@@ -412,6 +524,41 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		id, err := s.createCard(ctx, x, st, text)
 		if err == nil {
 			s.log(ctx, x.ID, x.Step, "", "step", "create:"+CardPath(st.Entity, id))
+		}
+		return next, false, err
+	case "crmupdate", "crmread", "crmconvert", "crmdelete", "crmmove", "crmcopy", "crmobservers", "crmclose", "crmresponsible", "crmproduct":
+		did, err := s.crmStep(ctx, x, st)
+		if err == nil {
+			s.log(ctx, x.ID, x.Step, "", "step", did)
+		}
+		return next, false, err
+	case "diskfolder", "diskcopy", "diskread", "diskdelete":
+		did, err := s.diskStep(ctx, x, st)
+		if err == nil {
+			s.log(ctx, x.ID, x.Step, "", "step", did)
+		}
+		return next, false, err
+	case "listadd", "listupdate", "listread", "listdelete":
+		did, err := s.listStep(ctx, x, st)
+		if err == nil {
+			s.log(ctx, x.ID, x.Step, "", "step", did)
+		}
+		return next, false, err
+	case "sms", "workday", "workdayinfo", "random":
+		var did string
+		switch st.Kind {
+		case "sms":
+			did, err = s.smsStep(ctx, x, text, st)
+		case "workday":
+			did, err = s.workdayStep(ctx, x, text, st)
+		case "workdayinfo":
+			did, err = s.workdayInfo(ctx, x, st)
+		default:
+			f, _ := x.Field(st.Field)
+			did, err = s.randomStep(ctx, x, st, f.Kind)
+		}
+		if err == nil {
+			s.log(ctx, x.ID, x.Step, "", "step", did)
 		}
 		return next, false, err
 	case "comment": // «Добавить комментарий»: in the card's timeline, of From
@@ -476,6 +623,8 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 	case "goto":
 		s.log(ctx, x.ID, x.Step, "", "step", "goto")
 		return jump(x, st.Goto), false, nil
+	case "foreach": // «Итератор»: the next value of the multiple field into Item, or past the steps when they are over
+		return s.each(ctx, x, st)
 	case "set":
 		if x.Values == nil {
 			x.Values = map[string]string{}
@@ -484,20 +633,29 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if err != nil {
 			return next, false, err
 		}
+		f, _ := x.Field(st.Field)
+		if f.Multiple { // the values one a line or parted by «;»
+			v = strings.ReplaceAll(v, ";", Multi)
+		}
 		x.Values[st.Field] = v
-		if f, _ := x.Field(st.Field); f.Kind == "user" && x.Values[st.Field] != "" { // starter, manager, a name, an e-mail
-			id, err := s.person(ctx, x, x.Values[st.Field])
-			if err != nil {
-				return next, false, err
+		if f.Kind == "user" && v != "" { // starter, manager, a name, an e-mail — each of a multiple field
+			var ids []string
+			for _, p := range f.List(v) {
+				id, err := s.person(ctx, x, p)
+				if err != nil {
+					return next, false, err
+				}
+				if !contains(ids, id) {
+					ids = append(ids, id)
+				}
 			}
-			x.Values[st.Field] = id
+			x.Values[st.Field] = strings.Join(ids, Multi)
 		} else if f.Kind != "" {
-			if v, err := cleanValue(Field{Kind: f.Kind, Options: f.Options}, x.Values[st.Field]); err == nil {
+			if v, err := cleanValue(Field{Kind: f.Kind, Options: f.Options, Multiple: f.Multiple}, x.Values[st.Field]); err == nil {
 				x.Values[st.Field] = v
 			}
 		}
-		vals, _ := json.Marshal(x.Values)
-		if _, err := s.db.Exec(ctx, `UPDATE bp_instances SET values = $2 WHERE id = $1`, x.ID, vals); err != nil {
+		if err := s.saveValues(ctx, x); err != nil {
 			return next, false, err
 		}
 		s.log(ctx, x.ID, x.Step, "", "step", "set:"+st.Field)
@@ -650,18 +808,38 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		s.notify(ctx, x.StartedBy.ID, "", x.ID, "✅ "+x.Name)
 		return next, true, s.finish(ctx, x.ID, "done")
 	case "wait":
-		wake := time.Now().AddDate(0, 0, st.Days)
+		now := time.Now()
+		pause := st.Timeout + st.Days*24*60 // minutes; Days — of the templates before the units
+		wake := now.Add(time.Duration(pause) * time.Minute)
 		if st.Field != "" { // «до даты» of the field: a date — its beginning; empty or past — no pause
 			v := x.Values[st.Field]
 			t, err := time.ParseInLocation("2006-01-02T15:04", v, time.Local)
 			if err != nil {
 				t, err = time.ParseInLocation("2006-01-02", v, time.Local)
 			}
-			if err != nil || !t.After(time.Now()) {
+			if err != nil || !t.After(now) {
 				s.log(ctx, x.ID, x.Step, "", "step", "wait:"+st.Field)
 				return next, false, nil
 			}
 			wake = t
+		}
+		if st.WorkTime { // «Учитывать рабочее время»: days are working days, hours and minutes — working hours
+			sched, err := s.Tasks.Schedule(ctx)
+			if err != nil {
+				return next, false, err
+			}
+			switch {
+			case st.Field != "": // the date out of working time — till the next working hours
+				wake = sched.NextWorking(wake)
+			case pause%(24*60) == 0:
+				wake = sched.AddWorkingDays(now, pause/(24*60))
+			default:
+				wake = sched.AddWorking(now, time.Duration(pause)*time.Minute)
+			}
+			if !wake.After(now) {
+				s.log(ctx, x.ID, x.Step, "", "step", "wait:"+st.Field)
+				return next, false, nil
+			}
 		}
 		if x.branch > 0 {
 			_, err = s.db.Exec(ctx, `UPDATE bp_branches SET wake_at = $2 WHERE instance_id = $1 AND n = $3`, x.ID, wake, x.branch-1)
@@ -671,10 +849,13 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		if err != nil {
 			return next, false, err
 		}
-		s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("wait:%d%s", st.Days, st.Field))
+		s.log(ctx, x.ID, x.Step, "", "step", "wait:"+wake.Format(time.RFC3339))
 		return next, true, nil
 	case "webhook":
 		return next, false, s.webhook(ctx, x, st.URL)
+	case "app":
+		wait, err := s.appStep(ctx, x, st)
+		return next, wait, err
 	}
 	return next, false, fmt.Errorf("unknown step %q", st.Kind)
 }
@@ -838,9 +1019,16 @@ func (s *Store) people(ctx context.Context, x Instance, st Step) ([]string, erro
 		if err != nil {
 			return nil, err
 		}
-		if !seen[user] {
-			seen[user] = true
-			out = append(out, user)
+		all := []string{user}
+		if key, ok := strings.CutPrefix(to, FieldPrefix); ok { // everyone of a multiple field
+			f, _ := x.Field(key)
+			all = f.List(x.Values[key])
+		}
+		for _, user := range all {
+			if !seen[user] {
+				seen[user] = true
+				out = append(out, user)
+			}
 		}
 	}
 	return out, nil
@@ -857,29 +1045,69 @@ func check(v, op, want string) bool {
 		return v != ""
 	case "contains":
 		return strings.Contains(strings.ToLower(v), strings.ToLower(want))
+	case "notcontains":
+		return !strings.Contains(strings.ToLower(v), strings.ToLower(want))
+	case "in":
+		for _, w := range Alternatives(want) {
+			if compare(v, w) == 0 {
+				return true
+			}
+		}
+		return false
+	case "between":
+		from, to, ok := strings.Cut(want, ";")
+		return ok && v != "" && compare(v, strings.TrimSpace(from)) >= 0 && compare(v, strings.TrimSpace(to)) <= 0
 	}
-	cmp := strings.Compare(strings.ToLower(v), strings.ToLower(want))
+	c := compare(v, want)
+	switch op {
+	case "eq":
+		return c == 0
+	case "ne":
+		return c != 0
+	case "gt":
+		return c > 0
+	case "ge":
+		return c >= 0
+	case "lt":
+		return c < 0
+	case "le":
+		return c <= 0
+	}
+	return false
+}
+
+// compare: as numbers when both are numbers, as text without case otherwise.
+func compare(v, want string) int {
 	a, errA := strconv.ParseFloat(strings.ReplaceAll(v, ",", "."), 64)
 	b, errB := strconv.ParseFloat(strings.ReplaceAll(want, ",", "."), 64)
 	if errA == nil && errB == nil {
-		cmp = 0
-		if a < b {
-			cmp = -1
-		} else if a > b {
-			cmp = 1
+		switch {
+		case a < b:
+			return -1
+		case a > b:
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(strings.ToLower(v), strings.ToLower(want))
+}
+
+// Alternatives are the values of «содержится в»: given by «;», or by «,» when there is no «;» (a number may have a
+// comma), or by lines.
+func Alternatives(want string) []string {
+	sep := ";"
+	if strings.Contains(want, Multi) {
+		sep = Multi
+	} else if !strings.Contains(want, ";") {
+		sep = ","
+	}
+	var out []string
+	for _, w := range strings.Split(want, sep) {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
 		}
 	}
-	switch op {
-	case "eq":
-		return cmp == 0
-	case "ne":
-		return cmp != 0
-	case "gt":
-		return cmp > 0
-	case "lt":
-		return cmp < 0
-	}
-	return false
+	return out
 }
 
 // webhookClient waits for n8n a while: a workflow may do some work before it answers.
@@ -918,7 +1146,7 @@ func (s *Store) webhook(ctx context.Context, x Instance, target string) error {
 		x.Values = map[string]string{}
 	}
 	for k, v := range answer {
-		if strings.ContainsAny(k, " {}") || len(k) > 100 {
+		if strings.ContainsAny(k, " {}") || len(k) > 100 || strings.HasPrefix(k, GlobalPrefix) {
 			continue
 		}
 		switch t := v.(type) {
@@ -928,10 +1156,39 @@ func (s *Store) webhook(ctx context.Context, x Instance, target string) error {
 			x.Values[k] = fmt.Sprint(t)
 		}
 	}
-	vals, _ := json.Marshal(x.Values)
-	if _, err := s.db.Exec(ctx, `UPDATE bp_instances SET values = $2 WHERE id = $1`, x.ID, vals); err != nil {
+	if err := s.saveValues(ctx, x); err != nil {
 		return err
 	}
 	s.log(ctx, x.ID, x.Step, "", "step", "webhook")
 	return nil
+}
+
+// each is a step of «Итератор»: the values of the multiple field are counted by the step's lines «each:N» of the
+// history since its last «each:end» — the next one goes into Item and the steps after the iterator are done; when
+// they are over, the process goes past the «Перейти к шагу» back to it.
+func (s *Store) each(ctx context.Context, x Instance, st Step) (next int, wait bool, err error) {
+	var n int
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM bp_log WHERE instance_id = $1 AND step = $2 AND kind = 'step' AND text LIKE 'each:%'
+		AND id > coalesce((SELECT max(id) FROM bp_log WHERE instance_id = $1 AND step = $2 AND kind = 'step' AND text = 'each:end'), 0)`,
+		x.ID, x.Step).Scan(&n); err != nil {
+		return x.Step + 1, false, err
+	}
+	f, _ := x.Field(st.Field)
+	list := f.List(x.Values[st.Field])
+	if n >= len(list) {
+		s.log(ctx, x.ID, x.Step, "", "step", "each:end")
+		return min(EachEnd(x.Steps, x.Step), jump(x, 0)), false, nil
+	}
+	if n >= MaxLoops {
+		return x.Step + 1, false, i18n.E("err.bp_loops", MaxLoops)
+	}
+	if x.Values == nil {
+		x.Values = map[string]string{}
+	}
+	x.Values[st.Item] = list[n]
+	if err := s.saveValues(ctx, x); err != nil {
+		return x.Step + 1, false, err
+	}
+	s.log(ctx, x.ID, x.Step, "", "step", fmt.Sprintf("each:%d", n+1))
+	return x.Step + 1, false, nil
 }

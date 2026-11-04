@@ -22,6 +22,7 @@ import (
 // CollabChat is a group chat of a collab as the chat's header lists it.
 type CollabChat struct {
 	Room, Name string
+	CoPilot    bool // a «Чат с CoPilot»
 }
 
 // CollabOf is the collab whose group chat this room is ("" — none).
@@ -73,6 +74,27 @@ func (s *Service) intoCollab(ctx context.Context, p tasks.Project, ids []string)
 // CreateCollabChat makes a group chat in the collab of the employee (any of its people) and the people named; those
 // not in the collab join it.
 func (s *Service) CreateCollabChat(ctx context.Context, userID, projectID, name string, ids []string) (string, error) {
+	return s.createCollabChat(ctx, userID, projectID, name, ids, false)
+}
+
+// CreateCollabCoPilot makes a «Чат с CoPilot» in the collab, as «Чат с LegacyGPT» projects: a group
+// chat of the employee (not a guest), CoPilot and the people named, where CoPilot answers every message and knows
+// the collab (copilotAbout). A collab may have several.
+func (s *Service) CreateCollabCoPilot(ctx context.Context, userID, projectID, name string, ids []string) (string, error) {
+	if tasks.IsGuestCtx(ctx) || s.isGuest(ctx, userID) {
+		return "", tasks.ErrForbidden
+	}
+	bot, err := s.CoPilotID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if bot == "" {
+		return "", ErrNoAccount
+	}
+	return s.createCollabChat(ctx, userID, projectID, name, append(ids, bot), true)
+}
+
+func (s *Service) createCollabChat(ctx context.Context, userID, projectID, name string, ids []string, copilot bool) (string, error) {
 	p, err := s.collabFor(ctx, userID, projectID)
 	if err != nil {
 		return "", err
@@ -103,10 +125,18 @@ func (s *Service) CreateCollabChat(ctx context.Context, userID, projectID, name 
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.DB.Exec(ctx, `INSERT INTO collab_chats (room_id, project_id, added_by) VALUES ($1, $2, $3)`, room, p.ID, userID); err != nil {
+	if _, err := s.DB.Exec(ctx, `INSERT INTO collab_chats (room_id, project_id, added_by, copilot) VALUES ($1, $2, $3, $4)`,
+		room, p.ID, userID, copilot); err != nil {
 		return "", err
 	}
 	return room, s.Tasks.LogCollabChat(ctx, p.ID, userID, "chat_created", name)
+}
+
+// CoPilotCollab is the collab whose «Чат с CoPilot» this room is ("" — it is none).
+func (s *Service) CoPilotCollab(ctx context.Context, room string) string {
+	var pid string
+	_ = s.DB.QueryRow(ctx, `SELECT project_id::text FROM collab_chats WHERE room_id = $1 AND copilot`, room).Scan(&pid)
+	return pid
 }
 
 // AddChatToCollab: the owner of a group chat who may bring people into the collab (or owns it) adds the chat to it;
@@ -206,7 +236,7 @@ func (s *Service) CollabChats(ctx context.Context, userID, projectID string) ([]
 	var out []CollabChat
 	for _, r := range rooms {
 		if r.CollabID == projectID && r.CollabID != "" {
-			out = append(out, CollabChat{Room: r.ID, Name: r.Name})
+			out = append(out, CollabChat{Room: r.ID, Name: r.Name, CoPilot: r.CoPilot})
 		}
 	}
 	return out, nil

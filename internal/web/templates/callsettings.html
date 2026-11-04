@@ -8,6 +8,8 @@
   {{if not $d.Ready}}<p class="flash">{{t "call.record_not_ready"}}</p>{{end}}
   <label><input type="checkbox" name="transcribe" value="1" {{if $d.Transcribe}}checked{{end}} {{if not $d.Speech}}disabled{{end}}> {{t "call.transcript_allow"}}</label>
   <p class="muted small">{{if $d.Speech}}{{t "call.transcript_allow_hint"}}{{else}}{{t "call.transcript_no_speech"}}{{end}}</p>
+  <label><input type="checkbox" name="summary" value="1" {{if $d.Summary}}checked{{end}} {{if not (and $d.Speech $d.AI)}}disabled{{end}}> {{t "call.summary_allow"}}</label>
+  <p class="muted small">{{if and $d.Speech $d.AI}}{{t "call.summary_allow_hint"}}{{else}}{{t "call.summary_no_ai"}}{{end}}</p>
   <div><button class="primary">{{t "common.save"}}</button></div>
 </form>{{end}}
 {{if $d.Services}}<h2>{{t "call.ext_title"}}</h2>

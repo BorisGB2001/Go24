@@ -40,12 +40,18 @@ const TokenTTL = 6 * time.Hour
 // what the others see; host — the person leads the call (as «ведущий»), which everyone in it sees in
 // the participant's metadata.
 func (p *Provider) Token(identity, name, room string, host bool, now time.Time) (string, error) {
+	return p.TokenAs(identity, name, room, host, true, now)
+}
+
+// TokenAs is Token of someone who may speak and show (speaks) or only watch, listen and write in the call's chat —
+// a viewer of a broadcast («Трансляция»).
+func (p *Provider) TokenAs(identity, name, room string, host, speaks bool, now time.Time) (string, error) {
 	if p == nil {
 		return "", errors.New("calls: not configured")
 	}
 	c := map[string]any{
 		"iss": p.Key, "sub": identity, "name": name, "nbf": now.Add(-time.Minute).Unix(), "exp": now.Add(TokenTTL).Unix(),
-		"video": map[string]any{"room": room, "roomJoin": true, "canPublish": true, "canSubscribe": true, "canPublishData": true},
+		"video": map[string]any{"room": room, "roomJoin": true, "canPublish": speaks, "canSubscribe": true, "canPublishData": true},
 	}
 	if host {
 		c["metadata"] = `{"host":true}`

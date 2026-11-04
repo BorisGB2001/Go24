@@ -1,65 +1,67 @@
-# Архитектура go24
+Русская версия: [ru/architecture.md](ru/architecture.md)
 
-## Цель
+# go24 Architecture
 
-Собственный продукт вместо корпоративного портала. **Главная задача — таск-трекер и ведение проектов**, максимально близкие к задачам корпоративного портала и к OpenProject (разбор API — в [api-research.md](api-research.md)). Магазин, B2B, лиды и воронку пока не делаем. Почта, контакты и компании — вторая очередь.
+## Goal
 
-Инфраструктура распределённая, контейнеры можно разносить по серверам ([distributed.md](distributed.md)). Связь с другими продуктами (корпоративный портал, OpenProject, Jira, Confluence) — по API-ключам.
+In-house product replacing the portal. **The main objective is a task tracker and project management**, as close as possible to the portal tasks and OpenProject (API analysis in [api-research.md](api-research.md)). Store, B2B, leads, and sales funnel are not being developed yet. Mail, contacts, and companies are second priority.
 
-## Схема
+The infrastructure is distributed; containers can be split across servers ([distributed.md](distributed.md)). Integration with other products (the portal, OpenProject, Jira, Confluence) is handled via API keys.
+
+## Diagram
 
 ```
-                Сотрудники и разработчики
-                                 │  сейчас SSH-туннель, позже Traefik + TLS
+                 Employees and developers
+                                 │  currently SSH tunnel, later Traefik + TLS
                                  ▼
- ┌──────────────── сервер (Docker), порты только на BIND_IP ─────────────────┐
- │                                                                           │
- │  [authentik-server :9000] ◄── вход (OIDC) ── [go24 :8080]                 │
- │  [authentik-worker]                            │  │                       │
- │          │                                     │  │ S3 API                │
- │          ▼                                     ▼  ▼                       │
- │     [postgres] базы: authentik, go24      [rclone serve s3 :8333]         │
- │                                                │                          │
- └────────────────────────────────────────────────┼──────────────────────────┘
+ ┌──────────────── server (Docker), ports bound only to BIND_IP ──────────────┐
+ │                                                                            │
+ │  [authentik-server :9000] ◄─ login (OIDC) ── [go24 :8080]                  │
+ │  [authentik-worker]                            │  │                        │
+ │          │                                     │  │ S3 API                 │
+ │          ▼                                     ▼  ▼                        │
+ │     [postgres] databases: authentik, go24 [rclone serve s3 :8333]          │
+ │                                                │                           │
+ └────────────────────────────────────────────────┼───────────────────────────┘
                                                   ▼
-                 своё хранилище: локальный диск, SFTP, Garage/SeaweedFS, Nextcloud
+               own storage: local disk, SFTP, Garage/SeaweedFS, Nextcloud
 ```
 
-## Решения
+## Decisions
 
-| Решение | Почему |
+| Decision | Why |
 |---|---|
-| Пользователи и вход — Authentik, go24 только OIDC-клиент | Не пишем свою аутентификацию, 2FA, восстановление пароля и группы. Роли go24 берёт из групп Authentik (claim `groups`) |
-| Сессия go24 — подписанная HMAC cookie | Сервису не нужно хранить состояние, проще масштабировать |
-| Продукт self-hosted: все компоненты ставятся на свои серверы, облачные сервисы не используются | Требование заказчика. Подробности — в [selfhosted.md](selfhosted.md) |
-| Файлы через `rclone serve s3`, а go24 общается с ним по S3 API | Хранилище меняется правкой `RCLONE_REMOTE`, код не трогаем. Позже можно заменить на настоящее S3 без изменений в go24 |
-| Порты публикуются только на `BIND_IP` (127.0.0.1), доступ при разработке — SSH-туннель | На сервере разработки 80/443 занимает nginx корпоративного портала. Публичный доступ позже через Traefik с TLS. NetBird исключён из стека |
-| Postgres — один контейнер на базы `go24` и `authentik` | Меньше контейнеров на сервере разработки. В продакшене можно разделить |
-| Миграции SQL встроены в бинарник (`embed`) и применяются при старте | Не нужен отдельный инструмент миграций |
-| Go собирается внутри Docker (`golang:1-alpine`), образ `alpine` | На хосте не нужен Go. Сервер — CentOS 7, ставить туда тулчейн не стоит |
+| Users and authentication — Authentik, go24 is only an OIDC client | We do not write our own authentication, 2FA, password recovery, or groups. go24 takes roles from Authentik groups (`groups` claim) |
+| go24 session — HMAC-signed cookie | The service does not need to store state, making it easier to scale |
+| Self-hosted product: all components are installed on own servers, cloud services are not used | Customer requirement. Details in [selfhosted.md](selfhosted.md) |
+| Files via `rclone serve s3`, with go24 communicating via S3 API | Storage is changed by editing `RCLONE_REMOTE`, leaving code untouched. Can later be replaced with real S3 without changes to go24 |
+| Ports published only on `BIND_IP` (127.0.0.1), access during development via SSH tunnel | On the development server, 80/443 is occupied by Legacy nginx. Public access later via Traefik with TLS. NetBird is excluded from the stack |
+| Postgres — single container for `go24` and `authentik` databases | Fewer containers on the development server. Can be separated in production |
+| SQL migrations embedded in the binary (`embed`) and applied on startup | No separate migration tool needed |
+| Go is built inside Docker (`golang:1-alpine`), `alpine` image | No Go required on the host. The server is CentOS 7; installing a toolchain there is undesirable |
 
-## Дорожная карта
+## Roadmap
 
-1. **Каркас (сделано):** вход через Authentik, пользователи, загрузка и выдача файлов через rclone, миграции.
-2. **Ядро таск-трекера (первая версия сделана 11.10.2026: проекты, задачи, статусы и роли, подзадачи, чек-листы, комментарии, история, «Мои задачи»):**
-   - проекты (иерархия, участники, роли);
-   - задачи с ключом `ПРЕФИКС-N`, типами и статусами с workflow;
-   - роли участников задачи: постановщик, исполнитель, соисполнители, наблюдатели, контроль результата;
-   - подзадачи, чек-листы, комментарии, история, вложения.
-3. **API-ключи go24 и REST API v1** — сделано 11.10.2026 (ключи с правами и сроком, REST API по задачам и проектам). Осталось добавить вебхуки.
-4. **Представления:** сделаны 11.10.2026 — канбан по статусам, «Мой план», счётчики, учёт времени, Гант со связями. Дальше: список с фильтрами и сохранёнными запросами, перетаскивание полос на Ганте, автосдвиг последователей.
-5. **Agile:** версии, спринты, эпики, бэклог (Scrum и Kanban).
-6. **Импорт** (корпоративный портал сделан 11.10.2026: 335 задач, комментарии, участники, с обезличиванием): `importer` с адаптерами корпоративного портала (задачи и группы с портала), OpenProject, Jira и Confluence — по API-ключам.
-7. **Знания:** пространства и страницы, как в Confluence, со ссылками на задачи.
-8. **Распределённый деплой:** Docker Swarm (шифрованная overlay-сеть, файрвол между узлами), свой реестр образов, CI.
-9. **Вторая очередь:** почта (IMAP), контакты и компании.
-10. **Хранилище файлов — Nextcloud (на перспективу), вход в него через Authentik:**
-    - rclone подключается к Nextcloud по WebDAV (`RCLONE_REMOTE=nextcloud:...`), код go24 не меняется;
-    - в Authentik добавляется второй OIDC-провайдер (blueprint) для приложения Nextcloud `user_oidc` — одна учётная запись для go24 и Nextcloud;
-    - позже: открытие и совместное редактирование вложений задач в Nextcloud.
-11. **Раздел «Хранилища»** (сделан 11.10.2026) — rclone остаётся основным слоем хранения. Пользователь сам подключает своё хранилище (Nextcloud, SFTP, S3, диск сервера) из интерфейса go24 через встроенный в rclone API управления (`rclone rcd`: `config/create`, `operations/list`), без правки файлов на сервере.
-12. **Телефония на Asterisk (планы на будущее), как телефония корпоративного портала:**
-    - отдельный сервис `telephony` подключается к своему Asterisk через ARI или AMI;
-    - звонок по клику из карточки, всплывающая карточка при входящем;
-    - журнал звонков и записи разговоров в хранилище через rclone;
-    - задача или комментарий по звонку.
+1. **Skeleton (completed):** login via Authentik, users, file uploading and serving via rclone, migrations.
+2. **Task tracker core (first version completed 2026-10-11: projects, tasks, statuses and roles, subtasks, checklists, comments, history, "My tasks"):**
+   - projects (hierarchy, participants, roles);
+   - tasks with `PREFIX-N` key, types and statuses with workflow;
+   - task participant roles: creator, assignee, participants, observers, result review;
+   - subtasks, checklists, comments, history, attachments.
+3. **go24 API keys and REST API v1** — completed 2026-10-11 (keys with permissions and expiration, REST API for tasks and projects). Webhooks remain to be added.
+4. **Views:** completed 2026-10-11 — Kanban by status, "My plan", counters, time tracking, Gantt chart with dependencies. Next: list with filters and saved queries, dragging bars on Gantt, auto-shifting dependent tasks.
+5. **Agile:** versions, sprints, epics, backlog (Scrum and Kanban).
+6. **Import** (the portal completed 2026-10-11: 335 tasks, comments, participants, with anonymization): `importer` with adapters for the portal (tasks and groups from the portal), OpenProject, Jira, and Confluence — via API keys.
+7. **Knowledge Base:** spaces and pages, like in Confluence, with links to tasks.
+8. **Distributed deployment:** Docker Swarm (encrypted overlay network, firewall between nodes), own image registry, CI.
+9. **Phase two:** mail (IMAP), contacts, and companies.
+10. **File storage — Nextcloud (long-term perspective), login via Authentik:**
+    - rclone connects to Nextcloud via WebDAV (`RCLONE_REMOTE=nextcloud:...`), go24 code remains unchanged;
+    - a second OIDC provider (blueprint) is added to Authentik for the Nextcloud `user_oidc` app — single account for go24 and Nextcloud;
+    - later: opening and collaborative editing of task attachments in Nextcloud.
+11. **"Storages" section** (completed 2026-10-11) — rclone remains the primary storage layer. Users connect their own storage (Nextcloud, SFTP, S3, server disk) directly from the go24 interface via rclone's built-in management API (`rclone rcd`: `config/create`, `operations/list`), without modifying files on the server.
+12. **Asterisk telephony (future plans) telephony:**
+    - a separate `telephony` service connects to its own Asterisk via ARI or AMI;
+    - click-to-call from the card, pop-up card on incoming call;
+    - call log and call recordings in storage via rclone;
+    - task or comment from a call.

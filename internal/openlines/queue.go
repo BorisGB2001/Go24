@@ -138,7 +138,9 @@ func (s *Store) closeAs(ctx context.Context, id, key string, args ...any) error 
 	}
 	defer tx.Rollback(ctx)
 	var text string
-	err = tx.QueryRow(ctx, `UPDATE ol_sessions s SET status = 'closed', closed_at = now(), waiting_since = NULL, bot_node = NULL FROM ol_widgets w
+	// the line's automatic messages count from the closing
+	err = tx.QueryRow(ctx, `UPDATE ol_sessions s SET status = 'closed', closed_at = now(), waiting_since = NULL, bot_node = NULL, ai_bot = false, ai_wait = NULL,
+		automsg_from = CASE WHEN jsonb_array_length(w.auto_msgs) > 0 AND NOT s.spam THEN now() END, automsg_step = 0 FROM ol_widgets w
 		WHERE w.id = s.widget_id AND s.id::text = $1 AND s.status = 'open' RETURNING w.close_text`, id).Scan(&text)
 	if err == pgx.ErrNoRows {
 		return nil
@@ -159,7 +161,8 @@ func (s *Store) closeAs(ctx context.Context, id, key string, args ...any) error 
 
 // Due is the line's clock (go24-worker, every half a minute): a dialogue its operator has not answered in time goes
 // to the next one; the visitor waiting too long gets «all operators are busy»; a dialogue the visitor left after an
-// answer is closed; a dialogue waiting longer than the line's KPI is a violation told to its operator and the heads.
+// answer is closed and a while after closing gets the automatic messages; a dialogue waiting longer than the line's
+// KPI is a violation told to its operator and the heads.
 // It returns how many dialogues changed.
 func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 	n := 0
@@ -282,7 +285,10 @@ func (s *Store) Due(ctx context.Context, now time.Time) (int, error) {
 		}
 		n++
 	}
-	return n, nil
+
+	// closed a while ago — the line's automatic messages
+	sent, err := s.autoMsgs(ctx, now, line)
+	return n + sent, err
 }
 
 // passOn gives the dialogue its operator has not answered to the next one of the queue; when the whole queue has

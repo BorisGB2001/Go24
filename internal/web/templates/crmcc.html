@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{t "crm.title"}}</h1></div>
+<div class="tabs">{{template "crmtabs" $d}}</div>
+<p class="sub">{{t "crm.cc.hint"}}</p>
+<div class="cctiles">{{range $d.Channels}}
+  <a class="card cctile{{if .Count}} on{{end}}" href="{{.URL}}">
+    <span class="ccicon">{{icon .Icon}}</span>
+    <b>{{t (print "crm.cc." .Key)}}</b>
+    <span class="small muted">{{t (print "crm.cc." .Key "_hint")}}</span>
+    <span class="row small">{{if .Count}}<span class="pill cc-on">{{icon "check"}} {{t (print "crm.cc." .Key "_count") .Count}}</span>{{else}}<span class="muted">{{t "crm.cc.off"}}</span>{{end}}
+      {{with .Errors}}<span class="pill cc-err">{{icon "alert-triangle"}} {{t "crm.cc.errors" .}}</span>{{end}}</span>
+    {{if and .Inbound .Count}}<span class="small muted">{{t "crm.cc.recent" .Recent $d.Days}}</span>{{end}}
+    <span class="ccgo">{{if .Count}}{{t "crm.cc.setup"}}{{else}}{{t "crm.cc.connect"}}{{end}} {{icon "chevron-right"}}</span>
+  </a>{{end}}</div>
+{{end}}

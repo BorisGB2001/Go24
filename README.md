@@ -35,8 +35,10 @@ Self-hosted таск-трекер и система ведения проект�
 
 ## Установка и обновление
 
-- [docs/install.md](docs/install.md) — установка для тестовой работы и первые шаги.
-- [docs/update.md](docs/update.md) — установка обновлений.
+- [docs/install.md](docs/install.md) — installation guide and first steps (English).
+- [docs/update.md](docs/update.md) — update guide (English).
+- [docs/ru/install.md](docs/ru/install.md) — установка для тестовой работы и первые шаги (русский).
+- [docs/ru/update.md](docs/ru/update.md) — установка обновлений (русский).
 
 ## REST API v1
 

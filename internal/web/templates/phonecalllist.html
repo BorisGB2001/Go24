@@ -1,0 +1,44 @@
+{{define "content"}}
+{{$d := .Data}}{{$l := $d.List}}{{$c := $d.Current}}
+<div class="pagehead"><h1>{{icon "phone"}} {{$l.Title}}</h1><a class="button ghost" href="/telephony/calllists">{{icon "list"}} {{t "tel.cl_title"}}</a>
+  <form method="post" action="/telephony/calllists/{{$l.ID}}" class="row" style="gap:6px">
+    {{if $l.Closed}}<button class="ghost" name="closed" value="0">{{t "tel.cl_resume"}}</button>{{else}}<button class="ghost" name="closed" value="1">{{icon "check"}} {{t "tel.cl_close"}}</button>{{end}}
+    <button class="ghost danger" name="delete" value="1" data-confirm="{{t "tel.cl_delete_confirm"}}">{{icon "trash"}} {{t "tel.cl_delete"}}</button>
+  </form></div>
+<p class="muted small">{{$l.OwnerName}} · {{datetime $l.Created}} · {{t "tel.cl_done" $l.Done $l.Total}}</p>
+<div class="progress" style="width:100%;margin-bottom:12px"><span style="width:{{pct $l.Done $l.Total}}%"></span></div>
+{{if and $d.Mine (not $d.HasLine)}}<div class="card muted">{{t "tel.cl_no_line"}}</div>{{end}}
+{{if $l.Closed}}<div class="card muted">{{t "tel.cl_closed_hint"}}</div>
+{{else if $c}}<div class="card" id="clcurrent" data-calllist="{{$l.ID}}" {{if and $c.Dialed (eq $c.Status "wait")}}data-cl-waiting{{end}}>
+  <div class="muted small">{{t "tel.cl_now" $c.Pos $l.Total}}</div>
+  <h2 style="margin:4px 0"><a href="/crm/{{$d.Path}}/{{$c.EntityID}}" target="_blank" rel="noopener">{{or $c.Title "—"}}</a></h2>
+  <div>{{if and $c.Name (ne $c.Name $c.Title)}}{{$c.Name}} · {{end}}<b>{{$c.Phone}}</b>
+    {{if ne $c.Status "wait"}} <span class="pill {{if eq $c.Status "answered"}}tel-in{{else if eq $c.Status "noanswer"}}tel-missed{{else}}st-deferred{{end}}">{{t (print "tel.cl_st." $c.Status)}}</span>{{end}}
+    {{if and $c.Dialed (eq $c.Status "wait")}} <span class="muted small">{{t "tel.cl_dialed"}}</span>{{end}}</div>
+  <div class="row" style="margin-top:12px;gap:6px;flex-wrap:wrap">
+    {{if and $d.Mine $c.Dial}}<a class="button primary" href="tel:{{$c.Dial}}" data-cl-dial="/telephony/calllists/{{$l.ID}}/items/{{$c.ID}}/dial">{{icon "phone"}} {{t "tel.cl_call"}}</a>{{end}}
+    <form method="post" action="/telephony/calllists/{{$l.ID}}/items/{{$c.ID}}" class="row" style="gap:6px;flex-wrap:wrap">
+      <input type="hidden" name="next" value="{{$d.Next}}">
+      <button class="ghost" name="status" value="answered">{{t "tel.cl_set.answered"}}</button>
+      <button class="ghost" name="status" value="noanswer">{{t "tel.cl_set.noanswer"}}</button>
+      <button class="ghost" name="status" value="skipped">{{t "tel.cl_set.skipped"}}</button>
+      {{if ne $c.Status "wait"}}<button class="ghost" name="status" value="wait">{{t "tel.cl_set.wait"}}</button>{{end}}
+    </form>
+    {{if $d.Next}}<a class="button ghost" href="?item={{$d.Next}}">{{t "tel.cl_next"}} →</a>{{end}}
+  </div>
+</div>
+{{else}}<div class="card"><b>{{t "tel.cl_all_done"}}</b> <span class="muted">{{t "tel.cl_all_done_hint"}}</span></div>{{end}}
+<div class="card flush">
+  <div class="tablewrap"><table class="tlist">
+    <thead><tr><th>№</th><th>{{t (print "crm." $l.Entity)}}</th><th>{{t "tel.cl_client"}}</th><th>{{t "tel.cl_phone"}}</th><th>{{t "tel.col.status"}}</th><th class="right">{{t "tel.col.duration"}}</th></tr></thead>
+    <tbody>{{range $d.Items}}<tr{{if and $c (eq .ID $c.ID)}} class="on"{{end}}>
+      <td class="muted">{{.Pos}}</td>
+      <td><a href="?item={{.ID}}">{{or .Title "—"}}</a></td>
+      <td>{{.Name}}</td>
+      <td class="nowrap">{{.Phone}}</td>
+      <td class="small">{{if eq .Status "wait"}}{{if .Dialed}}<span class="muted">{{t "tel.cl_dialed"}}</span>{{else}}<span class="muted">{{t "tel.cl_st.wait"}}</span>{{end}}{{else}}<span class="pill {{if eq .Status "answered"}}tel-in{{else if eq .Status "noanswer"}}tel-missed{{else}}st-deferred{{end}}">{{t (print "tel.cl_st." .Status)}}</span>{{end}}</td>
+      <td class="right nowrap">{{if .CallID}}<a href="/telephony/calls?q={{.Phone}}">{{talk .Seconds}}</a>{{end}}</td>
+    </tr>{{end}}</tbody></table></div>
+</div>
+<script src="{{asset "js/calllist.js"}}"></script>
+{{end}}

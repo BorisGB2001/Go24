@@ -33,6 +33,9 @@ func commKey(kind, v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
 }
 
+// CommKey is commKey for the other sections: a card is found by its phone or e-mail with it.
+func CommKey(kind, v string) string { return commKey(kind, v) }
+
 // commMatch is the condition «the card (alias.id of the entity) has the phone key p or the e-mail e» over all its
 // phones and e-mails (p and e are SQL parameters; "" matches nothing).
 func commMatch(entity, alias, p, e string) string {

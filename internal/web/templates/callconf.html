@@ -1,0 +1,45 @@
+{{define "content"}}
+{{$d := .Data}}{{$e := $d.Edit}}
+<div class="row"><h1 style="flex:1">{{icon "video"}} {{t "call.conf_title"}}</h1>
+  <a class="button ghost" href="/im">{{icon "arrow-back-up"}} {{t "call.conf_to_im"}}</a></div>
+<p class="muted small">{{t "call.conf_intro"}}</p>
+<details class="card" {{if $e}}open{{end}} id="conf-form"><summary class="button {{if not $e}}primary{{end}}">{{if $e}}{{icon "edit"}} {{t "call.conf_edit"}}{{else}}{{icon "plus"}} {{t "call.conf_new"}}{{end}}</summary>
+  <form method="post" action="/call/conferences{{if $e}}/{{$e.ID}}{{end}}" class="stack" style="margin-top:12px">
+    <label>{{t "call.conf_name"}} <input type="text" name="title" required maxlength="200" value="{{if $e}}{{$e.Title}}{{end}}" placeholder="{{t "call.conf_name_ph"}}"></label>
+    <label>{{t "call.conf_members"}}</label>
+    {{template "upick" (upick "members" $d.Members $d.Users "multi" "noself" "ph" (t "call.conf_members_ph"))}}
+    <label><input type="checkbox" name="password_set" value="1" data-conf-pass{{if and $e $e.Password}} checked{{end}}> {{t "call.conf_password"}}</label>
+    <input type="text" name="password" autocomplete="off" data-conf-pass-input placeholder="{{if and $e $e.Password}}{{t "call.conf_password_keep"}}{{else}}{{t "call.conf_password_ph"}}{{end}}"{{if not (and $e $e.Password)}} hidden{{end}}>
+    <label title="{{t "call.conf_broadcast_hint"}}"><input type="checkbox" name="broadcast" value="1" data-conf-bc{{if and $e $e.Broadcast}} checked{{end}}> {{t "call.conf_broadcast"}}
+      <span class="muted small">— {{t "call.conf_broadcast_hint"}}</span></label>
+    <div data-conf-presenters{{if not (and $e $e.Broadcast)}} hidden{{end}}><label>{{t "call.conf_presenters"}}</label>
+      {{template "upick" (upick "presenters" $d.Presenters $d.Users "multi" "noself" "ph" (t "call.conf_presenters_ph"))}}
+      <span class="muted small">{{t "call.conf_presenters_hint"}}</span></div>
+    <div class="row"><button class="primary">{{if $e}}{{t "common.save"}}{{else}}{{t "call.conf_create"}}{{end}}</button>
+      {{if $e}}<a class="button ghost" href="/call/conferences">{{t "common.cancel"}}</a>{{end}}</div>
+  </form></details>
+<div class="stack" style="margin-top:16px">
+{{range $d.Rows}}<div class="card confrow" id="c-{{.ID}}">
+  <div class="row"><b style="flex:1">{{icon "video"}} {{.Title}}
+    {{if .Broadcast}}<span class="badge small" title="{{t "call.conf_broadcast_hint"}}">{{t "call.conf_broadcast"}}</span>{{end}}
+    {{if .Password}}<span class="badge small">🔒 {{t "call.conf_with_password"}}</span>{{end}}</b>
+    <a class="button primary" href="/call?conf={{.ID}}">{{icon "video"}} {{t "call.conf_join"}}</a></div>
+  <div class="muted small">{{t "call.conf_organizer"}}: {{.By}} · {{t "call.conf_people" .People}}{{if .Chat}} · <a href="/im?room={{urlquery .Chat}}">{{icon "message-circle"}} {{t "call.conf_chat"}}</a>{{end}}</div>
+  {{if .URL}}<div class="row small"><input type="text" readonly value="{{.URL}}" style="flex:1" aria-label="{{t "call.conf_link"}}">
+    <button type="button" class="ghost" data-copy="{{.URL}}">{{icon "link"}} {{t "call.conf_copy"}}</button></div>{{end}}
+  {{if .Mine}}<div class="row small">
+    <a class="button ghost" href="/call/conferences?edit={{.ID}}#conf-form">{{icon "edit"}} {{t "call.conf_edit"}}</a>
+    <form method="post" action="/call/conferences/{{.ID}}" data-confirm="{{t "call.conf_new_link_confirm"}}"><input type="hidden" name="action" value="link"><button class="ghost">{{t "call.conf_new_link"}}</button></form>
+    <form method="post" action="/call/conferences/{{.ID}}" data-confirm="{{t "call.conf_delete_confirm"}}"><input type="hidden" name="action" value="delete"><button class="ghost">{{icon "trash"}} {{t "common.delete"}}</button></form></div>{{end}}
+</div>{{else}}<p class="empty">{{t "call.conf_none"}}</p>{{end}}
+</div>
+<script>
+(() => {
+  const f = document.getElementById('conf-form');
+  const pass = f.querySelector('[data-conf-pass]'), input = f.querySelector('[data-conf-pass-input]');
+  pass.addEventListener('change', () => { input.hidden = !pass.checked; });
+  const bc = f.querySelector('[data-conf-bc]'), who = f.querySelector('[data-conf-presenters]');
+  bc.addEventListener('change', () => { who.hidden = !bc.checked; });
+})();
+</script>
+{{end}}

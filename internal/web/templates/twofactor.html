@@ -1,0 +1,34 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.Policy}}
+<h1>{{icon "shield-lock"}} {{t "twofa.title"}}</h1>
+<div class="sub">{{t "twofa.subtitle"}}</div>
+<div class="card">
+  <form method="post" action="/settings/two-factor" class="stack">
+    <div class="stack">
+      {{range $d.Modes}}<label class="check"><input type="radio" name="mode" value="{{.}}"{{if eq . $p.Mode}} checked{{end}}> {{t (print "twofa.mode." (or . "off"))}}</label>{{end}}
+    </div>
+    <label>{{t "twofa.days"}} <select name="days">
+      {{range $d.DaysChoice}}<option value="{{.}}"{{if eq . $p.Days}} selected{{end}}>{{if eq . 0}}{{t "twofa.days_now"}}{{else}}{{t "twofa.days_n" .}}{{end}}</option>{{end}}
+    </select></label>
+    {{if $p.Mode}}<p class="muted small">{{t "twofa.since" (datetime $p.Since)}}</p>{{end}}
+    <div><button class="primary">{{t "common.save"}}</button></div>
+  </form>
+</div>
+<h2>{{t "twofa.people"}} <span class="muted small">{{t "twofa.people_with" $d.With (len $d.People)}}</span></h2>
+<div class="card flush">
+  <table>
+    <thead><tr><th>{{t "col.name"}}</th><th>{{t "twofa.col.state"}}</th></tr></thead>
+    <tbody>
+    {{range $d.People}}
+    <tr>
+      <td><a href="/u/{{.ID}}">{{.Name}}</a>{{if .Admin}} <span class="pill">{{t "twofa.admin"}}</span>{{end}}</td>
+      <td class="small">{{if .MFAAt}}<span style="color: var(--ok)">{{icon "check"}} {{t "twofa.state.on" (date .MFAAt)}}</span>
+        {{else if .Deadline}}<span style="color: var(--danger)">{{icon "clock"}} {{t "twofa.state.due" (date .Deadline)}}</span>
+        {{else}}<span class="muted">{{t "twofa.state.off"}}</span>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="muted small">{{t "twofa.hint"}}{{with $d.AccountURL}} <a href="{{.}}" target="_blank" rel="noopener">{{t "twofa.setup_own"}}</a>{{end}}</p>
+{{end}}

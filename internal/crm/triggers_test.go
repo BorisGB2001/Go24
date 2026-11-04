@@ -41,10 +41,10 @@ func TestTriggers(t *testing.T) {
 	s := NewStore(pool)
 	pipes, _ := s.Pipelines(ctx)
 	st := pipes[0].Stages // new, preparation, prepayment, executing, final_invoice, won, lose
-	must(s.AddTrigger(ctx, boss, st[1].ID, "mail"))
-	must(s.AddTrigger(ctx, boss, st[1].ID, "mail")) // twice is once
-	must(s.AddTrigger(ctx, boss, st[2].ID, "activity"))
-	must(s.AddTrigger(ctx, boss, st[5].ID, "invoice_paid"))
+	must(s.AddTrigger(ctx, boss, st[1].ID, "mail", TriggerParams{}))
+	must(s.AddTrigger(ctx, boss, st[1].ID, "mail", TriggerParams{})) // twice is once
+	must(s.AddTrigger(ctx, boss, st[2].ID, "activity", TriggerParams{}))
+	must(s.AddTrigger(ctx, boss, st[5].ID, "invoice_paid", TriggerParams{}))
 	trs, _ := s.Triggers(ctx, []string{st[1].ID, st[2].ID, st[5].ID})
 	if len(trs) != 3 {
 		t.Fatalf("triggers = %+v", trs)
@@ -98,8 +98,8 @@ func TestTriggers(t *testing.T) {
 
 	// leads: a message in the open line moves the lead; once converted, its deal
 	leadStages, _ := s.LeadStages(ctx)
-	must(s.AddTrigger(ctx, boss, leadStages[1].ID, "openline"))
-	must(s.AddTrigger(ctx, boss, st[3].ID, "openline"))
+	must(s.AddTrigger(ctx, boss, leadStages[1].ID, "openline", TriggerParams{}))
+	must(s.AddTrigger(ctx, boss, st[3].ID, "openline", TriggerParams{}))
 	lead, err := s.SaveLead(ctx, boss, Lead{Title: "Сайт", Name: "Гость", Responsible: Ref{ID: boss}})
 	must(err)
 	must(s.Fire(ctx, "lead", lead, "openline"))

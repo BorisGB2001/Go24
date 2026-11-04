@@ -133,6 +133,10 @@ func (s *Server) callSettings(w http.ResponseWriter, r *http.Request, sess auth.
 			s.taskErr(w, r, err, "/settings/calls")
 			return
 		}
+		if err := s.Recordings.SetSummarizing(ctx, sess.UserID, r.FormValue("summary") == "1"); err != nil {
+			s.taskErr(w, r, err, "/settings/calls")
+			return
+		}
 		http.Redirect(w, r, "/settings/calls?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
 		return
 	}
@@ -148,7 +152,11 @@ func (s *Server) callSettings(w http.ResponseWriter, r *http.Request, sess auth.
 			s.fail(w, "call settings", err)
 			return
 		}
-		data["Speech"] = s.Speech != nil
+		if data["Summary"], err = s.Recordings.Summarizing(ctx); err != nil {
+			s.fail(w, "call settings", err)
+			return
+		}
+		data["Speech"], data["AI"] = s.Speech != nil, s.AI != nil
 	}
 	if s.External != nil {
 		services, err := s.External.Configs(ctx)

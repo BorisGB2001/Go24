@@ -182,9 +182,42 @@ func FillRows(template []byte, values map[string]string, rows Rows) ([]byte, err
 	return Make(template, values, rows, nil)
 }
 
+// hideXML takes away the table rows (<w:tr>) — or, out of a table, the paragraphs — with a placeholder of hide whose
+// value is empty: «Скрывать строку, если пусто» of a field of the template.
+func hideXML(xml string, values map[string]string, hide map[string]bool) string {
+	if len(hide) == 0 {
+		return xml
+	}
+	for from := 0; ; {
+		at := -1
+		for _, l := range span.FindAllStringIndex(xml[from:], -1) {
+			if n := name.FindStringSubmatch(tags.ReplaceAllString(xml[from+l[0]:from+l[1]], "")); n != nil && hide[n[1]] &&
+				strings.TrimSpace(values[n[1]]) == "" {
+				at = from + l[0]
+				break
+			}
+		}
+		if at < 0 {
+			return xml
+		}
+		start, end, ok := block(xml, at, "w:tr")
+		if !ok {
+			if start, end, ok = block(xml, at, "w:p"); !ok {
+				start, end = at, at+len(span.FindString(xml[at:]))
+			}
+		}
+		xml, from = xml[:start]+xml[end:], start
+	}
+}
+
 // Make is FillRows with pictures: the placeholders of the images (by their names) become them; an image that is not
 // a PNG nor a JPEG — nothing.
 func Make(template []byte, values map[string]string, rows Rows, images map[string]Image) ([]byte, error) {
+	return MakeHiding(template, values, rows, images, nil)
+}
+
+// MakeHiding is Make with the rows of the empty fields of hide taken away.
+func MakeHiding(template []byte, values map[string]string, rows Rows, images map[string]Image, hide map[string]bool) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(template), int64(len(template)))
 	if err != nil {
 		return nil, ErrNotDocx
@@ -223,7 +256,7 @@ func Make(template []byte, values map[string]string, rows Rows, images map[strin
 		if !textPart(name) {
 			continue
 		}
-		parts[i].data = []byte(fillXML(fillRows(string(parts[i].data), rows), values, func(k string) (string, bool) {
+		parts[i].data = []byte(fillXML(fillRows(hideXML(string(parts[i].data), values, hide), rows), values, func(k string) (string, bool) {
 			p, ok := pics[k]
 			if !ok || p == nil {
 				return "", ok

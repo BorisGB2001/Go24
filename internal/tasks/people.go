@@ -181,7 +181,7 @@ func MatchPeople(all []PersonHit, q string, recent bool) []PersonHit {
 	words := strings.Fields(fold(q))
 	var variants [][]string
 	if len(words) > 0 {
-		variants = [][]string{words, strings.Fields(fold(switchLayout(q)))}
+		variants = [][]string{words, strings.Fields(fold(SwitchLayout(q)))}
 	}
 	type hit struct {
 		p      PersonHit
@@ -246,8 +246,8 @@ func tokens(s string) []string {
 
 func fold(s string) string { return strings.ReplaceAll(strings.ToLower(s), "ё", "е") }
 
-// switchLayout retypes the text in the other keyboard layout (ЙЦУКЕН ↔ QWERTY): «ghbdtn» → «привет».
-func switchLayout(s string) string {
+// SwitchLayout retypes the text in the other keyboard layout (ЙЦУКЕН ↔ QWERTY): «ghbdtn» → «привет».
+func SwitchLayout(s string) string {
 	const en, ru = "`qwertyuiop[]asdfghjkl;'zxcvbnm,.", "ёйцукенгшщзхъфывапролджэячсмитьбю"
 	enR, ruR := []rune(en), []rune(ru)
 	m := make(map[rune]rune, 2*len(enR))

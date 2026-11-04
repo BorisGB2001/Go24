@@ -1,0 +1,45 @@
+{{define "content"}}
+{{$d := .Data}}{{$p := $d.P}}{{$a := $d.A}}
+<p class="muted small crumbs"><a href="/company/gallery">{{t "gallery.title"}}</a> / <a href="/company/gallery/{{$a.ID}}">{{$a.Title}}</a> · {{t "gallery.n_of" $d.N $d.Count}}</p>
+<div class="gview" data-gview{{with $d.Prev}} data-prev="/company/photos/{{.}}"{{end}}{{with $d.Next}} data-next="/company/photos/{{.}}"{{else}}{{with $d.First}} data-next="/company/photos/{{.}}"{{end}}{{end}}{{if $d.Play}} data-play{{end}}>
+  {{with $d.Prev}}<a class="gnav gprev" href="/company/photos/{{.}}{{if $d.Play}}?play=1{{end}}" title="{{t "gallery.prev"}}">{{icon "chevron-left"}}</a>{{end}}
+  <img src="/company/photos/{{$p.ID}}/file" alt="{{$p.Caption}}">
+  {{with $d.Next}}<a class="gnav gnext" href="/company/photos/{{.}}{{if $d.Play}}?play=1{{end}}" title="{{t "gallery.next"}}">{{icon "chevron-right"}}</a>{{end}}
+</div>
+<div class="row gbar">
+  <form method="post" action="/company/photos/{{$p.ID}}/like"><button class="{{if $p.Liked}}primary{{else}}ghost{{end}}" title="{{range $i, $l := $d.Likers}}{{if $i}}, {{end}}{{$l.Name}}{{end}}">{{icon "thumb-up"}} {{t "gallery.like"}}{{if $p.Likes}} · {{$p.Likes}}{{end}}</button></form>
+  {{if $d.Play}}<a class="button ghost" href="/company/photos/{{$p.ID}}">{{icon "player-stop"}} {{t "gallery.stop"}}</a>
+  {{else if gt $d.Count 1}}<a class="button ghost" href="/company/photos/{{$p.ID}}?play=1">{{icon "player-play"}} {{t "gallery.slideshow"}}</a>{{end}}
+  <button type="button" class="ghost" data-gfull>{{icon "arrows-split"}} {{t "gallery.fullscreen"}}</button>
+  <a class="button ghost" href="/company/photos/{{$p.ID}}/file?dl=1">{{icon "download"}} {{t "gallery.download"}}</a>
+  <span style="flex:1"></span>
+  <span class="muted small">{{if $p.CreatedBy}}<a href="/u/{{$p.CreatedBy}}" data-user="{{$p.CreatedBy}}">{{$p.AuthorName}}</a> · {{end}}{{datetime $p.Created}}{{if $p.Width}} · {{$p.Width}}×{{$p.Height}}{{end}}</span>
+</div>
+{{with $p.Caption}}<p class="gcaption">{{nl2br .}}</p>{{end}}
+{{if $d.CanChange}}<details class="card gedit"><summary>{{icon "edit"}} {{t "gallery.edit_photo"}}</summary>
+  <form method="post" action="/company/photos/{{$p.ID}}">
+    <label>{{t "gallery.caption"}}</label>
+    <textarea name="caption" rows="2" maxlength="{{$d.CaptionMax}}">{{$p.Caption}}</textarea>
+    <p><button class="primary">{{t "common.save"}}</button></p></form>
+  {{if gt (len $d.Albums) 1}}<form method="post" action="/company/photos/{{$p.ID}}" class="row">
+    <select name="album" style="width:auto" required><option value="">{{t "gallery.move_to"}}</option>
+      {{range $d.Albums}}{{if ne .ID $a.ID}}<option value="{{.ID}}">{{.Title}}</option>{{end}}{{end}}</select>
+    <button class="ghost">{{icon "arrows-exchange"}} {{t "gallery.move"}}</button></form>{{end}}
+  <div class="row">
+    {{if and $d.CanCover (ne $a.CoverID $p.ID)}}<form method="post" action="/company/photos/{{$p.ID}}"><input type="hidden" name="cover" value="1"><button class="ghost">{{icon "star"}} {{t "gallery.make_cover"}}</button></form>{{end}}
+    <form method="post" action="/company/photos/{{$p.ID}}/delete" data-confirm="{{t "gallery.delete_photo_confirm"}}"><button class="ghost">{{icon "trash"}} {{t "gallery.delete_photo"}}</button></form>
+  </div>
+</details>{{end}}
+<h2 id="comments">{{icon "message-circle"}} {{t "gallery.comments"}}{{with $d.Comments}} · {{len .}}{{end}}</h2>
+{{range $d.Comments}}<div class="gcomment row">
+  {{photo .Name .PhotoURL false}}
+  <div style="flex:1"><a href="/u/{{.UserID}}" data-user="{{.UserID}}"><b>{{.Name}}</b></a> <span class="muted small">{{datetime .Created}}</span>
+    <div>{{imtext .Body}}</div></div>
+  {{if or (eq .UserID $.User.UserID) $d.Keeper}}<form method="post" action="/company/photo-comments/{{.ID}}/delete" data-confirm="{{t "gallery.delete_comment_confirm"}}"><button class="link muted small" title="{{t "common.delete"}}">{{icon "x"}}</button></form>{{end}}
+</div>{{end}}
+<form method="post" action="/company/photos/{{$p.ID}}/comment" class="gcomment-form">
+  <textarea name="body" rows="2" required maxlength="{{$d.CommentMax}}" placeholder="{{t "gallery.comment_hint"}}"></textarea>
+  <p><button class="primary">{{t "gallery.send"}}</button></p>
+</form>
+<script src="{{asset "js/gallery.js"}}"></script>
+{{end}}

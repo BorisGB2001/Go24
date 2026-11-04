@@ -1,0 +1,37 @@
+{{define "content"}}{{$d := .Data}}
+<div class="crumbs"><a href="/mail{{with $d.Trash}}?folder={{.}}{{end}}">{{t "mail.title"}}</a> {{icon "chevron-right"}} {{t "mail.recover.title"}}</div>
+<div class="pagehead"><h1>{{icon "history"}} {{t "mail.recover.title"}}</h1></div>
+{{if not $d.Boxes}}<div class="card"><p class="muted">{{t "mail.export.no_boxes"}}</p></div>{{else}}
+<p class="muted small">{{t "mail.recover.hint" $d.Days}}</p>
+<form method="get" action="/mail/recover" class="row mrecover-bar">
+  {{if gt (len $d.Boxes) 1}}<select name="box" data-recover-box>{{range $d.Boxes}}<option value="{{.ID}}"{{if eq .ID $d.Box}} selected{{end}}>{{.Email}}</option>{{end}}</select>{{else}}<input type="hidden" name="box" value="{{$d.Box}}">{{end}}
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "mail.recover.search"}}">
+  <button class="ghost">{{icon "search"}}</button>
+</form>
+{{if $d.List}}
+<form method="post" action="/mail/recover/restore" data-recover>
+<input type="hidden" name="box" value="{{$d.Box}}"><input type="hidden" name="q" value="{{$d.Q}}">
+<div class="row mrecover-acts">
+  <button class="primary small" data-recover-act disabled>{{icon "history"}} {{t "mail.recover.restore"}}</button>
+  <button class="ghost small" formaction="/mail/recover/delete" data-recover-act disabled data-confirm="{{t "mail.recover.delete_confirm"}}">{{icon "trash"}} {{t "mail.recover.delete"}}</button>
+  <span class="muted small" data-recover-count></span>
+</div>
+<div class="card flush tlist-wrap">
+<table class="tlist mrecover">
+  <thead><tr><th><input type="checkbox" data-checkall title="{{t "mail.recover.all"}}"></th><th>{{t "mail.from"}}</th><th>{{t "mail.subject"}}</th>
+    <th>{{t "mail.recover.sent"}}</th><th>{{t "mail.recover.folder"}}</th><th>{{t "mail.recover.deleted_at"}}</th><th>{{t "mail.recover.size"}}</th></tr></thead>
+  <tbody>{{range $d.List}}
+  <tr><td><input type="checkbox" name="id" value="{{.ID}}"></td>
+    <td>{{if .FromName}}<b>{{.FromName}}</b> <span class="muted small">{{.FromAddr}}</span>{{else}}{{.FromAddr}}{{end}}</td>
+    <td>{{if .Subject}}{{.Subject}}{{else}}<span class="muted">{{t "mail.no_subject"}}</span>{{end}}</td>
+    <td class="nowrap">{{datetime .SentAt}}</td>
+    <td>{{if .Role}}{{t (print "mail.folder." .Role)}}{{else}}{{.Folder}}{{end}}</td>
+    <td class="nowrap">{{datetime .DeletedAt}}<div class="muted small">{{t "mail.recover.until" (day .Until)}}</div></td>
+    <td class="nowrap">{{size .Size}}</td></tr>{{end}}
+  </tbody>
+</table></div>
+</form>
+{{else}}<div class="card"><p class="muted">{{if $d.Q}}{{t "mail.found_none"}}{{else}}{{t "mail.recover.empty" $d.Days}}{{end}}</p></div>{{end}}
+{{end}}
+<script src="{{asset "js/mailrecover.js"}}"></script>
+{{end}}

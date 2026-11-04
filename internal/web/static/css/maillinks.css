@@ -47,3 +47,131 @@
 .msend-pop form + form { border-top: 1px solid var(--line); padding-top: 8px; }
 .msend-pop textarea, .msend-pop select, .msend-pop input[name="name"] { width: 100%; }
 .msend-people { display: grid; gap: 2px; max-height: 140px; overflow: auto; }
+
+/* «Мой день» beside the mail, as in Outlook (templates/mail.html mmyday, js/mailday.js): a pane on the right, the mail
+   makes room for it on a wide screen and lies under it on a narrow one */
+.mmyday { position: fixed; z-index: 30; top: calc(var(--top-h) + 12px); right: 12px; bottom: 12px; width: 320px; overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-pop); }
+.with-myday .mailhead, .with-myday .mail3, .with-myday .mooo { margin-right: 332px; }
+@media (max-width: 1100px) { .with-myday .mailhead, .with-myday .mail3, .with-myday .mooo { margin-right: 0; } }
+@media (max-width: 760px) { .mmyday { left: 8px; right: 8px; width: auto; } }
+.mmyday-toggle.on { color: var(--accent); background: var(--accent-soft); }
+.mmyday-head { gap: 2px; align-items: center; }
+.mmyday-head [data-myday-tab].on { color: var(--accent); background: var(--accent-soft); }
+.mmyday-close { margin-left: auto; }
+.mmyday-pane { display: flex; flex-direction: column; gap: 6px; border-radius: 8px; padding: 4px; }
+.mmyday-pane[hidden] { display: none; }
+.mmyday-pane.drop { outline: 2px dashed var(--accent); background: var(--accent-soft); }
+.mmyday-pane h4 { margin: 6px 0 0; }
+.mmyday-pane h4.over, .mmyday-task .over { color: var(--danger); }
+.mmyday-nav { gap: 4px; align-items: center; }
+.mmyday-nav b { flex: 1; text-align: center; }
+.mmyday-ev { display: flex; flex-direction: column; padding: 6px 8px; border-left: 3px solid var(--ev, var(--accent)); border-radius: 4px;
+  background: var(--accent-soft); color: inherit; text-decoration: none; }
+.mmyday-ev.invited { background: none; border-style: dashed; }
+.mmyday-task { gap: 6px; align-items: baseline; flex-wrap: nowrap; }
+.mmyday-task a { color: inherit; min-width: 0; }
+.mmyday-task.done a { text-decoration: line-through; opacity: .6; }
+.mmyday-drop { margin-top: 4px; }
+
+/* CoPilot beside the mail, as Copilot in Outlook (templates/mail.html mcopilot, js/mailai.js): the pane of «Мой день» */
+.mai-title { display: inline-flex; gap: 6px; align-items: center; margin-right: auto; }
+.mai-runs { position: relative; }
+.mai-runs > summary { list-style: none; }
+.mai-runs > summary::-webkit-details-marker { display: none; }
+.mai-runs-pop { position: absolute; z-index: 2; right: 0; top: 100%; width: 260px; max-height: 320px; overflow: auto; padding: 4px;
+  display: flex; flex-direction: column; box-shadow: var(--shadow-pop); }
+.mai-runs-pop button { justify-content: flex-start; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mai-runs-pop button.on { color: var(--accent); background: var(--accent-soft); }
+.mai-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+.mai-me { align-self: flex-end; max-width: 90%; padding: 6px 10px; border-radius: 10px; background: var(--accent-soft); white-space: normal; }
+.mai-bot { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.mai-act { display: flex; flex-direction: column; gap: 4px; }
+.mai-act.write { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.mai-act.write.pending { border-color: var(--accent); }
+.mai-draft { padding: 6px 8px; border-left: 3px solid var(--line); font-size: .92em; max-height: 220px; overflow: auto; }
+.mai-done { color: var(--ok, var(--accent)); }
+.mai-err { color: var(--danger); }
+.mai-quick { display: flex; flex-wrap: wrap; gap: 4px; }
+.mai-form { display: flex; gap: 6px; align-items: flex-end; }
+.mai-form textarea { flex: 1; resize: vertical; min-height: 56px; }
+/* CoPilot of a section (templates/parts/aipane.html, js/aipane.js): the same conversation in a pane on the right over
+   the page; on a wide screen the page makes room for it */
+.aipane { position: fixed; z-index: 30; top: calc(var(--top-h) + 12px); right: 12px; bottom: 12px; width: 340px; overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-pop); }
+.aipane-head { gap: 2px; align-items: center; }
+.aitoggle.on { color: var(--accent); background: var(--accent-soft); }
+@media (min-width: 1280px) { .with-aipane .main { margin-right: 352px; } }
+@media (max-width: 760px) { .aipane { left: 8px; right: 8px; width: auto; } }
+
+/* «Перевести» (web.mailTranslateData): the banner over the letter, its translated text, «Ещё → Перевести», the
+   languages of «Параметры → Перевод» */
+.mtr { flex-wrap: wrap; }
+.mtr-menu > summary { list-style: none; }
+.mtr-form { gap: 6px; padding: 4px 0; }
+.mtr-skip { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 12px; }
+
+/* reactions under a letter between colleagues (web.mailReactData): the chosen ones, the user's own marked, and the
+   picker of «Реакция» */
+.mreacts { flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+.mreacts .mreact { border-radius: 14px; padding: 1px 8px; border: 1px solid var(--border); }
+.mreacts .mreact.on { border-color: var(--accent); background: var(--accent-soft); }
+.mreacts .mact-menu > summary { list-style: none; }
+.mreact-pick { gap: 2px; padding: 4px; }
+.mreact-pick .mreact-one { font-size: 20px; line-height: 1; padding: 4px 6px; }
+.mreact-pick .mreact-one.on { background: var(--accent-soft); }
+
+/* «Иммерсивное средство чтения» of a letter (templates mail.html «mimmersive», static/js/mailread.js) */
+html.mimm-open { overflow: hidden; }
+.mimm { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+  --imm-bg: var(--card); --imm-fg: var(--text); --imm-on: #fff1a8; --imm-on-fg: #000;
+  background: var(--imm-bg); color: var(--imm-fg); }
+.mimm[data-theme="light"] { --imm-bg: #ffffff; --imm-fg: #1b1b1b; }
+.mimm[data-theme="sepia"] { --imm-bg: #f4ecd8; --imm-fg: #5b4636; }
+.mimm[data-theme="dark"] { --imm-bg: #1e1e1e; --imm-fg: #e8e8e8; --imm-on: #5a4a00; --imm-on-fg: #fff; }
+.mimm[data-theme="blue"] { --imm-bg: #dbe9f6; --imm-fg: #14213d; }
+.mimm[data-theme="green"] { --imm-bg: #e3f1df; --imm-fg: #1f3320; }
+.mimm[data-theme="rose"] { --imm-bg: #f8e1e7; --imm-fg: #3d1f28; }
+.mimm[data-theme]:not([data-theme="auto"]) { color-scheme: light; }
+.mimm[data-theme="dark"] { color-scheme: dark; }
+.mimm-bar { gap: 6px; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--imm-fg) 15%, transparent); flex-wrap: wrap; align-items: center; }
+.mimm-bar .grow { flex: 1; }
+.mimm-bar select { width: auto; padding: 2px 6px; }
+.mimm-voice { gap: 4px; align-items: center; }
+.mimm-menu .mbox-pop { right: 0; left: auto; min-width: 260px; display: grid; gap: 8px; color: var(--text); }
+.mimm-menu .mbox-pop label:not(.check) { display: grid; gap: 4px; }
+.mimm-menu input[type=range] { width: 100%; }
+.mimm-themes { gap: 6px; flex-wrap: wrap; }
+.mimm-swatch { width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 2px solid var(--line); font-weight: 600; }
+.mimm-swatch[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.mimm-swatch[data-imm-theme="auto"] { background: var(--card); color: var(--text); }
+.mimm-swatch[data-imm-theme="light"] { background: #fff; color: #1b1b1b; }
+.mimm-swatch[data-imm-theme="sepia"] { background: #f4ecd8; color: #5b4636; }
+.mimm-swatch[data-imm-theme="dark"] { background: #1e1e1e; color: #e8e8e8; }
+.mimm-swatch[data-imm-theme="blue"] { background: #dbe9f6; color: #14213d; }
+.mimm-swatch[data-imm-theme="green"] { background: #e3f1df; color: #1f3320; }
+.mimm-swatch[data-imm-theme="rose"] { background: #f8e1e7; color: #3d1f28; }
+.mimm-scroll { flex: 1; overflow-y: auto; padding: 32px 16px 25vh; outline: none; }
+.mimm-text { margin: 0 auto; max-width: 65ch; font-size: var(--imm-size, 24px); line-height: 1.7; overflow-wrap: anywhere;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.mimm[data-width="narrow"] .mimm-text { max-width: 42ch; }
+.mimm[data-width="wide"] .mimm-text { max-width: 90ch; }
+.mimm[data-font="serif"] .mimm-text { font-family: Georgia, "Times New Roman", serif; }
+.mimm[data-font="comic"] .mimm-text { font-family: "Comic Sans MS", "Comic Neue", "Chalkboard SE", cursive; }
+.mimm[data-font="mono"] .mimm-text { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.mimm.mimm-wide .mimm-text { line-height: 2.2; letter-spacing: .06em; word-spacing: .3em; }
+.mimm-text h1 { font-size: 1.35em; line-height: 1.3; margin: 0 0 .3em; }
+.mimm-text h3 { font-size: 1.15em; margin: 1em 0 .3em; }
+.mimm-text p, .mimm-text ul, .mimm-text blockquote { margin: 0 0 .8em; }
+.mimm-text [data-kind="who"] { font-size: .75em; opacity: .75; margin-bottom: 1.4em; }
+.mimm-text blockquote { padding-left: .8em; border-left: 3px solid color-mix(in srgb, var(--imm-fg) 30%, transparent); opacity: .85; }
+.mimm-text img { display: block; max-width: 100%; height: auto; margin: .6em auto; }
+.mimm-w { cursor: pointer; border-radius: 3px; }
+html:not(.go24-tts) .mimm-w { cursor: auto; }
+.mimm-w.mimm-on { background: var(--imm-on); color: var(--imm-on-fg); box-shadow: 0 0 0 2px var(--imm-on); }
+.mimm-mask { position: absolute; left: 0; right: 0; background: color-mix(in srgb, #000 72%, transparent); pointer-events: none; }
+@media (max-width: 640px) {
+  .mimm-bar { padding: 6px 8px; }
+  .mimm-menu summary span { display: none; }
+  .mimm-scroll { padding: 20px 16px 25vh; }
+}

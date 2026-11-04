@@ -478,6 +478,29 @@ func TestAPI(t *testing.T) {
 		body, _ := io.ReadAll(res.Body)
 		return string(body)
 	}
+	// «Календарь» of tasks: a drop onto a day moves the deadline there, keeping its time; the task is on that day
+	day := time.Now().AddDate(0, 0, 10).Format("2006-01-02")
+	if code, out := post("/t/API-1/date", url.Values{"day": {day}}); code != http.StatusOK || out["deadline"] == "" {
+		t.Fatalf("calendar move: %d %v", code, out)
+	}
+	var due time.Time
+	if err := pool.QueryRow(ctx, `SELECT deadline FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.key = 'API' AND t.number = 1`).Scan(&due); err != nil ||
+		due.Local().Format("2006-01-02") != day {
+		t.Fatalf("the deadline after the move: %v %v, want %s", due, err, day)
+	}
+	if code, _ := post("/t/API-1/date", url.Values{"day": {"someday"}}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a move to no day: %d", code)
+	}
+	for _, view := range []string{"month", "week", "day"} { // API-1 is completed: on its day, not to be dragged
+		body := page(cookie, "/tasks/calendar?view="+view+"&date="+day)
+		if !strings.Contains(body, `data-day="`+day+`"`) || !strings.Contains(body, `class="calitem task done" href="/t/API-1" data-key="API-1"
+        title="API-1 Переименована · Крайний срок`) {
+			t.Fatalf("calendar %s: no task on its day", view)
+		}
+	}
+	if body := page(cookie, "/tasks/calendar?view=day&date=2020-01-01"); strings.Contains(body, `data-key="API-1"`) {
+		t.Fatal("calendar: a task on a day it is not on")
+	}
 	if body := page(admin, "/bp?tab=all&status=stopped"); !strings.Contains(body, "/bp/i/"+running) || strings.Contains(body, "/bp/i/"+mine[0].InstanceID) {
 		t.Fatal("all the processes, the stopped ones: wrong list")
 	}
@@ -506,6 +529,46 @@ func TestAPI(t *testing.T) {
 	}
 	if _, err := srv.BP.Instance(ctx, uid, running); !errors.Is(err, bp.ErrNotFound) {
 		t.Fatalf("deleted process: %v", err)
+	}
+	// «Задания»: the group actions on the ticked ones, then the completed ones and the search; an administrator opens anyone's
+	form(cookie, "/bp/start/"+tpl, url.Values{"f_sum": {"801"}})
+	form(cookie, "/bp/start/"+tpl, url.Values{"f_sum": {"802"}})
+	waiting, _ := srv.BP.MyApprovals(ctx, uid)
+	if len(waiting) != 2 {
+		t.Fatalf("waiting: %+v", waiting)
+	}
+	ticked := url.Values{"task": {waiting[0].ID, waiting[1].ID}, "back": {"/bp?tab=approvals"}}
+	if body := page(cookie, "/bp?tab=approvals"); !strings.Contains(body, `value="`+waiting[1].ID+`" form="bpbulk"`) || !strings.Contains(body, `id="bpbulk"`) {
+		t.Fatal("«Задания»: no boxes to tick or no group actions")
+	}
+	ticked.Set("op", "seen")
+	if got, _ := url.QueryUnescape(form(cookie, "/bp/approvals/bulk", ticked)); !strings.Contains(got, "0 из 2") {
+		t.Fatalf("«Ознакомлен» for approvals: %s", got)
+	}
+	ticked.Set("op", "approve")
+	ticked.Set("comment", "Все разом")
+	if got, _ := url.QueryUnescape(form(cookie, "/bp/approvals/bulk", ticked)); !strings.Contains(got, "2 из 2") {
+		t.Fatalf("approve the ticked: %s", got)
+	}
+	if mine, _ := srv.BP.MyApprovals(ctx, uid); len(mine) != 0 {
+		t.Fatalf("still waiting: %+v", mine)
+	}
+	done, _ := srv.BP.UserApprovals(ctx, bp.TaskFilter{UserID: uid, State: "done"})
+	if len(done) != 3 || done[0].Decision != "approve" || done[0].Comment != "Все разом" || done[0].DecidedAt == nil || done[2].Text != "Оплатить 500?" {
+		t.Fatalf("the completed ones: %+v", done)
+	}
+	if found, _ := srv.BP.UserApprovals(ctx, bp.TaskFilter{UserID: uid, State: "all", Query: "802"}); len(found) != 1 {
+		t.Fatalf("search: %+v", found)
+	}
+	if body := page(cookie, "/bp?tab=approvals&state=done&q=801"); !strings.Contains(body, "Оплатить 801?") || strings.Contains(body, "Оплатить 802?") ||
+		!strings.Contains(body, "«Все разом»") {
+		t.Fatal("«Выполненные» with the search: wrong list")
+	}
+	if body := page(admin, "/bp?tab=approvals&state=all&user="+uid); !strings.Contains(body, "Оплатить 802?") {
+		t.Fatal("an administrator, the employee's tasks: not there")
+	}
+	if body := page(cookie, "/bp?tab=approvals&state=all&user="+colleague); !strings.Contains(body, "Оплатить 802?") {
+		t.Fatal("a non-administrator's ?user= is not their own list")
 	}
 	// «Стандартные шаблоны» with the accountant, once; «Внести в график отсутствий» needs the form's dates
 	if body := page(admin, "/bp/templates"); !strings.Contains(body, `action="/bp/standard"`) {
@@ -549,6 +612,32 @@ func TestAPI(t *testing.T) {
 	if vt, _ := srv.BP.Template(ctx, vacation); len(vt.Steps) != 7 || vt.Steps[5].Kind != "loop" || vt.Steps[6].Template != tpl || vt.Steps[6].Text == "" {
 		t.Fatalf("the loop and the start: %+v", vt.Steps[5:])
 	}
+	// statuses: «Команды» added, «Установить статус» put before it — the buttons' steps move down; the starter presses one
+	states := strings.TrimPrefix(form(admin, "/bp/templates/new", url.Values{"op": {"meta"}, "name": {"Статусы"}, "active": {"on"}}), "/bp/templates/")
+	if got := form(admin, "/bp/templates/"+states, url.Values{"op": {"add"}, "kind": {"commands"}, "to": {"starter"}, "text": {"Что дальше?"},
+		"commands": {"Готово\nЕщё раз = 1"}}); got != "/bp/templates/"+states {
+		t.Fatalf("add commands: %s", got)
+	}
+	if got := form(admin, "/bp/templates/"+states, url.Values{"op": {"add"}, "kind": {"status"}, "text": {"Черновик"}, "at": {"1"}}); got != "/bp/templates/"+states {
+		t.Fatalf("add a status: %s", got)
+	}
+	if vt, _ := srv.BP.Template(ctx, states); len(vt.Steps) != 3 || vt.Steps[0].Kind != "status" || len(vt.Steps[2].Commands) != 2 ||
+		vt.Steps[2].Commands[1].Goto != 2 || vt.Steps[2].Commands[0].Goto != 0 {
+		t.Fatalf("the steps with statuses: %+v", vt.Steps)
+	}
+	if body := page(admin, "/bp/templates/"+states); !strings.Contains(body, "«Ещё раз» → ") {
+		t.Fatal("the commands are not in the constructor")
+	}
+	sx := strings.TrimPrefix(form(cookie, "/bp/start/"+states, nil), "/bp/i/")
+	if body := page(cookie, "/bp/i/"+sx); !strings.Contains(body, `class="pill bplabel"`) || !strings.Contains(body, ">Готово</button>") {
+		t.Fatal("no status or buttons on the process's page")
+	}
+	if got := form(cookie, "/bp/i/"+sx+"/command", url.Values{"step": {"2"}, "n": {"0"}}); got != "/bp/i/"+sx {
+		t.Fatalf("press: %s", got)
+	}
+	if x, _ := srv.BP.Instance(ctx, uid, sx); x.Status != "done" || x.Label != "Черновик" {
+		t.Fatalf("pressed: %s %q", x.Status, x.Label)
+	}
 	// the feed: «Бизнес-процессы» of the composer; a process started is a post with its state and the decision in it
 	if body := page(cookie, "/feed"); !strings.Contains(body, `href="/bp/start/`+vacation+`"`) {
 		t.Fatal("no processes in the composer")
@@ -591,7 +680,7 @@ func TestAPI(t *testing.T) {
 		dt.Steps[3].To != "client" || dt.Steps[3].Subject != "Счёт" || dt.Steps[3].From != "responsible" {
 		t.Fatalf("the steps: %+v %v", dt.Steps, err)
 	}
-	if body := page(admin, "/bp/templates/"+dealTpl); !strings.Contains(body, "<code>amount</code> = «100»") || !strings.Contains(body, `data-for="update create"`) {
+	if body := page(admin, "/bp/templates/"+dealTpl); !strings.Contains(body, "<code>amount</code> = «100»") || !strings.Contains(body, `data-for="update create crmupdate crmcopy"`) {
 		t.Fatal("the steps are not in the constructor")
 	}
 	// «Параллельное выполнение» inserted before the branches' steps: the branches run at once, the process waits on both

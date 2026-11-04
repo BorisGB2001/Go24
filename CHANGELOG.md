@@ -1,347 +1,671 @@
-# Изменения go24
+Русская версия: [CHANGELOG.ru.md](CHANGELOG.ru.md)
 
-Версии — `MAJOR.MINOR.PATCH` (файл `VERSION`). Пока go24 в разработке, MAJOR = 0: крупное (новый раздел, заметный набор
-функций, изменения установки) — MINOR, исправления — PATCH. Каждая версия выкладывается на GitHub с тегом `vX.Y.Z`.
+# go24 Changelog
+
+Versions follow `MAJOR.MINOR.PATCH` (the `VERSION` file). While go24 is in development, MAJOR = 0: major changes (a new section, a significant feature set, installation changes) are MINOR, bug fixes are PATCH. Each version is tagged on GitHub as `vX.Y.Z`.
+
+## 0.5.7 — 2026-11-04
+
+- Phone: the top bar keeps only the workday icon, so the search has room
+- Telephony: CoPilot conversation summary
+- Messenger: chat «Tasks» and «Meetings» in the chat panel
+- REST compatible with the portal: the core
+- make test-db: -timeout 60m (internal/web integration tests take longer than the 10 minute default)
+- Docs: English install and update guides; Russian originals moved to docs/ru
+- Groups: subjects and keywords
+- CRM: triggers, step 3
+- Mail: «My Day» pane, as in Outlook
+- Workflows: list element actions, like the «Lists» group of the portal designer
+- Sign: send PDF, pictures, DOC/ODT/RTF for signing, not only Word
+- Sign: gofmt
+- Mail: «My Day»
+- Open lines: invite a colleague into a dialogue
+- Open lines: invited-colleagues migration renumbered to 617
+- Company structure: a department's «Chats and channels»
+- Telephony: CoPilot call assessment by scripts
+- Messenger: CoPilot, a chat with AI
+- Messenger: CoPilot migration renumbered to 620
+- Messenger: CoPilot tells a failure as a notice, kept out of the conversation
+- REST compatible with the portal: crm.deal, crm.lead, crm.contact, crm.company
+- docs: English architecture and distributed docs, Russian originals in docs/ru
+- Sign: signing deadline
+- CRM robot «Send for signing»
+- Messenger: comments on a channel's posts
+- Groups: «Group features»
+- Groups: departments in a group
+- Groups: renumber migrations 621/622 → 644/645 (taken on main)
+- Telephony: «Current calls»
+- Calls: CoPilot «Meeting summary» of a recorded call
+- Telephony: CoPilot fills the client's CRM card from the conversation
+- Company structure: «Права доступа»
+- Company structure: JS test for drag and drop limited by «Права доступа»
+- Employee profile: «Интересы»
+- Absences: «Типы отсутствий»
+- Mail: CoPilot beside the mail, as Copilot in Outlook
+- Mail: «Translate» a letter, as in Outlook
+- Mail: reactions to colleagues' letters, as in Outlook
+- Messenger: select several messages
+- Messenger: «Attach» menu
+- make test: run go vet and go test on agent (srv-pve3) to spare go24
+- Messenger: «Attach» menu
+- Workflows with statuses state-machine processes
+- Workflows: CRM steps
+- Workflows: Drive steps
+- Mail: «Conditional formatting», as in Outlook
+- CRM: triggers, step 4
+- CRM: triggers, step 5
+- CRM: «CRM mode»
+- CRM: renumber the «Link followed» trigger migration to 632
+- Open lines: CoPilot
+- Company: «eNPS» employee loyalty survey
+- REST compatible with the portal: tasks.task.*, task.commentitem.*, task.checklistitem.*, department.get
+- REST compatible with the portal: crm.status, crm.dealcategory, crm.category, crm.currency, crm.enum, crm.activity, crm.timeline.comment
+- REST compatible with the portal: events, event.get/bind/unbind, placement.* by name; events posted posts them
+- REST compatible with the portal: im.notify.*, im.message.*, im.dialog/chat.get, im.chat.user.list, im.dialog.messages.get
+- Messenger: the company's «General chat»
+- Messenger: general chat
+- REST compatible with the portal: workflows
+- REST bizproc: rename helpers that collided with the CRM reference REST
+- CRM: SMS to the client
+- CRM: «Sales generator»
+- REST compatible with the portal: user.fields/search/add/update, department.fields/add/update/delete
+- Mail: letter «Sensitivity»
+- Mail: «Подсказки по почте» while a letter is written, as Outlook's MailTips
+- Mail: «Dictate» and «Read aloud», as in Outlook
+- Mail: «Suggested replies», as in Outlook
+- CRM: «Activities» and «Calendar» views of deals, leads and smart processes
+- REST compatible with the portal: calendar
+- Worktime: «Time control»
+- Worktime: violation notifications to the manager
+- Workday: «Events» of the day in the working day window
+- Worktime: «Access permissions»
+- REST compatible with the portal: drive
+- Mail: «Проверка читаемости», as Outlook's Accessibility Checker
+- Mail: «Clean Up Conversation» and «Clean Up Folder», as Outlook's Clean Up
+- Mail: the editor's «Insert» and «Format Text», as in Outlook
+- docs: English i18n, theming, selfhosted, import-legacy; Russian originals in docs/ru
+- docs: English api-research and portal-tasks-ui, Russian originals in docs/ru
+- docs: English streams.md, Russian original in docs/ru
+- internal/config: unit tests
+- internal/auth: unit tests
+- internal/db: unit tests
+- internal/storage: add unit tests
+- internal/portalrest: unit tests
+- internal/legacy: unit tests
+- internal/hooks: unit tests
+- internal/notifyout: unit tests
+- internal/matrixsync: unit tests
+- internal/apps: add comprehensive unit tests
+- internal/sign: unit tests
+- docs: English CHANGELOG, Russian original in CHANGELOG.ru.md
+- docs: English n8n.md, Russian original in docs/ru
+- internal/backup: unit tests
+- internal/booking: unit tests
+- internal/calendar: unit tests
+- internal/crm: unit tests
+- internal/drive: unit tests
+- internal/feed: unit tests
+- internal/marketing: unit tests
+- CRM: «Wait» in the card's history
+- CRM: «Contact center»
+- CRM: «Copy» a deal, lead, contact, company or smart process item
+- CRM: «Payment systems»
+- Worktime: «Time clock terminal».Time
+- Groups: «Access to tasks»
+- Tasks: CoPilot
+- Tasks: nested checklist items and the people of an item
+- Tasks: «Time tracking»
+- Mail: «Nudges» about messages waiting for an answer, as in Outlook
+- Workflows: «Send SMS», working day control and status, random string, rand() in formulas
+- Workflows: roadmap line for the SMS, working day and random string steps
+- Workflows: approval in full
+- Workflows: roadmap line for the approval in full
+- Workflows: global constants and variables
+- Workflows: multiple fields and the «Iterator» step
+- Open lines: MAX channel
+- Open lines: VK channel
+- Open lines: «Callback» in the line's widget
+- Open lines: Viber channel
+- Open lines: Odnoklassniki channel
+- Open lines: Avito channel
+- Open lines: WhatsApp channel
+- Open lines: renumber the VK channel migration after main's 731
+- CRM: «Deal scoring»
+- Notifications in Viber: the company's Viber bot, webhook channels
+- Collabs: «Chat with CoPilot», as «Chat with LegacyGPT» projects
+- Messenger: «Delete chat»
+- Messenger: «Show the history to new members» in group chats and channels
+- Notifications: search and filter (section, author, period, unread) and deleting a notification
+- Notifications by e-mail «By e-mail» notification column
+- Notifications: answer buttons confirming notifications
+- REST compatible with the portal: messenger chats and reading
+- notifyout: the channel order test knows e-mail and Viber (GO24DEV-891, GO24DEV-860)
+- REST compatible with the portal: messenger part 3
+- REST compatible with the portal: messenger part 4
+- Mail: «Recover deleted items», as in Outlook
+- REST compatible with the portal: telephony
+- Groups: «Copy» a group or project
+- Open lines: AI bot on the knowledge base
+- Roadmap: open lines AI bot on the knowledge base
+- Groups: «Change owner» and «Delete group»
+- Groups: the page test renders «Delete group»
+- Groups: deleting a group gives up after 10 s instead of hanging on the messenger's status log
+- Sign: blocks on the document's pages
+- Sign: fields the signer fills in on the document's pages
+- Document generator: templates of smart processes
+- Sign: the client signs with a code by SMS
+- Documents: «With stamps and signatures» of a card's document, as stampsEnabled
+- Sign: signing with a qualified signature (КЭП) through CryptoPro plug-in
+- Sign: the SMS test expects the escaped «+» of the rendered page
+- Documents: «Send to the client» of a card's document by SMS and into the open line chat
+- Tasks: CoPilot in the task description
+- REST compatible with the portal: chat bots
+- im.dialog.messages.get: a chat bot among the authors
+- Mail: message safety, as in Outlook
+- CRM: «Chat» of a card
+- REST compatible with the portal: open lines
+- REST compatible with the portal: CRM products and product rows
+- Sign: «Safe» of HR documents
+- Mail: «Assign policy», as in Outlook
+- Sign: several files sent for signing as one document
+- Open lines: «Live chat» by a link
+- REST compatible with the portal: workgroups
+- Mail: «Scheduling poll», as in Outlook
+- socialnetwork.api.workgroup.list: dialogId
+- Mail: the scheduling poll's first times on working days, its page fits a phone
+- Workflows: «Commands» with a time to wait
+- Workflows: application actions in the designer
+- Workflows: «Edit» a step of a template
+- Workflows: several conditions with «and» / «or» in «Condition» and «Loop»
+- Open lines: «Detailed statistics»
+- Open lines: shorter headers of the times in «Detailed statistics»
+- deploy: max_locks_per_transaction 1024
+- Mail: «Immersive Reader», as in Outlook
+- Mail: the Immersive Reader's line focus starts at the first line
+- Sign: the client's link and code in the open line chat sending by messengers
+- Changelog: mail «Immersive Reader»
+- REST compatible with the portal: feed and working time
+- REST compatible with the portal: messenger part 6
+- Workflows: «Pause» in minutes, hours or days and in working time only
+- CRM: access rights
+- CRM: the robot «Send SMS» could be saved again
+- CRM: «Card view» of the kanban
+- Open lines: the line's time zone and holidays in «Working hours»
+- Workflows: the pause's length shown once in the list of steps
+- Employees: «Salary and vacation»
+- Company: «Photo gallery»
+- Absences: «Connect to Outlook»
+- REST compatible with the portal: chat bots 2.0, part 1
+- Mail: «Favorite people», as in Outlook
+- Mail: the letter fragment without Favorites renders the «Add sender to Favorites» item
+- Menu: fix the «Payslips» item in menu-entry
+- Calls: «Видеоконференции»
+- Telephony: «Call back»
+- Telephony: «Call tracking»
+- Telephony: «Предупреждать о записи разговора» on a line
+- Telephony: «Recorded calls» on the company drive
+- Telephony: «Sales scripts» in the call card
+- TestPhone: the fake Asterisk answers only the SIP WebSocket
+- Telephony: «Call list» from the CRM list
+- TestPagesRender: the call list pages
+- docs/roadmap.md: fix the telephony entry after the rebase onto main
+- Tests: the pages' render test draws the whole left menu, so a wrong field in menu-entry fails the test
+- REST compatible with the portal: chat bots 2.0, part 2
+- Tasks: files in checklist items
+- Tasks: checklist item files migration renumbered to 900
+- TestChecklistFilesHTTP: an auditor and a task's attachment as a drive file are refused with 403
+- Workflows: CRM steps «Change pipeline», «Copy deal», «Change observers», «Complete activities»
+- Workflows: tests of the new CRM steps in the designer's form and the list of steps
+- Signing: search and filter of the list and a «Kanban» view by status
+- Mail: «Mail merge», as in Outlook
+- Tasks: the kanban card shows a preview of the task's first picture, its tags and «Muted»; the file counter leaves out files of checklist items
+- Roadmap: the kanban card with a picture preview and tags
+- Telephony: call reports
+- Telephony: the heat map's rows of one height, with calls or without
+- REST compatible with the portal: chat bots 2.0 called by an incoming webhook with botToken
+- REST compatible with the portal: imbot.v2.File.upload/download and im.v2.File.upload/download
+- REST compatible with the portal: imbot.v2.Chat.TextField.enabled
+- Chat bots 2.0: the context of a bot's chat
+- REST compatible with the portal: im.v2.Event.subscribe/unsubscribe/get
+- REST compatible with the portal: crm.item.* for leads, deals, contacts, companies and smart processes, crm.type.* numbered from 128, crm.category.* of a smart process
+- REST compatible with the portal: DIALOG_ID may be a chat bot's number
+- Chat bots 2.0: ONIMBOTV2MESSAGEADD of a file gives params.FILE_ID and FILE_NAME
+- Worktime: «Location» of the working day, as the portal mobile time tracking
+- Workflows: CRM steps «Change responsible» and «Add product»
+- REST compatible with the portal: the CRM's lists and pipelines changed
+- Workflows: gofmt of the designer's page
+- Signing: access rights by roles, as «Signing → Access rights»
+- Mail: «Do not forward», as Outlook's «Permissions → Do Not Forward»
+- Mail: the «Do not forward» bar keeps its lock beside the text
+- Telephony: picking up a colleague's call, as in an office PBX
+- Tasks: the «Time spent» report
+- Messenger: widgets of applications chat widgets
+- Telephony: an external line's working hours
+- Messenger: the applications of IM_NAVIGATION in their own row under the messenger's header, with their titles
+- REST compatible with the portal: «Time control» and office networks
+- Workflows: smart process steps
+- REST compatible with the portal: the document generator
+- Tasks: «Group by projects» in task lists
+- REST compatible with the portal: timeman.timecontrol.reports.settings.get gives a head's department when they are not a member of it; timezone_offset of reports.get is the current one
+- Open lines: «Automatic messages» to the client after a dialogue is closed
+- REST compatible with the portal: the data of applications
+- Migration of the application storage numbered 957, after main's 947
+- Mail: «Delivery options», as in Outlook
+- Telephony: «Export to Excel» in the call log
+- REST compatible with the portal: CRM user fields UF_CRM_* in crm.*.fields/get/list/add/update, crm.*.userfield.list/get/add/update/delete, crm.userfield.types/fields/enumeration.fields; contacts of a deal and a company, a contact's company
+- CRM: duplicate control while a form is filled
+- Fix the test-js Makefile merge: keep the workgeo and imapps tests next to crmdupcheck
+- Notifications: push to the phone, as in the portal mobile app
+- Tasks: the «Calendar» view
+- Document generator: access rights by roles
+- Notifications: push «Test» tells when every device is unsubscribed
+- AI: the agent of tasks
+- REST compatible with the portal: the own fields of employees' profiles
+- Open lines: applications' own channels
+- Workflows: «Tasks» task list
+- Mail: personal contacts on the phone and in Outlook
+- Tasks: REST compatible with the portal, step 2
+- Telephony: «Whom not to ring» queues
+- Document generator: «Active», «Sort» and «With stamps and signatures» of a template, as ACTIVE, SORT and WITH_STAMPS
+- Notifications in WhatsApp: the company's WhatsApp Business number
+- Employees: the list as the portal grid
+- Employees: the group actions' panel finds its boxes
+- CRM: «Field visibility»
+- Mail: «Send to the knowledge base», as Outlook's «Send to OneNote»
+- Workflows: the template's «Scheme» graphical designer
+- Tasks: REST compatible with the portal, step 3
+- AI: usage and limits
+- Open lines: clients' voice messages
+- DB: migrations from 1000 apply in numeric order
+- Open lines: roadmap line for clients' voice messages
+- Open lines: REST compatible with the portal, step 2
+- Messenger: chat messages in Telegram pushes them to the phone
+- AI: «CoPilot settings»
+- Notification settings: the «Chat messages» row only when a linked chat takes them
+- Workflows: condition comparisons
+- Telephony: a Piper speech synthesis image with Russian and English voices, a first step of «Speak a text»
+- Telephony: «Speak a text», as speech synthesis
+- Work schedules: «Working day report» and «Devices for marking»
+- CRM: the robots «Convert the lead», «Create based on» and «Request additional information»
+- Telephony: TestPagesRender checks «Speak a text» beside the sounds of telephony and of «Information call»
+- Document generator: template fields
+- Sign-in returns to the page, not to the unread counter's event stream: only page navigations are remembered while signed out
+
+## 0.5.6 — 2026-10-28
+
+- Phone: the top bar keeps only the workday icon, so the search has room
+- Telephony: CoPilot conversation summary
+- Messenger: chat «Tasks» and «Meetings» in the chat panel
+- REST compatible with the portal: the core
+- make test-db: -timeout 60m (internal/web integration tests take longer than the 10 minute default)
+- Docs: English install and update guides; Russian originals moved to docs/ru
+- Groups: subjects and keywords
+- CRM: triggers, step 3
+- Mail: «My Day» pane, as in Outlook
+- Mail: «Recover deleted items», as in Outlook — letters deleted for good from Deleted Items or Junk are kept for 30 days and can be put back
+- Mail: message safety, as in Outlook — «Report phishing» and «Report junk» (a copy goes to the company's reporting address, administrators see the list), «?» and a warning when the server could not verify the sender (SPF, DKIM, DMARC), «via» another domain, «You don't often get email from…» for a first letter, lookalike domains
+- Mail: «Assign policy», as in Outlook — retention policies of folders and letters (delete after a week … 5 years, archive after 1 or 5 years, never delete), the policy and its expiry in the reading pane, the worker moves due letters hourly; REST `/api/v1/mail/folders|letters/{id}/policy`
+- Sign: several files sent for signing at once — scanned pages and other files are joined into one PDF document in the order chosen (pictures as pages, PDF as is, Word and other office documents through the document server); REST `POST /api/v1/sign` takes several `file` fields
+- Open lines: «Live chat» by a link — each line has a public page `/online/{line}` with the chat on the whole screen (messages, files, contact, callback, rating, consent — as in the widget), the link and its QR code (PNG) in the widgets' settings, for letters, social networks and business cards
+- Mail: «Scheduling poll», as in Outlook — a few times of a meeting offered in a letter (the busy colleagues shown, «Suggest times» when all are free), the recipients answer «Yes / Maybe / No» by the link without signing in, the organizer is told of each vote and sees them all in «Scheduling polls»; «Schedule» — or by itself when everyone agreed — makes the meeting with go24's employees invited and the others by mail; REST `/api/v1/mail/polls`
+- Mail: «Immersive Reader», as in Outlook — a letter over the whole page as large calm text: text size, wider spacing, font, column width, background (sepia, dark and others), line focus on one, three or five lines; reading aloud highlights the word spoken, a click on a word reads from it; the preferences stay in the browser
+- Employees: «Salary and vacation» — the vacation balance of the year in the profile and monthly payslips uploaded by HR
+- Company: «Photo gallery» — albums with access rights, photo upload, slideshow, likes and comments; REST `/api/v1/gallery`
+- Absences: «Connect to Outlook» — a secret iCalendar link to the absence chart of the company or a department for Outlook, Google Calendar and phones
+- Mail: «Favorite people», as in Outlook — «Add sender to Favorites» in a letter's «…» menu puts the person into the folder pane's «Favorites» (avatar, the name of the latest letter, unread count); the person's folder holds the letters from that address in all folders but Deleted Items and Junk; REST — `folder=person:e-mail` in `GET /api/v1/mail/messages` (GO24DEV-956)
+- REST compatible with the portal: chat bots 2.0 — `imbot.v2.*`: bots with events taken by `Event.get` or posted to their webhook, messages, commands, the bot's chats, reading, the messages around one, reactions and `ONIMBOTV2REACTIONCHANGE`
+- Mail: «Mail merge», as in Outlook — the compose window's «Options → Mail merge» sends each recipient in «To» a separate letter; the fields {First name}, {Middle name}, {Last name}, {Full name}, {Company}, {Job title}, {Email} in the subject and text take the recipient's data from the employee's profile, personal contacts, the CRM or the name in the address; «Insert field» and «Preview» of each recipient's letter; up to 500 recipients, sent in the background with «Undo» and «Send later»; after a failure the draft keeps how many it went to and, sent again, goes only to the others (GO24DEV-959)
+- Telephony: call reports — in «Call statistics»: missed calls called back or not (a later conversation with the number, either way), the average time to call back and the numbers still waiting with their client; the load by weekday and hour; every total against the period before; REST `missed`, `hours`, `previous` in `GET /api/v1/telephony/stats` (GO24DEV-960)
+- REST compatible with the portal: the CRM universal methods `crm.item.*` (fields, list, get, add, update, delete) for leads, deals, contacts, companies and smart processes, in camelCase with numbers as numbers and phones, e-mails and websites as `fm`; smart processes `crm.type.*` numbered from 128, with their pipelines and `DT…` stages; `crm.category.*` of a smart process (GO24DEV-952)
+- REST compatible with the portal: the CRM's lists and pipelines changed — `crm.status.add/update/delete` (stages of leads, deal pipelines and smart processes at their `SORT`, dictionary items), `crm.dealcategory.add/update/delete`, `crm.category.add/update/delete/fields`, by the administrators; `crm.stagehistory.list` — how deals, leads and smart processes' cards went through the stages, written whatever moved them (GO24DEV-976)
+- Telephony: picking up a colleague's call, as in an office PBX — *8 or «Pick up» in the softphone takes a call ringing in one's department or queue group, **101 — the call of the employee 101, «Pick up» in «Current calls»; the call log shows the one who picked it up; a switch in «Settings → Telephony»; REST `POST /api/v1/telephony/active/pick` (GO24DEV-975)
+- Tasks: «Group by projects» in task lists — the gear of a list turns it on for the user: the tasks of each project go together under its header (the name and the number of its tasks in the list), the arrow by a header folds the project; sorting and subtasks under their parent work inside a project, a list of one project has no headers (GO24DEV-983)
+- Tasks: the «Calendar» view — the tasks of one's roles on the days of a month, a week or a day, from the planned start to the deadline; a task dragged onto another day gets its deadline there at the same time, the number of a day creates a task due that day; overdue and completed tasks are marked (GO24DEV-988)
+- Tasks: the «Time spent» report — «Tasks → Time spent»: the time each employee logged on tasks in a month or a chosen period (tasks, time, «Over plan» — tasks whose whole logged time passed the planned effort, the total), narrowed to a project and a department with its sub-departments; an employee's line opens their tasks with the time, the task total and the planned effort; «Export to Excel». One sees oneself, a department head (or deputy) — the people of their departments, the administrator — everyone (GO24DEV-971)
+- Telephony: an external line's working hours — its own time zone (go24's by default) and holidays («31.12» every year, «31.12.2026» once, «From the company's work calendar»); on a holiday its calls go as out of the working hours, and «Request a call» waits (GO24DEV-981)
+- Telephony: «Export to Excel» in the call log — all the calls of the filter (not only the first page) by the same rights: date, type, employees and numbers, line, status, duration, CRM client, transfer, comment, client's rating, script score; the «Line» filter (go24's and outside PBX's lines); REST `line` in `GET /api/v1/telephony/calls` (GO24DEV-986)
+- Telephony: «Whom not to ring» queues — the clients' calls (lines, queue groups, voice menus, calls back, «first the responsible one») pass by the employees whose status is «Do not disturb», who are absent by the absence chart today and, when chosen, who have not started the working day (or are on a break, or finished it): their phones do not ring, the call is not forwarded to their mobile; colleagues, transfers, picking up and listening ring as before. «Settings → Telephony» has the switches and shows why an employee is passed by now, the softphone tells the employee; REST `skip` in `GET /api/v1/telephony/users` (GO24DEV-993)
+- REST compatible with the portal: the document generator — `crm.documentgenerator.template.*` (templates of deals, leads, contacts, companies and smart processes as base64 DOCX, «Available to» as access codes, the placeholders with a card's values), `crm.documentgenerator.document.*` (make, make again with other values, fields, public link, the DOCX and PDF by signed links), `crm.documentgenerator.numerator.*`; templates, documents and numerators get numbers (GO24DEV-980)
+- Mail: «Delivery options», as in Outlook — «Direct replies to» (Reply-To) and «Expires after» (Expiry-Date) in the compose window's options; «Reply» and «Reply all» of a letter with Reply-To go to its addresses; a letter past its expiry is struck through in the list, with a bar over it in the reading pane; REST `replies_to`, `expires_at` of a letter (GO24DEV-982)
+- Mail: personal contacts on the phone and in Outlook, as Outlook's contacts — a CardDAV address book «go24 personal contacts» beside the employees (an API key with «Mail»: read to see it, write to change it): iPhone and Mac, Android (DAVx⁵), Thunderbird, Outlook (CalDav Synchronizer) sync both ways — contacts added, changed and deleted on the phone come to go24 and back; a phone's card is kept whole (photo, more phones and addresses stay when it is changed in go24); a contact may have only a phone (kept, never offered as a recipient); «Import» (.vcf of a phone, Outlook, Google, iCloud; Outlook and Google .csv — the same address is updated), «Export to vCard» and «On the phone» on the address book's «Personal contacts» tab (GO24DEV-991)
+- REST compatible with the portal: CRM user fields `UF_CRM_*` in `crm.*.fields/get/list/add/update`, `crm.*.userfield.list/get/add/update/delete`, `crm.userfield.types/fields/enumeration.fields`; the contacts of a deal and a company and a contact's companies — `crm.deal.contact.*`, `crm.contact.company.*`, `crm.company.contact.*`; `crm.duplicate.findbycomm`, `crm.multifield.fields` (GO24DEV-957)
+- CRM: duplicate control while typing — the form of a new lead, contact or company, a card being changed and its requisites show «Matches found: N» with the cards of the same phone, e-mail, name, company title or TIN (a lead — contacts and companies too): type, title, responsible and what matched, each opening in a new tab; only the cards the employee may read (GO24DEV-970)
+- Notifications: push to the phone, as in the portal mobile app — the «Push to the phone» channel in «Settings → Notification bots» (go24 makes its VAPID keys itself); an employee turns push on on each device in «Notification settings» and picks the kinds in its column; go24-worker sends each new notification encrypted for the device (Web Push, RFC 8291/8292), the installed go24 shows it with the portal's name even when closed and a tap opens it; the device list with «Test» and «Turn off», a device its push service forgot is dropped (GO24DEV-743)
+- Document generator: access rights by roles — «Document generator → Access rights»: changing templates, viewing documents, changing documents, changing settings (My company, stamp and facsimiles, numerators); members are employees and departments; CRM cards, invoices and the REST API follow them; REST `documentgenerator.role.*` (GO24DEV-987)
+- Document generator: «Active», «Sort» and «With stamps and signatures» of a template, as ACTIVE, SORT and WITH_STAMPS — an inactive template stays on the templates page but is not offered in CRM cards, invoices, robots, business processes and HR documents, and makes no documents; the sort orders the lists; «With stamps» is the default of new documents by it; who changed it and when; REST `active`, `sort`, `with_stamps`, `name`, and `active`, `sort`, `withStamps`, `createdBy`, `updatedBy` in `crm.documentgenerator.template.*` (GO24DEV-994)
+- REST compatible with the portal: the own fields of employees' profiles `UF_USR_*` in `user.get`, `user.current`, `user.search`, `user.add` and `user.update`; `user.userfield.list/get/add/update/delete`
+- CRM: «Field visibility» — an own field of deals, leads, contacts and companies can be shown only to the chosen employees and departments (with the ones below; «Settings → fields», the «Visibility» column); the others' card, form, list columns, kanban tiles, documents and REST (`crm.*.get/list`, `crm.*.userfield.*`) leave it out, saving the card keeps its value, a hidden required field is not asked; administrators see every field (GO24DEV-992)
+- Messenger: chat messages in Telegram pushes them to the phone — the new unread messages of an employee's private and group chats (and threads) come to their linked chat with the company's bot while they are not in go24 (no page seen for 3 minutes); muted chats and messages read meanwhile do not; «Chat messages» is a row of the notification settings, turned off by channel; a reply to such a message in Telegram is posted into the go24 chat (its thread) as the employee's (GO24DEV-1009)
+- Telephony: «Speak a text», as speech synthesis — beside each sound (a line's voicemail greeting, the invitation to rate the conversation, the notice of recording, a voice menu's greeting, a queue's music, the sound of the robot «Information call») a text can be spoken by go24's own Piper voices (four Russian, two English) at a chosen rate instead of uploading a WAV: listen to it and save the form; works offline; REST `GET /api/v1/telephony/tts` (the voices) and `POST /api/v1/telephony/tts` `{text, voice, rate}` (the WAV) (GO24DEV-1002)
+- Work schedules: «Working day report» and «Devices for marking» — a schedule asks the report on finishing the day as optional, required or not at all, and allows marking the day only from the chosen devices (the browser, a time terminal, apps by REST); the working day window, the terminal and REST follow it, `report_req` and `devices` in `/api/v1/worktime/schedules/{id}`, `UF_TM_REPORT_REQ` of `timeman.settings` and `ALLOWED_DEVICES` of `timeman.schedule.get`
+- CRM: the robots «Convert the lead», «Create based on» and «Request additional information» — a lead at the stage is converted as the «Convert» dialog offers (the deal in the chosen pipeline); a deal, a smart process item or a lead is made of the card in the chosen stage with its title (or the robot's), amount, client and responsible, both cards refer to each other in the history; a request asks an employee to fill fields of the card (a notification and a block over the card), the stage's next robots wait until they are filled (GO24DEV-1004)
+- Document generator: template fields — «Fields» of a template lists every field of its file with a title (shown in «Edit values»), a value by default (when the card's field is empty), «Required» (no document without a value: «Edit values» opens instead; robots and business processes still make it) and «Hide the row when empty» (the paragraph or table row of an empty field is taken out); HR documents use the defaults and hiding too; REST `GET/PUT /api/v1/document-templates/{id}/fields`, `default`, `required`, `hideRow` in `crm.documentgenerator.template.getfields` and `document.getfields` (GO24DEV-1007)
+- DB: migrations from 1000 apply in numeric order (GO24DEV-1006)
 
 ## 0.5.5 — 2026-10-27
 
-- Подпись: документы от сотрудников
-- Открытые линии: лимит диалогов у оператора и обращение ответственному в CRM
-- Диск: фильтр
-- Диск: миниатюры в плитке и крупной плитке
-- Дорожная карта: фильтр Диска и «Крупная плитка»
-- Телефония: робот CRM «Информационный звонок»
-- Календарь: «Ближайшие события» в ленте
-- Онлайн-запись, шаг 16 (GO24DEV-733): ссылка для записи в чате открытых линий
-- Коллабы: «Стартовый инструмент»
-- Дорожная карта: комментарии ленты
-- Компания: «Собрания и планёрки»
-- BI: ещё виды виджетов
-- BI: миграция видов виджетов
-- База знаний: черновик с автосохранением и одновременная правка страницы как в Confluence
-- CRM: роботы «Создать документ», «Запустить бизнес-процесс», «Изменить наблюдателей», «Завершить дела»
-- make test, test-db, test-js: при доступной памяти меньше 3 ГБ прогоны идут по одному (tools/memgate.sh)
-- Документация: установка для тестовой работы и первые шаги (docs/install.md), установка обновлений (docs/update.md)
-- Звонки: «Поднять руку», реакции и чат в звонке
-- Приложения: статическое приложение из архива ZIP
-- Почта: S/MIME
-- Бизнес-процессы: действие «Задача» полностью
-- Диск: «Отказаться» от доступа к папке или файлу
-- CRM: «Поиск дубликатов»
-- Лента: меню «Ещё» у сообщения
-- Лента, «Ещё» (GO24DEV-766): «Следить» / «Не следить»
-- Дорожная карта: меню «Ещё» сообщения ленты
-- Мессенджер: карточки ATTACH и меню MENU у сообщений чат-ботов
-- Дорожная карта: чат-боты приложений
-- Компания: «Пульс компании»
-- Звонки: фон видео и шумоподавление
-- Диск: «Отправить в чат» у файла
-- Лента: карточки ссылок
-- Дорожная карта: карточки ссылок в ленте
-- Настройки: «Состояние системы», как «Проверка системы»
-- Состояние системы: новая копия убирает умершие копии своей роли (новый контейнер
-- Задачи: меню сообщения в чате задачи
-- Бизнес-процессы: «Списки»
-- Компания: «Обучение», шаг 1
-- Обучение: крупнее значок на обложке курса
-- Компания: «Обучение», шаг 2
-- Мессенджер: карточка сотрудника
-- Почта: «Хранилище», как в Outlook
-- Компания: «Обучение», шаг 3
-- Звонки: ведущий звонка
-- CRM: «Настроить карточку»
-- CRM: «Настроить карточку»
-- Лента: форматирование сообщения и «Развернуть»
-- Дорожная карта: форматирование сообщения ленты
-- Диск: «Загрузить новую версию» файла и меню по правой кнопке
-- Настройки: «Формат имени» в «Общих настройках»
-- Состояние системы: тест берёт последнюю миграцию из базы, а не номер 547
-- Мессенджер: открытые каналы и чаты
-- Мессенджер: открытый чат без участников создаётся
-- Почта: «Предложить новое время» в приглашении, как в Outlook
-- Звонки: расшифровка записи звонка, как у CoPilot в корпоративном портале
-- Лента: фильтр
-- Диск: миниатюры файлов, как превью в корпоративном портале
-- Настройки: «Сотрудники»
-- Почта: подключение ящика входом в Google, Microsoft, Яндекс (OAuth2) как в Outlook
-- BI: «Экспорт в файл» и «Импорт» дашборда
-- Склад: групповые действия в списке документов и «Копировать» документ
-- Маркетинг: «Отправить повторно»
-- REST: изменение и удаление сделок, лидов, контактов, компаний, как crm.*.update и crm.*.delete в корпоративном портале
-- Рабочее время: «Таблица рабочего времени»
-- Телефония: личные настройки сотрудника
-- Генератор документов: «Нумераторы»
-- Открытые линии: «Правила показа» виджета
-- memgate: не больше 3 тяжёлых прогонов тестов сразу, при нехватке памяти или перегрузке процессора
+- Sign: documents from employees
+- Open Channels: operator conversation limit and routing to the CRM responsible person
+- Drive: filter
+- Drive: thumbnails in grid view and large grid view
+- Roadmap: Drive filter and "Large grid"
+- Telephony: CRM automation rule "Information call"
+- Calendar: "Upcoming events" in Feed
+- Online booking, step 16 (GO24DEV-733): booking link in Open Channels chat
+- Collabs: "Start tool"
+- Roadmap: Feed comments
+- Company: "Meetings and briefings"
+- BI: more widget types
+- BI: widget types migration
+- Knowledge base: auto-saved drafts and concurrent page editing, as in Confluence
+- CRM: automation rules "Create document", "Start workflow", "Change observers", "Complete activities"
+- make test, test-db, test-js: runs execute sequentially when available memory is under 3 GB (tools/memgate.sh)
+- Documentation: testing setup and first steps (docs/install.md), installing updates (docs/update.md)
+- Calls: "Raise hand", reactions, and in-call chat
+- Applications: static application from a ZIP archive
+- Mail: S/MIME
+- Workflows: complete "Task" action
+- Drive: "Decline" access to a folder or file
+- CRM: "Find duplicates"
+- Feed: "More" menu for messages
+- Feed, "More" (GO24DEV-766): "Follow" / "Unfollow"
+- Roadmap: "More" menu for Feed messages
+- Messenger: ATTACH cards and MENU menu in chat bot messages
+- Roadmap: application chat bots
+- Company: "Company pulse"
+- Calls: video backgrounds and noise suppression
+- Drive: "Send to chat" for files
+- Feed: link preview cards
+- Roadmap: link cards in Feed
+- Settings: "System status", like "System check"
+- System status: new instance removes dead instances of its role (new container
+- Tasks: message menu in task chat
+- Workflows: "Lists"
+- Company: "Learning", step 1
+- Learning: larger icon on course cover
+- Company: "Learning", step 2
+- Messenger: employee card
+- Mail: "Storage", as in Outlook
+- Company: "Learning", step 3
+- Calls: call host
+- CRM: "Configure card"
+- CRM: "Configure card"
+- Feed: message formatting and "Show more"
+- Roadmap: Feed message formatting
+- Drive: "Upload new version" of file and context menu on right-click
+- Settings: "Name format" in "General settings"
+- System status: test takes the latest migration from database instead of 547
+- Messenger: public channels and chats
+- Messenger: public chat without participants can now be created
+- Mail: "Propose new time" in invitations, as in Outlook
+- Calls: call recording transcription, like CoPilot
+- Feed: filter
+- Drive: file thumbnails, like previews
+- Settings: "Employees"
+- Mail: connect mailbox by signing in with Google, Microsoft, Yandex (OAuth2), as in Outlook
+- BI: dashboard "Export to file" and "Import"
+- Inventory: group actions in document list and "Copy" document
+- Marketing: "Resend"
+- REST: update and delete deals, leads, contacts, companies, as crm.*.update and crm.*.delete
+- Working hours: "Worktime sheet"
+- Telephony: employee personal settings
+- Document generator: "Auto numbering"
+- Open Channels: widget "Display rules"
+- memgate: no more than 3 heavy test runs concurrently during low memory or CPU overload
 
 ## 0.5.4 — 2026-10-27
 
-- Подпись: документы от сотрудников
-- Открытые линии: лимит диалогов у оператора и обращение ответственному в CRM
-- Диск: фильтр
-- Диск: миниатюры в плитке и крупной плитке
-- Дорожная карта: фильтр Диска и «Крупная плитка»
-- Телефония: робот CRM «Информационный звонок»
-- Календарь: «Ближайшие события» в ленте
-- Онлайн-запись, шаг 16 (GO24DEV-733): ссылка для записи в чате открытых линий
-- Коллабы: «Стартовый инструмент»
-- Дорожная карта: комментарии ленты
-- Компания: «Собрания и планёрки»
-- BI: ещё виды виджетов
-- BI: миграция видов виджетов
-- База знаний: черновик с автосохранением и одновременная правка страницы как в Confluence
-- CRM: роботы «Создать документ», «Запустить бизнес-процесс», «Изменить наблюдателей», «Завершить дела»
-- make test, test-db, test-js: при доступной памяти меньше 3 ГБ прогоны идут по одному (tools/memgate.sh)
-- Документация: установка для тестовой работы и первые шаги (docs/install.md), установка обновлений (docs/update.md)
-- Звонки: «Поднять руку», реакции и чат в звонке
-- Приложения: статическое приложение из архива ZIP
-- Почта: S/MIME
-- Бизнес-процессы: действие «Задача» полностью
-- Диск: «Отказаться» от доступа к папке или файлу
-- CRM: «Поиск дубликатов»
-- Лента: меню «Ещё» у сообщения
-- Лента, «Ещё» (GO24DEV-766): «Следить» / «Не следить»
-- Дорожная карта: меню «Ещё» сообщения ленты
-- Мессенджер: карточки ATTACH и меню MENU у сообщений чат-ботов
-- Дорожная карта: чат-боты приложений
-- Компания: «Пульс компании»
-- Звонки: фон видео и шумоподавление
-- Диск: «Отправить в чат» у файла
-- Лента: карточки ссылок
-- Дорожная карта: карточки ссылок в ленте
-- Настройки: «Состояние системы», как «Проверка системы»
-- Состояние системы: новая копия убирает умершие копии своей роли (новый контейнер
-- Задачи: меню сообщения в чате задачи
-- Бизнес-процессы: «Списки»
-- Компания: «Обучение», шаг 1
-- Обучение: крупнее значок на обложке курса
-- Компания: «Обучение», шаг 2
-- Мессенджер: карточка сотрудника
-- Почта: «Хранилище», как в Outlook
+- Sign: documents from employees
+- Open Channels: operator conversation limit and routing to the CRM responsible person
+- Drive: filter
+- Drive: thumbnails in grid view and large grid view
+- Roadmap: Drive filter and "Large grid"
+- Telephony: CRM automation rule "Information call"
+- Calendar: "Upcoming events" in Feed
+- Online booking, step 16 (GO24DEV-733): booking link in Open Channels chat
+- Collabs: "Start tool"
+- Roadmap: Feed comments
+- Company: "Meetings and briefings"
+- BI: more widget types
+- BI: widget types migration
+- Knowledge base: auto-saved drafts and concurrent page editing, as in Confluence
+- CRM: automation rules "Create document", "Start workflow", "Change observers", "Complete activities"
+- make test, test-db, test-js: runs execute sequentially when available memory is under 3 GB (tools/memgate.sh)
+- Documentation: testing setup and first steps (docs/install.md), installing updates (docs/update.md)
+- Calls: "Raise hand", reactions, and in-call chat
+- Applications: static application from a ZIP archive
+- Mail: S/MIME
+- Workflows: complete "Task" action
+- Drive: "Decline" access to a folder or file
+- CRM: "Find duplicates"
+- Feed: "More" menu for messages
+- Feed, "More" (GO24DEV-766): "Follow" / "Unfollow"
+- Roadmap: "More" menu for Feed messages
+- Messenger: ATTACH cards and MENU menu in chat bot messages
+- Roadmap: application chat bots
+- Company: "Company pulse"
+- Calls: video backgrounds and noise suppression
+- Drive: "Send to chat" for files
+- Feed: link preview cards
+- Roadmap: link cards in Feed
+- Settings: "System status", like "System check"
+- System status: new instance removes dead instances of its role (new container
+- Tasks: message menu in task chat
+- Workflows: "Lists"
+- Company: "Learning", step 1
+- Learning: larger icon on course cover
+- Company: "Learning", step 2
+- Messenger: employee card
+- Mail: "Storage", as in Outlook
 
 ## 0.5.3 — 2026-10-26
 
-- CRM: связи смарт-процессов
-- Календарь: «Доступ к моему календарю»
-- Календарь: ссылки календаря проекта и коллеги не теряют ?project= и ?user=
-- Дорожная карта: доступ к календарю
-- Задачи: страницы списка
-- Бизнес-процессы: действие «Выбор сотрудника»
-- Телефония: REST API, как voximplant.* и telephony.* в корпоративном портале
-- Подпись: согласующие и наблюдатели
-- Коллабы: групповые чаты в коллабе, как «Чаты в проекте»
-- Диск: загрузка файла, который уже есть в папке
-- Диск: вопрос о файле, который уже есть в папке,
-- Диск: окно вопроса о совпадающем файле шире
-- Открытые линии: чат-бот «Интерактивное меню»
-- Компания: «Доска почёта»
-- Компания: «Доска почёта»
-- CRM: робот «Сменить ответственного»
-- Онлайн-запись, шаг 15 (GO24DEV-713): права доступа
+- CRM: smart process relationships
+- Calendar: "Access to my calendar"
+- Calendar: project and colleague calendar links preserve ?project= and ?user=
+- Roadmap: calendar access
+- Tasks: list pagination
+- Workflows: "Select employee" action
+- Telephony: REST API, as voximplant.* and telephony.*
+- Sign: approvers and observers
+- Collabs: group chats in collab, like "Project chats"
+- Drive: uploading a file that already exists in the folder
+- Drive: prompt for a file that already exists in the folder,
+- Drive: wider dialog window for existing file prompt
+- Open Channels: "Interactive menu" chat bot
+- Company: "Honor board"
+- Company: "Honor board"
+- CRM: automation rule "Change responsible person"
+- Online booking, step 15 (GO24DEV-713): access permissions
 
 ## 0.5.2 — 2026-10-26
 
-- План на день: окно рабочего дня на телефоне
-- Онлайн-запись, оценка визита: звёзды крупнее, кнопка «Отправить» по ширине текста; REST-поля feedback, rating, rating_note в docs/n8n.md
-- Меню: «POST /menu» снова сохраняет левое меню
-- Бизнес-процессы: в шагах шаблона и процесса «сотрудник из поля» показывает название поля, а не его код
-- Маркетинг: REST
-- Доски: шаблоны при создании доски
-- Профиль: «Безопасность»
-- Маркетинг: блоки «Колонки» и «Соцсети» в редакторе письма (GO24DEV-642, GO24DEV-445)
-- Телефония: перевод звонка в софтфоне
-- Открытые линии: права доступа
-- Диаграмма Ганта: сдвиг зависимых задач
-- «Входящий вебхук», как «Разработчикам»
-- Бизнес-процессы: «Делегировать» задание процесса
-- Календарь: часовой пояс встречи
-- Хранилища: Google Диск, Dropbox и OneDrive входом в аккаунт
-- Подпись: автоматические напоминания подписантам
-- Подпись: миграция напоминаний
-- Онлайн-запись, шаг 11 (GO24DEV-649): расписание ресурса по дням. В форме ресурса у каждого дня недели можно задать свои часы (пусто
-- Лента: права, как «Настройки ленты»
-- Маркетинг: A/B-тест рассылки (GO24DEV-645, GO24DEV-445)
-- Задачи: «Прочитать все» новые комментарии
-- Настройки: «Инструменты»
-- Телефония: статистика звонков
-- Компания: REST API, как user.*, department.*, timeman.* в корпоративном портале
-- Онлайн-запись, «Ресурсы»: в «Типах ресурсов» число ресурсов вместо «%!s(int=1)»
-- Открытые линии: другие обращения клиента и задача из диалога
-- Бизнес-процессы: переменные и константы шаблона (GO24DEV-629). У поля шаблона появился «Вид»: параметр, переменная или константа. Параметр заполняют при запуске. Переменная не спрашивается: в начале у неё значение по умолчанию, шаг «Изменить переменную» (бывшее «Изменить поле») меняет его. Константа
-- Уведомления в MAX, как в Telegram (GO24DEV-563, GO24DEV-560)
-- Бизнес-процессы: в таблице полей шаблона списки по ширине содержимого, название шире
-- Подпись: несколько подписантов со стороны компании и клиента
-- Уведомления в Mattermost (GO24DEV-567, GO24DEV-560)
-- Маркетинг: «Обзвон» (GO24DEV-651, GO24DEV-445)
-- Почта: цифровая подпись и шифрование S/MIME, как в Outlook
-- Телефония: чёрный список номеров
-- Календарь: «Открытые события»
-- Коллабы: «Автоудаление сообщений» в настройках коллаба
-- Маркетинг: «Обзвон сохранён» вместо «Рассылка сохранена»
-- Подпись: форма отправки без документа CRM снова открывается
-- Уведомления на свою учётку Matrix (GO24DEV-564, GO24DEV-560)
-- Открытые линии: согласие на обработку персональных данных в виджете
-- Лента: события других разделов
-- Дорожная карта: телефония
-- Телефония: обратный звонок с сайта
-- Сайты: история изменений, корзина, права доступа
-- Мессенджер: команды чат-ботов и кнопки под сообщениями, как imbot.command.* и KEYBOARD в корпоративном портале
-- Профиль → «Безопасность»: «Пароль и двухэтапная авторизация»
-- Коллабы: значок автоудаления в шапке чата коллаба
-- Бизнес-процессы: «Цикл» и «Запуск бизнес-процесса»
-- Открытые линии: пауза оператора и закрепление диалога
-- Уведомления во ВКонтакте (GO24DEV-565, GO24DEV-560)
-- Мессенджер: имя удалённого чат-бота остаётся у его сообщений и чатов, кнопки бота
-- Календарь: дела CRM в календаре
-- Дорожная карта: Подпись и генератор документов
-- Генератор документов: QR-код для оплаты в счёте
-- Телефония: расшифровка записей разговоров
-- Виджет: другие каналы линии
-- Бизнес-процессы: формулы в значениях шагов, как «Математические операции»
-- Лента: правая колонка
-- Лента: заголовок поста переносится на узком экране
-- Бизнес-процессы: «Пауза» до даты из поля процесса
-- Генератор документов: сумма прописью
-- Открытые линии: передача диалога в другую линию
-- Телефония: оценка разговора клиентом
-- Календарь: «Чат встречи»
-- Бизнес-процессы: действие «Сообщение в ленту», как «Сообщение в живую ленту»
-- Телефония: обратный звонок
-- CRM: «Повторный лид»
-- Генератор документов: шаблоны для счетов и предложений CRM
-- Генератор документов: миграция шаблонов счетов
-- Календарь: подключить внешний календарь по ссылке iCal
-- Календарь: миграция подключённых календарей
-- Телефония: группы очереди
-- Подпись: документ счёта или предложения
-- Дорожная карта: QR для оплаты, сумма прописью, печатные формы счетов
-- Телефония: группы очереди
-- Подпись: шаблоны отправки
-- Дорожная карта: шаблоны отправки в «Подписи»
-- Диск: документ по публичной ссылке
-- Диск: гость по публичной ссылке на документ загружает редактор через go24
-- CRM: несколько телефонов и e-mail у контакта, компании и лида
-- Компания: приглашение сотрудников
-- Онлайн-запись, шаг 12 (GO24DEV-677): запрос подтверждения записи, как «Подтверждение записи»
-- Authentik: учётке go24-sync
-- Коллабы: уведомления
-- Задачи: «Роботы» в «Моих задачах»
-- Лента: опрос
-- Дорожная карта: опрос ленты
-- Лента: «Кто голосовал» в опросе
-- Бизнес-процессы: действия «Комментарий в карточку» и «Дело CRM»
-- Открытые линии: скрытое сообщение и «Перехватить диалог»
-- Телефония: звонок клиента из CRM
-- Подпись: история документа
-- Диск REST: публичные ссылки, общий доступ, восстановление версии, обсуждение, как disk.* в корпоративном портале
-- Календарь: повтор по дням недели и «После N повторений»
-- Календарь: дни недели и окончание повтора
-- Компания: «Команды» в структуре компании
-- Онлайн-запись, шаг 13 (GO24DEV-688): запись на сайте
-- Компания: карточка команды в структуре
-- Онлайн-запись на сайте: рамка уменьшается по содержимому
-- Задачи: несколько ответственных в новой задаче
-- Лента: комментарии
-- Коллабы: «Документ на подпись» гостю из чата коллаба
-- Открытые линии: KPI времени ответа
-- Бизнес-процессы: действие «Создать документ CRM»
-- Открытые линии KPI: тест страниц, дорожная карта
-- CRM: «План продаж»
-- Телефония: права доступа
-- Документы: «Недавние», «Загрузить документ» и меню действий у документа
-- Диск: бизнес-процессы документов Общего диска
-- Компания: сотрудники в Outlook и телефоне
-- Календарь: «Подключить календарь CalDAV» с синхронизацией в обе стороны
-- Календарь CalDAV: сервер без /.well-known/caldav (Яндекс) спрашивается с корня, 403 при поиске календарей
-- Задачи: список задач
-- Задачи: меню строки списка
-- Бизнес-процессы: «Создать документ CRM»
-- Бизнес-процессы: действия «Информация о сотруднике» и «Запись в отчёт»
-- Онлайн-запись, шаг 14 (GO24DEV-700): календарь сотрудника
+- Day plan: working day window on mobile
+- Online booking, visit rating: larger stars, "Submit" button sized to text width; REST fields feedback, rating, rating_note in docs/n8n.md
+- Menu: "POST /menu" saves left menu again
+- Workflows: in template and workflow steps, "employee from field" shows the field name instead of its code
+- Marketing: REST
+- Boards: templates when creating a board
+- Profile: "Security"
+- Marketing: "Columns" and "Social networks" blocks in email editor (GO24DEV-642, GO24DEV-445)
+- Telephony: call transfer in softphone
+- Open Channels: access permissions
+- Gantt chart: shifting dependent tasks
+- "Incoming webhook", like "For developers"
+- Workflows: "Delegate" workflow assignment
+- Calendar: meeting time zone
+- Cloud storages: Google Drive, Dropbox, and OneDrive by signing in
+- Sign: automatic reminders to signers
+- Sign: reminders migration
+- Online booking, step 11 (GO24DEV-649): resource schedule by days. In the resource form, custom hours can be set for each day of the week (empty
+- Feed: permissions, like "Feed settings"
+- Marketing: newsletter A/B testing (GO24DEV-645, GO24DEV-445)
+- Tasks: "Mark all as read" for new comments
+- Settings: "Tools"
+- Telephony: call statistics
+- Company: REST API, as user.*, department.*, timeman.*
+- Online booking, "Resources": resource count in "Resource types" instead of "%!s(int=1)"
+- Open Channels: other client inquiries and task creation from chat
+- Workflows: template variables and constants (GO24DEV-629). Template fields now have a "Type": parameter, variable, or constant. Parameters are specified at launch. Variables are not prompted: they start with a default value, and the "Change variable" step (formerly "Change field") modifies it. Constants
+- Notifications in MAX, like in Telegram (GO24DEV-563, GO24DEV-560)
+- Workflows: in template fields table, dropdowns fit content width, title column is wider
+- Sign: multiple signers on company and client sides
+- Notifications in Mattermost (GO24DEV-567, GO24DEV-560)
+- Marketing: "Call lists" (GO24DEV-651, GO24DEV-445)
+- Mail: digital signature and S/MIME encryption, as in Outlook
+- Telephony: number blacklist
+- Calendar: "Open events"
+- Collabs: "Message auto-deletion" in collab settings
+- Marketing: "Call list saved" instead of "Campaign saved"
+- Sign: send form without a CRM document opens again
+- Notifications to own Matrix account (GO24DEV-564, GO24DEV-560)
+- Open Channels: consent to personal data processing in widget
+- Feed: events from other sections
+- Roadmap: telephony
+- Telephony: callback from website
+- Sites: revision history, recycle bin, access permissions
+- Messenger: chat bot commands and buttons under messages, as imbot.command.* and KEYBOARD
+- Profile → "Security": "Password and two-factor authentication"
+- Collabs: auto-deletion icon in collab chat header
+- Workflows: "Loop" and "Start workflow"
+- Open Channels: operator break and pin conversation
+- Notifications in VKontakte (GO24DEV-565, GO24DEV-560)
+- Messenger: deleted chat bot name is preserved in its messages and chats, bot buttons
+- Calendar: CRM activities in calendar
+- Roadmap: Sign and document generator
+- Document generator: payment QR code on invoice
+- Telephony: call recording transcription
+- Widget: other line channels
+- Workflows: formulas in action values, like "Mathematical operations"
+- Feed: right column
+- Feed: post title wraps on narrow screens
+- Workflows: "Pause" until date from process field
+- Document generator: amount in words
+- Open Channels: transfer conversation to another channel
+- Telephony: call rating by customer
+- Calendar: "Meeting chat"
+- Workflows: "Post to Feed" action, like "Post to Activity Stream"
+- Telephony: callback
+- CRM: "Repeat lead"
+- Document generator: templates for CRM invoices and quotes
+- Document generator: invoice templates migration
+- Calendar: connect external calendar via iCal link
+- Calendar: connected calendars migration
+- Telephony: queue groups
+- Sign: invoice or quote document
+- Roadmap: payment QR code, amount in words, invoice print forms
+- Telephony: queue groups
+- Sign: sending templates
+- Roadmap: sending templates in "Sign"
+- Drive: document via public link
+- Drive: guest via public document link loads the editor through go24
+- CRM: multiple phones and emails for contact, company, and lead
+- Company: invite employees
+- Online booking, step 12 (GO24DEV-677): booking confirmation request, like "Booking confirmation"
+- Authentik: go24-sync account
+- Collabs: notifications
+- Tasks: "Automation rules" in "My tasks"
+- Feed: poll
+- Roadmap: Feed poll
+- Feed: "Who voted" in poll
+- Workflows: "Add comment to entity" and "CRM activity" actions
+- Open Channels: whisper message and "Intercept dialogue"
+- Telephony: client call from CRM
+- Sign: document history
+- Drive REST: public links, shared access, version restore, discussion, as disk.*
+- Calendar: recurring by days of the week and "After N recurrences"
+- Calendar: days of the week and recurrence end
+- Company: "Teams" in company structure
+- Online booking, step 13 (GO24DEV-688): booking on website
+- Company: team card in structure
+- Online booking on website: frame shrinks to fit content
+- Tasks: multiple assignees in a new task
+- Feed: comments
+- Collabs: "Document for signing" to a guest from collab chat
+- Open Channels: response time KPI
+- Workflows: "Create CRM document" action
+- Open Channels KPI: pages test, roadmap
+- CRM: "Sales target"
+- Telephony: access permissions
+- Documents: "Recent", "Upload document", and document action menu
+- Drive: company Drive document workflows
+- Company: employees in Outlook and phone
+- Calendar: "Connect CalDAV calendar" with two-way synchronization
+- CalDAV calendar: server without /.well-known/caldav (Yandex) queried from root, 403 when searching calendars
+- Tasks: task list
+- Tasks: list row menu
+- Workflows: "Create CRM document"
+- Workflows: "Employee information" and "Write to report" actions
+- Online booking, step 14 (GO24DEV-700): employee calendar
 
 ## 0.5.1 — 2026-10-26
 
-- Диск: без сервера документов «Создать» отправляется на создание доски, а не new-doc
-- Онлайн-запись, шаг 8 (GO24DEV-600): услуги из каталога
-- Онлайн-запись, услуги: «Итого» в карточке брони
-- База знаний: комментарии, «Нравится» и просмотры страницы как в Confluence
-- База знаний: ответ на свой комментарий
-- Бизнес-процессы: экспорт и импорт шаблона, «Кто может запускать»
-- BI: фильтры дашборда и кросс-фильтр кликом по графику, как в BI Конструкторе корпоративного портала
-- BI: значок filter-off в icons.css
-- BI: миграция фильтров дашборда
-- Диаграмма Ганта: перетаскивание сроков, связи четырёх типов, подзадачи деревом (GO24DEV-599, GO24DEV-474)
-- Каталог и склад: REST на запись, как catalog.product.*, catalog.section.*, catalog.store.* в корпоративном портале (GO24DEV-603, GO24DEV-361)
-- REST: плановые даты новой задачи
-- Приложения, шаг 4
-- Склад: отчёт «Продажи», как в аналитике складского учёта корпоративного портала (GO24DEV-614, GO24DEV-361)
-- Коллабы: REST
-- Маркетинг: шаблоны писем (GO24DEV-612, GO24DEV-445)
-- Календарь: счётчик приглашений в левом меню
-- Маркетинг: кнопки карточки шаблона в одну строку
+- Drive: without a document server, "Create" navigates to board creation instead of new-doc
+- Online booking, step 8 (GO24DEV-600): services from catalog
+- Online booking, services: "Total" in booking card
+- Knowledge base: comments, "Like", and page views, as in Confluence
+- Knowledge base: reply to one's own comment
+- Workflows: template export and import, "Who can start"
+- BI: dashboard filters and cross-filtering by clicking a chart BI Builder
+- BI: filter-off icon in icons.css
+- BI: dashboard filters migration
+- Gantt chart: dragging deadlines, four link types, subtasks as a tree (GO24DEV-599, GO24DEV-474)
+- Commercial catalog and inventory: write REST API, as catalog.product.*, catalog.section.*, catalog.store.* (GO24DEV-603, GO24DEV-361)
+- REST: planned dates for new tasks
+- Applications, step 4
+- Inventory: "Sales" report inventory analytics (GO24DEV-614, GO24DEV-361)
+- Collabs: REST
+- Marketing: email templates (GO24DEV-612, GO24DEV-445)
+- Calendar: invitation counter in the left menu
+- Marketing: template card buttons on a single line
 
 ## 0.5.0 — 2026-10-25
 
-Новые разделы:
-- Телефония: свой Asterisk, внутренние номера и SIP-учётки, софтфон в браузере (WebRTC), звонки из карточек и в CRM,
-  внешние линии и обработка звонков, детализация, запись разговоров, голосовая почта.
-- BI-аналитика: движок запросов и REST `/api/v1/bi`, дашборды и виджеты, готовые дашборды «Продажи», «Лиды и
-  источники», «Задачи и эффективность», «Рабочее время».
-- Маркетинг: сегменты, e-mail рассылки, стоп-лист, статистика, рекламные источники и расходы, «Сквозная аналитика» с
-  ROI и UTM-метками.
-- Сайты: страницы из блоков, редактор, публикация, блок «CRM-форма».
-- Склад: складской учёт, резерв и реализация товаров сделки, отчёты «Остатки на дату» и «Движение товаров»; каталог:
-  единицы измерения, свойства, вариации товара.
-- Онлайн-запись: страница клиента, письма, напоминания, подтверждение и отмена.
-- Подпись документов; счета: оплаты, просрочка, ссылка для клиента.
+New sections:
+- Telephony: built-in Asterisk, internal extensions and SIP accounts, browser softphone (WebRTC), calls from CRM cards and into CRM, external lines and inbound call processing, call detail records (CDR), call recording, voicemail.
+- BI Analytics: query engine and `/api/v1/bi` REST API, dashboards and widgets, pre-built dashboards for "Sales", "Leads and sources", "Tasks and efficiency", "Working hours".
+- Marketing: segments, email campaigns, stop list, statistics, ad sources and expenses, end-to-end analytics with ROI and UTM tags.
+- Sites: block-based pages, editor, publishing, "CRM form" block.
+- Inventory: inventory management, reserve and deduction of deal products, "Stock balance as of date" and "Stock movement" reports; commercial catalog: units of measurement, properties, product variations.
+- Online booking: client page, emails, reminders, confirmation and cancellation.
+- Document signing; invoices: payments, overdue tracking, payment link for clients.
 
-Разделы:
-- CRM: туннели продаж, канбан, наблюдатели, обязательные поля, конвертация лида, письма и шаблоны из карточки,
-  пресеты фильтра, «Настроить колонки», CRM-формы, корзина.
-- Открытые линии: очередь и распределение, действия оператора, оценка качества, лид автоматически, статистика, REST API.
-- Мессенджер: предпросмотр ссылок, «Заметки», вкладки «Каналы» и «Звонки», меню «…» сообщения, цитаты, файлы чата,
-  непрочитанные ответы в тредах, администраторы и права группового чата, REST.
-- Звонки: гостевая ссылка, запись, внешние сервисы видеосвязи.
-- Почта: пересылка, адреса отправителя, макет, голосование и отслеживание, отзыв сообщения, импорт .eml/.msg, экспорт
-  в файл и в Outlook .pst, адресная книга.
-- Диск: поиск по содержимому, загрузка папки, права папок, карточка файла, очистка и версии, «Подключить к Диску»,
-  REST API, «Настройки Диска», «Диск сотрудника».
-- Документы: ONLYOFFICE для шаблонов, нумератор, PDF и публичная ссылка, таблица товаров и реквизиты, готовые шаблоны,
-  REST API.
-- Задачи: чек-листы, подзадачи шаблонов, «Просмотры», «Задачи подчинённых», параметры задачи, права доступа.
-- Календарь: цвет и важность, свои календари и календари сотрудников, напоминания, поиск, файлы и обсуждение, .ics.
-- Лента: «Поделиться», «Следить», «Скрыть», «Важное до даты», файлы в комментариях, теги, «Изменить», REST API.
-- Компания: график отсутствий, сотрудники, кадровые изменения, благодарности, рабочие отчёты, структура; рабочее
-  время: таблица.
-- База знаний: настройки, корзина, дерево страниц, редактор, поиск и оглавление, публикация по ссылке.
-- Бизнес-процессы: автозапуск по CRM, «Все процессы», запрос дополнительной информации.
-- Коллабы: передача владельца, настройки компании, права, счётчики, шапка чата.
-- Настройки: страница всех настроек, общие настройки портала, своё левое меню, журнал событий, администраторы,
-  подключения ИИ; ширина столбцов и панелей перетаскиванием во всех списках.
-- Разработка: до 20 потоков Claude параллельно.
+Sections:
+- CRM: sales pipelines, kanban, observers, required fields, lead conversion, emails and templates from card, filter presets, "Configure columns", CRM forms, recycle bin.
+- Open Channels: queue and distribution, operator actions, quality assessment, automatic lead creation, statistics, REST API.
+- Messenger: link previews, "Notes", "Channels" and "Calls" tabs, message "…" menu, quotes, chat files, unread replies in threads, group chat administrators and permissions, REST.
+- Calls: guest link, recording, external video conferencing services.
+- Mail: forwarding, sender addresses, layout, voting and tracking, message recall, .eml/.msg import, export to file and Outlook .pst, address book.
+- Drive: search by content, folder upload, folder permissions, file card, cleanup and version history, "Connect to Drive", REST API, "Drive settings", "Employee Drive".
+- Documents: ONLYOFFICE for templates, auto-numbering, PDF and public link, products table and company details, pre-built templates, REST API.
+- Tasks: checklists, subtasks in templates, "Views", "Supervised tasks", task parameters, access permissions.
+- Calendar: color and importance, personal and employee calendars, reminders, search, files and discussions, .ics.
+- Feed: "Share", "Follow", "Hide", "Important until date", files in comments, tags, "Edit", REST API.
+- Company: absence chart, employees, personnel changes, appreciations, work reports, company structure; working hours: timesheet.
+- Knowledge base: settings, recycle bin, page tree, editor, search and table of contents, publish via link.
+- Workflows: auto-start triggers from CRM, "All workflows", request for additional information.
+- Collabs: transfer owner, company settings, permissions, counters, chat header.
+- Settings: settings index page, general portal settings, custom left menu, event log, administrators, AI connections; resizable columns and panels via drag-and-drop across all lists.
+- Development: up to 20 parallel Claude streams.
 
 ## 0.4.0 — 2026-10-24
 
-- Мессенджер: черновики (в чате и в треде), «Создать пост в ленте» из сообщения, упоминания «@» в списке чатов и
-  переход по ним.
-- Лента: реакции (семь эмоций вместо «Нравится»), меню комментария: ответить, изменить, удалить.
-- CRM: справочники (источники, типы и др.), история изменений в ленте карточки, закрепить, изменить и удалить запись
-  ленты.
-- Задачи: «Копировать» и «Делегировать».
-- Диск и документы: раздел «Документы», поделиться отдельным файлом.
-- Почта: «Поделиться» (сообщение в Ленте, чат), «Параметры → Обработка сообщений» как в Outlook.
-- Разработка: автозапуск сессий Claude после перезагрузки сервера.
+- Messenger: drafts (in chat and in thread), "Create feed post" from message, "@" mentions in chat list and quick navigation.
+- Feed: reactions (seven emotions instead of "Like"), comment menu: reply, edit, delete.
+- CRM: reference lists (sources, types, etc.), history log in entity feed, pin, edit and delete feed entries.
+- Tasks: "Copy" and "Delegate".
+- Drive and Documents: "Documents" section, share individual file.
+- Mail: "Share" (feed post, chat), "Settings → Message handling" like in Outlook.
+- Development: auto-start Claude sessions after server reboot.
 
 ## 0.3.0 — 2026-10-22
 
-- Потоки разработки (почта, диск, CRM, мессенджер, задачи — отдельные сессии), почта как в Outlook (уведомления,
-  вложения, печать, связь с календарём, задачами и CRM, общие ящики), исправления коллабов.
+- Development streams (mail, drive, CRM, messenger, tasks — separate sessions), mail like in Outlook (notifications, attachments, printing, integration with calendar, tasks and CRM, shared mailboxes), collab fixes.
 
 ## 0.2.0 — 2026-10-21
 
-- Почта как в Outlook (три панели, редактор, правила, автоответы, очистка), коллабы с гостями, выбор сотрудников по
-  отделам, перетаскивание встреч в календаре.
+- Mail like in Outlook (three-pane view, editor, rules, auto-replies, cleanup), collabs with guests, employee picker by department, drag-and-drop meetings in calendar.
 
 ## 0.1.0 — 2026-10-19
 
-- Первая версия на GitHub: задачи и проекты, мессенджер на Matrix, лента, календарь, CRM, почта, автоматизация.
+- First release on GitHub: tasks and projects, Matrix-based messenger, feed, calendar, CRM, mail, automation.

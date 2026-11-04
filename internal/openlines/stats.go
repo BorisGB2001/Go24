@@ -2,7 +2,9 @@ package openlines
 
 import (
 	"context"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -135,4 +137,98 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) (Stats, error) {
 		st.Days = append(st.Days, r)
 	}
 	return st, nil
+}
+
+// DetailFilter of «Детальная статистика»: the dialogues started in the period, of a line and an operator, of a status
+// (open, closed, noanswer, spam), a channel and the client's rating (up, down, none); "" — any. Sort is one of
+// DetailSorts, "-" before it — descending; "" — the newest first.
+type DetailFilter struct {
+	StatsFilter
+	Status, Channel, Vote, Sort string
+}
+
+// DetailSorts are the columns «Детальная статистика» sorts by.
+var DetailSorts = []string{"num", "started", "answer", "close", "messages"}
+
+// DetailLimit is how many dialogues «Детальная статистика» shows at most.
+const DetailLimit = 1000
+
+// DetailRow is a dialogue of «Детальная статистика»: its line (the one the client wrote to), channel, client, operator,
+// times, how many messages the client and the operators wrote, the ratings and the CRM cards.
+type DetailRow struct {
+	ID                                string
+	Num                               int64
+	Line, Channel, Name, Phone, Email string
+	OperatorID, Operator, Status      string
+	Started                           time.Time
+	Answered, Closed                  *time.Time
+	Messages, Vote, HeadVote, KPILate int
+	Spam                              bool
+	LeadID, ContactID                 string
+}
+
+// Client is how the dialogue's client is shown: the name or «#…».
+func (r DetailRow) Client() string { return Session{ID: r.ID, Name: r.Name}.Title() }
+
+// FirstAnswer is the time from the client's first message to the operator's first answer (0 — no answer yet).
+func (r DetailRow) FirstAnswer() time.Duration {
+	if r.Answered == nil || r.Answered.Before(r.Started) {
+		return 0
+	}
+	return r.Answered.Sub(r.Started).Round(time.Second)
+}
+
+// ToClose is the time from the client's first message to closing (0 — open).
+func (r DetailRow) ToClose() time.Duration {
+	if r.Closed == nil || r.Closed.Before(r.Started) {
+		return 0
+	}
+	return r.Closed.Sub(r.Started).Round(time.Second)
+}
+
+// Detail lists the dialogues of «Детальная статистика», at most DetailLimit; more tells there are others.
+func (s *Store) Detail(ctx context.Context, f DetailFilter) (list []DetailRow, more bool, err error) {
+	from := time.Date(f.From.Year(), f.From.Month(), f.From.Day(), 0, 0, 0, 0, time.Local)
+	to := time.Date(f.To.Year(), f.To.Month(), f.To.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
+	order := "s.started_at DESC"
+	if k := strings.TrimPrefix(f.Sort, "-"); slices.Contains(DetailSorts, k) {
+		dir := " ASC"
+		if strings.HasPrefix(f.Sort, "-") {
+			dir = " DESC"
+		}
+		order = map[string]string{"num": "s.num", "started": "s.started_at", "answer": "s.answered_at - s.started_at",
+			"close": "s.closed_at - s.started_at", "messages": "msgs"}[k] + dir + " NULLS LAST"
+	}
+	rows, err := s.db.Query(ctx, `SELECT s.id::text, s.num, w.name, s.channel, s.name, s.phone, s.email,
+		coalesce(s.operator_id::text, ''), coalesce(o.name, ''), s.status, s.started_at, s.answered_at, s.closed_at,
+		(SELECT count(*) FROM ol_messages m WHERE m.session_id = s.id AND m.kind = '')::int AS msgs,
+		s.vote, s.head_vote, s.kpi_late, s.spam, coalesce(s.lead_id::text, ''), coalesce(s.contact_id::text, '')
+		FROM ol_sessions s JOIN ol_widgets w ON w.id = s.widget_id LEFT JOIN users o ON o.id = s.operator_id
+		WHERE s.started_at >= $1 AND s.started_at < $2
+		AND ($3 = '' OR s.widget_id::text = $3) AND ($4 = '' OR s.operator_id::text = $4)
+		AND CASE $5 WHEN 'open' THEN s.status = 'open' AND NOT s.spam WHEN 'closed' THEN s.status = 'closed' AND NOT s.spam
+			WHEN 'noanswer' THEN s.answered_at IS NULL AND NOT s.spam WHEN 'spam' THEN s.spam ELSE true END
+		AND ($6 = '' OR s.channel = $6)
+		AND CASE $7 WHEN 'up' THEN s.vote > 0 WHEN 'down' THEN s.vote < 0 WHEN 'none' THEN s.vote = 0 ELSE true END
+		ORDER BY `+order+`, s.num DESC LIMIT $8`,
+		from, to, f.Widget, f.OperatorID, f.Status, f.Channel, f.Vote, DetailLimit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x DetailRow
+		if err := rows.Scan(&x.ID, &x.Num, &x.Line, &x.Channel, &x.Name, &x.Phone, &x.Email, &x.OperatorID, &x.Operator, &x.Status,
+			&x.Started, &x.Answered, &x.Closed, &x.Messages, &x.Vote, &x.HeadVote, &x.KPILate, &x.Spam, &x.LeadID, &x.ContactID); err != nil {
+			return nil, false, err
+		}
+		list = append(list, x)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(list) > DetailLimit {
+		return list[:DetailLimit], true, nil
+	}
+	return list, false, nil
 }

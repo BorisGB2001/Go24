@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +50,7 @@ func (p Product) Service() bool { return p.Kind == KindService }
 
 // ProductRow is a line of a card's products.
 type ProductRow struct {
+	ID                    int64 // the line's number: kept when saved again on the same card (0 — a new line)
 	ProductID, Name, Unit string
 	Price, Quantity       float64
 	Discount              float64 // percent
@@ -387,7 +389,7 @@ func (s *Store) DeleteProduct(ctx context.Context, id string) error {
 
 // ProductRows of a card, in their order.
 func (s *Store) ProductRows(ctx context.Context, entity, id string) ([]ProductRow, error) {
-	rows, err := s.db.Query(ctx, `SELECT coalesce(r.product_id::text, ''), r.name, r.unit, r.price::float8, r.quantity::float8, r.discount::float8,
+	rows, err := s.db.Query(ctx, `SELECT r.id, coalesce(r.product_id::text, ''), r.name, r.unit, r.price::float8, r.quantity::float8, r.discount::float8,
 		r.vat_rate::float8, r.vat_included, coalesce(r.warehouse_id::text, ''), coalesce(w.name, ''), r.reserve::float8, r.reserve_until,
 		coalesce(p.kind = 'service', false)
 		FROM crm_product_rows r LEFT JOIN crm_warehouses w ON w.id = r.warehouse_id LEFT JOIN crm_products p ON p.id = r.product_id
@@ -397,7 +399,7 @@ func (s *Store) ProductRows(ctx context.Context, entity, id string) ([]ProductRo
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ProductRow, error) {
 		var x ProductRow
-		err := r.Scan(&x.ProductID, &x.Name, &x.Unit, &x.Price, &x.Quantity, &x.Discount, &x.VATRate, &x.VATIncluded, &x.WarehouseID,
+		err := r.Scan(&x.ID, &x.ProductID, &x.Name, &x.Unit, &x.Price, &x.Quantity, &x.Discount, &x.VATRate, &x.VATIncluded, &x.WarehouseID,
 			&x.WarehouseName, &x.Reserve, &x.ReserveUntil, &x.Service)
 		return x, err
 	})
@@ -409,7 +411,8 @@ var rowTables = map[string]string{"deal": "crm_deals", "lead": "crm_leads", "quo
 // SetProductRows replaces the lines of a deal, a lead, a quote or an invoice and counts its amount from them (with no lines the amount
 // stays as it was). A line of a catalog product without a name takes the product's name, price, unit and VAT.
 // Only a deal's line of a catalog product (not a service) is reserved: on its warehouse (the default one when a
-// reserve is given without it), no more than its quantity.
+// reserve is given without it), no more than its quantity. A line keeps its number (ID) when it is one of the card's;
+// the rows given get their numbers.
 func (s *Store) SetProductRows(ctx context.Context, userID, entity, id string, rows []ProductRow) (float64, error) {
 	tbl := rowTables[entity]
 	if tbl == "" {
@@ -509,14 +512,25 @@ func (s *Store) SetProductRows(ctx context.Context, userID, entity, id string, r
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM crm_product_rows WHERE entity = $1 AND entity_id::text = $2`, entity, id); err != nil {
+		rs, err := tx.Query(ctx, `DELETE FROM crm_product_rows WHERE entity = $1 AND entity_id::text = $2 RETURNING id`, entity, id)
+		if err != nil {
 			return err
 		}
+		had, err := pgx.CollectRows(rs, pgx.RowTo[int64])
+		if err != nil {
+			return err
+		}
+		kept := map[int64]bool{}
 		for i, r := range rows {
-			if _, err := tx.Exec(ctx, `INSERT INTO crm_product_rows (entity, entity_id, product_id, name, price, quantity, unit, discount,
-				vat_rate, vat_included, sort, warehouse_id, reserve, reserve_until) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			var num *int64 // the line keeps its number when it was the card's, once
+			if r.ID > 0 && slices.Contains(had, r.ID) && !kept[r.ID] {
+				kept[r.ID], num = true, &r.ID
+			}
+			if err := tx.QueryRow(ctx, `INSERT INTO crm_product_rows (id, entity, entity_id, product_id, name, price, quantity, unit, discount,
+				vat_rate, vat_included, sort, warehouse_id, reserve, reserve_until) VALUES (coalesce($15::bigint, nextval(pg_get_serial_sequence('crm_product_rows', 'id'))),
+				$1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 				entity, id, optional(r.ProductID), r.Name, r.Price, r.Quantity, r.Unit, r.Discount, r.VATRate, r.VATIncluded, i,
-				optional(r.WarehouseID), r.Reserve, r.ReserveUntil); err != nil {
+				optional(r.WarehouseID), r.Reserve, r.ReserveUntil, num).Scan(&rows[i].ID); err != nil {
 				var pe interface{ SQLState() string }
 				if errors.As(err, &pe) && pe.SQLState() == "23503" { // the product is gone
 					return ErrNotFound

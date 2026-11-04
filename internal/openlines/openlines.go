@@ -12,7 +12,9 @@ import (
 	"io"
 	"net/mail"
 	"net/url"
+	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,12 +35,20 @@ type Store struct {
 	Tr func(key string, args ...any) string
 	// SendMail writes a letter from the user's mailbox (the conversation the visitor asked for)
 	SendMail func(ctx context.Context, userID, to, subject, text string) error
-	// Telegram: the Bot API's address (a field for tests), the key sealing the bots' tokens, the built-in storage
-	// for the files clients send there and the operators' files to send
+	// Telegram, MAX, VK, Viber, OK, Avito and WhatsApp: the bot APIs' addresses (fields for tests), the key sealing the bots' tokens, the built-in
+	// storage for the files clients send there and the operators' files to send
 	TelegramAPI string
+	MaxAPI      string
+	VKAPI       string
+	ViberAPI    string
+	OKAPI       string
+	AvitoAPI    string
+	WhatsAppAPI string
 	Key         []byte
 	PutFile     func(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 	OpenFile    func(ctx context.Context, key string) (io.ReadCloser, error)
+	// AppQueued: an event for the applications' channels was queued (their deliveries go at once)
+	AppQueued func()
 }
 
 // dbtx is the pool or a transaction.
@@ -48,7 +58,9 @@ type dbtx interface {
 }
 
 func NewStore(db *pgxpool.Pool, c *crm.Store) *Store {
-	return &Store{db: db, CRM: c, TelegramAPI: "https://api.telegram.org"}
+	return &Store{db: db, CRM: c, TelegramAPI: "https://api.telegram.org", MaxAPI: "https://platform-api2.max.ru", VKAPI: "https://api.vk.com",
+		ViberAPI: "https://chatapi.viber.com/pa", OKAPI: "https://api.ok.ru/graph",
+		AvitoAPI: "https://api.avito.ru", WhatsAppAPI: "https://graph.facebook.com/v21.0"}
 }
 
 // Widget is a widget's settings: the open line behind it — its queue, working hours and automatic messages.
@@ -106,6 +118,16 @@ type Widget struct {
 	HelloText           string
 	HelloDelay          int
 	HideOffline         bool
+	AISummary           bool   // «CoPilot: итоги диалога»: the AI sums a dialogue up by itself when it is closed
+	CallbackID          string // «Обратный звонок» in the widget: telephony's callback form ("" — none)
+	// the AI bot on the knowledge base: a new dialogue (of a line without the menu bot) goes to it first, it answers from
+	// the pages of the knowledge base space AISpace and hands the dialogue to the operators when they have no answer
+	AIBot   bool
+	AISpace string
+	// the working hours' time zone ("" — go24's) and «Праздничные дни»: "MM-DD" every year or "YYYY-MM-DD"
+	HoursTZ  string
+	Holidays []string
+	AutoMsgs []AutoMsg // «Автоматические сообщения» after the dialogue is closed
 }
 
 // Day: is the weekday (0 Sunday … 6 Saturday) a working day of the line?
@@ -118,13 +140,39 @@ func (w Widget) Day(d int) bool {
 	return false
 }
 
+// Loc is the time zone of the line's working hours.
+func (w Widget) Loc() *time.Location {
+	if l, err := time.LoadLocation(w.HoursTZ); w.HoursTZ != "" && err == nil {
+		return l
+	}
+	return time.Local
+}
+
+// HolidaysText is the holidays as people write them: «31.12», «31.12.2026», one a line.
+func (w Widget) HolidaysText() string {
+	return strings.Join(HolidaysDM(w.Holidays), "\n")
+}
+
+// HolidaysDM is holidays "MM-DD" / "YYYY-MM-DD" as «31.12» / «31.12.2026».
+func HolidaysDM(days []string) []string {
+	out := []string{}
+	for _, h := range days {
+		if t, err := time.Parse("2006-01-02", h); err == nil {
+			out = append(out, t.Format("02.01.2006"))
+		} else if t, err := time.Parse("01-02", h); err == nil {
+			out = append(out, t.Format("02.01"))
+		}
+	}
+	return out
+}
+
 // InHours: does the line work at this time (always, without working hours)?
 func (w Widget) InHours(t time.Time) bool {
 	if !w.HoursOn {
 		return true
 	}
-	t = t.Local()
-	if !w.Day(int(t.Weekday())) {
+	t = t.In(w.Loc())
+	if !w.Day(int(t.Weekday())) || slices.Contains(w.Holidays, t.Format("01-02")) || slices.Contains(w.Holidays, t.Format("2006-01-02")) {
 		return false
 	}
 	now := t.Format("15:04")
@@ -200,6 +248,24 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 	if len([]rune(w.ConsentText)) > 10000 {
 		return "", i18n.E("err.ol_widget")
 	}
+	if w.AISpace != "" { // the knowledge base space the AI bot answers from
+		var ok bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM kb_spaces WHERE id::text = $1)`, w.AISpace).Scan(&ok); err != nil {
+			return "", err
+		} else if !ok {
+			return "", i18n.E("err.ol_widget")
+		}
+	} else if w.AIBot {
+		return "", i18n.E("err.ol_aibot_space")
+	}
+	if w.CallbackID != "" { // a form of telephony's «Обратный звонок»
+		var ok bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM telephony_callbacks WHERE id::text = $1)`, w.CallbackID).Scan(&ok); err != nil {
+			return "", err
+		} else if !ok {
+			return "", i18n.E("err.ol_widget")
+		}
+	}
 	if w.ID == "" {
 		err = s.db.QueryRow(ctx, `INSERT INTO ol_widgets (name, greeting, color, origins, operators, active, created_by)
 			VALUES ($1, $2, $3, $4, $5::text[]::uuid[], $6, $7) RETURNING id`, w.Name, w.Greeting, w.Color, origins, nonNil(w.Operators), w.Active, userID).Scan(&w.ID)
@@ -213,14 +279,16 @@ func (s *Store) SaveWidget(ctx context.Context, userID string, w Widget) (string
 		vote_on = $20, vote_text = $21, history_on = $22, crm_auto = $23, consent_on = $24, consent_text = $25,
 		kpi_first = $26, kpi_further = $27, kpi_operator = $28, kpi_heads = $29,
 		bot_on = $30, bot_text = $31, bot_menu = $32, bot_other = $33, max_chats = $34, max_chats_type = $35, crm_forward = $36,
-		position = $37, pages_mode = $38, pages = $39, show_delay = $40, hello_on = $41, hello_text = $42, hello_delay = $43, hide_offline = $44
+		position = $37, pages_mode = $38, pages = $39, show_delay = $40, hello_on = $41, hello_text = $42, hello_delay = $43, hide_offline = $44, ai_summary = $45,
+		callback_id = nullif($46, '')::uuid, ai_bot = $47, ai_space = nullif($48, '')::uuid, hours_tz = $49, holidays = $50, auto_msgs = $51
 		WHERE id::text = $1`, w.ID, w.Name, w.Greeting, w.Color, origins, nonNil(w.Operators), w.Active,
 		w.QueueMode, w.AnswerWait, w.HoursOn, w.HoursDays, w.HoursFrom, w.HoursTo, w.OfflineText,
 		w.WelcomeText, w.NoanswerText, w.NoanswerAfter, w.CloseText, w.Autoclose,
 		w.VoteOn, w.VoteText, w.HistoryOn, w.CRMAuto, w.ConsentOn, w.ConsentText,
 		w.KPIFirst, w.KPIFurther, w.KPIOperator, w.KPIHeads,
 		w.BotOn, w.BotText, w.BotMenu, w.BotOther, w.MaxChats, w.MaxChatsType, w.CRMForward,
-		w.Position, w.PagesMode, w.Pages, w.ShowDelay, w.HelloOn, w.HelloText, w.HelloDelay, w.HideOffline)
+		w.Position, w.PagesMode, w.Pages, w.ShowDelay, w.HelloOn, w.HelloText, w.HelloDelay, w.HideOffline, w.AISummary, w.CallbackID, w.AIBot, w.AISpace,
+		w.HoursTZ, w.Holidays, w.AutoMsgs)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
@@ -260,6 +328,19 @@ func cleanLine(w *Widget) error {
 			return i18n.E("err.ol_widget")
 		}
 	}
+	if w.HoursTZ = strings.TrimSpace(w.HoursTZ); w.HoursTZ != "" {
+		if _, err := time.LoadLocation(w.HoursTZ); err != nil || w.HoursTZ == "Local" {
+			return i18n.E("err.ol_hours")
+		}
+	}
+	days, err := Holidays(w.Holidays)
+	if err != nil {
+		return err
+	}
+	w.Holidays = days
+	if w.AutoMsgs, err = cleanAutoMsgs(w.AutoMsgs); err != nil {
+		return err
+	}
 	for _, p := range []*string{&w.OfflineText, &w.WelcomeText, &w.NoanswerText, &w.CloseText, &w.VoteText} {
 		*p = strings.TrimSpace(*p)
 		if len([]rune(*p)) > 1000 {
@@ -272,6 +353,29 @@ func cleanLine(w *Widget) error {
 		return i18n.E("err.ol_hours")
 	}
 	return nil
+}
+
+// Holidays normalizes the line's holidays: «31.12», «12-31» (every year), «31.12.2026» or «2026-12-31»; sorted, once each.
+func Holidays(in []string) ([]string, error) {
+	out := []string{}
+	for _, h := range in {
+		if h = strings.TrimSpace(h); h == "" {
+			continue
+		}
+		var d string
+		for _, f := range [][2]string{{"01-02", "01-02"}, {"2006-01-02", "2006-01-02"}, {"2.1", "01-02"}, {"2.1.2006", "2006-01-02"}} {
+			if t, err := time.Parse(f[0], h); err == nil {
+				d = t.Format(f[1])
+				break
+			}
+		}
+		if d == "" || len(out) >= 400 {
+			return nil, i18n.E("err.ol_holiday")
+		}
+		out = append(out, d)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // cleanShow checks the widget's corner and «Правила показа», filling in the defaults.
@@ -361,7 +465,8 @@ const widgetSQL = `SELECT id, name, greeting, color, origins, operators::text[],
 	hours_on, hours_days, hours_from, hours_to, offline_text, welcome_text, noanswer_text, noanswer_after, close_text, autoclose,
 	vote_on, vote_text, history_on, crm_auto, consent_on, consent_text,
 	kpi_first, kpi_further, kpi_operator, kpi_heads, max_chats, max_chats_type, crm_forward, bot_on, bot_text, bot_menu, bot_other,
-	position, pages_mode, pages, show_delay, hello_on, hello_text, hello_delay, hide_offline FROM ol_widgets`
+	position, pages_mode, pages, show_delay, hello_on, hello_text, hello_delay, hide_offline, ai_summary,
+	coalesce(callback_id::text, ''), ai_bot, coalesce(ai_space::text, ''), hours_tz, holidays, auto_msgs FROM ol_widgets`
 
 func nonNil(v []string) []string {
 	if v == nil {
@@ -459,6 +564,7 @@ type Message struct {
 	Buttons                       []string   // the chat bot's menu (kind bot): «1. Оплата», …
 	// a booking link an operator sent (kind booking, its key in FormSecret) or the client booked by (booking_done)
 	BookingLinkID, BookingToken string
+	Transcript                  string // the text of the message's sound file, once an operator asked for it
 }
 
 // Image: is the message's file a picture to show?
@@ -470,15 +576,34 @@ func (m Message) Image() bool {
 	return false
 }
 
-// Text is the message as a line of text: its body and the file's name.
-func (m Message) Text() string {
-	switch {
-	case m.FileName == "":
-		return m.Body
-	case m.Body == "":
-		return "📎 " + m.FileName
+// Audio: is the message's file a sound — a voice message or a recording to play and to turn into text?
+func (m Message) Audio() bool { return m.FileName != "" && Audio(m.FileName, m.FileType) }
+
+// Audio: is a file of this name and type a sound?
+func Audio(name, typ string) bool {
+	if strings.HasPrefix(strings.ToLower(typ), "audio/") {
+		return true
 	}
-	return m.Body + "\n📎 " + m.FileName
+	switch strings.ToLower(path.Ext(name)) {
+	case ".mp3", ".wav", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".amr", ".aac":
+		return true
+	}
+	return false
+}
+
+// Text is the message as a line of text: its body, the file's name and the text of its sound.
+func (m Message) Text() string {
+	t := m.Body
+	if m.FileName != "" {
+		if t != "" {
+			t += "\n"
+		}
+		t += "📎 " + m.FileName
+	}
+	if m.Transcript != "" {
+		t += "\n🎤 " + m.Transcript
+	}
+	return t
 }
 
 // Auto: an automatic message of the line.
@@ -526,8 +651,9 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 	var spam, pinned bool
 	var queue *string   // the line it was passed to
 	var botNode *string // where the client is in the bot's menu
+	var aiBot bool      // the dialogue is with the AI bot
 	if err := tx.QueryRow(ctx, `SELECT status, operator_id::text, (SELECT count(*) FROM ol_messages m WHERE m.session_id = s.id AND m.author_id IS NULL AND m.kind = ''),
-		spam, pinned, queue_id::text, bot_node FROM ol_sessions s WHERE id = $1 FOR UPDATE`, id).Scan(&status, &operator, &said, &spam, &pinned, &queue, &botNode); err != nil {
+		spam, pinned, queue_id::text, bot_node, ai_bot FROM ol_sessions s WHERE id = $1 FOR UPDATE`, id).Scan(&status, &operator, &said, &spam, &pinned, &queue, &botNode, &aiBot); err != nil {
 		return err
 	}
 	if spam { // the visitor does not know: the message is just not taken
@@ -551,6 +677,13 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 		if next, err = s.botStep(ctx, tx, w, id, *botNode, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
 			return err
 		}
+	case (fresh && w.AIBot && w.AISpace != "" && !(pinned && operator != nil)) || (!fresh && aiBot):
+		// the AI bot: go24 worker answers the client's message soon (OLAIBotDue), the operators wait
+		withBot = true
+		if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET ai_bot = true, ai_wait = now(), ai_turns = CASE WHEN $2 THEN 0 ELSE ai_turns END
+			WHERE id = $1`, id, fresh); err != nil {
+			return err
+		}
 	}
 	fromBot := withBot && next == "queue"
 	handed := !withBot || fromBot // the dialogue is the operators'
@@ -562,7 +695,7 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET unread = unread + $2::int, last_at = now(), status = 'open',
 		waiting_since = CASE WHEN $3 THEN coalesce(waiting_since, now()) END, vis_typing_at = NULL,
 		bot_node = CASE WHEN NOT $3 THEN bot_node END,
-		started_at = coalesce(started_at, now()), closed_at = NULL WHERE id = $1`, id, map[bool]int{true: 1}[handed], handed); err != nil {
+		started_at = coalesce(started_at, now()), closed_at = NULL, summary_tried = false WHERE id = $1`, id, map[bool]int{true: 1}[handed], handed); err != nil {
 		return err
 	}
 	// whose queue: of the line it was passed to; the client back after closing — of its own line again
@@ -581,19 +714,9 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 		if err != nil {
 			return err
 		}
-		keep := ""
-		if qw.CRMForward { // the responsible of the client's CRM card
-			var owner *string
-			if err := tx.QueryRow(ctx, `SELECT coalesce((SELECT responsible_id FROM crm_contacts WHERE id = s.contact_id),
-				(SELECT responsible_id FROM crm_leads WHERE id = s.lead_id))::text FROM ol_sessions s WHERE s.id = $1`, id).Scan(&owner); err != nil {
-				return err
-			}
-			if owner != nil && contains(ops, *owner) {
-				keep = *owner
-			}
-		}
-		if keep == "" && operator != nil && contains(ops, *operator) {
-			keep = *operator // the one who talked to them before
+		keep, err := keeper(ctx, tx, qw, id, ops, operator)
+		if err != nil {
+			return err
 		}
 		if _, err := s.assign(ctx, tx, qw, id, keep, nil); err != nil {
 			return err
@@ -617,6 +740,9 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 		if err := notifyOperators(ctx, tx, id, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
 			return err
 		}
+		if err := notifyInvited(ctx, tx, id, (Message{Body: body, FileName: f.name()}).Text()); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -636,6 +762,25 @@ func (s *Store) VisitorSend(ctx context.Context, widgetID, token, body string, f
 		}
 	}
 	return s.fire(ctx, id, "openline")
+}
+
+// keeper is the operator of the queue ops a dialogue going to the operators stays with: the responsible of the client's
+// CRM card (a line with CRMForward), else the one who talked to them before (operator); "" — the queue decides.
+func keeper(ctx context.Context, tx dbtx, qw Widget, id string, ops []string, operator *string) (string, error) {
+	if qw.CRMForward {
+		var owner *string
+		if err := tx.QueryRow(ctx, `SELECT coalesce((SELECT responsible_id FROM crm_contacts WHERE id = s.contact_id),
+			(SELECT responsible_id FROM crm_leads WHERE id = s.lead_id))::text FROM ol_sessions s WHERE s.id = $1`, id).Scan(&owner); err != nil {
+			return "", err
+		}
+		if owner != nil && contains(ops, *owner) {
+			return *owner, nil
+		}
+	}
+	if operator != nil && contains(ops, *operator) {
+		return *operator, nil
+	}
+	return "", nil
 }
 
 // fire tells the CRM triggers of the dialogue's lead (if it has one) of the visitor's message or form.
@@ -673,7 +818,7 @@ func (s *Store) VisitorMessages(ctx context.Context, widgetID, token string, aft
 func (s *Store) messages(ctx context.Context, sessionID string, after int64) ([]Message, error) {
 	rows, err := s.db.Query(ctx, `SELECT m.id, coalesce(u.name, ''), m.body, m.at, m.kind, coalesce(m.author_id::text, ''),
 		m.file_name, m.file_type, m.file_size, m.file_secret, coalesce(m.form_id::text, ''), coalesce(f.token, ''), m.form_secret, m.form_done, m.buttons,
-		coalesce(m.booking_link_id::text, ''), coalesce(bl.token, '')
+		coalesce(m.booking_link_id::text, ''), coalesce(bl.token, ''), m.transcript
 		FROM ol_messages m LEFT JOIN users u ON u.id = m.author_id LEFT JOIN crm_forms f ON f.id = m.form_id
 		LEFT JOIN booking_links bl ON bl.id = m.booking_link_id
 		WHERE m.session_id = $1 AND m.id > $2 ORDER BY m.id LIMIT 500`, sessionID, after)
@@ -770,7 +915,12 @@ type Session struct {
 	Pinned                             bool       // «Закрепить за собой»: not passed on to another operator
 	QueueID                            string     // the line it was passed to ("" — its own); Widget is that line's name
 	KPILate                            int        // how many times the visitor waited longer than the line's KPI
-	Bot                                bool       // the client is with the line's chat bot
+	Bot                                bool       // the client is with the line's chat bot (the menu or the AI bot)
+	// the colleagues invited into the dialogue («Пригласить в диалог»), their ids and names
+	InvitedIDs, InvitedNames []string
+	Summary                  string // CoPilot's summary of the dialogue («Подвести итоги»)
+	// an application's channel (Channel «app»): its name and code
+	Connector, ConnectorCode string
 }
 
 // Title is how the dialogue is shown: the visitor's name or «Посетитель #…».
@@ -784,7 +934,10 @@ func (x Session) Title() string {
 const sessionSQL = `SELECT s.id, w.name, s.name, s.email, s.phone, s.page, coalesce(o.name, ''), coalesce(s.operator_id::text, ''),
 		coalesce(s.lead_id::text, ''), s.status, s.unread,
 		coalesce((SELECT m.body FROM ol_messages m WHERE m.session_id = s.id AND m.kind NOT IN ('note', 'hidden') ORDER BY m.id DESC LIMIT 1), ''), s.created_at, s.last_at,
-		s.waiting_since IS NOT NULL, s.spam, s.vote, s.head_vote, s.vote_comment, s.head_comment, coalesce(h.name, ''), coalesce(s.contact_id::text, ''), s.widget_id::text, s.vis_read, s.channel, s.consent_at, s.pinned, coalesce(s.queue_id::text, ''), s.kpi_late, s.bot_node IS NOT NULL
+		s.waiting_since IS NOT NULL, s.spam, s.vote, s.head_vote, s.vote_comment, s.head_comment, coalesce(h.name, ''), coalesce(s.contact_id::text, ''), s.widget_id::text, s.vis_read, s.channel, s.consent_at, s.pinned, coalesce(s.queue_id::text, ''), s.kpi_late, s.bot_node IS NOT NULL OR s.ai_bot,
+		ARRAY(SELECT u.id::text FROM unnest(s.invited) WITH ORDINALITY i(id, n) JOIN users u ON u.id = i.id ORDER BY i.n),
+		ARRAY(SELECT u.name FROM unnest(s.invited) WITH ORDINALITY i(id, n) JOIN users u ON u.id = i.id ORDER BY i.n), s.summary,
+		coalesce((SELECT c.name FROM ol_connectors c WHERE c.id = s.connector_id), ''), coalesce((SELECT c.code FROM ol_connectors c WHERE c.id = s.connector_id), '')
 	FROM ol_sessions s JOIN ol_widgets w ON w.id = coalesce(s.queue_id, s.widget_id) LEFT JOIN users o ON o.id = s.operator_id LEFT JOIN users h ON h.id = s.head_by`
 
 // Open is a dialogue with its messages; the operator reads it.
@@ -840,7 +993,7 @@ func (s *Store) answer(ctx context.Context, userID, id string, insert func(tx pg
 	}
 	if _, err := tx.Exec(ctx, `UPDATE ol_sessions SET operator_id = CASE WHEN answered_at IS NULL THEN $2::uuid ELSE coalesce(operator_id, $2::uuid) END,
 		answered_at = coalesce(answered_at, now()), waiting_since = NULL, noanswer_sent = false, tried = '{}',
-		status = 'open', unread = 0, last_at = now(), op_typing_at = NULL, bot_node = NULL
+		status = 'open', unread = 0, last_at = now(), op_typing_at = NULL, bot_node = NULL, ai_bot = false, ai_wait = NULL
 		WHERE id::text = $1`, id, userID); err != nil {
 		return err
 	}
@@ -905,7 +1058,7 @@ func (s *Store) SetStatus(ctx context.Context, userID, id string, open bool) err
 	if !open {
 		return s.closeSession(ctx, id, userID)
 	}
-	_, err := s.db.Exec(ctx, `UPDATE ol_sessions SET status = 'open', spam = false, closed_at = NULL WHERE id::text = $1`, id)
+	_, err := s.db.Exec(ctx, `UPDATE ol_sessions SET status = 'open', spam = false, closed_at = NULL, summary_tried = false WHERE id::text = $1`, id)
 	return err
 }
 
@@ -929,20 +1082,7 @@ func (s *Store) MakeLead(ctx context.Context, userID, id, source string) (string
 	if entity != "" {
 		return "/crm/" + entity + "s/" + client, s.bind(ctx, x.ID, entity, client, userID, false)
 	}
-	var b strings.Builder
-	for _, m := range msgs {
-		who := x.Title()
-		switch {
-		case m.Internal():
-			continue
-		case m.Auto():
-			who = x.Widget
-		case m.Operator != "":
-			who = m.Operator
-		}
-		b.WriteString(who + ": " + m.Text() + "\n")
-	}
-	comment := b.String()
+	comment := Conversation(x, msgs)
 	if r := []rune(comment); len(r) > 9000 {
 		comment = string(r[len(r)-9000:])
 	}

@@ -252,12 +252,27 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			return
 		}
 	}
-	siteForms(p.Blocks, "preview", "", "")
-	siteForms(x.Header, "preview", "", "")
-	siteForms(x.Footer, "preview", "", "")
+	sections, err := s.CRM.Sections(r.Context()) // for the block «Каталог товаров»
+	if err != nil {
+		s.taskErr(w, r, err, "/sites")
+		return
+	}
+	pipelines, err := s.CRM.Pipelines(r.Context())
+	if err != nil {
+		s.taskErr(w, r, err, "/sites")
+		return
+	}
+	for _, list := range [][]sites.Block{p.Blocks, x.Header, x.Footer} {
+		siteForms(list, "preview", "", "")
+		if err := s.siteGoods(r.Context(), "", list); err != nil {
+			s.taskErr(w, r, err, "/sites")
+			return
+		}
+	}
 	s.render(w, r, "sitepage", page{Title: p.Title + " · " + x.Name, Nav: "sites", Data: map[string]any{"Site": x, "Page": p, "Pages": pages,
 		"Types": sites.BlockTypes, "TypeOf": siteTypeOf(), "Users": users, "Access": access, "Roles": sites.Roles,
-		"Sites": all, "PageTemplates": sites.PageTemplates, "Fonts": sites.Fonts, "Domain": s.ownHost(), "BookingLinks": links}})
+		"Sites": all, "PageTemplates": sites.PageTemplates, "Fonts": sites.Fonts, "Domain": s.ownHost(), "BookingLinks": links,
+		"Sections": sections, "Pipelines": pipelines}})
 }
 
 func (s *Server) siteSavePage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -386,6 +401,10 @@ func (s *Server) sitePreview(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	p.Blocks = x.Compose(p.Blocks)
 	siteForms(p.Blocks, "preview", "", "")
+	if err := s.siteGoods(r.Context(), "", p.Blocks); err != nil {
+		s.taskErr(w, r, err, "/sites")
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	s.renderSite(w, r, http.StatusOK, map[string]any{"Site": x, "Page": p, "Preview": true})
 }
@@ -499,20 +518,24 @@ func (s *Server) sitePublic(w http.ResponseWriter, r *http.Request) {
 		state = "sent"
 	}
 	siteForms(p.Blocks, state, q.Get("form"), q.Get("err"))
+	if err := s.siteGoods(r.Context(), x.Slug, p.Blocks); err != nil {
+		s.fail(w, "site goods", err)
+		return
+	}
 	keepUTM(w, r)
 	w.Header().Set("Cache-Control", "no-store")
 	s.renderSite(w, r, status, map[string]any{"Site": x, "Page": p})
 }
 
-// siteForms prepares the form blocks of a page to be shown: each gets the stamp of the time; the one the visitor has
+// siteForms prepares the form and catalog blocks of a page to be shown: each gets the stamp of the time; the one the visitor has
 // just sent (id; every one when id is "") — the state and the refusal.
 func siteForms(list []sites.Block, state, id, errKey string) {
-	if !strings.HasPrefix(errKey, "err.site_form_") {
+	if !strings.HasPrefix(errKey, "err.site_form_") && !strings.HasPrefix(errKey, "err.site_cart") {
 		errKey = ""
 	}
 	stamp := sites.FormStamp(time.Now())
 	for i := range list {
-		if b := &list[i]; b.Type == "form" {
+		if b := &list[i]; b.Type == "form" || b.Type == "catalog" {
 			b.Stamp = stamp
 			if id == "" || b.ID == id {
 				b.State, b.Err = state, errKey
@@ -526,7 +549,8 @@ var siteFormHits = &sites.Hits{Max: 5, Per: 10 * time.Minute}
 
 // siteFormSend: a visitor sends the block «CRM-форма» of a published page — a lead in CRM (source «Веб-сайт») for
 // the form's responsible, who gets a notification. The page shows the answer: ?form=<block>&sent=1 or &err=<key>.
-// A robot (the trap field filled, the form sent too fast) is told it went well, and nothing is created.
+// A robot (the trap field filled, the form sent too fast) is told it went well, and nothing is created. The block
+// «Каталог товаров» sends an order — siteOrder.
 func (s *Server) siteFormSend(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	slug, pg := r.PathValue("slug"), r.PathValue("page")
@@ -564,6 +588,18 @@ func (s *Server) siteFormSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.fail(w, "site form", err)
+		return
+	}
+	if b.Type == "catalog" {
+		if err := s.siteOrder(w, r, x, p, b, ans, strings.SplitN(back, "?", 2)[0]); err != nil {
+			if key := siteOrderErr(err); key != "" {
+				refuse(key)
+				return
+			}
+			s.fail(w, "site order", err)
+			return
+		}
+		http.Redirect(w, r, back+"&sent=1#b-"+bid, http.StatusSeeOther)
 		return
 	}
 	resp, err := s.Sites.Responsible(ctx, x, b)

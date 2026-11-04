@@ -29,6 +29,7 @@ var (
 type Store struct {
 	db   *pgxpool.Pool
 	seen pulseSeen // the marks of «Пульс компании» written today
+	Key  []byte    // the server's secret: the PINs of the time terminals are kept as its HMAC
 }
 
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
@@ -90,6 +91,7 @@ type Profile struct {
 	Departments  []DeptRef
 	Teams        []DeptRef // the teams the person is in
 	Collabs      []DeptRef // a guest's collabs (ID — the key); filled for the list of guests
+	Interests    []string  // «Интересы»: the person's tags
 }
 
 // EditFirst / EditLast fill the card form: the saved parts, or — before the card was ever filled in —
@@ -152,7 +154,8 @@ type Department struct {
 	HeadPhoto string   // photo key of the head
 	Deputies  []Person // заместители руководителя
 	Employees []Person
-	Teams     []*Team // the teams under the department
+	Teams     []*Team    // the teams under the department
+	Chats     []DeptChat // «Чаты и каналы» of the department
 	Children  []*Department
 	Depth     int
 }
@@ -248,6 +251,15 @@ func (s *Store) Tree(ctx context.Context) (*Department, []*Department, error) {
 	for _, t := range teams {
 		if d := byID[t.DepartmentID]; d != nil {
 			d.Teams = append(d.Teams, t)
+		}
+	}
+	chats, err := s.DeptChats(ctx, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, c := range chats {
+		if d := byID[c.DepartmentID]; d != nil {
+			d.Chats = append(d.Chats, c)
 		}
 	}
 	var root *Department
@@ -463,6 +475,7 @@ type Filter struct {
 	Query        string // name, position, e-mail or phone
 	DepartmentID string // with its sub-departments
 	TeamID       string // the people of a team
+	Interest     string // the people with this interest (case aside)
 	Fired        bool   // show dismissed employees instead of active ones
 	Guests       bool   // the guests of collabs instead of employees (the «Гости коллабов»), for administrators
 	// Preset is a quick filter of the list: here — the working day is going on (started, not finished),
@@ -486,7 +499,8 @@ func (s *Store) Employees(ctx context.Context, f Filter) ([]Profile, error) {
 		args = append(args, "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(q)+"%")
 		n := "$" + strconv.Itoa(len(args))
 		where = append(where, "(u.name ILIKE "+n+" OR u.last_name ILIKE "+n+" OR u.position ILIKE "+n+" OR u.email ILIKE "+n+
-			" OR u.work_phone ILIKE "+n+" OR u.mobile_phone ILIKE "+n+" OR u.inner_phone ILIKE "+n+")")
+			" OR u.work_phone ILIKE "+n+" OR u.mobile_phone ILIKE "+n+" OR u.inner_phone ILIKE "+n+
+			" OR EXISTS (SELECT 1 FROM user_interests i WHERE i.user_id = u.id AND i.tag ILIKE "+n+"))")
 	}
 	if f.DepartmentID != "" {
 		args = append(args, f.DepartmentID)
@@ -497,6 +511,10 @@ func (s *Store) Employees(ctx context.Context, f Filter) ([]Profile, error) {
 	if f.TeamID != "" {
 		args = append(args, f.TeamID)
 		where = append(where, "EXISTS (SELECT 1 FROM team_members m WHERE m.user_id = u.id AND m.team_id::text = $"+strconv.Itoa(len(args))+")")
+	}
+	if t := NormInterests([]string{f.Interest}); len(t) > 0 {
+		args = append(args, t[0])
+		where = append(where, "EXISTS (SELECT 1 FROM user_interests i WHERE i.user_id = u.id AND lower(i.tag) = lower($"+strconv.Itoa(len(args))+"))")
 	}
 	if slices.Contains(EmployeePresets, f.Preset) {
 		today := f.Today
@@ -595,7 +613,10 @@ func (s *Store) fillDepartments(ctx context.Context, list []Profile) error {
 		return err
 	}
 	rows.Close()
-	return s.fillTeams(ctx, list, idx, ids)
+	if err := s.fillTeams(ctx, list, idx, ids); err != nil {
+		return err
+	}
+	return s.fillInterests(ctx, list, idx, ids)
 }
 
 func (s *Store) Profile(ctx context.Context, id string) (Profile, error) {

@@ -94,7 +94,7 @@ func TestForms(t *testing.T) {
 	// a lead, moved by the trigger «form»
 	stages, err := s.LeadStages(ctx)
 	must(err)
-	must(s.AddTrigger(ctx, anna, stages[1].ID, "form"))
+	must(s.AddTrigger(ctx, anna, stages[1].ID, "form", TriggerParams{}))
 	ans, err := answer(map[string]string{"name": "Иван", "email": "ivan@client.ru", "position": "Директор", "f:" + guests: "12,5"}, true)
 	must(err)
 	res, err := s.SubmitForm(ctx, f, ans, FormFilling{Title: "Заявка — Иван", Comment: "со страницы", Source: "CRM-форма «Заявка»", IP: "10.0.0.1", Page: "https://site.ru/"})

@@ -28,6 +28,23 @@ func TestWorkdayMath(t *testing.T) {
 }
 
 // TestWorkday: start, a break, finish with a report, continue the day; actions out of turn are refused.
+// «Местоположение»: what the browser sends is kept within the map, to six decimals and whole metres.
+func TestParseGeo(t *testing.T) {
+	g := ParseGeo(" 52.37021571 ", "4.8951679", "24.6")
+	if g == nil || *g != (Geo{52.370216, 4.895168, 25}) || g.String() != "52.370216, 4.895168" ||
+		g.MapURL() != "https://www.openstreetmap.org/?mlat=52.370216&mlon=4.895168#map=17/52.370216/4.895168" {
+		t.Fatalf("%+v", g)
+	}
+	if g := ParseGeo("-33.8688", "151.2093", ""); g == nil || g.Acc != 0 {
+		t.Fatalf("no accuracy: %+v", g)
+	}
+	for _, c := range [][2]string{{"", ""}, {"91", "0"}, {"0", "181"}, {"NaN", "1"}, {"0", "0"}, {"a", "1"}} {
+		if g := ParseGeo(c[0], c[1], "5"); g != nil {
+			t.Errorf("%v: %+v", c, g)
+		}
+	}
+}
+
 func TestWorkday(t *testing.T) {
 	url := os.Getenv("GO24_TEST_DATABASE_URL")
 	if url == "" {

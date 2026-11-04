@@ -70,7 +70,9 @@
 
 {{define "kcard"}}{{$t := .}}
 <div class="kcard" draggable="{{if .CanMove}}true{{else}}false{{end}}" data-key="{{.Key}}">
-  <a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}{{if eq .Priority 2}} <span class="prio" title="{{t "priority.2"}}">{{icon "flame"}}</span>{{end}}</a>
+  <a href="/t/{{.Key}}" class="ttitle{{if .Unread}} unread{{end}}">{{.Title}}{{if eq .Priority 2}} <span class="prio" title="{{t "priority.2"}}">{{icon "flame"}}</span>{{end}}{{if .Muted}} <span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}</a>
+  {{with .Cover}}<a href="/t/{{$t.Key}}" class="kcover"><img src="/files/{{.}}/thumb" alt="" loading="lazy"></a>{{end}}
+  {{with .Tags}}<div class="ktags">{{range .}}<a class="tag small" href="/tasks?tag={{.}}">#{{.}}</a> {{end}}</div>{{end}}
   <div class="chips">
     {{if .ChecklistTotal}}<span class="chip{{if eq .ChecklistDone .ChecklistTotal}} done{{end}}">{{icon "list-check"}} {{.ChecklistDone}}/{{.ChecklistTotal}}</span>{{end}}
     {{if .Files}}<span class="chip">{{icon "paperclip"}} {{.Files}}</span>{{end}}

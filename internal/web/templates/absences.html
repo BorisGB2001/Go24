@@ -5,6 +5,8 @@
   <a href="/company/absences" {{if ne $d.View "list"}}class="on"{{end}}>{{icon "calendar-event"}} {{t "absence.chart"}}</a>
   <a href="/company/absences?view=list" {{if eq $d.View "list"}}class="on"{{end}}>{{icon "list"}} {{t "absence.list"}}</a>
   {{if $d.Report}}<a href="/company/absences/report">{{icon "chart-bar"}} {{t "vacation.report"}}</a>{{end}}
+  {{if $d.CanKinds}}<a href="/company/absences/kinds">{{icon "settings"}} {{t "abskinds.title"}}</a>{{end}}
+  <a href="/company/absences/sync{{with $d.Dept}}?dept={{.}}{{end}}">{{icon "calendar-event"}} {{t "abssync.link"}}</a>
 </div>
 <details class="card absform-card" id="absform" {{if or $d.Editing $d.Picked}}open{{end}}>
   <summary hidden>{{t "absence.add"}}</summary>
@@ -12,7 +14,7 @@
   <form method="post" action="/company/absences{{if $d.Editing}}/{{$f.ID}}{{end}}" class="row absform">
     <input type="hidden" name="back" value="{{$d.Back}}">
     {{template "upick" (upick "user" $f.UserID $d.Users "required")}}
-    <select name="kind" style="width:auto">{{range $d.Kinds}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{t (print "absence.kind." .)}}</option>{{end}}</select>
+    <select name="kind" style="width:auto">{{range $d.Kinds}}<option value="{{.}}" {{if eq . $f.Kind}}selected{{end}}>{{absKind .}}</option>{{end}}</select>
     <span class="period"><span>{{t "period.from"}} <input type="date" name="from" required value="{{$f.From.Format "2006-01-02"}}"></span> <span>{{t "period.to"}} <input type="date" name="to" required value="{{$f.To.Format "2006-01-02"}}"></span></span>
     <input type="text" name="comment" value="{{$f.Comment}}" placeholder="{{t "time.comment"}}" style="flex:1;min-width:140px">
     <div class="actingbox">
@@ -34,7 +36,7 @@
   <thead><tr><th>{{t "absence.who"}}</th><th>{{t "absence.kind"}}</th><th>{{t "absence.when"}}</th><th>{{t "acting.who"}}</th><th>{{t "time.comment"}}</th><th></th></tr></thead>
   <tbody>{{range $d.List}}
   <tr><td><a href="/u/{{.UserID}}" class="person" data-user="{{.UserID}}">{{photo .UserName (photoURL .UserID .PhotoKey) false}} {{.UserName}}</a></td>
-    <td><span class="pill abs-{{.Kind}}">{{t (print "absence.kind." .Kind)}}</span></td>
+    <td><span class="pill abs-{{absColor .Kind}}">{{absKind .Kind}}</span></td>
     <td>{{day .From}} — {{day .To}}</td>
     <td>{{if .ActingID}}<a href="/u/{{.ActingID}}" data-user="{{.ActingID}}">{{.ActingName}}</a><div class="muted small">{{range $i, $r := .Rights}}{{if $i}}, {{end}}{{t (print "acting.right." $r)}}{{end}}</div>{{else}}<span class="muted">—</span>{{end}}</td>
     <td class="muted">{{.Comment}}</td>
@@ -59,14 +61,14 @@
     </span>
     <input type="hidden" name="from" value="{{$d.From.Format "2006-01-02"}}">{{/* after the buttons: a pressed one's «from» comes first */}}
   </form>
-  <div class="wslegend">{{range $d.Kinds}}<span class="abs-{{.}}">{{t (print "absence.kind." .)}}</span>{{end}}<span class="ws-off">{{t "worksheet.legend.off"}}</span>
+  <div class="wslegend">{{range $d.Kinds}}<span class="abs-{{absColor .}}">{{absKind .}}</span>{{end}}<span class="ws-off">{{t "worksheet.legend.off"}}</span>
     <span class="muted hint">{{t "absence.chart_hint"}}</span></div>
   {{if $d.Rows}}<div class="wsheet-wrap"><table class="wsheet abschart{{if $d.Week}} week{{end}}"><thead><tr><th class="who">{{t "absence.who"}}</th>
     {{range $d.Dates}}{{$k := .Format "2006-01-02"}}<th class="{{if index $d.Off $k}}off{{end}}{{if eq $k $d.TodayKey}} today{{end}}">{{.Day}}<br><span class="muted">{{t (print "wd." (wdnum .))}}</span></th>{{end}}</tr></thead>
   <tbody>{{range $row := $d.Rows}}{{$can := or $d.Admin (index $d.Mine $row.ID)}}<tr><td class="who"><a href="/u/{{$row.ID}}" class="person" data-user="{{$row.ID}}">{{photo $row.Name $row.PhotoURL false}}<span>{{$row.Name}}{{with $row.Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a></td>
     {{range $row.Cells}}{{$k := .Day.Format "2006-01-02"}}{{if .Absence}}{{$a := .Absence}}<td colspan="{{.Span}}" class="absc">
-      {{if $can}}<a href="/company/absences?{{$d.Keep}}&edit={{$a.ID}}#absform"{{else}}<span{{end}} class="absbar abs-{{$a.Kind}}{{if .CutBefore}} cutl{{end}}{{if .CutAfter}} cutr{{end}}"
-        title="{{$row.Name}}: {{t (print "absence.kind." $a.Kind)}}, {{day $a.From}} — {{day $a.To}}{{with $a.Comment}} · {{.}}{{end}}{{with $a.ActingName}} · {{t "acting.who"}}: {{.}}{{end}}">{{t (print "absence.kind." $a.Kind)}}{{if gt .Span 3}} · {{day $a.From}} — {{day $a.To}}{{end}}{{if $can}}</a>{{else}}</span>{{end}}</td>
+      {{if $can}}<a href="/company/absences?{{$d.Keep}}&edit={{$a.ID}}#absform"{{else}}<span{{end}} class="absbar abs-{{absColor $a.Kind}}{{if .CutBefore}} cutl{{end}}{{if .CutAfter}} cutr{{end}}"
+        title="{{$row.Name}}: {{absKind $a.Kind}}, {{day $a.From}} — {{day $a.To}}{{with $a.Comment}} · {{.}}{{end}}{{with $a.ActingName}} · {{t "acting.who"}}: {{.}}{{end}}">{{absKind $a.Kind}}{{if gt .Span 3}} · {{day $a.From}} — {{day $a.To}}{{end}}{{if $can}}</a>{{else}}</span>{{end}}</td>
     {{else}}<td class="{{if .Off}}ws-off{{end}}{{if .Today}} today{{end}}">{{if $can}}<a href="/company/absences?{{$d.Keep}}&user={{$row.ID}}&day={{$k}}#absform" title="{{t "absence.add"}}">&nbsp;</a>{{end}}</td>{{end}}{{end}}</tr>{{end}}</tbody></table></div>
   {{else}}<div class="empty">{{icon "calendar-event"}} {{if $d.OnlyAbsent}}{{t "absence.none_absent"}}{{else}}{{t "company.empty"}}{{end}}</div>{{end}}
 </div>

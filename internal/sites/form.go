@@ -13,16 +13,28 @@ import (
 
 // ---------- the block «CRM-форма» ----------
 
-// FormFields are the fields a form may ask, in the order they are shown.
-var FormFields = []string{"name", "phone", "email", "comment"}
+// FormFields are the fields a form may ask, in the order they are shown; OrderFields — those of an order from a
+// catalog block.
+var (
+	FormFields  = []string{"name", "phone", "email", "comment"}
+	OrderFields = []string{"name", "phone", "email", "address", "comment"}
+)
+
+// AskFields are the fields the block may ask.
+func (b Block) AskFields() []string {
+	if b.Type == "catalog" {
+		return OrderFields
+	}
+	return FormFields
+}
 
 // Asks is how the form asks a field: "" — not, on — asked, req — required.
 func (b Block) Asks(field string) string { return b.Data["ask_"+field] }
 
-// FormBlock finds a visible form block of a page.
+// FormBlock finds a visible block of a page a visitor sends: a form or a catalog (an order).
 func (p Page) FormBlock(id string) (Block, bool) {
 	for _, b := range p.Blocks {
-		if b.ID == id && b.Type == "form" && !b.Hidden {
+		if b.ID == id && (b.Type == "form" || b.Type == "catalog") && !b.Hidden {
 			return b, true
 		}
 	}
@@ -38,7 +50,7 @@ const (
 // them; the e-mail looks like an address.
 func (b Block) Answer(get func(string) string) (map[string]string, error) {
 	out := map[string]string{}
-	for _, f := range FormFields {
+	for _, f := range b.AskFields() {
 		ask := b.Asks(f)
 		if ask == "" {
 			continue
@@ -70,12 +82,12 @@ func (b Block) Answer(get func(string) string) (map[string]string, error) {
 	return out, nil
 }
 
-// Responsible is who gets the form's leads: the employee the block names, else the site's creator, else the first
+// Responsible is who gets the form's leads (the catalog's orders): the employee the block names, else the site's creator, else the first
 // employee — whoever of them is active.
 func (s *Store) Responsible(ctx context.Context, site Site, b Block) (string, error) {
 	var id string
 	err := s.db.QueryRow(ctx, `SELECT id::text FROM users WHERE active AND NOT guest
-		ORDER BY id::text = $1 DESC, id::text = $2 DESC, created_at LIMIT 1`, b.Get("responsible"), site.CreatedBy).Scan(&id)
+		ORDER BY id::text = $1 DESC, id::text = $2 DESC, created_at LIMIT 1`, b.Get("responsible")+b.Get("manager"), site.CreatedBy).Scan(&id)
 	return id, err
 }
 

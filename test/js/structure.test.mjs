@@ -22,8 +22,10 @@ const treeT = tree.slice(0, at) + team + tree.slice(at);
 let reloads = 0;
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('jsdomError', e => { if (/navigation|reload/i.test(e.message)) reloads++; else console.error(e); });
-const page = edit => new JSDOM(`<!doctype html><body><div class="row structbar"><input type="search" class="structfind"><span class="structnone" hidden>Ничего не найдено</span></div>
-  <div class="orgtree"${edit ? ' data-struct-edit' : ''}>${treeT.replace('class="dept"', 'class="dept root"')}</div></body>`,
+// can: the departments «Права доступа» let change (data-can-edit, data-can-staff); none given — all of them
+const page = (edit, can) => new JSDOM(`<!doctype html><body><div class="row structbar"><input type="search" class="structfind"><span class="structnone" hidden>Ничего не найдено</span></div>
+  <div class="orgtree"${edit ? ' data-struct-edit' : ''}>${treeT.replace('class="dept"', 'class="dept root"')
+    .replace(/data-dept="(\w+)"/g, (m, id) => !edit || (can && !can.includes(id)) ? m : `${m} data-can-edit data-can-staff`)}</div></body>`,
   { runScripts: 'outside-only', url: 'http://go24.test/company/structure', virtualConsole });
 
 // the search
@@ -129,5 +131,28 @@ const page = edit => new JSDOM(`<!doctype html><body><div class="row structbar">
   await drag(head('b2b'), card('root'));
   assert.deepEqual(sent.pop(), { alert: 'Нельзя' });
   assert.equal(reloads, 2);
+}
+
+// rights in «Продажи» only: its people and sub-departments move inside it, nothing else is dragged or dropped onto
+{
+  const w = page(true, ['sales', 'b2b']).window, doc = w.document;
+  const sent = [];
+  w.fetch = async (url, opts) => { sent.push({ url, body: Object.fromEntries(opts.body) }); return { ok: true, status: 204 }; };
+  w.eval(script);
+  const card = id => doc.querySelector(`[data-dept="${id}"] > .dcard`);
+  const person = u => doc.querySelector(`[data-user="${u}"]`);
+  assert.ok(!person('u2').hasAttribute('draggable'), 'a person of another department is not dragged');
+  assert.ok(!card('it').querySelector('.dhead').hasAttribute('draggable'));
+  assert.equal(person('u4').getAttribute('draggable'), 'true');
+  const ev = (type, el) => {
+    const e = new w.Event(type, { bubbles: true, cancelable: true });
+    e.dataTransfer = { setData() {}, effectAllowed: '' };
+    el.dispatchEvent(e);
+    return e;
+  };
+  ev('dragstart', person('u4'));
+  assert.equal(ev('dragover', card('it')).defaultPrevented, false, 'not onto a department without the rights');
+  assert.equal(ev('dragover', card('b2b')).defaultPrevented, true);
+  ev('dragend', person('u4'));
 }
 console.log('structure.test.mjs: ok');

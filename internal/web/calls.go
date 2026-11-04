@@ -51,6 +51,22 @@ func (s *Server) callRoom(r *http.Request, sess auth.Session) (room, title, back
 		}
 		return "event-" + e.ID, e.Title, "/calendar/" + e.ID, func(string) error { return nil }, nil
 	}
+	if id := q.Get("conf"); id != "" && s.Conferences != nil { // a video conference: any employee who has its link
+		if tasks.IsGuestCtx(r.Context()) {
+			return "", "", "", nil, tasks.ErrForbidden
+		}
+		c, err := s.Conferences.Get(r.Context(), id)
+		if err != nil {
+			return "", "", "", nil, confErr(err)
+		}
+		return calls.ConferenceRoom(c.ID), c.Title, "/call/conferences#c-" + c.ID, func(body string) error {
+			if c.Chat == "" || s.Matrix == nil {
+				return nil
+			}
+			_, err := s.Matrix.Send(r.Context(), sess.UserID, c.Chat, body, "")
+			return err
+		}, nil
+	}
 	if chat := q.Get("room"); chat != "" && s.Matrix != nil {
 		rooms, err := s.Matrix.Rooms(r.Context(), sess.UserID)
 		if err != nil {
@@ -120,7 +136,16 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		return
 	}
 	host := s.callHost(r, sess, room)
-	token, err := s.Calls.Token(sess.UserID, sess.Name, room, host, time.Now())
+	speaks, broadcast := true, false
+	if id := r.URL.Query().Get("conf"); id != "" && s.Conferences != nil { // a broadcast: the others watch
+		if c, err := s.Conferences.Get(r.Context(), id); err == nil {
+			speaks, broadcast = c.Speaks(sess.UserID) || sess.AdminActive(), c.Broadcast
+			if c.Token != "" {
+				link = s.confURL(c) // one link for everyone
+			}
+		}
+	}
+	token, err := s.Calls.TokenAs(sess.UserID, sess.Name, room, host, speaks, time.Now())
 	if err != nil {
 		s.fail(w, "call token", err)
 		return
@@ -131,7 +156,7 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		"Video": r.URL.Query().Get("video") != "0", "Ring": r.URL.Query().Get("r"), "Chat": r.URL.Query().Get("room"),
 		"RingMore": s.Rings != nil && s.Matrix != nil && r.URL.Query().Get("room") != "",
 		"Guests":   s.CallGuests != nil && !tasks.IsGuestCtx(r.Context()), "Query": join.Encode(),
-		"Host":     host && s.Calls.APIURL != ""}})
+		"Host":     host && s.Calls.APIURL != "", "Viewer": !speaks, "Broadcast": broadcast}})
 }
 
 // callHost: the person leads the call, as «ведущий» — the creator, the responsible and the project's
@@ -157,6 +182,9 @@ func (s *Server) callHost(r *http.Request, sess auth.Session, room string) bool 
 	case q.Get("event") != "":
 		e, err := s.Calendar.Get(ctx, sess.UserID, q.Get("event"))
 		return err == nil && e.Mine(sess.UserID)
+	case q.Get("conf") != "" && s.Conferences != nil:
+		c, err := s.Conferences.Get(ctx, q.Get("conf"))
+		return err == nil && c.Host(sess.UserID)
 	case q.Get("room") != "" && s.CallLines != nil:
 		by, err := s.CallLines.Starter(ctx, room)
 		if err != nil {

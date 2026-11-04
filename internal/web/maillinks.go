@@ -48,11 +48,6 @@ func (c senderCard) Empty() bool {
 	return c.Employee == nil && len(c.Contacts) == 0 && len(c.Companies) == 0 && len(c.Leads) == 0
 }
 
-// publicDomains are mail services' domains: a company is not found by them.
-var publicDomains = map[string]bool{"gmail.com": true, "googlemail.com": true, "yandex.ru": true, "ya.ru": true, "yandex.com": true,
-	"mail.ru": true, "bk.ru": true, "list.ru": true, "inbox.ru": true, "outlook.com": true, "hotmail.com": true, "icloud.com": true,
-	"yahoo.com": true, "rambler.ru": true, "proton.me": true, "protonmail.com": true, "live.com": true, "me.com": true}
-
 // mailSender is the card of the letter's person.
 func (s *Server) mailSender(r *http.Request, sess auth.Session, m mail.Message, thread []mail.Message) (*senderCard, error) {
 	ctx := r.Context()
@@ -102,7 +97,7 @@ func (s *Server) mailSender(r *http.Request, sess auth.Session, m mail.Message, 
 		}
 		domain := c.Addr[strings.LastIndex(c.Addr, "@")+1:]
 		q := c.Addr
-		if !publicDomains[domain] {
+		if !mail.PublicDomain(domain) {
 			q = "@" + domain // a company of the sender's domain
 		}
 		companies, err := s.CRM.Companies(ctx, sess.UserID, q)
@@ -110,7 +105,7 @@ func (s *Server) mailSender(r *http.Request, sess auth.Session, m mail.Message, 
 			return nil, err
 		}
 		for _, co := range companies {
-			if !companyIDs[co.ID] && (strings.EqualFold(co.Email, c.Addr) || (!publicDomains[domain] && strings.HasSuffix(strings.ToLower(co.Email), "@"+domain))) {
+			if !companyIDs[co.ID] && (strings.EqualFold(co.Email, c.Addr) || (!mail.PublicDomain(domain) && strings.HasSuffix(strings.ToLower(co.Email), "@"+domain))) {
 				companyIDs[co.ID] = true
 				c.Companies = append(c.Companies, co)
 			}
@@ -228,7 +223,7 @@ func (s *Server) mailExtras(r *http.Request, sess auth.Session, m mail.Message, 
 		data["LetterCRM"] = refs
 		can := map[string]bool{}
 		for _, e := range []string{"lead", "deal", "contact", "company"} {
-			if can[e], err = s.CRM.Can(ctx, sess.UserID, e, "write", sess.UserID); err != nil {
+			if can[e], err = s.CRM.Can(ctx, sess.UserID, e, "add", sess.UserID); err != nil {
 				return err
 			}
 		}
@@ -237,7 +232,7 @@ func (s *Server) mailExtras(r *http.Request, sess auth.Session, m mail.Message, 
 	if data["Sender"], err = s.mailSender(r, sess, m, thread); err != nil {
 		return err
 	}
-	return s.mailShareExtras(r, sess, ids, thread, data)
+	return s.mailShareExtras(r, sess, ids, thread, m.Locked(), data)
 }
 
 // ---------- a task of a letter ----------
@@ -364,7 +359,7 @@ func (s *Server) crmFromLetter(r *http.Request, sess auth.Session, m mail.Messag
 	if _, ok := crmPaths[kind]; !ok {
 		return "", i18n.E("err.bad_form")
 	}
-	if err := s.CRM.Check(ctx, sess.UserID, kind, "write", sess.UserID); err != nil {
+	if err := s.CRM.Check(ctx, sess.UserID, kind, "add", sess.UserID); err != nil {
 		return "", err
 	}
 	addr, name := m.FromAddr, m.FromName
@@ -387,7 +382,7 @@ func (s *Server) crmFromLetter(r *http.Request, sess auth.Session, m mail.Messag
 	body := clipText(m.Body, 9000)
 	domain := strings.ToLower(addr[strings.LastIndex(addr, "@")+1:])
 	companyOf := func() string { // a company of the CRM with an address of the domain
-		if publicDomains[domain] || domain == "" {
+		if mail.PublicDomain(domain) || domain == "" {
 			return ""
 		}
 		list, err := s.CRM.Companies(ctx, sess.UserID, "@"+domain)
@@ -410,7 +405,7 @@ func (s *Server) crmFromLetter(r *http.Request, sess auth.Session, m mail.Messag
 			Origin: crm.Dict{Code: "EMAIL"}})
 	case "company":
 		t := domain
-		if publicDomains[domain] {
+		if mail.PublicDomain(domain) {
 			t = name
 		}
 		return s.CRM.SaveCompany(ctx, sess.UserID, crm.Company{Title: clipText(t, 300), Email: clipText(addr, 300)})
@@ -425,7 +420,7 @@ func (s *Server) crmFromLetter(r *http.Request, sess auth.Session, m mail.Messag
 			}
 		}
 	}
-	if contact == "" && s.CRM.Check(ctx, sess.UserID, "contact", "write", sess.UserID) == nil {
+	if contact == "" && s.CRM.Check(ctx, sess.UserID, "contact", "add", sess.UserID) == nil {
 		company = companyOf()
 		id, err := s.CRM.SaveContact(ctx, sess.UserID, crm.Contact{Name: clipText(name, 300), Email: clipText(addr, 300), Company: crm.Ref{ID: company},
 			Origin: crm.Dict{Code: "EMAIL"}})

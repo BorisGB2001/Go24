@@ -1,0 +1,18 @@
+{{define "content"}}{{$d := .Data}}{{$doc := $d.Doc}}
+<div class="pagehead"><h1>{{icon "signature"}} {{t "sign.blocks.title"}}</h1><span class="muted">{{$doc.Title}}</span><span style="flex:1"></span>
+  <a class="button ghost" href="/sign/{{$doc.ID}}">{{t "common.back"}}</a></div>
+<form method="post" action="/sign/{{$doc.ID}}/blocks" class="sgb" data-native data-sgblocks data-del="{{t "common.delete"}}">
+  <input type="hidden" name="blocks" value="{{$d.Blocks}}">
+  <div class="sgb-pages">{{range $i, $p := $d.Pages}}<div class="sgb-page" data-page="{{add $i 1}}" style="aspect-ratio: {{$p.W}} / {{$p.H}}">
+    <img src="/sign/{{$doc.ID}}/page/{{add $i 1}}" loading="lazy" draggable="false" alt="{{t "sign.blocks.page" (add $i 1)}}"><span class="sgb-num">{{add $i 1}}</span></div>{{end}}</div>
+  <div class="card sgb-tools"><h2>{{t "sign.blocks.add"}}</h2>
+    <label>{{t "sign.blocks.signer"}}<select data-signer>{{range $doc.Parties}}{{if not .Reviewer}}<option value="{{.Ord}}">{{.Ord}}. {{.Name}}</option>{{end}}{{end}}</select></label>
+    <div class="sgb-kinds">{{range $d.Kinds}}<button type="button" class="ghost" data-kind="{{.}}" aria-pressed="false"{{if and (eq . "stamp") (not $d.Stamp)}} disabled title="{{t "sign.blocks.no_stamp"}}"{{end}}>{{t (print "sign.block." .)}}</button>{{end}}</div>
+    <label>{{t "sign.blocks.text"}}<input type="text" maxlength="200" data-text placeholder="{{t "sign.blocks.text_hint"}}"></label>
+    <label class="small"><input type="checkbox" data-required> {{t "sign.blocks.required"}}</label>
+    <p class="small muted">{{t "sign.blocks.hint"}}</p>
+    <p class="small" data-count data-tpl="{{t "sign.blocks.count"}}"></p>
+    <p><button class="primary">{{icon "check"}} {{t "common.save"}}</button></p></div>
+</form>
+<script src="{{asset "js/signblocks.js"}}"></script>
+{{end}}

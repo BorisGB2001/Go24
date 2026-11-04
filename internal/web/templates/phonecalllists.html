@@ -1,0 +1,18 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{icon "phone"}} {{t "tel.cl_title"}}</h1><a class="button ghost" href="/telephony/calls">{{icon "list"}} {{t "tel.calls"}}</a>
+  {{if $d.Admin}}{{if $d.All}}<a class="button ghost" href="/telephony/calllists">{{t "tel.cl_mine"}}</a>{{else}}<a class="button ghost" href="/telephony/calllists?all=1">{{t "tel.cl_all"}}</a>{{end}}{{end}}</div>
+<p class="muted small">{{t "tel.cl_hint"}}</p>
+<div class="card flush">
+  {{if $d.Lists}}<div class="tablewrap"><table class="tlist">
+    <thead><tr><th>{{t "tel.cl_one"}}</th>{{if $d.All}}<th>{{t "tel.col.employee"}}</th>{{end}}<th>{{t "tel.cl_progress"}}</th><th>{{t "tel.cl_created"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Lists}}<tr>
+      <td><a href="/telephony/calllists/{{.ID}}">{{.Title}}</a> <span class="muted small">{{t (print "crm." .Entity "s")}}</span></td>
+      {{if $d.All}}<td>{{.OwnerName}}</td>{{end}}
+      <td>{{.Done}} / {{.Total}}<div class="progress"><span style="width:{{pct .Done .Total}}%"></span></div></td>
+      <td class="nowrap small">{{datetime .Created}}</td>
+      <td class="small">{{if .Closed}}<span class="pill">{{t "tel.cl_closed"}}</span>{{else if eq .Left 0}}<span class="pill tel-in">{{t "tel.cl_finished"}}</span>{{end}}</td>
+    </tr>{{end}}</tbody></table></div>
+  {{else}}<p class="muted" style="padding:16px">{{t "tel.cl_none"}}</p>{{end}}
+</div>
+{{end}}

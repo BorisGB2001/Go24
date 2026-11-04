@@ -16,6 +16,7 @@
     <label class="check"><input type="checkbox" name="auto_change" {{if $t.AutoChange}}checked{{end}}> {{t "bp.auto_change"}}</label>
     <p class="small muted">{{t "bp.autostart_hint"}}</p>
     <label>{{t "bp.fields"}}</label>{{template "bpfields" (dict "P" "f" "Rows" $d.FieldRows "Kinds" $d.FieldKinds "Scopes" $d.Scopes)}}
+    <p class="small muted"><a href="/bp/globals">{{t "bp.globals"}}</a>{{with $d.Globals}}: {{range $i, $g := .}}{{if $i}}, {{end}}<code>{{print "{" $g.Key "}"}}</code> {{$g.Label}}{{end}}{{end}}</p>
     <label class="check"><input type="checkbox" name="active" {{if $t.Active}}checked{{end}}> {{t "bp.active"}}</label>
     <p><button class="primary">{{t "common.save"}}</button></p>
   </form>
@@ -35,88 +36,173 @@
 </div>{{end}}
 </div><div>
 {{if $t.ID}}<div class="card">
-  <h2>{{t "bp.steps"}}</h2>
-  <ol class="bpsteps">{{range $i, $s := $t.Steps}}<li>{{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $t.Fields)}}
-    <span class="row" style="display:inline-flex">{{if $i}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="up"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "bp.up"}}">↑</button></form>{{end}}
+  <div class="row bphead"><h2>{{t "bp.steps"}}</h2><span class="bpviews"><button type="button" class="ghost small" data-bpview="list">{{icon "list"}} {{t "bp.scheme.list"}}</button><button type="button" class="ghost small" data-bpview="scheme">{{icon "hierarchy-2"}} {{t "bp.scheme.title"}}</button></span></div>
+  <ol class="bpsteps">{{range $i, $s := $t.Steps}}<li{{if eq (add $i 1) $d.Edit}} class="on"{{end}} data-bpedit="?step={{add $i 1}}#stepform">{{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $t.Fields)}}
+    <span class="row" style="display:inline-flex"><a class="button ghost small" href="?step={{add $i 1}}#stepform" title="{{t "bp.edit_step" (add $i 1)}}">{{icon "edit"}}</a>{{if $i}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="up"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "bp.up"}}">↑</button></form>{{end}}
     <form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span></li>{{end}}</ol>
-  <details><summary class="button ghost">{{icon "plus"}} {{t "bp.add_step"}}</summary>
-    <form method="post" action="/bp/templates/{{$id}}" class="bpaddstep" data-robot><input type="hidden" name="op" value="add">
-      <select name="kind">{{range $d.Kinds}}<option value="{{.}}">{{t (print "bp.kind." .)}}</option>{{end}}</select>
-      <div data-for="create"><label>{{t "bp.step_card_entity"}}</label><select name="card_entity">{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}">{{t (print "crm." .)}}</option>{{end}}</select></div>
-      <div data-for="approve review request task notify chat create activity absence event"><input type="text" name="text" maxlength="1000" placeholder="{{t "bp.step_text"}}"></div>
-      <div data-for="chat mail post comment document"><label>{{t "bp.step_from"}}</label>{{template "upick" (upick "from" "starter" $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
-      <div data-for="approve review request task notify chat create activity userinfo"><label>{{t "bp.step_to"}}</label>{{template "upick" (upick "to" "starter" $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
-      <div data-for="approve review request chat"><label>{{t "bp.step_users"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
-      <div data-for="post"><label>{{t "bp.step_post_to"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "ph" (t "bp.step_post_all") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_post_title"}}</label><input type="text" name="subject" maxlength="300">
-        <label>{{t "bp.step_post_text"}}</label><textarea name="text" rows="5" maxlength="1000"></textarea></div>
-      <div data-for="pick"><label>{{t "bp.step_pick_users"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_pick_mode"}}</label><select name="pick_mode">{{range $d.PickModes}}<option value="{{.}}">{{t (print "bp.pick." .)}}</option>{{end}}</select>
-        <label class="check"><input type="checkbox" name="skip" checked> {{t "bp.step_pick_skip"}}</label>
-        <label>{{t "bp.step_pick_reserve"}}</label>{{template "upick" (upick "reserve" "" $d.Users "ph" (t "bp.pick.no_reserve") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_pick_field"}}</label><select name="pick_field">{{range $d.AllFields}}{{if and (eq .Kind "user") (ne .Scope "const")}}<option value="{{.Key}}">{{.Label}}</option>{{end}}{{end}}</select>
-        <p class="small muted">{{t "bp.step_pick_hint"}}</p></div>
+  {{template "bpscheme" (dict "Nodes" $d.Scheme "ID" $id "Users" $d.Users "Fields" $t.Fields)}}
+  {{$v := $d.V}}{{$kind := $v.Get "kind"}}
+  <details id="stepform"{{if or $d.Edit $d.Gap.At}} open{{end}}><summary class="button ghost">{{if $d.Edit}}{{icon "edit"}} {{t "bp.edit_step" $d.Edit}}{{else}}{{icon "plus"}} {{t "bp.add_step"}}{{end}}</summary>
+    <form method="post" action="/bp/templates/{{$id}}" class="bpaddstep" data-robot><input type="hidden" name="op" value="{{if $d.Edit}}edit{{else}}add{{end}}">{{if $d.Edit}}<input type="hidden" name="n" value="{{sub $d.Edit 1}}">{{end}}
+      <select name="kind">{{range $d.Kinds}}{{if ne . "app"}}<option value="{{.}}" {{if eq . $kind}}selected{{else if $d.Edit}}disabled{{end}}>{{t (print "bp.kind." .)}}</option>{{end}}{{end}}
+        {{with $d.Actions}}<optgroup label="{{t "bp.app_actions"}}">{{range .}}<option value="app:{{.ID}}" {{if eq (print "app:" .ID) $kind}}selected{{else if $d.Edit}}disabled{{end}}>{{.AppName}}: {{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+      <div data-for="create"><label>{{t "bp.step_card_entity"}}</label><select name="card_entity">{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}" {{if eq . ($v.Get "card_entity")}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}
+        {{with $d.Types}}<optgroup label="{{t "bp.step_create_types"}}">{{range .}}<option value="type:{{.ID}}" {{if eq (print "type:" .ID) ($v.Get "card_entity")}}selected{{end}}>{{.Name}}</option>{{end}}</optgroup>{{end}}</select>
+        <label>{{t "bp.step_create_stage"}}</label><select name="card_stage"><option value="">{{t "bp.step_create_stage_first"}}</option>{{range $d.CreatePipes}}<optgroup label="{{.Name}}">{{range .Stages}}<option value="{{.ID}}" {{if eq .ID ($v.Get "card_stage")}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}</optgroup>{{end}}</select>
+        <p class="small muted">{{t "bp.step_create_hint"}}</p></div>
+      <div data-for="crmupdate crmread crmdelete crmclose crmresponsible"><label>{{t "bp.step_card_entity"}}</label><select name="crm_entity">{{if $d.CRMCard}}<option value="">{{t "bp.step_crm_own"}}</option>{{end}}{{range list "deal" "lead" "contact" "company"}}<option value="{{.}}" {{if eq . ($v.Get "crm_entity")}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}</select></div>
+      <div data-for="crmobservers crmproduct"><label>{{t "bp.step_card_entity"}}</label><select name="crm_entity">{{if or (eq $t.Entity "deal") (eq $t.Entity "lead")}}<option value="">{{t "bp.step_crm_own"}}</option>{{end}}{{range list "deal" "lead"}}<option value="{{.}}" {{if eq . ($v.Get "crm_entity")}}selected{{end}}>{{t (print "crm." .)}}</option>{{end}}</select></div>
+      <div data-for="crmupdate crmread crmdelete crmconvert crmmove crmcopy crmobservers crmclose crmresponsible crmproduct"><label>{{t "bp.step_crm_card"}}</label><input type="text" name="value" maxlength="1000" placeholder="{created_card}" value="{{$v.Get "value"}}">
+        <p class="small muted">{{t "bp.step_crm_card_hint"}}</p><p class="small muted" data-for="crmread">{{t "bp.step_crmread_hint"}}</p></div>
+      <div data-for="crmconvert"><label>{{t "bp.step_convert_into"}}</label>{{range $d.ConvertInto}}<label class="check"><input type="checkbox" name="into" value="{{.}}" {{if has (index $v "into") .}}checked{{end}}> {{t (print "crm." .)}}</label>{{end}}
+        <p class="small muted">{{t "bp.step_convert_hint"}}</p></div>
+      <div data-for="crmmove crmcopy"><label>{{t "bp.step_crm_stage"}}</label><select name="crm_stage">{{range $d.DealPipes}}<optgroup label="{{.Name}}">{{range .Stages}}<option value="{{.ID}}" {{if eq .ID ($v.Get "crm_stage")}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}</optgroup>{{end}}</select>
+        <p class="small muted" data-for="crmmove">{{t "bp.step_crmmove_hint"}}</p><p class="small muted" data-for="crmcopy">{{t "bp.step_crmcopy_hint"}}</p></div>
+      <div data-for="crmobservers"><label>{{t "bp.step_obs_mode"}}</label><select name="obs_mode">{{range $d.ObserverModes}}<option value="{{.}}" {{if eq . ($v.Get "obs_mode")}}selected{{end}}>{{t (print "bp.obs." .)}}</option>{{end}}</select>
+        <label>{{t "bp.step_obs_users"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
+      <div data-for="crmproduct"><label>{{t "bp.step_product"}}</label><select name="product">{{range $d.Products}}<option value="{{.ID}}" {{if eq .ID ($v.Get "product")}}selected{{end}}>{{.Name}}{{with .SKU}} ({{.}}){{end}}</option>{{end}}</select>
+        <label>{{t "bp.step_product_price"}}</label><input type="text" name="price" maxlength="300" placeholder="{{t "bp.step_product_price_ph"}}" value="{{$v.Get "price"}}">
+        <label>{{t "bp.step_product_qty"}}</label><input type="text" name="quantity" maxlength="300" placeholder="1" value="{{$v.Get "quantity"}}">
+        <label>{{t "bp.step_product_discount"}}</label><input type="text" name="discount" maxlength="300" placeholder="0" value="{{$v.Get "discount"}}">
+        <p class="small muted">{{t "bp.step_crmproduct_hint"}}</p></div>
+      <div data-for="crmclose"><label>{{t "bp.step_close_deed"}}</label><select name="close_deed"><option value="">{{t "bp.step_close_all"}}</option>{{range $d.Deeds}}<option value="{{.}}" {{if eq . ($v.Get "close_deed")}}selected{{end}}>{{t (print "crm.act." .)}}</option>{{end}}</select></div>
+      <div data-for="diskfolder diskcopy"><label>{{t "bp.step_disk_drive"}}</label><select name="drive"><option value="company" {{if eq "company" ($v.Get "drive")}}selected{{end}}>{{t "bp.disk_company"}}</option><option value="my" {{if eq "my" ($v.Get "drive")}}selected{{end}}>{{t "bp.disk_my"}}</option>{{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key ($v.Get "drive")}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+        <label>{{t "bp.step_disk_folder"}}</label><input type="text" name="folder" maxlength="1000" placeholder="{{t "bp.step_disk_folder_ph"}}" value="{{$v.Get "folder"}}">
+        <p class="small muted" data-for="diskfolder">{{t "bp.step_diskfolder_hint"}}</p><p class="small muted" data-for="diskcopy">{{t "bp.step_diskcopy_folder_hint"}}</p></div>
+      <div data-for="diskcopy diskread diskdelete"><label>{{t "bp.step_disk_object"}}</label><input type="text" name="value" maxlength="1000" placeholder="{created_folder}" value="{{$v.Get "value"}}">
+        <p class="small muted">{{t "bp.step_disk_object_hint"}}</p><p class="small muted" data-for="diskread">{{t "bp.step_diskread_hint"}}</p></div>
+      <div data-for="diskcopy"><label class="check"><input type="checkbox" name="move" value="1" {{if $v.Has "move"}}checked{{end}}> {{t "bp.step_disk_move"}}</label></div>
+      <div data-for="diskfolder diskcopy diskread diskdelete"><label>{{t "bp.step_disk_as"}}</label>{{template "upick" (upick "from" (index $v "from") $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
+      <div data-for="approve review request commands task notify chat create activity absence event"><input type="text" name="text" maxlength="1000" placeholder="{{t "bp.step_text"}}" value="{{$v.Get "text"}}"></div>
+      <div data-for="chat mail post comment document"><label>{{t "bp.step_from"}}</label>{{template "upick" (upick "from" (index $v "from") $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
+      <div data-for="approve review request commands task notify chat create activity userinfo"><label>{{t "bp.step_to"}}</label>{{template "upick" (upick "to" (index $v "to") $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
+      <div data-for="approve review request commands chat"><label>{{t "bp.step_users"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}</div>
+      <div data-for="post"><label>{{t "bp.step_post_to"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "ph" (t "bp.step_post_all") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_post_title"}}</label><input type="text" name="subject" maxlength="300" value="{{$v.Get "subject"}}">
+        <label>{{t "bp.step_post_text"}}</label><textarea name="text" rows="5" maxlength="1000">{{$v.Get "text"}}</textarea></div>
+      <div data-for="pick crmresponsible"><label>{{t "bp.step_pick_users"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_pick_mode"}}</label><select name="pick_mode">{{range $d.PickModes}}<option value="{{.}}" {{if eq . ($v.Get "pick_mode")}}selected{{end}}>{{t (print "bp.pick." .)}}</option>{{end}}</select>
+        <label class="check"><input type="checkbox" name="skip" {{if $v.Has "skip"}}checked{{end}}> {{t "bp.step_pick_skip"}}</label>
+        <label>{{t "bp.step_pick_reserve"}}</label>{{template "upick" (upick "reserve" (index $v "reserve") $d.Users "ph" (t "bp.pick.no_reserve") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <div data-for="pick"><label>{{t "bp.step_pick_field"}}</label><select name="pick_field">{{range $d.AllFields}}{{if and (eq .Kind "user") (ne .Scope "const")}}<option value="{{.Key}}" {{if eq .Key ($v.Get "pick_field")}}selected{{end}}>{{.Label}}</option>{{end}}{{end}}</select>
+        <p class="small muted">{{t "bp.step_pick_hint"}}</p></div><p class="small muted" data-for="crmresponsible">{{t "bp.step_crmresponsible_hint"}}</p></div>
+      <div data-for="status"><label>{{t "bp.step_status"}}</label><input type="text" name="text" maxlength="1000" placeholder="{{t "bp.step_status_ph"}}" value="{{$v.Get "text"}}">
+        <p class="small muted">{{t "bp.step_status_hint"}}</p></div>
+      <div data-for="commands"><label>{{t "bp.step_commands"}}</label><textarea name="commands" rows="3" placeholder="{{t "bp.step_commands_ph"}}">{{$v.Get "commands"}}</textarea>
+        <p class="small muted">{{t "bp.step_commands_hint" $d.MaxCommands}}</p>
+        <label>{{t "bp.step_commands_goto"}}</label><input type="number" name="commands_goto" min="0" max="200" value="{{$v.Get "commands_goto"}}"></div>
       <div data-for="userinfo"><p class="small muted">{{t "bp.step_userinfo_hint"}}</p></div>
-      <div data-for="log"><label>{{t "bp.step_log_text"}}</label><textarea name="text" rows="3" maxlength="1000"></textarea>
+      <div data-for="log"><label>{{t "bp.step_log_text"}}</label><textarea name="text" rows="3" maxlength="1000">{{$v.Get "text"}}</textarea>
         <p class="small muted">{{t "bp.step_log_hint"}}</p></div>
-      <div data-for="comment"><label>{{t "bp.step_comment_text"}}</label><textarea name="text" rows="4" maxlength="1000"></textarea></div>
-      <div data-for="activity"><label>{{t "bp.step_deed"}}</label><select name="deed">{{range $d.Deeds}}<option value="{{.}}">{{t (print "crm.act." .)}}</option>{{end}}</select>
-        <label>{{t "bp.step_note"}}</label><textarea name="note" rows="3" maxlength="1000"></textarea></div>
-      <div data-for="document">{{if $d.Docs}}<label>{{t "bp.step_doc"}}</label><select name="doc">{{range $d.Docs}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>{{else}}<p class="small muted">{{t "bp.step_doc_none"}}</p>{{end}}
-        <label>{{t "bp.step_doc_sets"}}</label><textarea name="sets" rows="3" placeholder="Total = {sum}&#10;Comment = {comment}"></textarea>
+      <div data-for="comment"><label>{{t "bp.step_comment_text"}}</label><textarea name="text" rows="4" maxlength="1000">{{$v.Get "text"}}</textarea></div>
+      <div data-for="activity"><label>{{t "bp.step_deed"}}</label><select name="deed">{{range $d.Deeds}}<option value="{{.}}" {{if eq . ($v.Get "deed")}}selected{{end}}>{{t (print "crm.act." .)}}</option>{{end}}</select>
+        <label>{{t "bp.step_note"}}</label><textarea name="note" rows="3" maxlength="1000">{{$v.Get "note"}}</textarea></div>
+      <div data-for="document">{{if $d.Docs}}<label>{{t "bp.step_doc"}}</label><select name="doc">{{range $d.Docs}}<option value="{{.ID}}" {{if eq .ID ($v.Get "doc")}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{else}}<p class="small muted">{{t "bp.step_doc_none"}}</p>{{end}}
+        <label>{{t "bp.step_doc_sets"}}</label><textarea name="sets" rows="3" placeholder="Total = {sum}&#10;Comment = {comment}">{{$v.Get "sets"}}</textarea>
         <p class="small muted">{{t "bp.step_doc_hint"}}</p></div>
-      <div data-for="mail"><label>{{t "bp.step_mail_to"}}</label>{{template "upick" (upick "mail_to" (or (and (ne $t.Entity "none") (ne $t.Entity "file") (ne $t.Entity "list") "client") "") $d.Users "+client" (t "bp.to.client") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_email"}}</label><input type="text" name="email" maxlength="1000" placeholder="buh@example.com, {email}">
-        <label>{{t "bp.step_subject"}}</label><input type="text" name="subject" maxlength="300">
-        <label>{{t "bp.step_body"}}</label><textarea name="text" rows="5" maxlength="1000"></textarea></div>
-      <div data-for="approve review request"><label>{{t "bp.step_delegate"}}</label><select name="delegate">{{range $d.Delegations}}<option value="{{.}}">{{t (print "bp.delegation." .)}}</option>{{end}}</select></div>
-      <div data-for="approve"><label>{{t "bp.step_mode"}}</label><select name="mode">{{range $d.Modes}}<option value="{{.}}">{{t (print "bp.mode." .)}}</option>{{end}}</select></div>
-      {{if $d.AllFields}}<div data-for="if loop set"><label>{{t "bp.step_field"}}</label><div class="row"><select name="field">{{range $d.AllFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select>
-        <span data-for="if loop"><select name="cmp">{{range $d.Ops}}<option value="{{.}}">{{t (print "bp.op." .)}}</option>{{end}}</select></span>
-        <input type="text" name="value" maxlength="1000" placeholder="{{t "bp.step_value"}}" style="flex:1"></div>
+      <div data-for="mail"><label>{{t "bp.step_mail_to"}}</label>{{template "upick" (upick "mail_to" (index $v "mail_to") $d.Users "+client" (t "bp.to.client") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_email"}}</label><input type="text" name="email" maxlength="1000" placeholder="buh@example.com, {email}" value="{{$v.Get "email"}}">
+        <label>{{t "bp.step_subject"}}</label><input type="text" name="subject" maxlength="300" value="{{$v.Get "subject"}}">
+        <label>{{t "bp.step_body"}}</label><textarea name="text" rows="5" maxlength="1000">{{$v.Get "text"}}</textarea></div>
+      <div data-for="approve review request"><label>{{t "bp.step_delegate"}}</label><select name="delegate">{{range $d.Delegations}}<option value="{{.}}" {{if eq . ($v.Get "delegate")}}selected{{end}}>{{t (print "bp.delegation." .)}}</option>{{end}}</select></div>
+      <div data-for="approve"><label>{{t "bp.step_mode"}}</label><select name="mode">{{range $d.Modes}}<option value="{{.}}" {{if eq . ($v.Get "mode")}}selected{{end}}>{{t (print "bp.mode." .)}}</option>{{end}}</select>
+        <div class="row" data-bpvote><label>{{t "bp.step_percent"}}</label><input type="number" name="percent" min="1" max="100" style="width:6em" value="{{$v.Get "percent"}}">
+          <label class="check"><input type="checkbox" name="wait_all" {{if $v.Has "wait_all"}}checked{{end}}> {{t "bp.step_wait_all"}}</label></div></div>
+      <div data-for="approve review request commands"><label>{{t "bp.step_timeout"}}</label><div class="row"><input type="number" name="timeout" min="0" max="525600" style="width:7em" value="{{$v.Get "timeout"}}">
+          <select name="timeout_unit">{{range list "min" "hour" "day"}}<option value="{{.}}" {{if eq . ($v.Get "timeout_unit")}}selected{{end}}>{{t (print "bp.unit." .)}}</option>{{end}}</select></div>
+        <p class="small muted">{{t "bp.step_timeout_hint"}}</p>
+        <label>{{t "bp.step_remark"}}</label><select name="remark">{{range list "" "yes" "approve" "reject"}}<option value="{{.}}" {{if eq . ($v.Get "remark")}}selected{{end}}>{{t (print "bp.remark." .)}}</option>{{end}}</select>
+        <div class="row"><input type="text" name="yes" maxlength="50" placeholder="{{t "bp.step_yes"}}" style="flex:1" value="{{$v.Get "yes"}}">
+          <span data-for="approve request" style="flex:1;display:flex"><input type="text" name="no" maxlength="50" placeholder="{{t "bp.step_no"}}" style="flex:1" value="{{$v.Get "no"}}"></span></div></div>
+      {{if $d.AllFields}}<div data-for="if loop set"><label>{{t "bp.step_field"}}</label><div class="row"><select name="field">{{range $d.AllFields}}<option value="{{.Key}}" {{if eq .Key ($v.Get "field")}}selected{{end}}>{{.Label}}</option>{{end}}</select>
+        <span data-for="if loop"><select name="cmp">{{range $d.Ops}}<option value="{{.}}" {{if eq . ($v.Get "cmp")}}selected{{end}}>{{t (print "bp.op." .)}}</option>{{end}}</select></span>
+        <input type="text" name="value" maxlength="1000" placeholder="{{t "bp.step_value"}}" style="flex:1" value="{{$v.Get "value"}}"></div>
+        <div data-for="if loop" data-rows="{{$d.MaxConds}}">{{range $d.Conds}}{{template "bpcond" (dict "C" . "D" $d)}}{{end}}
+          <p><button type="button" class="ghost small" data-add-row="bpcond-row">{{icon "plus"}} {{t "bp.cond_add"}}</button></p>
+          <template id="bpcond-row">{{template "bpcond" (dict "C" nil "D" $d)}}</template>
+          <p class="small muted">{{t "bp.cond_hint"}}</p></div>
         <p class="small muted">{{t "bp.step_formula_hint"}}</p></div>{{end}}
-      <div data-for="update create"><label>{{t "bp.step_sets"}}</label><textarea name="sets" rows="4" placeholder="amount = {sum}&#10;responsible = manager"></textarea>
+      <div data-for="update create crmupdate crmcopy"><label>{{t "bp.step_sets"}}</label><textarea name="sets" rows="4" placeholder="amount = {sum}&#10;responsible = manager">{{$v.Get "sets"}}</textarea>
         <p class="small muted">{{t "bp.step_sets_hint"}}</p>
         <div class="small muted">{{range list "deal" "lead" "contact" "company"}}<div><b>{{t (print "crm." .)}}:</b>{{range $i, $f := index $d.CardFields .}}{{if $i}},{{end}} <code>{{$f}}</code> {{t (print "crm.f." $f)}}{{end}}{{range index $d.OwnFields .}}, «{{.}}»{{end}}</div>{{end}}
         {{with $d.List}}<div><b>{{.Name}}:</b> <code>name</code> {{t "lists.el_name"}}{{range .Fields}}, <code>{{.Key}}</code> {{.Label}}{{end}}</div>{{end}}</div></div>
+      <div data-for="listadd listupdate listread listdelete">{{if $d.Lists}}<label>{{t "bp.step_list"}}</label><select name="list">{{range $d.Lists}}<option value="{{.ID}}" {{if eq .ID ($v.Get "list")}}selected{{end}}>{{.Name}}</option>{{end}}</select>{{else}}<p class="small muted">{{t "bp.step_list_none"}}</p>{{end}}
+        <div data-for="listupdate listread listdelete"><label>{{t "bp.step_list_element"}}</label><input type="text" name="value" maxlength="1000" placeholder="{created_list_element}" value="{{$v.Get "value"}}">
+          <p class="small muted">{{t "bp.step_list_element_hint"}}</p></div>
+        <div data-for="listadd listupdate"><label>{{t "bp.step_sets"}}</label><textarea name="sets" rows="4" placeholder="name = {title}&#10;amount = {sum}">{{$v.Get "sets"}}</textarea></div>
+        <div class="small muted"><p data-for="listadd">{{t "bp.step_listadd_hint"}}</p><p data-for="listread">{{t "bp.step_listread_hint"}}</p>
+          {{range $d.Lists}}<div><b>{{.Name}}:</b> <code>name</code> {{t "lists.el_name"}}{{range .Fields}}, <code>{{.Key}}</code> {{.Label}}{{end}}</div>{{end}}</div></div>
       <div data-for="request"><label>{{t "bp.step_request_fields"}}</label>{{template "bpfields" (dict "P" "rf" "Rows" $d.NewRows "Kinds" $d.FieldKinds)}}
-        <label class="check"><input type="checkbox" name="reject"> {{t "bp.step_reject"}}</label></div>
-      <div data-for="parallel"><label>{{t "bp.step_branches"}}</label><input type="text" name="branches" maxlength="100" placeholder="4, 7">
+        <label class="check"><input type="checkbox" name="reject" {{if $v.Has "reject"}}checked{{end}}> {{t "bp.step_reject"}}</label></div>
+      <div data-for="parallel"><label>{{t "bp.step_branches"}}</label><input type="text" name="branches" maxlength="100" placeholder="4, 7" value="{{$v.Get "branches"}}">
         <p class="small muted">{{t "bp.step_branches_hint"}}</p></div>
-      <div data-for="start"><label>{{t "bp.step_template"}}</label><select name="template">{{range $d.Others}}<option value="{{.ID}}">{{.Name}}{{if eq .Entity "file"}} ({{t "bp.entity_file"}}){{else if eq .Entity "list"}} ({{t "bp.entity_list"}}){{else if ne .Entity "none"}} ({{t (print "crm." .Entity)}}){{end}}</option>{{end}}</select>
-        <label>{{t "bp.step_start_fields"}}</label><textarea name="sets" rows="3" placeholder="sum = {sum}&#10;who = starter"></textarea>
+      <div data-for="start"><label>{{t "bp.step_template"}}</label><select name="template">{{range $d.Others}}<option value="{{.ID}}" {{if eq .ID ($v.Get "template")}}selected{{end}}>{{.Name}}{{if eq .Entity "file"}} ({{t "bp.entity_file"}}){{else if eq .Entity "list"}} ({{t "bp.entity_list"}}){{else if ne .Entity "none"}} ({{t (print "crm." .Entity)}}){{end}}</option>{{end}}</select>
+        <label>{{t "bp.step_start_fields"}}</label><textarea name="sets" rows="3" placeholder="sum = {sum}&#10;who = starter">{{$v.Get "sets"}}</textarea>
         <p class="small muted">{{t "bp.step_start_hint"}}</p></div>
       <div data-for="loop"><p class="small muted">{{t "bp.step_loop_hint" $d.MaxLoops}}</p></div>
-      <div data-for="if goto loop approve request parallel"><label>{{t "bp.step_goto"}}</label><input type="number" name="goto" min="0" max="200" value="0"></div>
-      <div data-for="task"><label>{{t "bp.step_task_note"}}</label><textarea name="note" rows="3" maxlength="1000"></textarea>
-        <label>{{t "bp.step_accomplices"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_watchers"}}</label>{{template "upick" (upick "watchers" "" $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_items"}}</label><textarea name="items" rows="3" maxlength="4000" placeholder="{{t "bp.step_items_ph"}}"></textarea>
-        <label class="check"><input type="checkbox" name="high"> {{t "bp.step_high"}}</label>
-        <label class="check"><input type="checkbox" name="control"> {{t "bp.step_control"}}</label>
-        <label class="check"><input type="checkbox" name="wait"> {{t "bp.step_wait"}}</label>
+      <div data-for="if goto loop approve request parallel"><label>{{t "bp.step_goto"}}</label><input type="number" name="goto" min="0" max="200" value="{{$v.Get "goto"}}"></div>
+      <div data-for="task"><label>{{t "bp.step_task_note"}}</label><textarea name="note" rows="3" maxlength="1000">{{$v.Get "note"}}</textarea>
+        <label>{{t "bp.step_accomplices"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_watchers"}}</label>{{template "upick" (upick "watchers" (index $v "watchers") $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_items"}}</label><textarea name="items" rows="3" maxlength="4000" placeholder="{{t "bp.step_items_ph"}}">{{$v.Get "items"}}</textarea>
+        <label class="check"><input type="checkbox" name="high" {{if $v.Has "high"}}checked{{end}}> {{t "bp.step_high"}}</label>
+        <label class="check"><input type="checkbox" name="control" {{if $v.Has "control"}}checked{{end}}> {{t "bp.step_control"}}</label>
+        <label class="check"><input type="checkbox" name="wait" {{if $v.Has "wait"}}checked{{end}}> {{t "bp.step_wait"}}</label>
         <p class="small muted">{{t "bp.step_task_hint"}}</p></div>
-      <div data-for="task"><label>{{t "bp.step_project"}}</label><select name="project"><option value=""></option>{{range $d.Projects}}<option value="{{.Key}}">{{.Name}}</option>{{end}}</select></div>
-      <div data-for="task wait activity"><label>{{t "bp.step_days"}}</label><input type="number" name="days" min="0" max="365" value="0"></div>
-      {{with $d.TimeFields}}<div data-for="wait"><label>{{t "bp.step_until"}}</label><select name="until"><option value=""></option>{{range .}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select></div>{{end}}
-      <div data-for="absence"><label>{{t "absence.kind"}}</label><select name="absence">{{range $d.AbsenceKinds}}<option value="{{.}}">{{t (print "absence.kind." .)}}</option>{{end}}</select>
-        <label>{{t "bp.step_absence_dates"}}</label><div class="row"><select name="start"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select> —
-        <select name="end"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select></div>
+      <div data-for="task"><label>{{t "bp.step_project"}}</label><select name="project"><option value=""></option>{{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key ($v.Get "project")}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+      <div data-for="wait"><label>{{t "bp.step_pause"}}</label><div class="row"><input type="number" name="timeout" min="0" max="525600" style="width:7em" value="{{$v.Get "timeout"}}">
+          <select name="timeout_unit">{{range list "min" "hour" "day"}}<option value="{{.}}" {{if eq . ($v.Get "timeout_unit")}}selected{{end}}>{{t (print "bp.unit." .)}}</option>{{end}}</select></div></div>
+      <div data-for="task activity"><label>{{t "bp.step_days"}}</label><input type="number" name="days" min="0" max="365" value="{{$v.Get "days"}}"></div>
+      {{with $d.TimeFields}}<div data-for="wait"><label>{{t "bp.step_until"}}</label><select name="until"><option value=""></option>{{range .}}<option value="{{.Key}}" {{if eq .Key ($v.Get "until")}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>{{end}}
+      <div data-for="wait"><label class="check"><input type="checkbox" name="worktime" {{if $v.Has "worktime"}}checked{{end}}> {{t "bp.step_worktime"}}</label>
+        <p class="small muted">{{t "bp.step_worktime_hint"}}</p></div>
+      <div data-for="absence"><label>{{t "absence.kind"}}</label><select name="absence">{{range $d.AbsenceKinds}}<option value="{{.}}" {{if eq . ($v.Get "absence")}}selected{{end}}>{{absKind .}}</option>{{end}}</select>
+        <label>{{t "bp.step_absence_dates"}}</label><div class="row"><select name="start"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}" {{if eq .Key ($v.Get "start")}}selected{{end}}>{{.Label}}</option>{{end}}</select> —
+        <select name="end"><option value=""></option>{{range $d.DateFields}}<option value="{{.Key}}" {{if eq .Key ($v.Get "end")}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>
         <div class="small muted">{{t "bp.step_absence_hint"}}</div></div>
-      <div data-for="event"><label>{{t "bp.step_event_users"}}</label>{{template "upick" (upick "users" "" $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
-        <label>{{t "bp.step_event_time"}}</label><div class="row"><select name="start"><option value=""></option>{{range $d.TimeFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select> —
-        <select name="end"><option value="">{{t "bp.step_event_no_end"}}</option>{{range $d.TimeFields}}<option value="{{.Key}}">{{.Label}}</option>{{end}}</select></div>
-        <label>{{t "bp.step_note"}}</label><textarea name="note" rows="3" maxlength="1000"></textarea>
+      <div data-for="event"><label>{{t "bp.step_event_users"}}</label>{{template "upick" (upick "users" (index $v "users") $d.Users "multi" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <label>{{t "bp.step_event_time"}}</label><div class="row"><select name="start"><option value=""></option>{{range $d.TimeFields}}<option value="{{.Key}}" {{if eq .Key ($v.Get "start")}}selected{{end}}>{{.Label}}</option>{{end}}</select> —
+        <select name="end"><option value="">{{t "bp.step_event_no_end"}}</option>{{range $d.TimeFields}}<option value="{{.Key}}" {{if eq .Key ($v.Get "end")}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+        <label>{{t "bp.step_note"}}</label><textarea name="note" rows="3" maxlength="1000">{{$v.Get "note"}}</textarea>
         <div class="small muted">{{t "bp.step_event_hint"}}</div></div>
-      <div data-for="end"><label>{{t "bp.step_end_text"}}</label><input type="text" name="text" maxlength="1000">
+      <div data-for="sms"><label>{{t "bp.step_sms_phone"}}</label><input type="text" name="value" maxlength="1000" placeholder="{{if $d.CRMCard}}{{t "bp.step_sms_client"}}{{else}}+7 900 000-00-00, {phone}{{end}}" value="{{$v.Get "value"}}">
+        <label>{{t "bp.step_sms_text"}}</label><textarea name="text" rows="3" maxlength="1000">{{$v.Get "text"}}</textarea>
+        <label>{{t "bp.step_sms_sender"}}</label><select name="sender"><option value="">{{t "bp.step_sms_default"}}</option>{{range $d.Senders}}{{if .Active}}<option value="{{.ID}}" {{if eq .ID ($v.Get "sender")}}selected{{end}}>{{.Name}}</option>{{end}}{{end}}</select>
+        <p class="small muted">{{t "bp.step_sms_hint"}}</p></div>
+      <div data-for="workday"><label>{{t "bp.step_workday_act"}}</label><select name="act">{{range $d.WorkdayActs}}<option value="{{.}}" {{if eq . ($v.Get "act")}}selected{{end}}>{{t (print "bp.workday." .)}}</option>{{end}}</select>
+        <label>{{t "bp.step_workday_report"}}</label><textarea name="text" rows="2" maxlength="1000">{{$v.Get "text"}}</textarea>
+        <p class="small muted">{{t "bp.step_workday_hint"}}</p></div>
+      <div data-for="workday workdayinfo"><label>{{t "bp.step_workday_whose"}}</label>{{template "upick" (upick "to" (index $v "to") $d.Users "required" "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
+        <p class="small muted" data-for="workdayinfo">{{t "bp.step_workdayinfo_hint"}}</p></div>
+      <div data-for="random"><label>{{t "bp.step_random_field"}}</label><select name="random_field">{{range $d.AllFields}}{{if and (or (eq .Kind "string") (eq .Kind "text") (eq .Kind "number")) (ne .Scope "const")}}<option value="{{.Key}}" {{if eq .Key ($v.Get "random_field")}}selected{{end}}>{{.Label}}</option>{{end}}{{end}}</select>
+        <label>{{t "bp.step_random_size"}}</label><input type="number" name="size" min="1" max="{{$d.MaxRandom}}" value="{{$v.Get "size"}}">
+        <label>{{t "bp.step_random_chars"}}</label>{{range $d.RandomChars}}<label class="check"><input type="checkbox" name="chars" value="{{.}}" {{if has (index $v "chars") .}}checked{{end}}> {{t (print "bp.random." .)}}</label>{{end}}
+        <p class="small muted">{{t "bp.step_random_hint"}}</p></div>
+      <div data-for="foreach"><label>{{t "bp.step_each_field"}}</label><select name="each_field">{{range $d.AllFields}}{{if .Multiple}}<option value="{{.Key}}" {{if eq .Key ($v.Get "each_field")}}selected{{end}}>{{.Label}}</option>{{end}}{{end}}</select>
+        <label>{{t "bp.step_each_item"}}</label><select name="each_item">{{range $d.AllFields}}{{if and (not .Multiple) (ne .Scope "const")}}<option value="{{.Key}}" {{if eq .Key ($v.Get "each_item")}}selected{{end}}>{{.Label}}</option>{{end}}{{end}}</select>
+        <p class="small muted">{{t "bp.step_each_hint" $d.MaxLoops}}</p></div>
+      <div data-for="end"><label>{{t "bp.step_end_text"}}</label><input type="text" name="text" maxlength="1000" value="{{$v.Get "text"}}">
         <div class="small muted">{{t "bp.step_end_hint"}}</div></div>
-      <div data-for="webhook"><label>{{t "bp.step_url"}}</label><input type="url" name="url" placeholder="https://n8n.example.com/webhook/…"></div>
-      {{with $d.Stages}}<div data-for="stage"><label>{{t "bp.step_stage"}}</label><select name="stage"><option value=""></option>{{range .}}<option value="{{.ID}}">{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}</select></div>{{end}}
-      <label>{{t "bp.step_at"}}</label><input type="number" name="at" min="1" max="200">
+      {{range $d.Actions}}<div data-for="app:{{.ID}}">{{with .Description}}<p class="small muted">{{.}}</p>{{end}}
+        {{range .Props}}<label>{{.Name}}{{if .Required}} *{{end}}</label>
+          {{- if eq .Type "select"}}<select name="ap_{{.Key}}">{{if not .Required}}<option value=""></option>{{end}}{{$def := or ($v.Get (print "ap_" .Key)) .Default}}{{range .Options}}<option value="{{.Key}}" {{if eq .Key $def}}selected{{end}}>{{.Value}}</option>{{end}}</select>
+          {{- else if eq .Type "bool"}}<select name="ap_{{.Key}}"><option value=""></option><option value="Y" {{if eq (or ($v.Get (print "ap_" .Key)) .Default) "Y"}}selected{{end}}>{{t "robots.yes"}}</option><option value="N" {{if eq (or ($v.Get (print "ap_" .Key)) .Default) "N"}}selected{{end}}>{{t "robots.no"}}</option></select>
+          {{- else if eq .Type "text"}}<textarea name="ap_{{.Key}}" rows="3" maxlength="1000" placeholder="{{.Default}}">{{$v.Get (print "ap_" .Key)}}</textarea>
+          {{- else}}<input type="text" name="ap_{{.Key}}" maxlength="1000" value="{{$v.Get (print "ap_" .Key)}}" placeholder="{{if .Default}}{{.Default}}{{else if eq .Type "user"}}{{t "bp.app_user_ph"}}{{end}}">{{end}}
+          {{with .Description}}<div class="small muted">{{.}}</div>{{end}}{{end}}
+        {{if .Subscribe}}<label>{{t "bp.app_timeout"}}</label><div class="row"><input type="number" name="timeout" min="0" max="525600" style="width:7em" value="{{$v.Get "timeout"}}">
+          <select name="timeout_unit">{{range list "min" "hour" "day"}}<option value="{{.}}" {{if eq . ($v.Get "timeout_unit")}}selected{{end}}>{{t (print "bp.unit." .)}}</option>{{end}}</select></div>
+        <p class="small muted">{{t "bp.app_wait_hint"}}{{range $i, $r := .Returns}}{{if $i}},{{else}}:{{end}} {{$r.Name}}{{end}}</p>{{end}}
+        <p class="small muted">{{t "bp.app_hint"}}</p></div>{{end}}
+      <div data-for="webhook"><label>{{t "bp.step_url"}}</label><input type="url" name="url" placeholder="https://n8n.example.com/webhook/…" value="{{$v.Get "url"}}"></div>
+      {{with $d.Stages}}<div data-for="stage"><label>{{t "bp.step_stage"}}</label><select name="stage"><option value=""></option>{{range .}}<option value="{{.ID}}" {{if eq .ID ($v.Get "stage")}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{t (print "crm.stage." .Code)}}{{end}}</option>{{end}}</select></div>{{end}}
+      {{if $d.Edit}}<p class="row"><button class="primary">{{t "common.save"}}</button><a class="button ghost" href="/bp/templates/{{$id}}">{{t "common.cancel"}}</a></p>
+      {{else}}<label>{{t "bp.step_at"}}</label><input type="number" name="at" min="1" max="200"{{with $d.Gap.At}} value="{{.}}"{{end}}>{{with $d.Gap.From}}<input type="hidden" name="from" value="{{.}}"><input type="hidden" name="br" value="{{$d.Gap.Br}}">{{end}}
       <p class="small muted">{{t "bp.step_hint"}}</p>
-      <button class="primary">{{t "common.add"}}</button></form></details>
+      <button class="primary">{{t "common.add"}}</button>{{end}}</form></details>
 </div>{{else}}<div class="card muted">{{t "bp.save_first"}}</div>{{end}}
 </div></div>
 <script src="{{asset "js/robots.js"}}"></script>
 <script src="{{asset "js/bpfields.js"}}"></script>
+<script src="{{asset "js/bpscheme.js"}}"></script>
 {{end}}

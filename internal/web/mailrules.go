@@ -29,7 +29,7 @@ type ruleForm struct {
 func ruleOfForm(r *http.Request) mail.Rule {
 	cond := func(p string) mail.Cond {
 		c := mail.Cond{From: r.FormValue(p + "from"), To: r.FormValue(p + "to"), Subject: r.FormValue(p + "subject"), Body: r.FormValue(p + "body"),
-			Attach: r.FormValue(p+"attach") != "", Importance: r.FormValue(p + "importance"), ToMe: r.FormValue(p+"to_me") != "",
+			Attach: r.FormValue(p+"attach") != "", Importance: r.FormValue(p + "importance"), Sensitivity: r.FormValue(p + "sensitivity"), ToMe: r.FormValue(p+"to_me") != "",
 			CcMe: r.FormValue(p+"cc_me") != "", OnlyMe: r.FormValue(p+"only_me") != ""}
 		if strings.TrimSpace(c.Subject) == "" {
 			c.Subject = r.FormValue(p + "subject_letter") // the letter's subject ticked

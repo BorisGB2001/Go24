@@ -170,4 +170,43 @@ func TestWorksheetHTTP(t *testing.T) {
 	if page := do(boss, "GET", "/worktime/table", nil, 200); !strings.Contains(page, `class="ws-away"`) {
 		t.Fatal("the table has no day out of office")
 	}
+
+	// «Местоположение»: off — the position the browser sent is not kept; on — the finish keeps it, and the day page
+	// and the manager's «Рабочее время» show «На карте»
+	ip = "192.168.7.20"
+	geo := url.Values{"lat": {"52.3702157"}, "lon": {"4.8951679"}, "acc": {"24.6"}}
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"reopen"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"finish"}, "lat": geo["lat"], "lon": geo["lon"]}, 303)
+	if td, err = srv.Company.Today(ctx, anna, time.Now()); err != nil || td.End.Geo != nil {
+		t.Fatalf("kept with «Местоположение» off: %+v %v", td.End, err)
+	}
+	if page := do(anna, "GET", "/my", nil, 200); strings.Contains(page, "data-geo") || strings.Contains(page, "workgeo.js") {
+		t.Fatal("the working day asks for the position with «Местоположение» off")
+	}
+	sched.Geo = true
+	must(srv.Tasks.SetSchedule(ctx, boss, sched))
+	if page := do(anna, "GET", "/my", nil, 200); !strings.Contains(page, "data-geo") || !strings.Contains(page, "workgeo.js") {
+		t.Fatal("the working day does not ask for the position")
+	}
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"reopen"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"finish"}, "lat": geo["lat"], "lon": geo["lon"], "acc": geo["acc"]}, 303)
+	td, err = srv.Company.Today(ctx, anna, time.Now())
+	must(err)
+	if g := td.End.Geo; g == nil || g.Lat != 52.370216 || g.Lon != 4.895168 || g.Acc != 25 || td.Start.Geo != nil {
+		t.Fatalf("finish position %+v, start %+v", td.End.Geo, td.Start.Geo)
+	}
+	mapURL := "https://www.openstreetmap.org/?mlat=52.370216&amp;mlon=4.895168#map=17/52.370216/4.895168"
+	if page := do(anna, "GET", "/worktime/d/"+anna+"/"+time.Now().Format(time.DateOnly), nil, 200); !strings.Contains(page, mapURL) ||
+		!strings.Contains(page, "±25 м") {
+		t.Fatal("the day page has no position")
+	}
+	if page := do(boss, "GET", "/worktime", nil, 200); !strings.Contains(page, mapURL) {
+		t.Fatal("the manager does not see where the day was finished")
+	}
+	// out of range or not numbers — not kept
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"reopen"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"finish"}, "lat": {"91"}, "lon": {"4.9"}}, 303)
+	if td, err = srv.Company.Today(ctx, anna, time.Now()); err != nil || td.End.Geo != nil {
+		t.Fatalf("a wrong position kept: %+v %v", td.End.Geo, err)
+	}
 }

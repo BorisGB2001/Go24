@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/ai"
+	"go24/internal/audit"
 	"go24/internal/apikeys"
 	"go24/internal/auth"
 	"go24/internal/db"
@@ -61,7 +62,7 @@ func TestAISettings(t *testing.T) {
 	defer prov.Close()
 	bundle, err := i18n.Load("")
 	must(err)
-	srv := &Server{DB: pool, Tasks: tasks.NewStore(pool), Keys: apikeys.NewStore(pool), I18n: bundle, AI: ai.NewStore(pool, "secret"),
+	srv := &Server{DB: pool, Tasks: tasks.NewStore(pool), Keys: apikeys.NewStore(pool), I18n: bundle, AI: ai.NewStore(pool, "secret"), Audit: audit.NewStore(pool),
 		AdminGroups: []string{"go24-admins"}, Sessions: auth.NewSessions(strings.Repeat("s", 32), false), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	hs := httptest.NewServer(srv.Routes())
 	defer hs.Close()
@@ -198,5 +199,88 @@ func TestAISettings(t *testing.T) {
 	call(annaKey, "GET", "/api/v1/ai/mine", "", 200, &mine)
 	if mine.Connection != "" || mine.Using == nil || mine.Using.Name != "Свой" {
 		t.Fatalf("mine after deletes = %+v", mine)
+	}
+
+	// «Расход ИИ» (GO24DEV-482): the prices and the limit of the company's connection, the report and the limits
+	if st, body := do(boss, "POST", "/settings/ai", url.Values{"scope": {"company"}, "name": {"Цены"}, "provider": {"openai"}, "key": {"sk-price-9876"},
+		"price_in": {"2,5"}, "price_out": {"10"}, "monthly_limit": {"1000"}}); st != http.StatusSeeOther {
+		t.Fatalf("priced connection: %d %s", st, body)
+	}
+	call(annaKey, "GET", "/api/v1/ai/connections", "", 200, &got)
+	if p := got.Connections[0]; p.Name != "Цены" || p.PriceIn != 2.5 || p.PriceOut != 10 || p.Limit != 1000 {
+		t.Fatalf("priced = %+v", p)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO ai_usage (user_id, company, agent, provider, model, in_tokens, out_tokens, cost)
+		VALUES ($1, true, 'tasks', 'openai', 'gpt', 1000, 100, 0.0035), ($1, false, 'mail', 'openai', 'gpt', 500, 50, 0), ($2, true, 'im', 'openai', 'gpt', 70, 7, 0.5)`, anna, boss)
+	must(err)
+	_, page = do(anna, "GET", "/settings/ai/usage", nil)
+	if !strings.Contains(page, "Мой расход по месяцам") || !strings.Contains(page, "1 650") || strings.Contains(page, "Борис") {
+		t.Errorf("anna's usage page:\n%s", page)
+	}
+	if st, _ := do(anna, "POST", "/settings/ai/usage", url.Values{"user_id": {anna}, "limit": {"0"}}); st != http.StatusForbidden {
+		t.Errorf("anna set a limit: %d", st)
+	}
+	if st, _ := do(boss, "POST", "/settings/ai/usage", url.Values{"user_id": {anna}, "limit": {"5000"}}); st != http.StatusSeeOther {
+		t.Errorf("boss limit: %d", st)
+	}
+	_, page = do(boss, "GET", "/settings/ai/usage", nil)
+	if !strings.Contains(page, "Анна") || !strings.Contains(page, "Борис") || !strings.Contains(page, `value="5000"`) || !strings.Contains(page, "$0.0035") {
+		t.Errorf("boss's usage page:\n%s", page)
+	}
+	var usage struct {
+		Users  []apiAISpend `json:"users"`
+		Months []apiAISpend `json:"months"`
+	}
+	call(annaKey, "GET", "/api/v1/ai/usage", "", 200, &usage)
+	if usage.Users != nil || len(usage.Months) != 1 || usage.Months[0].Calls != 2 || usage.Months[0].Company != 1100 {
+		t.Errorf("anna's usage = %+v", usage)
+	}
+	call(annaKey, "PUT", "/api/v1/ai/limits/"+anna, `{"monthly_tokens":0}`, 403, nil)
+	call(bossKey, "PUT", "/api/v1/ai/limits/"+anna, `{"monthly_tokens":null}`, 200, nil)
+	call(bossKey, "GET", "/api/v1/ai/usage", "", 200, &usage)
+	if len(usage.Users) != 2 || usage.Users[0].Name != "Анна" || usage.Users[0].OwnLimit != nil || usage.Months[0].Calls != 3 {
+		t.Errorf("boss's usage = %+v", usage)
+	}
+
+	// «Настройки CoPilot» (GO24DEV-1005): mail off, AI for Boris only — Anna is told so, the mail hides CoPilot
+	if st, _ := do(anna, "POST", "/settings/ai/policy", url.Values{"on": {"tasks"}}); st != http.StatusForbidden {
+		t.Errorf("anna saved the policy: %d", st)
+	}
+	if st, body := do(boss, "POST", "/settings/ai/policy", url.Values{"on": {"tasks", "im", "openlines", "calls", "telephony"}, "who": {boss}}); st != http.StatusSeeOther {
+		t.Fatalf("policy: %d %s", st, body)
+	}
+	_, page = do(boss, "GET", "/settings/ai", nil)
+	if !strings.Contains(page, `id="ai-policy"`) || !strings.Contains(page, `value="mail" >`) || !strings.Contains(page, `value="tasks" checked`) || strings.Contains(page, `id="ai-denied"`) {
+		t.Errorf("boss's policy form:\n%s", page)
+	}
+	_, page = do(anna, "GET", "/settings/ai", nil)
+	if !strings.Contains(page, `id="ai-denied"`) || strings.Contains(page, `id="ai-policy"`) {
+		t.Errorf("anna's page under the policy:\n%s", page)
+	}
+	if !srv.aiOn(ctx, boss, "tasks") || srv.aiOn(ctx, boss, "mail") || srv.aiOn(ctx, anna, "tasks") {
+		t.Error("aiOn does not follow the policy")
+	}
+	var pol struct {
+		Tools []struct {
+			ID string `json:"id"`
+			On bool   `json:"on"`
+		} `json:"tools"`
+		Users   []string `json:"users"`
+		Depts   []string `json:"departments"`
+		Allowed bool     `json:"allowed"`
+	}
+	call(annaKey, "GET", "/api/v1/ai/policy", "", 200, &pol)
+	if pol.Allowed || len(pol.Users) != 1 || pol.Users[0] != boss || len(pol.Tools) != len(ai.Tools) || pol.Tools[1].ID != "mail" || pol.Tools[1].On {
+		t.Errorf("anna's policy = %+v", pol)
+	}
+	call(annaKey, "PUT", "/api/v1/ai/policy", `{"off":[]}`, 403, nil)
+	call(bossKey, "PUT", "/api/v1/ai/policy", `{"off":["bogus","calls"]}`, 200, &pol)
+	if pol.Users == nil || len(pol.Users) != 0 || !pol.Allowed || pol.Tools[4].On || !pol.Tools[1].On {
+		t.Errorf("policy after PUT = %+v", pol)
+	}
+	var n int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE kind = 'ai_policy_saved'`).Scan(&n))
+	if n != 2 {
+		t.Errorf("audit rows %d", n)
 	}
 }

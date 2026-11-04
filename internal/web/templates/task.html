@@ -15,6 +15,7 @@
     {{if index .Data.Marks "favorite"}}<span class="markic fav" title="{{t "mark.favorite_is"}}">{{icon "mark-favorite"}}</span>{{end}}
     {{if index .Data.Marks "mute"}}<span class="markic" title="{{t "mark.muted"}}">{{icon "mark-mute"}}</span>{{end}}
     {{if eq $c.Priority 2}}<span class="prio" title="{{t "task.high_priority"}}">{{icon "flame"}}</span>{{end}}
+    {{if .Data.TaskAI}}{{template "aitoggle" (t "tasks.ai.hint")}}{{end}}
     <details class="tmenu"><summary title="{{t "task.menu"}}">{{icon "menu-2"}}</summary>
       <div class="pop">
         <button type="button" class="ghost" data-copy="{{$.Data.BaseURL}}/t/{{$key}}">{{icon "link"}} {{t "task.copy_link"}}</button>
@@ -73,7 +74,7 @@
               {{template "params" $c.Params}}
               <label class="check"><input type="checkbox" name="no_efficiency" {{if $c.NoEfficiency}}checked{{end}}> {{t "form.no_efficiency"}}</label>
               <input type="hidden" name="efficiency_form" value="1">
-              {{template "keep" (keepOf $c "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required")}}
+              {{template "keep" (keepOf $c "requires_control" "allow_change_deadline" "match_work_time" "dates_from_subtasks" "auto_complete" "result_required" "time_tracking")}}
               <p><button class="primary">{{t "common.save"}}</button></p>
             </form>
           </div>
@@ -213,25 +214,39 @@
       </div>
       <div class="ck-items" data-ck-items>
       {{range $l.Items}}
-      <div class="ck-item{{if .Done}} done{{end}}{{if .Important}} important{{end}}" data-item="{{.ID}}"{{if $c.CanWork}} draggable="true"{{end}}>
+      <div class="ck-item{{if .Done}} done{{end}}{{if .Important}} important{{end}}" data-item="{{.ID}}" data-level="{{.Level}}"{{if .Level}} style="--lvl:{{.Level}}"{{end}}{{if $c.CanWork}} draggable="true"{{end}}>
         {{if $c.CanWork}}
         <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="toggle">
           <button class="ghost" title="{{t "checklist.toggle"}}" style="color:var(--{{if .Done}}ok{{else}}muted{{end}})">{{if .Done}}{{icon "circle-check"}}{{else}}{{icon "circle-dashed"}}{{end}}</button></form>
         {{else}}{{if .Done}}{{icon "circle-check"}}{{else}}{{icon "circle-dashed"}}{{end}}{{end}}
         {{if .Important}}<span class="ck-imp" title="{{t "checklist.important"}}">{{icon "exclamation-mark"}}</span>{{end}}
         <span class="t" {{if $c.CanWork}}data-ck-edit title="{{t "checklist.edit_hint"}}"{{end}}>{{.Title}}</span>
+        {{if .Sub}}<span class="muted small ck-sub" title="{{t "checklist.sub_done"}}">{{t "checklist.progress" .SubDone .Sub}}</span>{{end}}
+        {{if .Members}}<span class="ck-people">{{range .Members}}{{ava .Name}}{{end}}</span>{{end}}
         {{if $c.CanWork}}
         <form method="post" action="/t/{{$key}}/checklist/{{.ID}}" class="ck-edit" hidden><input type="hidden" name="op" value="edit">
           <input type="text" name="title" value="{{.Title}}" maxlength="500" required></form>
         <span class="ck-tools">
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="outdent">
+          <button class="ghost" title="{{t "checklist.outdent"}}"{{if not .Level}} disabled{{end}}>{{icon "indent-decrease"}}</button></form>
+        <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="indent">
+          <button class="ghost" title="{{t "checklist.indent"}}">{{icon "indent-increase"}}</button></form>
         <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="important"><input type="hidden" name="on" value="{{if not .Important}}1{{end}}">
           <button class="ghost" title="{{if .Important}}{{t "checklist.unimportant"}}{{else}}{{t "checklist.important"}}{{end}}">{{icon "exclamation-mark"}}</button></form>
         <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="task"><input type="hidden" name="title" value="{{.Title}}">
           <button class="ghost" title="{{t "checklist.to_task"}}">{{icon "hierarchy-2"}}</button></form>
+        {{if $.Data.CanAttach}}<form method="post" action="/t/{{$key}}/checklist/{{.ID}}/files" enctype="multipart/form-data" class="ck-attach">
+          <label class="ghost btn" title="{{t "checklist.attach"}}">{{icon "paperclip"}}<input type="file" name="file" hidden data-autosubmit></label></form>
+        {{if not $.Guest}}<button type="button" class="ghost" data-disk-pick data-to="/t/{{$key}}/checklist/{{.ID}}/files/drive" title="{{t "checklist.attach_drive"}}" {{template "diskPickL"}}>{{icon "folders"}}</button>{{end}}{{end}}
         <form method="post" action="/t/{{$key}}/checklist/{{.ID}}"><input type="hidden" name="op" value="delete">
           <button class="ghost" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>
         </span>
         {{end}}
+        {{$item := .ID}}{{with $.Data.ItemFiles}}{{with index . $item}}<div class="ck-files">
+          {{range .}}<span class="ck-file"><a href="/files/{{.ID}}" title="{{.Uploader}} · {{datetime .CreatedAt}}">{{icon "paperclip"}} {{.Name}}</a>
+          {{if $c.CanWork}}<form method="post" action="/t/{{$key}}/checklist/{{$item}}/files/{{.ID}}/delete" data-confirm="{{t "checklist.detach_confirm"}}">
+            <button class="ghost small" title="{{t "checklist.detach"}}">{{icon "x"}}</button></form>{{end}}</span>{{end}}
+        </div>{{end}}{{end}}
       </div>
       {{end}}
       </div>
@@ -248,7 +263,8 @@
       <textarea name="title" rows="1" placeholder="{{t "checklist.new_item"}}" title="{{t "checklist.paste_hint"}}" required data-ck-new></textarea><button>{{icon "plus"}} {{t "common.add"}}</button>
     </form>
     {{end}}
-    <form method="post" action="/t/{{$key}}/checklists" class="ck-more"><button class="ghost">{{icon "plus"}} {{t "checklist.add_list"}}</button></form>
+    <div class="row ck-more"><form method="post" action="/t/{{$key}}/checklists"><button class="ghost">{{icon "plus"}} {{t "checklist.add_list"}}</button></form>
+    {{if .Data.CoPilot}}<form method="post" action="/t/{{$key}}/copilot/checklist"><button class="ghost" title="{{t "task.copilot_checklist_hint"}}">{{icon "sparkles"}} {{t "task.copilot_checklist"}}</button></form>{{end}}</div>
     {{end}}
   </div>
 
@@ -319,7 +335,8 @@
       <span class="muted small">{{dur $c.TimeTotal}}{{with durm $c.EstimateMinutes}} {{t "time.of"}} {{.}}{{end}}</span>
       {{if $c.EstimateMinutes}}<span class="progress{{if $c.OverEstimate}} over{{end}}"><span style="width:{{$c.TimePercent}}%"></span></span>{{end}}</h2>
     {{$running := and .Timer (eq .Timer.TaskKey $key)}}
-    {{if $canTime}}
+    {{if and $canTime $c.NoTimeTracking (not $running)}}<p class="muted small">{{icon "clock"}} {{t "time.tracking_off"}}</p>
+    {{else if $canTime}}
     <div class="row" style="margin-bottom:10px">
       {{if $running}}
       <form method="post" action="/timer/stop"><button class="ok">{{icon "player-pause"}} {{t "time.stop"}} <b data-timer-since="{{.Timer.StartedAt.Unix}}">0:00:00</b></button></form>
@@ -388,12 +405,13 @@
   <div class="tchips">
     <button type="button" class="tchip" data-show="history">{{icon "history"}} {{t "history.title" (len $c.History)}}</button>
     <button type="button" class="tchip" data-show="checklist" {{if or $c.Checklists (not $c.CanWork)}}hidden{{end}}>{{icon "list-check"}} {{t "task.block.checklist"}}</button>
+    {{if and .Data.CoPilot $c.CanWork (not $c.Checklists)}}<form method="post" action="/t/{{$key}}/copilot/checklist"><button class="tchip" title="{{t "task.copilot_checklist_hint"}}">{{icon "sparkles"}} {{t "task.copilot_checklist"}}</button></form>{{end}}
     <button type="button" class="tchip" data-show="files" {{if .Data.Files}}hidden{{end}}>{{icon "paperclip"}} {{t "task.block.files"}}</button>
     <button type="button" class="tchip" data-show="people" {{if or $c.Accomplices $c.Auditors (not $canPeople)}}hidden{{end}}>{{icon "users"}} {{t "task.block.people"}}</button>
     <button type="button" class="tchip" data-show="subtasks" {{if or $c.Subtasks (not $canSub)}}hidden{{end}}>{{icon "hierarchy-2"}} {{t "task.block.subtasks"}}</button>
     <button type="button" class="tchip" data-show="links" {{if or .Data.Pred .Data.Succ (not $canLink)}}hidden{{end}}>{{icon "link"}} {{t "task.block.links"}}</button>
     <button type="button" class="tchip" data-show="plan" {{if or $c.StartPlan $c.EndPlan (not $c.CanEdit)}}hidden{{end}}>{{icon "calendar-event"}} {{t "task.block.plan"}}</button>
-    <button type="button" class="tchip" data-show="time" {{if or $c.TimeEntries $c.EstimateMinutes (not $canTime)}}hidden{{end}}>{{icon "clock"}} {{t "task.block.time"}}</button>
+    <button type="button" class="tchip" data-show="time" {{if or $c.TimeEntries $c.EstimateMinutes (not $canTime) $c.NoTimeTracking}}hidden{{end}}>{{icon "clock"}} {{t "task.block.time"}}</button>
   </div>
 
   {{if $c.Actions}}
@@ -424,6 +442,7 @@
     {{if .Data.Messenger}}<a href="/t/{{$key}}/messenger" class="button" title="{{t "chat.open_messenger_hint"}}">{{icon "message-circle"}} {{t "chat.open_messenger"}}</a>{{end}}
     {{if .Data.Calls}}<a href="/call?task={{$key}}&announce=1" class="button" target="_blank" rel="noopener" title="{{t "call.call"}}">📞 {{t "call.call"}}</a>{{end}}
     {{template "callext" (dict "Q" (printf "task=%s" $key))}}
+    {{if and .Data.CoPilot $c.Comments}}<form method="post" action="/t/{{$key}}/copilot/summary"><button class="ghost" title="{{t "task.copilot_summary_hint"}}">{{icon "sparkles"}} {{t "task.copilot_summary"}}</button></form>{{end}}
   </div>
   <div class="msgs" data-msgs>
     {{range .Data.Chat}}{{template "chatmsg" .}}{{else}}
@@ -449,6 +468,7 @@
 </aside>
 </div>
 <script src="{{asset "js/task.js"}}"></script>
+{{if .Data.TaskAI}}{{template "aiaside" (dict "URL" "/tasks/agent" "Task" $key)}}{{end}}
 {{end}}
 
 {{define "chatmsg"}}

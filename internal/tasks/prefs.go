@@ -306,6 +306,64 @@ func (s *Store) SetTree(ctx context.Context, userID string, on bool) error {
 	return err
 }
 
+const prefByProject = "list.by_project"
+
+// ByProject reports whether the user's task lists are grouped by projects («Группировать по проектам», as in
+// the portal lists; off unless the user turned it on).
+func (s *Store) ByProject(ctx context.Context, userID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefByProject).Scan(&n)
+	return n > 0, err
+}
+
+// SetByProject turns the grouping of the user's task lists by projects on or off.
+func (s *Store) SetByProject(ctx context.Context, userID string, on bool) error {
+	if !on {
+		_, err := s.db.Exec(ctx, `DELETE FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefByProject)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, 'true')
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefByProject)
+	return err
+}
+
+// GroupByProject puts the top tasks of a list (with their rows) together by project: the projects in the order
+// their first task comes in the list, the tasks of a project keep their order.
+func GroupByProject(groups [][]TreeRow) [][]TreeRow {
+	var order []string
+	by := map[string][][]TreeRow{}
+	for _, g := range groups {
+		k := g[0].ProjectID
+		if _, ok := by[k]; !ok {
+			order = append(order, k)
+		}
+		by[k] = append(by[k], g)
+	}
+	out := make([][]TreeRow, 0, len(groups))
+	for _, k := range order {
+		out = append(out, by[k]...)
+	}
+	return out
+}
+
+// ProjectNames are the names of the projects by id.
+func (s *Store) ProjectNames(ctx context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	rows, err := s.db.Query(ctx, `SELECT id::text, name FROM projects WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
 // TreeRow is a row of a task list shown as a tree: the task, how deep it is under the tasks of the list (0 — a task
 // whose parent is not in the list), the keys of its ancestors in the list (from the top) and how many of its
 // subtasks the list has.

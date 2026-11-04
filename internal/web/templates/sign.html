@@ -2,8 +2,9 @@
 <div class="pagehead"><h1>{{t "sign.title"}}</h1><span style="flex:1"></span>
   {{if $d.Self}}<a href="/sign/my" class="button">{{icon "file-plus"}} {{t "sign.self.new"}}</a>{{end}}
   {{if $d.HR}}<a href="/sign/hr" class="button">{{icon "users"}} {{t "sign.hr.new"}}</a>{{end}}
-  <a href="/sign/new" class="button create">{{icon "plus"}} {{t "sign.new"}}</a></div>
-<div class="tabs">{{range $d.Filters}}{{if or (ne . "hr") $d.HR}}<a href="/sign{{with .}}?f={{.}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}{{end}}</div>
+  {{if $d.Admin}}<a href="/sign/rights" class="button ghost">{{icon "lock"}} {{t "signroles.link"}}</a>{{end}}
+  {{if $d.Send}}<a href="/sign/new" class="button create">{{icon "plus"}} {{t "sign.new"}}</a>{{end}}</div>
+<div class="tabs">{{range $d.Filters}}{{if or (ne . "hr") $d.HR}}<a href="/sign{{if .}}?f={{.}}{{if and $d.Query (ne . "hr") (ne . "safe") (ne . "templates")}}&amp;{{$d.Query}}{{end}}{{else}}{{with $d.Query}}?{{.}}{{end}}{{end}}" {{if eq . $d.Filter}}class="on"{{end}}>{{t (print "sign.f." (or . "all"))}}{{if and (eq . "me") $d.Waiting}} <span class="cnt red">{{$d.Waiting}}</span>{{end}}</a>{{end}}{{end}}</div>
 {{if eq $d.Filter "hr"}}<div class="card flush">{{if $d.Batches}}<div class="tablewrap"><table class="tlist">
   <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.hr.progress"}}</th><th>{{t "sign.hr.signer"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
   <tbody>{{range $d.Batches}}<tr><td><a href="/sign/batch/{{.ID}}" class="ttitle">{{icon "users"}} {{.Title}}</a></td>
@@ -11,19 +12,56 @@
     <td class="small">{{or .Signer "—"}}{{if and .Ready (eq .SignerID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
     <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
 </table></div>{{else}}<div class="empty">{{icon "users"}} {{t "sign.hr.empty"}}</div>{{end}}</div>
+{{else if eq $d.Filter "safe"}}{{$f := $d.SafeF}}
+<form class="row filters sign-filters" method="get" action="/sign"><input type="hidden" name="f" value="safe">
+  {{if $f.All}}<select name="emp" style="width:auto" onchange="this.form.submit()"><option value="">{{t "sign.safe.all_employees"}}</option>
+    {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $f.Employee}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  {{with $d.Departments}}<select name="dept" style="width:auto" onchange="this.form.submit()"><option value="">{{t "company.all_departments"}}</option>
+    {{range .}}<option value="{{.ID}}" {{if eq .ID $f.DepartmentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>{{end}}{{end}}
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $f.From.IsZero}}{{$f.From.Format "2006-01-02"}}{{end}}" onchange="this.form.submit()"></span>
+    <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.SafeTo}}" onchange="this.form.submit()"></span></span>
+  <input type="search" name="q" value="{{$f.Q}}" placeholder="{{t "sign.safe.search"}}" style="flex:1;min-width:160px">
+  <span class="muted small">{{t "sign.safe.count" (len $d.Safe)}}</span>
+  {{if $d.Safe}}<a class="button ghost small" href="/sign/safe/zip?{{$d.SafeQuery}}">{{icon "download"}} {{t "sign.safe.zip"}}</a>{{end}}
+</form>
+<div class="card flush">{{if $d.Safe}}<div class="tablewrap"><table class="tlist">
+  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.hr.employee"}}</th><th>{{t "sign.safe.signed_at"}}</th><th>{{t "sign.sender"}}</th><th></th></tr></thead>
+  <tbody>{{range $d.Safe}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "lock"}} {{.Title}}</a>{{if .BatchID}}<div class="small muted">{{t "sign.hr.batch"}}</div>{{end}}</td>
+    <td class="small">{{with .Employee}}{{.Name}}{{end}}</td><td class="small nowrap">{{with .DoneAt}}{{.Format "02.01.2006 15:04"}}{{end}}</td>
+    <td class="small">{{.Author}}</td>
+    <td class="nowrap"><a class="button small ghost" href="/sign/{{.ID}}/file/result" title="{{t "sign.safe.download"}}">{{icon "download"}}</a></td></tr>{{end}}</tbody>
+</table></div>{{else}}<div class="empty">{{icon "lock"}} {{if $f.All}}{{t "sign.safe.empty_hr"}}{{else}}{{t "sign.safe.empty"}}{{end}}</div>{{end}}</div>
 {{else if eq $d.Filter "templates"}}<div class="card flush">{{if $d.Templates}}<div class="tablewrap"><table class="tlist">
-  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.side.company"}}</th><th>{{t "sign.remind"}}</th><th>{{t "sign.tpl.author"}}</th><th></th></tr></thead>
+  <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.side.company"}}</th><th>{{t "sign.remind"}}</th><th>{{t "sign.deadline"}}</th><th>{{t "sign.tpl.author"}}</th><th></th></tr></thead>
   <tbody>{{range $d.Templates}}<tr><td><a href="/sign/new?tpl={{.ID}}" class="ttitle">{{icon "file-text"}} {{.Title}}</a><div class="small muted">{{.FileName}}</div></td>
-    <td class="small">{{len .Signers}}</td><td class="small">{{t (print "sign.remind_" .RemindDays)}}</td><td class="small">{{.Author}}</td>
+    <td class="small">{{len .Signers}}</td><td class="small">{{t (print "sign.remind_" .RemindDays)}}</td><td class="small">{{if .DeadlineDays}}{{t "sign.deadline_days" .DeadlineDays}}{{else}}—{{end}}</td><td class="small">{{.Author}}</td>
     <td class="nowrap"><a class="button small" href="/sign/new?tpl={{.ID}}">{{icon "send"}} {{t "sign.tpl.send"}}</a>
-      {{if or (eq .AuthorID $d.Me) $d.Admin}}<form method="post" action="/sign/templates/{{.ID}}/delete" data-confirm="{{t "sign.tpl.delete_confirm"}}" style="display:inline"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}</tbody>
+      {{if or (eq .AuthorID $d.Me) $d.TplAll}}<form method="post" action="/sign/templates/{{.ID}}/delete" data-confirm="{{t "sign.tpl.delete_confirm"}}" style="display:inline"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form>{{end}}</td></tr>{{end}}</tbody>
 </table></div>{{else}}<div class="empty">{{icon "file-text"}} {{t "sign.tpl.empty"}}</div>{{end}}</div>
+{{else}}{{$lf := $d.LF}}
+<form class="row filters sign-filters" method="get" action="/sign">{{with $d.Filter}}<input type="hidden" name="f" value="{{.}}">{{end}}{{if eq $d.View "kanban"}}<input type="hidden" name="view" value="kanban">{{end}}
+  <input type="search" name="q" value="{{$lf.Q}}" placeholder="{{t "sign.search"}}" style="flex:1;min-width:160px">
+  <select name="author" style="width:auto" onchange="this.form.submit()"><option value="">{{t "sign.all_senders"}}</option>
+    {{range $d.Users}}<option value="{{.ID}}" {{if eq .ID $lf.Author}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+  <span class="period"><span>{{t "period.from"}} <input type="date" name="from" value="{{if not $lf.From.IsZero}}{{$lf.From.Format "2006-01-02"}}{{end}}" onchange="this.form.submit()"></span>
+    <span>{{t "period.to"}} <input type="date" name="to" value="{{$d.To}}" onchange="this.form.submit()"></span></span>
+  {{if not $lf.Empty}}<span class="muted small">{{t "sign.count" (len $d.Docs)}}</span> <a class="button ghost small" href="/sign?{{with $d.Filter}}f={{.}}&amp;{{end}}{{if eq $d.View "kanban"}}view=kanban{{end}}">{{t "sign.reset"}}</a>{{end}}
+  <span class="seg">{{range list "list" "kanban"}}<a class="chip{{if eq . $d.View}} on{{end}}" href="/sign?{{with $d.Filter}}f={{.}}&amp;{{end}}{{with $d.Base}}{{.}}&amp;{{end}}view={{.}}">{{icon (print "layout-" .)}} {{t (print "sign.view." .)}}</a>{{end}}</span>
+</form>
+{{if eq $d.View "kanban"}}<div class="board sgboard">{{range $d.Columns}}<div class="col sgcol-{{.Status}}">
+  <div class="colhead"><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span> <span class="muted small colcount">{{len .Docs}}</span></div>
+  {{range .Docs}}{{$c := .Current}}<div class="kcard"><a href="/sign/{{.ID}}" class="ttitle">{{.Title}}</a>
+    {{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}}<div><span class="pill sg-me">{{t "sign.your_turn"}}</span></div>{{end}}
+    <div class="small kline">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</div>
+    <div class="foot small muted"><span>{{.Author}}</span><span class="nowrap">{{.CreatedAt.Format "02.01.2006"}}</span>{{if and .Deadline (eq .Status "signing")}}<span class="nowrap">{{t "sign.deadline"}} {{.Deadline.Format "02.01.2006"}}</span>{{end}}</div></div>{{end}}
+</div>{{end}}</div>
 {{else}}<div class="card flush">{{if $d.Docs}}<div class="tablewrap"><table class="tlist">
   <thead><tr><th>{{t "sign.doc"}}</th><th>{{t "sign.status"}}</th><th>{{t "sign.parties"}}</th><th>{{t "sign.sender"}}</th><th>{{t "sign.created"}}</th></tr></thead>
   <tbody>{{range $d.Docs}}{{$c := .Current}}<tr><td><a href="/sign/{{.ID}}" class="ttitle">{{icon "signature"}} {{.Title}}</a></td>
-    <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span>{{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}</td>
+    <td><span class="pill sg-{{.Status}}">{{t (print "sign.st." .Status)}}</span>{{if and $c (eq .Status "signing") (eq $c.UserID $d.Me)}} <span class="pill sg-me">{{t "sign.your_turn"}}</span>{{end}}
+      {{if and .Deadline (eq .Status "signing")}}<div class="small muted nowrap">{{t "sign.deadline"}} {{.Deadline.Format "02.01.2006"}}</div>{{end}}</td>
     <td class="small">{{range $i, $p := .Parties}}{{if $i}} → {{end}}<span class="sgp-{{$p.Status}}" title="{{if $p.Reviewer}}{{t "sign.role.reviewer"}}: {{t (print "sign.rpst." $p.Status)}}{{else}}{{t (print "sign.pst." $p.Status)}}{{end}}">{{if eq $p.Status "signed"}}✓ {{else if eq $p.Status "refused"}}✕ {{end}}{{$p.Name}}</span>{{end}}</td>
     <td class="small">{{.Author}}</td><td class="small nowrap">{{.CreatedAt.Format "02.01.2006 15:04"}}</td></tr>{{end}}</tbody>
-</table></div>{{else}}<div class="empty">{{icon "signature"}} {{if eq $d.Filter "mine"}}{{t "sign.mine_empty"}}{{else}}{{t "sign.empty"}}{{end}}</div>{{end}}</div>{{end}}
+</table></div>{{else}}<div class="empty">{{icon "signature"}} {{if not $d.LF.Empty}}{{t "sign.nothing"}}{{else if eq $d.Filter "mine"}}{{t "sign.mine_empty"}}{{else}}{{t "sign.empty"}}{{end}}</div>{{end}}</div>{{end}}{{end}}
 {{end}}
 

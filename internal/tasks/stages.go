@@ -342,9 +342,11 @@ func (s *Store) ShiftProjectStage(ctx context.Context, p Project, stageID string
 	})
 }
 
-// CardInfo is what a kanban card shows besides the task row.
+// CardInfo is what a kanban card shows besides the task row. Files are the task's attachments (files of checklist
+// items are not among them); Cover is the first attached picture, shown on the card.
 type CardInfo struct {
 	ChecklistDone, ChecklistTotal, Files, Comments int
+	Cover                                          string
 }
 
 func (s *Store) CardInfo(ctx context.Context, ids []string) (map[string]CardInfo, error) {
@@ -355,8 +357,10 @@ func (s *Store) CardInfo(ctx context.Context, ids []string) (map[string]CardInfo
 	rows, err := s.db.Query(ctx, `SELECT t.id::text,
 			(SELECT count(*) FILTER (WHERE done) FROM task_checklist_items c WHERE c.task_id = t.id)::int,
 			(SELECT count(*) FROM task_checklist_items c WHERE c.task_id = t.id)::int,
-			(SELECT count(*) FROM files f WHERE f.task_id = t.id)::int,
-			(SELECT count(*) FROM task_comments m WHERE m.task_id = t.id)::int
+			(SELECT count(*) FROM files f WHERE f.task_id = t.id AND f.checklist_item_id IS NULL)::int,
+			(SELECT count(*) FROM task_comments m WHERE m.task_id = t.id)::int,
+			coalesce((SELECT f.id::text FROM files f WHERE f.task_id = t.id AND f.checklist_item_id IS NULL
+				AND f.content_type LIKE 'image/%' ORDER BY f.created_at, f.id LIMIT 1), '')
 		FROM tasks t WHERE t.id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
@@ -365,7 +369,7 @@ func (s *Store) CardInfo(ctx context.Context, ids []string) (map[string]CardInfo
 	for rows.Next() {
 		var id string
 		var c CardInfo
-		if err := rows.Scan(&id, &c.ChecklistDone, &c.ChecklistTotal, &c.Files, &c.Comments); err != nil {
+		if err := rows.Scan(&id, &c.ChecklistDone, &c.ChecklistTotal, &c.Files, &c.Comments, &c.Cover); err != nil {
 			return nil, err
 		}
 		out[id] = c

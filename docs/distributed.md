@@ -1,24 +1,26 @@
-# Распределённая инфраструктура go24
+Русская версия: [ru/distributed.md](ru/distributed.md)
 
-## Задача
+# Distributed Infrastructure of go24
 
-Разносить контейнеры по нескольким своим серверам (продукт self-hosted). Например, на слабом сервере — go24 и rclone, на сильном — Postgres и Authentik. Новый сервер должен добавляться без переделки конфигурации.
+## Objective
 
-## Решение: Docker Swarm
+Distribute containers across multiple own servers (the product is self-hosted). For example, go24 and rclone on a low-spec server, Postgres and Authentik on a powerful one. A new server must be added without reworking configuration.
 
-NetBird исключён из стека (решение от 11.10.2026). Связь между узлами строится на средствах самого Docker Swarm и файрволе.
+## Solution: Docker Swarm
+
+NetBird has been excluded from the stack (decision of 2026-10-11). Communication between nodes is built using Docker Swarm's own mechanisms and a firewall.
 
 ```
-                       Пользователи (HTTPS)
+                       Users (HTTPS)
                               │
                               ▼
  node-3 (edge)  ┌──────────────────────────┐
- role=edge      │ traefik :80/:443 (TLS)   │  ← единственная точка входа снаружи
+ role=edge      │ traefik :80/:443 (TLS)   │  ← single entry point from the outside
                 └────────────┬─────────────┘
-                             │  overlay-сеть Swarm, шифрование IPsec (--opt encrypted)
+                             │  Swarm overlay network, IPsec encryption (--opt encrypted)
         ┌────────────────────┴──────────────────────┐
         ▼                                           ▼
- node-1 (слабый) role=app                   node-2 (сильный) role=db
+ node-1 (low-spec) role=app                 node-2 (high-spec) role=db
  ┌──────────────────────┐                   ┌──────────────────────┐
  │ go24 ×N, rclone      │                   │ postgres             │
  │ worker, importer     │                   │ authentik-server     │
@@ -26,50 +28,49 @@ NetBird исключён из стека (решение от 11.10.2026). Св�
                                             └──────────────────────┘
 ```
 
-- Swarm встроен в Docker: тот же `docker-compose.yml` разворачивается командой `docker stack deploy`. Отдельный оркестратор не нужен.
-- Где работает сервис, задаётся меткой узла и ограничением `deploy.placement.constraints`, например `node.labels.role == db`. Чтобы перенести сервис на другой узел, достаточно сменить метку.
-- Узлы связаны так:
-  - если у провайдера есть **приватная сеть (VLAN)** между серверами, Swarm работает по ней;
-  - если приватной сети нет, работает по публичным IP, но порты Swarm (2377/tcp, 7946/tcp+udp, 4789/udp и ESP для шифрования) **открыты в файрволе только для IP других узлов**.
-- Overlay-сеть создаётся с `--opt encrypted`, поэтому трафик между контейнерами на разных узлах идёт по IPsec.
-- Наружу открыт только Traefik (80/443). Остальные сервисы портов не публикуют. Админам и разработчикам — SSH-туннель.
-- Stateless-сервисы (go24, rclone, будущие `mail-sync` и `importer`) масштабируются через `deploy.replicas`.
-- Postgres привязан к одному узлу из-за тома с данными. Позже можно добавить реплику (streaming replication или Patroni).
-- Образы хранятся в **своём реестре**, потому что Swarm не собирает их на узлах. Варианты: Forgejo (git + реестр контейнеров + Actions для CI в одном продукте) или `registry:2`. Внешние GitHub и GHCR не используем.
+- Swarm is built into Docker: the same `docker-compose.yml` is deployed with `docker stack deploy`. No separate orchestrator is required.
+- Where a service runs is configured by node labels and the `deploy.placement.constraints` constraint, for example `node.labels.role == db`. To move a service to another node, changing the label is sufficient.
+- Nodes are interconnected as follows:
+  - if the provider offers a **private network (VLAN)** between servers, Swarm runs over it;
+  - if there is no private network, it runs over public IPs, but Swarm ports (2377/tcp, 7946/tcp+udp, 4789/udp, and ESP for encryption) are **open in the firewall only to the IPs of other nodes**.
+- The overlay network is created with `--opt encrypted`, so traffic between containers on different nodes is sent over IPsec.
+- Only Traefik (80/443) is exposed to the outside. Other services do not publish ports. Admins and developers use an SSH tunnel.
+- Stateless services (go24, rclone, future `mail-sync` and `importer`) are scaled via `deploy.replicas`.
+- Postgres is bound to a single node because of the data volume. A replica (streaming replication or Patroni) can be added later.
+- Images are stored in our **own registry** because Swarm does not build them on nodes. Options: Forgejo (git + container registry + Actions for CI in a single product) or `registry:2`. External GitHub and GHCR are not used.
 
-## Альтернативы
+## Alternatives
 
-| Вариант | Плюсы | Минусы |
+| Option | Pros | Cons |
 |---|---|---|
-| **Docker Swarm** | Проще всего: те же compose-файлы, без новых инструментов | Меньше экосистема, нет автоскейлинга |
-| k3s (лёгкий Kubernetes) | Стандарт отрасли, богатая экосистема Helm | Сложнее в сопровождении, нужен отдельный навык |
-| HashiCorp Nomad | Лёгкий, гибкий | Ещё один язык описания (HCL), лицензия BSL |
+| **Docker Swarm** | Simplest: same compose files, no new tools | Smaller ecosystem, no auto-scaling |
+| k3s (lightweight Kubernetes) | Industry standard, rich Helm ecosystem | Harder to maintain, requires separate skills |
+| HashiCorp Nomad | Lightweight, flexible | Yet another specification language (HCL), BSL license |
 
-## План перехода
+## Migration Plan
 
-1. Сейчас: один узел, `docker compose`. Так устроено в `deploy/docker-compose.yml`.
-2. На первом узле: `docker swarm init --advertise-addr <приватный или публичный IP>`. Остальные узлы подключаются через `docker swarm join`. Файрвол между узлами настраивается по списку выше.
-3. В compose добавляются секции `deploy:` с метками и репликами. Секреты переносятся в `docker secret`, сеть создаётся с `encrypted`, образ go24 публикуется в свой реестр.
-4. Метки узлов: `docker node update --label-add role=db node-2`.
+1. Currently: single node, `docker compose`. This is how `deploy/docker-compose.yml` is set up.
+2. On the first node: `docker swarm init --advertise-addr <private or public IP>`. Remaining nodes join via `docker swarm join`. Firewall between nodes is configured according to the list above.
+3. Add `deploy:` sections with labels and replicas to compose. Secrets are moved to `docker secret`, the network is created with `encrypted`, and the go24 image is published to our own registry.
+4. Node labels: `docker node update --label-add role=db node-2`.
 
-## Ядро go24: web и worker (решение 2026-10-13)
+## go24 Core: web and worker (decision 2026-10-13)
 
-Ядро (задачи, проекты, лента, календарь, сотрудники) остаётся одним сервисом: эти части тесно связаны (общие права,
-одна транзакция на действие). Из одного образа запускаются два контейнера:
+The core (tasks, projects, feed, calendar, employees) remains a single service: these parts are tightly coupled (shared permissions,
+single transaction per action). Two containers are run from the same image:
 
-| Контейнер | `GO24_ROLE` | Что делает |
+| Container | `GO24_ROLE` | What it does |
 |---|---|---|
-| `go24` | `web` | страницы, REST API, живые обновления (SSE); можно запускать несколько копий |
-| `go24-worker` | `worker` | мост в Matrix (синхронизация, учётки, комнаты), уведомления в мессенджер, лог изменений задач в треды, регулярные задачи, напоминания о встречах, чистка |
+| `go24` | `web` | pages, REST API, live updates (SSE); multiple copies can be run |
+| `go24-worker` | `worker` | bridge to Matrix (sync, user accounts, rooms), messenger notifications, task change log in threads, recurring tasks, meeting reminders, cleanup |
 
-Они общаются через PostgreSQL: `LISTEN/NOTIFY` (например, `go24_matrix_wake` — web просит worker обновить комнаты) и
-очереди-таблицы со строками «ещё не отправлено». Миграции при старте применяет тот, кто первым взял блокировку.
-`GO24_ROLE=all` — оба режима в одном процессе, для самых простых установок.
+They communicate via PostgreSQL: `LISTEN/NOTIFY` (for example, `go24_matrix_wake` — web asks worker to update rooms) and
+queue tables with rows "yet to be sent". On startup, migrations are applied by whichever instance acquires the lock first.
+`GO24_ROLE=all` — both modes in a single process, for the simplest installations.
 
-Отдельными сервисами со своим API делаются модули, которые живут сами по себе: звонки (LiveKit), телефония (Asterisk),
-почта (IMAP), CRM, распознавание речи (Whisper — уже так).
+Modules that live on their own are implemented as separate services with their own API: calls (LiveKit), telephony (Asterisk),
+mail (IMAP), CRM, speech recognition (Whisper — already so).
 
-**Брокер сообщений (решение 2026-10-13).** Kafka и RabbitMQ не ставим: обмен между web и worker идёт через PostgreSQL —
-событие пишется в той же транзакции, что и данные, поэтому не теряется. Когда появится первый отдельный модуль
-(телефония, почта, CRM), подключим лёгкий NATS JetStream через таблицу исходящих событий (outbox), не переписывая ядро.
-
+**Message broker (decision 2026-10-13).** Kafka and RabbitMQ are not installed: communication between web and worker goes through PostgreSQL —
+an event is written within the same transaction as the data, so it is never lost. When the first separate module arrives
+(telephony, mail, CRM), we will connect lightweight NATS JetStream via an outbox table, without rewriting the core.

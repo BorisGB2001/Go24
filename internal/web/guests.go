@@ -46,7 +46,7 @@ var guestRoutes = map[string]bool{
 	// tasks
 	"GET /t/{key}": true, "POST /t/{key}/action": true, "POST /t/{key}/edit": true, "POST /t/{key}/deadline": true,
 	"POST /t/{key}/stage": true, "POST /t/{key}/participants": true, "POST /t/{key}/checklist": true,
-	"POST /t/{key}/checklist/{id}": true, "POST /t/{key}/checklists": true, "POST /t/{key}/checklists/{id}": true, "POST /t/{key}/comments": true, "GET /t/{key}/messenger": true,
+	"POST /t/{key}/checklist/{id}": true, "POST /t/{key}/checklist/{id}/files": true, "POST /t/{key}/checklist/{id}/files/{file}/delete": true, "POST /t/{key}/checklists": true, "POST /t/{key}/checklists/{id}": true, "POST /t/{key}/comments": true, "GET /t/{key}/messenger": true,
 	"GET /t/{key}/live": true, "POST /t/{key}/comments/{id}/react": true, "POST /t/{key}/comments/{id}/result": true,
 	"POST /t/{key}/timer": true, "POST /timer/stop": true, "POST /t/{key}/time": true, "POST /t/{key}/time/{id}": true,
 	"POST /t/{key}/time/{id}/delete": true, "POST /t/{key}/mark": true, "POST /t/{key}/tags": true,
@@ -54,10 +54,10 @@ var guestRoutes = map[string]bool{
 	"POST /t/{key}/links": true, "POST /t/{key}/links/{id}/delete": true, "POST /t/{key}/delete": true,
 	// a collab's drive and the files of its tasks
 	"GET /disk/p/{key}": true, "POST /disk/p/{key}/upload": true, "POST /disk/p/{key}/folders": true,
-	"POST /disk/p/{key}/delete": true, "GET /disk/p/{key}/edit/{file}": true, "POST /disk/p/{key}/new-doc": true, "/office/": true, "POST /files": true, "GET /files/{id}": true,
+	"POST /disk/p/{key}/delete": true, "GET /disk/p/{key}/edit/{file}": true, "POST /disk/p/{key}/new-doc": true, "/office/": true, "POST /files": true, "GET /files/{id}": true, "GET /files/{id}/open": true,
 	// calendar: the guest's meetings (of collabs) and the deadlines of their tasks
 	"GET /calendar": true, "GET /calendar/new": true, "POST /calendar/new": true, "GET /calendar/{id}": true, "GET /calendar/busy": true, "GET /calendar/sync": true, "POST /calendar/sync": true,
-	"POST /calendar/{id}": true, "POST /calendar/{id}/delete": true, "POST /calendar/{id}/respond": true, "POST /calendar/{id}/move": true, "POST /calendar/sections": true, "POST /calendar/sections/{id}/delete": true,
+	"POST /calendar/{id}": true, "POST /calendar/{id}/delete": true, "POST /calendar/{id}/respond": true, "POST /calendar/{id}/invite": true, "POST /calendar/{id}/move": true, "POST /calendar/sections": true, "POST /calendar/sections/{id}/delete": true,
 	// messenger: the chats of collabs and private chats with their people
 	"GET /im": true, "GET /im/messages": true, "POST /im/send": true, "POST /im/react": true, "GET /im/direct": true, "POST /im/upload": true, "POST /im/edit": true, "POST /im/delete": true, "POST /im/forward": true, "GET /im/file": true, "GET /im/file/preview": true, "POST /im/transcribe": true,
 	"GET /im/live": true, "POST /im/settings": true, "GET /im/notes": true, "GET /im/unread": true, "POST /im/read": true, "GET /im/photo": true, "POST /im/pin": true, "GET /im/search": true, "POST /im/typing": true, "POST /im/mark": true, "POST /im/draft": true, "POST /im/save": true, "POST /im/remind": true, "GET /im/saved": true, "GET /im/media": true, "GET /im/threads": true, "POST /im/poll": true, "GET /im/export": true, "POST /im/poll/{action}": true, "POST /im/group/{action}": true, "POST /im/collab/{action}": true, // a guest added to a group chat: leaves it, adds only people they may write to
@@ -84,11 +84,11 @@ var guestAPI = map[string]bool{
 	"POST /api/v1/tasks/{key}/time": true, "POST /api/v1/tasks/{key}/timer/start": true, "POST /api/v1/timer/stop": true,
 	"GET /api/v1/notifications": true, "POST /api/v1/notifications/read": true,
 	"GET /api/v1/im/rooms": true, "GET /api/v1/im/rooms/{room}/messages": true,
-	"POST /api/v1/im/rooms/{room}/messages": true, "PATCH /api/v1/im/rooms/{room}/messages/{id}": true, "DELETE /api/v1/im/rooms/{room}/messages/{id}": true, "PUT /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}": true, "DELETE /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}": true, "POST /api/v1/im/rooms/{room}/polls": true, "GET /api/v1/im/rooms/{room}/history": true, "GET /api/v1/im/rooms/{room}/files": true, "POST /api/v1/im/rooms/{room}/polls/{id}/{action}": true, "POST /api/v1/im/rooms/{room}/files": true, "GET /api/v1/im/rooms/{room}/messages/{id}/file": true, "POST /api/v1/im/rooms/{room}/messages/{id}/transcript": true, "POST /api/v1/im/direct": true, "POST /api/v1/im/notes": true, "GET /api/v1/im/calls": true, "GET /api/v1/im/settings": true, "PUT /api/v1/im/settings": true, "GET /api/v1/im/rooms/{room}/members": true, "POST /api/v1/im/rooms/{room}/members": true, "DELETE /api/v1/im/rooms/{room}/members/{user}": true, "GET /api/v1/im/search": true, "POST /api/v1/im/rooms/{room}/marks": true, "GET /api/v1/im/rooms/{room}/pins": true, "PUT /api/v1/im/rooms/{room}/pins/{id}": true, "DELETE /api/v1/im/rooms/{room}/pins/{id}": true,
+	"POST /api/v1/im/rooms/{room}/messages": true, "PATCH /api/v1/im/rooms/{room}/messages/{id}": true, "DELETE /api/v1/im/rooms/{room}/messages/{id}": true, "POST /api/v1/im/rooms/{room}/forward": true, "PUT /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}": true, "DELETE /api/v1/im/rooms/{room}/messages/{id}/reactions/{key}": true, "POST /api/v1/im/rooms/{room}/polls": true, "GET /api/v1/im/rooms/{room}/history": true, "GET /api/v1/im/rooms/{room}/files": true, "POST /api/v1/im/rooms/{room}/polls/{id}/{action}": true, "POST /api/v1/im/rooms/{room}/files": true, "GET /api/v1/im/rooms/{room}/messages/{id}/file": true, "POST /api/v1/im/rooms/{room}/messages/{id}/transcript": true, "POST /api/v1/im/direct": true, "POST /api/v1/im/notes": true, "GET /api/v1/im/calls": true, "GET /api/v1/im/settings": true, "PUT /api/v1/im/settings": true, "GET /api/v1/im/rooms/{room}/members": true, "POST /api/v1/im/rooms/{room}/members": true, "DELETE /api/v1/im/rooms/{room}/members/{user}": true, "GET /api/v1/im/search": true, "POST /api/v1/im/rooms/{room}/marks": true, "GET /api/v1/im/rooms/{room}/pins": true, "PUT /api/v1/im/rooms/{room}/pins/{id}": true, "DELETE /api/v1/im/rooms/{room}/pins/{id}": true,
 	"GET /api/v1/collabs": true, "GET /api/v1/collabs/{key}": true, "DELETE /api/v1/collabs/{key}/members/{uid}": true,
 	"GET /api/v1/calendar/events": true, "POST /api/v1/calendar/events": true, "GET /api/v1/calendar/events/{id}": true,
 	"PATCH /api/v1/calendar/events/{id}": true, "DELETE /api/v1/calendar/events/{id}": true,
-	"POST /api/v1/calendar/events/{id}/respond": true, "GET /api/v1/calendar/busy": true,
+	"POST /api/v1/calendar/events/{id}/respond": true, "POST /api/v1/calendar/events/{id}/invite": true, "GET /api/v1/calendar/busy": true,
 	"GET /api/v1/calendar/sections": true, "POST /api/v1/calendar/sections": true, "PATCH /api/v1/calendar/sections/{id}": true,
 	"DELETE /api/v1/calendar/sections/{id}": true,
 }

@@ -133,9 +133,65 @@ func TestWorkSchedulesHTTP(t *testing.T) {
 	if page := do(boss, "GET", "/worktime/table", nil, 200); !strings.Contains(page, "Дневная 08:00–20:00") {
 		t.Fatal("the worksheet does not show the shift")
 	}
+	// «Уведомлять о нарушениях» of the schedule: the people chosen are kept and shown
+	do(admin, "POST", path, url.Values{"name": {"Склад"}, "kind": {"shift"}, "members": {"dept:" + dept}, "notify_to": {olga},
+		"sh_id": {strconv.FormatInt(shift, 10)}, "sh_name": {"Дневная"}, "sh_start": {"08:00"}, "sh_end": {"20:00"}, "sh_break": {"60"}}, 303)
+	if ws, err = srv.Company.WorkSchedule(ctx, mustID(t, id)); err != nil || ws.NotifyHead || len(ws.NotifyTo) != 1 || ws.NotifyTo[0] != olga {
+		t.Fatalf("notify of the schedule: %v %v %v", err, ws.NotifyHead, ws.NotifyTo)
+	}
+	if page := do(admin, "GET", path, nil, 200); !strings.Contains(page, `name="notify_head"`) || !strings.Contains(page, olga) {
+		t.Fatal("the schedule page does not show whom to notify")
+	}
+	// «Отчёт о рабочем дне» and «Устройства для отметки»: olga marks her day only by a terminal or an app, with a report
+	form := url.Values{"name": {"Склад"}, "kind": {"shift"}, "members": {"dept:" + dept, olga}, "devices_shown": {"1"},
+		"sh_id": {strconv.FormatInt(shift, 10)}, "sh_name": {"Дневная"}, "sh_start": {"08:00"}, "sh_end": {"20:00"}, "sh_break": {"60"}}
+	if loc := do(admin, "POST", path, form, 303); !strings.Contains(loc, "msg=") { // no device chosen
+		t.Fatalf("saved without devices: %s", loc)
+	}
+	form["report_req"], form["devices"] = []string{"required"}, []string{"terminal", "app"}
+	do(admin, "POST", path, form, 303)
+	if page := do(admin, "GET", path, nil, 200); !strings.Contains(page, `name="report_req" value="required" checked`) ||
+		!strings.Contains(page, `name="devices" value="app" checked`) || strings.Contains(page, `name="devices" value="browser" checked`) {
+		t.Fatal("the schedule page does not show the report and the devices")
+	}
+	if page := do(olga, "GET", "/worktime", nil, 200); !strings.Contains(page, "не разрешает отмечать рабочий день в браузере") ||
+		strings.Contains(page, `name="action" value="start"`) {
+		t.Fatal("the working day window offers the browser")
+	}
+	if loc := do(olga, "POST", "/worktime/day", url.Values{"action": {"start"}}, 303); !strings.Contains(loc, "msg=") {
+		t.Fatalf("started from the browser: %s", loc)
+	}
+	form["devices"] = []string{"browser"}
+	do(admin, "POST", path, form, 303)
+	do(olga, "POST", "/worktime/day", url.Values{"action": {"start"}}, 303)
+	if page := do(olga, "GET", "/worktime", nil, 200); !strings.Contains(page, `required placeholder="Отчёт за день (обязательно)"`) {
+		t.Fatal("the report is not asked as required")
+	}
+	if loc := do(olga, "POST", "/worktime/day", url.Values{"action": {"finish"}}, 303); !strings.Contains(loc, "msg=") {
+		t.Fatalf("finished without the report: %s", loc)
+	}
+	do(olga, "POST", "/worktime/day", url.Values{"action": {"finish"}, "report": {"Склад принят"}}, 303)
+	if d, _ := srv.Company.Today(ctx, olga, time.Now()); d == nil || d.State() != "done" || d.Report != "Склад принят" {
+		t.Fatalf("olga's day %+v", d)
+	}
 	do(anna, "POST", path+"/delete", nil, 403)
 	do(admin, "POST", path+"/delete", nil, 303)
 	do(admin, "GET", path, nil, 404)
+
+	// the company's rules: the manager is told of a late start, once, and sees it in the notifications
+	do(admin, "POST", "/settings/worktime", url.Values{"start": {"00:00"}, "end": {"23:59"}, "late_after": {"00:00"}, "notify_head": {"on"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"start"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"pause"}}, 303)
+	do(anna, "POST", "/worktime/day", url.Values{"action": {"resume"}}, 303)
+	var n int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'workday_violation' AND actor_id = $2
+		AND url = $3`, boss, anna, "/worktime/d/"+anna+"/"+today).Scan(&n))
+	if n != 1 {
+		t.Fatalf("the manager got %d notifications of the late start", n)
+	}
+	if page := do(boss, "GET", "/notifications", nil, 200); !strings.Contains(page, "<b>Анна Сотрудникова</b> опоздал(а)") {
+		t.Fatal("the late start is not in the manager's notifications")
+	}
 }
 
 func mustID(t *testing.T, s string) int64 {

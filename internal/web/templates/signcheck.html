@@ -1,0 +1,31 @@
+{{define "content"}}{{$d := .Data}}
+<div class="share">
+  <h2>{{icon "shield-check"}} {{t "sign.check.title"}}</h2>
+  <div class="muted small">{{t "sign.check.hint"}}</div>
+  {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+  <div class="card">
+    <form method="get" action="/sg/check" class="row" data-native>
+      <input type="text" name="code" value="{{$d.Code}}" maxlength="40" required placeholder="XXXX-XXXX-XXXX" aria-label="{{t "sign.check.code"}}" style="flex:1;min-width:0" autocomplete="off">
+      <button class="primary">{{icon "search"}} {{t "sign.check.by_code"}}</button></form>
+    <form method="post" action="/sg/check" enctype="multipart/form-data" class="row" data-native>
+      <input type="file" name="file" required aria-label="{{t "sign.check.file"}}" style="flex:1;min-width:0">
+      <button class="ghost">{{icon "files"}} {{t "sign.check.by_file"}}</button></form>
+    <p class="small muted">{{t "sign.check.file_hint"}}</p>
+  </div>
+  {{if $d.Asked}}{{$c := $d.Check}}{{if $c.Found}}<div class="card sgcheck sgcheck-{{$c.Status}}">
+    <h2>{{if eq $c.Status "done"}}{{icon "circle-check"}} {{t "sign.check.signed"}}{{else}}{{icon "clock"}} {{t (print "sign.st." $c.Status)}}{{end}}</h2>
+    {{if $d.File}}<p>{{$d.File}}: {{t (print "sign.check.match." $c.Match)}}</p>{{end}}
+    <div class="grid">
+      <div><span class="muted small">{{t "sign.check.doc"}}</span><div><b>{{$c.Title}}</b></div></div>
+      <div><span class="muted small">{{t "sign.check.code"}}</span><div><code>{{$c.Code}}</code></div></div>
+      <div><span class="muted small">{{t "sign.check.from"}}</span><div>{{$c.Author}}, {{$c.CreatedAt.Format "02.01.2006 15:04"}}</div></div>
+      {{with $c.DoneAt}}<div><span class="muted small">{{t "sign.check.done_at"}}</span><div>{{.Format "02.01.2006 15:04"}}</div></div>{{end}}
+    </div>
+    <table class="tlist"><thead><tr><th>{{t "sign.sheet.signer"}}</th><th>{{t "sign.sheet.side"}}</th><th>{{t "sign.check.status"}}</th><th>{{t "sign.sheet.when"}}</th></tr></thead>
+      <tbody>{{range $c.Signers}}<tr><td>{{.Name}}{{if eq .Role "reviewer"}} <span class="small muted">· {{t "sign.role.reviewer"}}</span>{{end}}</td><td>{{t (print "sign.side." .Side)}}</td>
+        <td>{{t (print "sign.pst." .Status)}}</td><td>{{with .SignedAt}}{{.Format "02.01.2006 15:04"}}{{end}}</td></tr>{{end}}</tbody></table>
+    <div class="muted small" style="word-break:break-all">SHA-256: {{$c.Hash}}{{with $c.Result}}<br>{{t "sign.check.result_hash"}}: {{.}}{{end}}</div>
+  </div>{{else}}<div class="card">{{icon "alert-triangle"}} {{if $d.File}}{{t "sign.check.no_file_match"}}{{else}}{{t "sign.check.none"}}{{end}}</div>{{end}}{{end}}
+  <p class="muted small share-foot">go24 · {{t "sign.check.foot"}}</p>
+</div>
+{{end}}

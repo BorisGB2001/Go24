@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -220,6 +221,24 @@ func TestInvitesAndShares(t *testing.T) {
 	}
 	if !s.SharedCan(ctx, eve, q1) || s.SharedCan(ctx, gina, q1) || s.SharedCan(ctx, gone, q1) {
 		t.Fatal("SharedCan")
+	}
+	// «Частное» is the owner's only, as Outlook's private items
+	priv := letter(inbox, "doctor@x.test", "Больничный", "p@x.test", "", time.Now())
+	must2(pool.Exec(ctx, `UPDATE mail_messages SET sensitivity = 'private' WHERE id::text = $1`, priv))
+	has := func(list []Ticket) bool {
+		return slices.ContainsFunc(list, func(t Ticket) bool { return t.Thread == "p@x.test" })
+	}
+	if l, _ := s.Tickets(ctx, eve, box, TicketFilter{}); has(l) {
+		t.Fatal("a private letter is a request for the others")
+	}
+	if l, _ := s.Tickets(ctx, anna, box, TicketFilter{}); !has(l) {
+		t.Fatal("the owner does not see the private letter")
+	}
+	if _, err := s.LetterTicket(ctx, eve, box, priv); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("someone else opens a private letter: %v", err)
+	}
+	if _, err := s.LetterTicket(ctx, anna, box, priv); err != nil || s.SharedCan(ctx, eve, priv) {
+		t.Fatalf("private letter: %v, %v", err, s.SharedCan(ctx, eve, priv))
 	}
 	must(s.UnshareBox(ctx, anna, box))
 	if l, _ := s.SharedLevel(ctx, eve, box); l != "" || s.SharedCan(ctx, eve, q1) {

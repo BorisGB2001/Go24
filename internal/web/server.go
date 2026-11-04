@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -17,15 +18,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go24/internal/ai"
 	"go24/internal/apikeys"
 	"go24/internal/apps"
 	"go24/internal/audit"
-	"go24/internal/backup"
 	"go24/internal/auth"
 	"go24/internal/authentik"
+	"go24/internal/backup"
 	"go24/internal/bi"
 	"go24/internal/booking"
 	"go24/internal/bp"
@@ -49,20 +51,24 @@ import (
 	"go24/internal/notifyout"
 	"go24/internal/office"
 	"go24/internal/openlines"
+	"go24/internal/paysys"
 	"go24/internal/portal"
-	"go24/internal/sites"
-	"go24/internal/speech"
 	"go24/internal/sign"
+	"go24/internal/sites"
+	"go24/internal/sms"
+	"go24/internal/speech"
 	"go24/internal/storages"
 	"go24/internal/sysinfo"
 	"go24/internal/tasks"
 	"go24/internal/telephony"
+	"go24/internal/theme"
+	"go24/internal/twofactor"
 )
 
 const (
 	stateCookie   = "go24_oidc_state"
 	backCookie    = "go24_back" // the page asked for before signing in, opened after it
-	maxUploadSize = 100 << 20 // 100 MB
+	maxUploadSize = 100 << 20   // 100 MB
 )
 
 type Server struct {
@@ -75,31 +81,33 @@ type Server struct {
 	AuthentikPublic string // the Authentik address people open (sign-up links), from the OIDC issuer
 	// Matrix keeps the messenger in step (nil when the Matrix server is not configured)
 	Matrix *matrixsync.Service
-	Chats  groupChats // the group chats of meetings' chats (nil — those of Matrix; tests put their own)
+	Chats  groupChats // the group chats of meetings and departments (nil — those of Matrix; tests put their own)
 	// Live pushes new task chat messages to open cards (nil: cards update on reload only)
-	Live        *live.Broker
-	Feed        *feed.Store
-	KB          *kb.Store
-	Booking     *booking.Store
-	Sign        *sign.Store
-	Hooks       *hooks.Store
-	Apps        *apps.Store
-	Audit       *audit.Store    // «Журнал событий»; nil — not kept
-	IPAccess    *ipaccess.Store // «Ограничение доступа по IP»; nil — none
-	Backup      *backup.Store   // «Резервное копирование»; nil — no backups' folder
+	Live     *live.Broker
+	Feed     *feed.Store
+	KB       *kb.Store
+	Booking  *booking.Store
+	Sign     *sign.Store
+	Hooks    *hooks.Store
+	Apps     *apps.Store
+	Audit    *audit.Store    // «Журнал событий»; nil — not kept
+	IPAccess *ipaccess.Store // «Ограничение доступа по IP»; nil — none
+	Backup   *backup.Store   // «Резервное копирование»; nil — no backups' folder
 	// BackupHostDir is the backups' folder as the server names it (GO24_BACKUP_HOST_DIR); BackupRC — rclone-rcd for
 	// the outside places of the copies (nil — none)
 	BackupHostDir string
 	BackupRC      backup.Remote
 	// «Состояние системы»: the services checked and the folders whose free space is shown
-	SysProbes []sysinfo.Probe
-	SysDisks  []SysDisk
+	SysProbes   []sysinfo.Probe
+	SysDisks    []SysDisk
 	OpenLines   *openlines.Store
 	Sites       *sites.Store
 	BP          *bp.Store
 	Mail        *mail.Store
 	AI          *ai.Store // connections of AI providers (nil: «ИИ» is off)
 	CRM         *crm.Store
+	SMS         *sms.Store    // SMS providers of the CRM (nil: no SMS)
+	Pay         *paysys.Store // «Платёжные системы»: online payments of CRM invoices (nil: none)
 	BI          *bi.Store
 	Marketing   *marketing.Store
 	Drive       *drive.Store
@@ -107,12 +115,14 @@ type Server struct {
 	Rings       *calls.Rings         // a call from a chat rings its people (nil: it does not)
 	CallLines   *calls.Sessions      // a call of a chat has its line in the chat (nil: it has not)
 	CallGuests  *calls.Guests        // guest links of calls (nil: none)
+	Conferences *calls.Conferences   // «Видеоконференции» (nil: none)
 	Recordings  *calls.Recordings    // recordings of calls (nil: calls are not recorded)
 	RecordDir   string               // where LiveKit Egress puts the recordings, as go24 sees that folder
 	External    *calls.External      // external services of calls: Zoom, Телемост, VK, Telegram, Max (nil: none)
 	NotifyOut   *notifyout.Service   // notifications in outside messengers: Telegram, MAX… (nil: none)
 	Telephony   *telephony.PBX       // own Asterisk (nil: no telephony)
 	Speech      *speech.Client       // Whisper for the text of voice messages; nil — none
+	TTS         *speech.Synth        // Piper for the sounds of telephony spoken from a text; nil — none
 	Office      *office.Server       // «Документы онлайн» (ONLYOFFICE); nil — files are only downloaded
 	Links       *linkpreview.Fetcher // cards of links in chat messages; nil — none
 	CallURL     string               // go24 over https for calls ("" — BaseURL)
@@ -121,18 +131,19 @@ type Server struct {
 	Keys        *apikeys.Store
 	Portal      *portal.Store // general settings of the portal; nil — the defaults
 	Menus       *menu.Store   // the left menus employees set up; nil — go24's menu for all
+	Themes      *theme.Store  // «Тема оформления» of employees; nil — go24's look for all
 	BaseURL     string
 	ThemeDir    string // optional GO24_THEME_DIR with theme.css overriding the default look
 	I18n        *i18n.Bundle
 	AdminGroups []string // Authentik groups that make a user a go24 administrator
 	GuestGroups []string // Authentik groups of guests of collabs (they see their collabs only)
 
-	pages    map[string]map[string]*template.Template // language → page → template
+	pages map[string]map[string]*template.Template // language → page → template
 	// the sections switched off in «Инструменты» and when they were read (sectionsOff)
-	secMu  sync.Mutex
-	secOff []string
-	secAt  time.Time
-	OIDC     *auth.OIDC                               // nil when Authentik is not configured yet
+	secMu    sync.Mutex
+	secOff   []string
+	secAt    time.Time
+	OIDC     *auth.OIDC // nil when Authentik is not configured yet
 	Sessions *auth.Sessions
 	Log      *slog.Logger
 }
@@ -152,6 +163,7 @@ func (s *Server) Routes() http.Handler {
 	s.pages = pages
 
 	mux := http.NewServeMux()
+	ttsOn.Store(s.TTS != nil)
 	mux.HandleFunc("GET /lang/{code}", s.setLang)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /login", s.login)
@@ -159,6 +171,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /logout", s.logout)
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.Handle("GET /static/", staticHandler())
+	mux.HandleFunc("GET /manifest.webmanifest", s.pwaManifest)
+	mux.HandleFunc("GET /sw.js", s.pwaWorker)
+	mux.HandleFunc("GET /offline", s.pwaOffline)
 	if s.ThemeDir != "" {
 		mux.Handle("GET /theme/", themeHandler(s.ThemeDir))
 	}
@@ -178,6 +193,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /call/record", s.requireUser(s.callRecord))
 	mux.HandleFunc("POST /call/record", s.requireUser(s.callRecord))
 	mux.HandleFunc("POST /call/moderate", s.requireUser(s.callModerate))
+	mux.HandleFunc("GET /call/conferences", s.requireUser(s.callConferences))
+	mux.HandleFunc("POST /call/conferences", s.requireUser(s.callConferenceCreate))
+	mux.HandleFunc("POST /call/conferences/{id}", s.requireUser(s.callConferenceUpdate))
 	mux.HandleFunc("GET /call/g/{token}", s.guestPage) // guest links of calls: no sign-in
 	mux.HandleFunc("POST /call/g/{token}", s.guestArrive)
 	mux.HandleFunc("GET /call/g/{token}/state", s.guestState)
@@ -193,6 +211,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/documents/{id}/delete", s.requireUser(s.docTemplateDelete))
 	mux.HandleFunc("POST /crm/documents/{id}/numerator", s.requireUser(s.docTemplateNumerator))
 	mux.HandleFunc("POST /crm/documents/{id}/access", s.requireUser(s.docTemplateAccess))
+	mux.HandleFunc("POST /crm/documents/{id}/settings", s.requireUser(s.docTemplateSettings))
+	mux.HandleFunc("GET /crm/documents/{id}/fields", s.requireUser(s.docTemplateFields))
+	mux.HandleFunc("POST /crm/documents/{id}/fields", s.requireUser(s.docTemplateFieldsSave))
+	mux.HandleFunc("GET /crm/documents/rights", s.requireUser(s.docRoles))
+	mux.HandleFunc("POST /crm/documents/rights", s.requireUser(s.docRoleSave))
+	mux.HandleFunc("POST /crm/documents/rights/delete", s.requireUser(s.docRoleDelete))
 	mux.HandleFunc("POST /crm/{kind}/{id}/document", s.requireUser(s.crmDocument))
 	mux.HandleFunc("GET /crm/{kind}/{id}/document", s.requireUser(s.crmDocumentForm))
 	mux.HandleFunc("GET /crm/{kind}/{id}/documents/{doc}", s.requireUser(s.crmDocumentFile))
@@ -200,16 +224,21 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/{kind}/{id}/documents/{doc}/delete", s.requireUser(s.crmDocumentDelete))
 	mux.HandleFunc("GET /crm/{kind}/{id}/documents/{doc}/pdf", s.requireUser(s.crmDocumentPDF))
 	mux.HandleFunc("POST /crm/{kind}/{id}/documents/{doc}/public", s.requireUser(s.crmDocumentPublic))
+	mux.HandleFunc("POST /crm/{kind}/{id}/documents/{doc}/send", s.requireUser(s.crmDocumentSend))
 	// «Подпись»: documents sent for signing to the employee and the client (sign.go); the client's page — no sign-in
 	mux.HandleFunc("GET /sign", s.requireUser(s.signPage))
 	mux.HandleFunc("POST /sign", s.requireUser(s.signCreate))
 	mux.HandleFunc("GET /sign/new", s.requireUser(s.signNew))
+	mux.HandleFunc("GET /sign/rights", s.requireUser(s.signRoles))
+	mux.HandleFunc("POST /sign/rights", s.requireUser(s.signRoleSave))
+	mux.HandleFunc("POST /sign/rights/delete", s.requireUser(s.signRoleDelete))
 	mux.HandleFunc("GET /sign/hr", s.requireUser(s.signHRNew))
 	mux.HandleFunc("POST /sign/hr", s.requireUser(s.signHRCreate))
 	mux.HandleFunc("POST /sign/hr/self/{id}", s.requireUser(s.signSelfSet))
 	mux.HandleFunc("GET /sign/my", s.requireUser(s.signSelfNew))
 	mux.HandleFunc("POST /sign/my", s.requireUser(s.signSelfCreate))
 	mux.HandleFunc("GET /sign/batch/{id}", s.requireUser(s.signBatchPage))
+	mux.HandleFunc("GET /sign/safe/zip", s.requireUser(s.signSafeZip))
 	mux.HandleFunc("POST /sign/batch/{id}/sign", s.requireUser(s.signBatchSign))
 	mux.HandleFunc("POST /sign/batch/{id}/remind", s.requireUser(s.signBatchRemind))
 	mux.HandleFunc("POST /sign/batch/{id}/cancel", s.requireUser(s.signBatchCancel))
@@ -217,15 +246,22 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /sign/{id}/file/{which}", s.requireUser(s.signFile))
 	mux.HandleFunc("POST /sign/{id}/sign", s.requireUser(s.signSign))
 	mux.HandleFunc("GET /sign/{id}/signature/{party}", s.requireUser(s.signSignature))
+	mux.HandleFunc("GET /sign/{id}/qes/{party}", s.requireUser(s.signQESGet))
 	mux.HandleFunc("POST /sign/my-signature/forget", s.requireUser(s.signForget))
 	mux.HandleFunc("POST /sign/{id}/cancel", s.requireUser(s.signCancel))
 	mux.HandleFunc("POST /sign/{id}/resend", s.requireUser(s.signResend))
 	mux.HandleFunc("POST /sign/{id}/remind", s.requireUser(s.signRemind))
+	mux.HandleFunc("POST /sign/{id}/deadline", s.requireUser(s.signDeadline))
+	mux.HandleFunc("GET /sign/{id}/blocks/edit", s.requireUser(s.signBlocksPage))
+	mux.HandleFunc("POST /sign/{id}/blocks", s.requireUser(s.signBlocksSave))
+	mux.HandleFunc("GET /sign/{id}/page/{n}", s.requireUser(s.signPageImage))
 	mux.HandleFunc("POST /sign/templates/{id}/delete", s.requireUser(s.signTemplateDelete))
 	mux.HandleFunc("GET /bk/{token}", s.bookingPublic)
 	mux.HandleFunc("POST /bk/{token}", s.bookingPublicBook)
 	mux.HandleFunc("GET /bk/b/{token}", s.bookingClient)
 	mux.HandleFunc("POST /bk/b/{token}/status", s.bookingClientStatus)
+	mux.HandleFunc("POST /bk/b/{token}/move", s.bookingClientMove)
+	mux.HandleFunc("GET /bk/b/{token}/ics", s.bookingClientICS)
 	mux.HandleFunc("POST /bk/b/{token}/rate", s.bookingClientRate)
 	mux.HandleFunc("GET /cs/{token}", s.slotPublic) // «Поделиться слотами» of the calendar: no sign-in
 	mux.HandleFunc("POST /cs/{token}", s.slotPublicBook)
@@ -236,14 +272,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /cf/{token}", s.crmFormPublic)
 	mux.HandleFunc("GET /cb/{token}", s.callbackPublic) // «Обратный звонок»
 	mux.HandleFunc("POST /cb/{token}", s.callbackSend)
+	mux.HandleFunc("GET /ct.js", s.callTrackScript) // «Колл-трекинг»
 	mux.HandleFunc("POST /cf/{token}", s.crmFormSend)
+	mux.HandleFunc("GET /sg/check", s.signCheckPage) // checking a signed document by its code or file: no sign-in
+	mux.HandleFunc("GET /sg/check/{code}", s.signCheckPage)
+	mux.HandleFunc("POST /sg/check", s.signCheckFile)
 	mux.HandleFunc("GET /sg/{token}", s.signPublic)
 	mux.HandleFunc("GET /sg/{token}/file/{which}", s.signPublicFile)
 	mux.HandleFunc("POST /sg/{token}/code", s.signCode)
 	mux.HandleFunc("POST /sg/{token}/sign", s.signPublicSign)
 	mux.HandleFunc("GET /d/{token}", s.publicDocument) // public links of the documents of CRM cards: no sign-in
 	mux.HandleFunc("GET /d/{token}/{format}", s.publicDocumentFile)
-	mux.HandleFunc("GET /q/{token}", s.publicInvoice) // the client's link of a quote or an invoice
+	mux.HandleFunc("GET /q/{token}", s.publicInvoice)         // the client's link of a quote or an invoice
+	mux.HandleFunc("POST /q/{token}/pay", s.publicInvoicePay) // «Оплатить» there (crmpay.go)
+	mux.HandleFunc("POST /pay/{system}/notify", s.payNotify)  // a payment service's notice
 	mux.HandleFunc("GET /crm/roles", s.requireUser(s.crmRoles))
 	mux.HandleFunc("POST /crm/roles/{id}", s.requireUser(s.crmRoleSave))
 	mux.HandleFunc("POST /crm/roles/{id}/delete", s.requireUser(s.crmRoleDelete))
@@ -251,11 +293,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/stages", s.requireUser(s.crmStages))
 	mux.HandleFunc("POST /crm/presets", s.requireUser(s.crmPresetSave))
 	mux.HandleFunc("POST /crm/columns", s.requireUser(s.crmSetColumns))
+	mux.HandleFunc("POST /crm/tile", s.requireUser(s.crmSetTile))
 	mux.HandleFunc("POST /crm/presets/{id}", s.requireUser(s.crmPresetAction))
+	mux.HandleFunc("POST /crm/mode", s.requireUser(s.crmMode))
 	mux.HandleFunc("GET /crm/dicts", s.requireUser(s.crmDicts))
 	mux.HandleFunc("POST /crm/dicts", s.requireUser(s.crmDictSave))
 	mux.HandleFunc("GET /crm/duplicates", s.requireUser(s.crmDuplicates))
 	mux.HandleFunc("POST /crm/duplicates", s.requireUser(s.crmDuplicatesAction))
+	mux.HandleFunc("GET /crm/dupcheck", s.requireUser(s.crmDupCheck))
 	mux.HandleFunc("GET /crm/recycle", s.requireUser(s.crmRecycle))
 	mux.HandleFunc("POST /crm/recycle", s.requireUser(s.crmRecycleAction))
 	mux.HandleFunc("POST /crm/recycle/{id}", s.requireUser(s.crmRecycleAction))
@@ -285,6 +330,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/deals/{id}/recurrence", s.requireUser(s.crmRecurrence))
 	mux.HandleFunc("POST /crm/deals/{id}/parent", s.requireUser(s.crmParent))
 	mux.HandleFunc("GET /crm/currencies", s.requireUser(s.crmCurrencies))
+	mux.HandleFunc("GET /crm/sms", s.requireUser(s.crmSMSPage))
+	mux.HandleFunc("GET /crm/contact-center", s.requireUser(s.crmContactCenter))
+	mux.HandleFunc("POST /crm/sms", s.requireUser(s.crmSMSSave))
+	mux.HandleFunc("GET /crm/paysystems", s.requireUser(s.crmPayPage))
+	mux.HandleFunc("POST /crm/paysystems", s.requireUser(s.crmPaySave))
 	mux.HandleFunc("POST /crm/currencies", s.requireUser(s.crmCurrencySave))
 	// «Складской учёт»: stock documents, warehouses, the stock (stock.go)
 	mux.HandleFunc("GET /store", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/store/docs", http.StatusSeeOther) })
@@ -299,7 +349,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /store/settings", s.requireUser(s.stockSettingsSave))
 	mux.HandleFunc("GET /store/rights", s.requireUser(s.stockRoles))
 	mux.HandleFunc("POST /store/rights/{id}", s.requireUser(s.stockRoleSave))
-	mux.HandleFunc("GET /store/reports", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/store/reports/stock", http.StatusSeeOther) })
+	mux.HandleFunc("GET /store/reports", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/store/reports/stock", http.StatusSeeOther)
+	})
 	mux.HandleFunc("GET /store/reports/{kind}", s.requireUser(s.stockReport))
 	mux.HandleFunc("POST /crm/deals/{id}/shipment", s.requireUser(s.crmDealShipment))
 	mux.HandleFunc("GET /crm/products", s.requireUser(s.crmProducts))
@@ -316,17 +368,24 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/{kind}/{id}/products", s.requireUser(s.crmProductRows))
 	mux.HandleFunc("POST /crm/activities/{id}", s.requireUser(s.crmActivityAction))
 	mux.HandleFunc("POST /crm/{kind}/{id}/activities", s.requireUser(s.crmActivityAdd))
+	mux.HandleFunc("POST /crm/{kind}/{id}/wait", s.requireUser(s.crmWait))
+	mux.HandleFunc("GET /crm/scoring", s.requireUser(s.crmScoring))
+	mux.HandleFunc("POST /crm/scoring", s.requireUser(s.crmScoringSave))
 	mux.HandleFunc("GET /crm/robots", s.requireUser(s.crmRobots))
 	mux.HandleFunc("POST /crm/robots", s.requireUser(s.crmRobotAdd))
 	mux.HandleFunc("POST /crm/robots/{id}/delete", s.requireUser(s.crmRobotDelete))
 	mux.HandleFunc("GET /telephony/sounds/{sum}", s.requireUser(s.crmRobotSound))
 	mux.HandleFunc("POST /crm/triggers", s.requireUser(s.crmTriggerAdd))
 	mux.HandleFunc("POST /crm/triggers/{id}/delete", s.requireUser(s.crmTriggerDelete))
+	mux.HandleFunc("GET /cl/{token}", s.crmLinkFollow) // «Переход по ссылке»: the client's tracked link, no sign-in
 	mux.HandleFunc("GET /crm/{kind}", s.requireUser(s.crmList))
 	mux.HandleFunc("GET /crm/{kind}/{id}", s.requireUser(s.crmCard))
 	mux.HandleFunc("POST /crm/{kind}/{id}", s.requireUser(s.crmSave))
 	mux.HandleFunc("POST /crm/{kind}/{id}/delete", s.requireUser(s.crmDelete))
+	mux.HandleFunc("POST /crm/{kind}/{id}/copy", s.requireUser(s.crmCopy))
+	mux.HandleFunc("POST /crm/{kind}/{id}/chat", s.requireUser(s.crmChat))
 	mux.HandleFunc("POST /crm/{kind}/{id}/comment", s.requireUser(s.crmComment))
+	mux.HandleFunc("POST /crm/{kind}/{id}/sms", s.requireUser(s.crmSMSSend))
 	mux.HandleFunc("POST /crm/{kind}/{id}/mail", s.requireUser(s.crmMailSend))
 	mux.HandleFunc("GET /crm/{kind}/{id}/mail-template/{tpl}", s.requireUser(s.crmMailFill))
 	mux.HandleFunc("GET /crm/mail-templates", s.requireUser(s.crmMailTemplatesPage))
@@ -341,6 +400,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /marketing/calls/{id}", s.requireUser(s.mktCallPage))
 	mux.HandleFunc("POST /marketing/calls/{id}", s.requireUser(s.mktCallSave))
 	mux.HandleFunc("POST /marketing/calls/{id}/delete", s.requireUser(s.mktCallDelete))
+	mux.HandleFunc("GET /marketing/salesgen", s.requireUser(s.mktSalesGensPage))
+	mux.HandleFunc("GET /marketing/salesgen/{id}", s.requireUser(s.mktSalesGenPage))
+	mux.HandleFunc("POST /marketing/salesgen/{id}", s.requireUser(s.mktSalesGenSave))
+	mux.HandleFunc("POST /marketing/salesgen/{id}/delete", s.requireUser(s.mktSalesGenDelete))
 	mux.HandleFunc("GET /marketing/templates", s.requireUser(s.mktTemplatesPage))
 	mux.HandleFunc("POST /marketing/templates/{id}", s.requireUser(s.mktTemplateSave))
 	mux.HandleFunc("POST /marketing/templates/{id}/delete", s.requireUser(s.mktTemplateDelete))
@@ -356,7 +419,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /marketing/ads/expenses/{id}/delete", s.requireUser(s.mktExpenseDelete))
 	mux.HandleFunc("GET /marketing/analytics", s.requireUser(s.mktAnalytics))
 	mux.HandleFunc("POST /marketing/images", s.requireUser(s.mktImageUpload))
-	mux.HandleFunc("GET /m/i/{name}", s.mktImageFile) // a picture of a letter: no sign-in
+	mux.HandleFunc("GET /m/i/{name}", s.mktImageFile)    // a picture of a letter: no sign-in
 	mux.HandleFunc("GET /m/u/{token}", s.mktUnsubscribe) // «Отписаться» of a campaign's letter: no sign-in
 	mux.HandleFunc("POST /m/u/{token}", s.mktUnsubscribe)
 	mux.HandleFunc("GET /m/o/{file}", s.mktOpened)   // the picture of a letter: opened
@@ -366,6 +429,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /crm/{kind}/{id}/timeline/{ev}/{act}", s.requireUser(s.crmEvent))
 	mux.HandleFunc("POST /crm/{kind}/{id}/mail/{link}/unlink", s.requireUser(s.crmMailUnlink))
 	mux.HandleFunc("POST /crm/{kind}/{id}/stage", s.requireUser(s.crmStage))
+	mux.HandleFunc("POST /crm/{kind}/{id}/deed-period", s.requireUser(s.crmDeedPeriod))
+	mux.HandleFunc("POST /crm/{kind}/{id}/date", s.requireUser(s.crmDateMove))
 	mux.HandleFunc("POST /crm/leads/{id}/convert", s.requireUser(s.crmConvert))
 	mux.HandleFunc("GET /mail", s.requireUser(s.mailPage))
 	mux.HandleFunc("POST /mail", s.requireUser(s.mailAdd))
@@ -379,6 +444,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /mail/files", s.requireUser(s.mailFiles))
 	mux.HandleFunc("POST /mail/folders/{id}/read", s.requireUser(s.mailReadAll))
 	mux.HandleFunc("POST /mail/folders/{id}/empty", s.requireUser(s.mailEmpty))
+	mux.HandleFunc("POST /mail/folders/{id}/cleanup", s.requireUser(s.mailFolderCleanUp))
 	mux.HandleFunc("POST /mail/folders/{id}/clean", s.requireUser(s.mailClean))
 	mux.HandleFunc("POST /mail/folders/{id}/import", s.requireUser(s.mailImport))
 	mux.HandleFunc("POST /mail/categories", s.requireUser(s.mailCategorySave))
@@ -399,6 +465,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /mail/rules/run", s.requireUser(s.mailRulesRun))
 	mux.HandleFunc("POST /mail/rules/{id}/save", s.requireUser(s.mailRuleSave))
 	mux.HandleFunc("POST /mail/rules/{id}/do", s.requireUser(s.mailRuleDo))
+	mux.HandleFunc("POST /mail/formats", s.requireUser(s.mailFormatSave))
+	mux.HandleFunc("POST /mail/formats/{id}/save", s.requireUser(s.mailFormatSave))
+	mux.HandleFunc("POST /mail/formats/{id}/do", s.requireUser(s.mailFormatDo))
 	mux.HandleFunc("POST /mail/quicksteps", s.requireUser(s.mailQuickSave))
 	mux.HandleFunc("POST /mail/quicksteps/{id}/save", s.requireUser(s.mailQuickSave))
 	mux.HandleFunc("POST /mail/quicksteps/{id}/do", s.requireUser(s.mailQuickChange))
@@ -416,19 +485,30 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /mail/compose", s.requireUser(s.mailComposeHTML))
 	mux.HandleFunc("POST /mail/drafts/save", s.requireUser(s.mailDraftSave))
 	mux.HandleFunc("POST /mail/drafts/send", s.requireUser(s.mailDraftSend))
+	mux.HandleFunc("POST /mail/merge/preview", s.requireUser(s.mailMergePreview))
 	mux.HandleFunc("POST /mail/drafts/{id}/cancel", s.requireUser(s.mailDraftCancel))
 	mux.HandleFunc("POST /mail/drafts/{id}/delete", s.requireUser(s.mailDraftDelete))
 	mux.HandleFunc("POST /mail/drafts/{id}/files", s.requireUser(s.mailDraftFile))
 	mux.HandleFunc("POST /mail/drafts/{id}/files/{file}/delete", s.requireUser(s.mailDraftFileDelete))
 	mux.HandleFunc("GET /mail/rcpt", s.requireUser(s.mailRcpt))
+	mux.HandleFunc("POST /mail/tips", s.requireUser(s.mailTips))
+	mux.HandleFunc("POST /mail/dictate", s.requireUser(s.mailDictate))
 	mux.HandleFunc("GET /mail/book", s.requireUser(s.mailBook))
 	mux.HandleFunc("POST /mail/contacts", s.requireUser(s.mailContactSave))
 	mux.HandleFunc("POST /mail/contacts/{id}/save", s.requireUser(s.mailContactSave))
 	mux.HandleFunc("POST /mail/contacts/{id}/delete", s.requireUser(s.mailContactDelete))
+	mux.HandleFunc("GET /mail/contacts/export", s.requireUser(s.mailContactsExport))
+	mux.HandleFunc("POST /mail/contacts/import", s.requireUser(s.mailContactsImport))
+	mux.HandleFunc("GET /mail/contacts/phone", s.requireUser(s.mailContactsPhone))
 	mux.HandleFunc("POST /mail/letters/{letter}/receipt", s.requireUser(s.mailReceipt))
 	mux.HandleFunc("POST /mail/letters/{letter}/unsubscribe", s.requireUser(s.mailUnsubscribe))
 	mux.HandleFunc("POST /mail/letters/{letter}/vote", s.requireUser(s.mailVote))
 	mux.HandleFunc("POST /mail/letters/{letter}/recall", s.requireUser(s.mailRecall))
+	mux.HandleFunc("GET /mail/myday", s.requireUser(s.mailMyDay))
+	mux.HandleFunc("GET /mail/copilot", s.requireUser(s.mailCopilot))
+	mux.HandleFunc("POST /mail/copilot", s.requireUser(s.mailCopilotSay))
+	mux.HandleFunc("POST /mail/copilot/{run}/delete", s.requireUser(s.mailCopilotDelete))
+	mux.HandleFunc("POST /mail/copilot/{run}/{action}", s.requireUser(s.mailCopilotDecide))
 	mux.HandleFunc("GET /mail/settings", s.requireUser(s.mailSettingsPage))
 	mux.HandleFunc("POST /mail/settings", s.requireUser(s.mailPrefsSave))
 	mux.HandleFunc("POST /mail/settings/boxes/{id}", s.requireUser(s.mailBoxSignatures))
@@ -441,6 +521,14 @@ func (s *Server) Routes() http.Handler {
 	s.mailMoreRoutes(mux) // files, notifications, printing, the source, senders
 	// «Экспорт» of letters to a file and «Импорт из файла» (mailexport.go, mailimport.go)
 	s.mailExportRoutes(mux)
+	s.mailRecoverRoutes(mux) // «Восстановить удалённые элементы» (mailrecover.go)
+	s.mailPollRoutes(mux)    // «Опрос о времени встречи» (mailpoll.go)
+	s.mailTranslateRoutes(mux)
+	s.mailRepliesRoutes(mux)
+	s.mailReactRoutes(mux)
+	s.mailNudgeRoutes(mux)
+	s.mailSafetyRoutes(mux)    // «Сообщить о фишинге», the reporting address (mailsafety.go)
+	s.mailRetentionRoutes(mux) // «Назначить политику» of folders and letters
 	s.mailImportRoutes(mux)
 	s.mailSMIMERoutes(mux) // «Безопасность»: S/MIME certificates
 	s.mailOAuthRoutes(mux) // mailboxes signed in to Google, Microsoft, Яндекс
@@ -463,7 +551,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /bp/start/{id}", s.requireUser(s.bpStart))
 	mux.HandleFunc("GET /bp/i/{id}", s.requireUser(s.bpInstance))
 	mux.HandleFunc("POST /bp/i/{id}/stop", s.requireUser(s.bpStop))
+	mux.HandleFunc("POST /bp/i/{id}/command", s.requireUser(s.bpCommand))
 	mux.HandleFunc("POST /bp/i/{id}/delete", s.requireUser(s.bpDeleteInstance))
+	mux.HandleFunc("POST /bp/approvals/bulk", s.requireUser(s.bpTasksBulk))
 	mux.HandleFunc("POST /bp/approvals/{id}", s.requireUser(s.bpDecide))
 	mux.HandleFunc("POST /bp/approvals/{id}/delegate", s.requireUser(s.bpDelegate))
 	mux.HandleFunc("GET /bp/lists", s.requireUser(s.bpListsHome))
@@ -478,6 +568,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /bp/el/{id}", s.requireUser(s.bpElementSave))
 	mux.HandleFunc("POST /bp/el/{id}/delete", s.requireUser(s.bpElementDelete))
 	mux.HandleFunc("GET /bp/templates", s.requireUser(s.bpTemplates))
+	mux.HandleFunc("GET /bp/globals", s.requireUser(s.bpGlobals))
+	mux.HandleFunc("POST /bp/globals", s.requireUser(s.bpGlobals))
 	mux.HandleFunc("GET /bp/templates/{id}", s.requireUser(s.bpTemplatePage))
 	mux.HandleFunc("POST /bp/templates/{id}", s.requireUser(s.bpTemplateSave))
 	mux.HandleFunc("POST /bp/templates/{id}/delete", s.requireUser(s.bpTemplateDelete))
@@ -489,10 +581,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/w/{id}/api/{op}", s.widgetAPI)
 	mux.HandleFunc("GET /w/{id}/file/{msg}/{secret}", s.widgetFileGet)
 	mux.HandleFunc("GET /w/{id}/photo/{user}", s.widgetPhoto)
+	mux.HandleFunc("GET /online/{id}", s.olChatPublic)
 	mux.HandleFunc("GET /openlines", s.requireUser(s.openlinesPage))
 	mux.HandleFunc("POST /openlines/s/{id}", s.requireUser(s.openlinesAction))
 	mux.HandleFunc("POST /openlines/s/{id}/typing", s.requireUser(s.openlinesTyping))
+	mux.HandleFunc("POST /openlines/s/{id}/suggest", s.requireUser(s.openlinesSuggest))
 	mux.HandleFunc("GET /openlines/file/{msg}", s.requireUser(s.openlinesFile))
+	mux.HandleFunc("POST /openlines/file/{msg}/text", s.requireUser(s.openlinesTranscribe))
 	mux.HandleFunc("GET /openlines/live", s.requireUser(s.openlinesLive))
 	mux.HandleFunc("GET /openlines/stats", s.requireUser(s.openlinesStats))
 	mux.HandleFunc("GET /openlines/quick", s.requireUser(s.olQuickPage))
@@ -501,7 +596,19 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /openlines/widgets", s.requireUser(s.widgetsPage))
 	mux.HandleFunc("POST /openlines/widgets/{id}", s.requireUser(s.widgetSave))
 	mux.HandleFunc("POST /openlines/widgets/{id}/delete", s.requireUser(s.widgetDelete))
+	mux.HandleFunc("GET /openlines/widgets/{id}/qr", s.requireUser(s.widgetQR))
 	mux.HandleFunc("POST /openlines/widgets/{id}/telegram", s.requireUser(s.widgetTelegram))
+	mux.HandleFunc("POST /openlines/widgets/{id}/max", s.requireUser(s.widgetMax))
+	mux.HandleFunc("POST /openlines/widgets/{id}/vk", s.requireUser(s.widgetVK))
+	mux.HandleFunc("POST /openlines/widgets/{id}/viber", s.requireUser(s.widgetViber))
+	mux.HandleFunc("POST /hooks/ol/viber/{id}", s.viberHook) // Viber calls the line's bot here: signed by its token
+	mux.HandleFunc("POST /openlines/widgets/{id}/ok", s.requireUser(s.widgetOK))
+	mux.HandleFunc("POST /openlines/widgets/{id}/avito", s.requireUser(s.widgetAvito))
+	mux.HandleFunc("POST /openlines/widgets/{id}/whatsapp", s.requireUser(s.widgetWhatsApp))
+	mux.HandleFunc("POST /openlines/widgets/{id}/connector/{conn}/off", s.requireUser(s.widgetConnectorOff))
+	mux.HandleFunc("GET /hooks/ol/whatsapp/{id}", s.waVerify)   // Meta checks the line's webhook address: the verify token
+	mux.HandleFunc("POST /hooks/ol/whatsapp/{id}", s.waHook)    // Meta calls the line's number here: signed by the app's secret
+	mux.HandleFunc("POST /hooks/ol/ok/{id}/{secret}", s.okHook) // OK calls the line's group here: the secret only go24 knows
 	mux.HandleFunc("POST /openlines/heads", s.requireUser(s.olHeadsSave))
 	mux.HandleFunc("POST /openlines/pause", s.requireUser(s.olPause))
 	mux.HandleFunc("GET /openlines/widgets/{id}/preview", s.requireUser(s.widgetPreview))
@@ -533,6 +640,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /site/{slug}/{page}", s.sitePublic)
 	mux.HandleFunc("POST /site/{slug}", s.siteFormSend)
 	mux.HandleFunc("POST /site/{slug}/{page}", s.siteFormSend)
+	mux.HandleFunc("GET /site/{slug}/photo/{id}", s.siteProductPhoto)
 	mux.HandleFunc("GET /sitefile/{id}", s.siteFile)
 	mux.HandleFunc("GET /bi", s.requireUser(s.biList))
 	mux.HandleFunc("POST /bi", s.requireUser(s.biCreate))
@@ -623,7 +731,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /im/send", s.requireUser(s.imSend))
 	mux.HandleFunc("POST /im/react", s.requireUser(s.imReact))
 	mux.HandleFunc("GET /im/direct", s.requireUser(s.imDirect))
+	mux.HandleFunc("GET /online/{$}", s.requireUser(s.imDialogLink)) // ?IM_DIALOG=&BOT_CONTEXT=: the chat, its bot given the context
 	mux.HandleFunc("GET /im/notes", s.requireUser(s.imNotes))
+	mux.HandleFunc("GET /im/copilot", s.requireUser(s.imCoPilot))
 	mux.HandleFunc("GET /im/live", s.requireUser(s.imLive))
 	mux.HandleFunc("GET /im/unread", s.requireUser(s.imUnread))
 	mux.HandleFunc("GET /presence", s.requireUser(s.presenceGet))
@@ -658,6 +768,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /im/threads", s.requireUser(s.imThreads))
 	mux.HandleFunc("GET /im/calls", s.requireUser(s.imCalls))
 	mux.HandleFunc("POST /im/poll", s.requireUser(s.imPoll))
+	mux.HandleFunc("POST /im/disk", s.requireUser(s.imDisk)) // «Прикрепить»: «Файл с Диска»
+	mux.HandleFunc("POST /im/doc", s.requireUser(s.imDoc))   // «Прикрепить»: «Документ», «Таблица», «Презентация»
 	mux.HandleFunc("POST /im/settings", s.requireUser(s.imSettingsSave))
 	mux.HandleFunc("GET /im/export", s.requireUser(s.imExport))
 	mux.HandleFunc("POST /im/poll/{action}", s.requireUser(s.imPollAction))
@@ -698,13 +810,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /notifications", s.requireUser(s.notifications))
 	mux.HandleFunc("GET /settings/notifications", s.requireUser(s.notifySettings))
 	mux.HandleFunc("POST /settings/notifications", s.requireUser(s.notifySettings))
+	mux.HandleFunc("POST /settings/notifications/push/devices", s.requireUser(s.notifyPushDevice))
+	mux.HandleFunc("POST /settings/notifications/push/devices/{id}/remove", s.requireUser(s.notifyPushRemove))
+	mux.HandleFunc("POST /settings/notifications/push/test", s.requireUser(s.notifyPushTest))
 	mux.HandleFunc("POST /settings/notifications/{channel}/link", s.requireUser(s.notifyLink))
 	mux.HandleFunc("POST /settings/notifications/{channel}/unlink", s.requireUser(s.notifyUnlink))
 	mux.HandleFunc("GET /settings/notify-bots", s.requireUser(s.notifyBots))
 	mux.HandleFunc("POST /settings/notify-bots/{channel}", s.requireUser(s.notifyBotSave))
+	mux.HandleFunc("POST /hooks/notify/{channel}", s.notifyHook) // the messengers that call go24 themselves (Viber): signed by the bot's token
+	mux.HandleFunc("GET /hooks/notify/{channel}", s.notifyChallenge) // their check of the address (WhatsApp: the verify token)
 	mux.HandleFunc("GET /notifications/pop", s.requireUser(s.notifyPop))
 	mux.HandleFunc("GET /notifications/live", s.requireUser(s.notifyLive))
 	mux.HandleFunc("POST /notifications/read", s.requireUser(s.notifyRead))
+	mux.HandleFunc("POST /notifications/{id}/delete", s.requireUser(s.notifyDelete))
+	mux.HandleFunc("POST /notifications/{id}/answer", s.requireUser(s.notifyAnswer))
 	mux.HandleFunc("GET /notifications/{id}", s.requireUser(s.notifyOpen))
 	mux.HandleFunc("GET /tasks", s.requireUser(s.allTasks))
 	mux.HandleFunc("POST /tasks/presets", s.requireUser(s.presetSave))
@@ -752,10 +871,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /calendar/ics/{id}", s.requireUser(s.eventICS))
 	mux.HandleFunc("POST /calendar/{id}/move", s.requireUser(s.eventMove))
 	mux.HandleFunc("POST /calendar/{id}/respond", s.requireUser(s.eventRespond))
+	mux.HandleFunc("POST /calendar/{id}/invite", s.requireUser(s.eventAddPeople))
 	mux.HandleFunc("POST /calendar/{id}/files", s.requireUser(s.eventFiles))
 	mux.HandleFunc("POST /calendar/{id}/files/{file}/remove", s.requireUser(s.eventFileRemove))
 	mux.HandleFunc("POST /calendar/{id}/comments", s.requireUser(s.eventComment))
 	mux.HandleFunc("GET /tasks/efficiency", s.requireUser(s.efficiencyPage))
+	mux.HandleFunc("GET /tasks/time", s.requireUser(s.timeReportPage))
 	mux.HandleFunc("GET /flows", s.requireUser(s.flowsPage))
 	mux.HandleFunc("GET /flows/new", s.requireUser(s.flowEdit))
 	mux.HandleFunc("POST /flows/new", s.requireUser(s.flowSave))
@@ -791,6 +912,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /plan", s.requireUser(s.plan))
 	mux.HandleFunc("GET /deadlines", s.requireUser(s.deadlines))
 	mux.HandleFunc("POST /deadlines/move", s.requireUser(s.deadlineMove))
+	mux.HandleFunc("GET /tasks/calendar", s.requireUser(s.taskCalendar))
+	mux.HandleFunc("POST /t/{key}/date", s.requireUser(s.taskCalMove))
 	mux.HandleFunc("POST /plan/move", s.requireUser(s.planMove))
 	mux.HandleFunc("POST /plan/stages", s.requireUser(s.planStage))
 	mux.HandleFunc("POST /admin/mode", s.requireUser(s.toggleAdminMode))
@@ -800,6 +923,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /prefs/sort", s.requireUser(s.setListSort))
 	mux.HandleFunc("POST /prefs/pagesize", s.requireUser(s.setPageSize))
 	mux.HandleFunc("POST /prefs/tree", s.requireUser(s.setListTree))
+	mux.HandleFunc("POST /prefs/byproject", s.requireUser(s.setListByProject))
 	mux.HandleFunc("GET /join/{token}", s.joinPage) // an invitation into a collab: also for people not signed in
 	mux.HandleFunc("GET /join/{token}/signup", s.joinSignup)
 	mux.HandleFunc("POST /join/{token}", s.requireUser(s.joinAccept))
@@ -812,14 +936,24 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /collabs", s.requireUser(s.collabsPage))
 	mux.HandleFunc("GET /c/{key}", s.requireUser(s.collabOpen)) // a collab opened with its «Стартовый инструмент»
 	mux.HandleFunc("POST /collabs", s.requireUser(s.collabCreate))
+	mux.HandleFunc("POST /c/{key}/join", s.requireUser(s.collabJoin)) // «Вступить» in an open collab
 	mux.HandleFunc("POST /p/{key}/leave", s.requireUser(s.projectLeave))
+	mux.HandleFunc("POST /p/{key}/join", s.requireUser(s.groupJoin))
+	mux.HandleFunc("POST /p/{key}/join/cancel", s.requireUser(s.groupJoinCancel))
+	mux.HandleFunc("POST /p/{key}/requests/{uid}", s.requireUser(s.groupRequest))
 	mux.HandleFunc("GET /projects", s.requireUser(s.projects))
 	mux.HandleFunc("POST /projects", s.requireUser(s.createProject))
+	mux.HandleFunc("GET /projects/subjects", s.requireUser(s.groupSubjects))
+	mux.HandleFunc("POST /projects/subjects", s.requireUser(s.groupSubjectSave))
 	mux.HandleFunc("GET /p/{key}", s.requireUser(s.project))
 	mux.HandleFunc("POST /p/{key}/info", s.requireUser(s.projectInfo))
+	mux.HandleFunc("POST /p/{key}/tools", s.requireUser(s.groupTools))
+	mux.HandleFunc("POST /p/{key}/task-perms", s.requireUser(s.groupTaskPerms))
+	mux.HandleFunc("POST /p/{key}/departments", s.requireUser(s.groupDepts))
 	mux.HandleFunc("POST /p/{key}/photo", s.requireUser(s.projectPhoto))
 	mux.HandleFunc("GET /p/{key}/photo", s.requireUser(s.projectPhotoFile))
 	mux.HandleFunc("POST /p/{key}/archive", s.requireUser(s.projectArchive))
+	mux.HandleFunc("POST /p/{key}/copy", s.requireUser(s.projectCopy))
 	mux.HandleFunc("POST /p/{key}/invite", s.requireUser(s.inviteAnswer))
 	mux.HandleFunc("POST /p/{key}/invites/{uid}/delete", s.requireUser(s.inviteCancel))
 	mux.HandleFunc("POST /p/{key}/invite-perm", s.requireUser(s.invitePerm))
@@ -852,6 +986,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /settings", s.requireUser(s.settingsPage))
 	mux.HandleFunc("POST /menu", s.requireUser(s.menuSave))
 	mux.HandleFunc("POST /menu/reset", s.requireUser(s.menuReset))
+	mux.HandleFunc("POST /appearance", s.requireUser(s.appearanceSave))
+	mux.HandleFunc("POST /appearance/reset", s.requireUser(s.appearanceReset))
+	mux.HandleFunc("GET /appearance/bg", s.requireUser(s.appearanceBg))
 	mux.HandleFunc("GET /settings/portal", s.requireUser(s.portalPage))
 	mux.HandleFunc("POST /settings/portal", s.requireUser(s.portalSave))
 	mux.HandleFunc("GET /portal/logo", s.portalLogo)
@@ -861,6 +998,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/admins/{id}/remove", s.requireUser(s.adminsRemove))
 	mux.HandleFunc("GET /settings/ip", s.requireUser(s.ipAccessPage))
 	mux.HandleFunc("GET /settings/system", s.requireUser(s.systemPage))
+	mux.HandleFunc("GET /settings/two-factor", s.requireUser(s.twoFactorPage))
+	mux.HandleFunc("POST /settings/two-factor", s.requireUser(s.twoFactorSave))
+	mux.HandleFunc("GET /security/two-factor", s.requireUser(s.twoFactorRemind))
 	mux.HandleFunc("GET /settings/backup", s.requireUser(s.backupPage))
 	mux.HandleFunc("POST /settings/backup", s.requireUser(s.backupSave))
 	mux.HandleFunc("POST /settings/backup/run", s.requireUser(s.backupRun))
@@ -892,6 +1032,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /settings/ai", s.requireUser(s.aiPage))
 	mux.HandleFunc("POST /settings/ai", s.requireUser(s.aiPage))
 	mux.HandleFunc("POST /settings/ai/choice", s.requireUser(s.aiChoose))
+	mux.HandleFunc("POST /settings/ai/policy", s.requireUser(s.aiPolicySave))
+	mux.HandleFunc("GET /settings/ai/usage", s.requireUser(s.aiUsage))
+	mux.HandleFunc("POST /settings/ai/usage", s.requireUser(s.aiUsage))
 	mux.HandleFunc("POST /settings/ai/{id}/delete", s.requireUser(s.aiDelete))
 	mux.HandleFunc("POST /settings/ai/{id}/check", s.requireUser(s.aiCheck))
 	mux.HandleFunc("GET /settings/call-links", s.requireUser(s.callLinksPage))
@@ -900,6 +1043,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /call/external", s.requireUser(s.callExternal))
 	mux.HandleFunc("GET /settings/collabs", s.requireUser(s.collabCreatorsSettings))
 	mux.HandleFunc("POST /settings/collabs", s.requireUser(s.collabCreatorsSettings))
+	mux.HandleFunc("GET /settings/general-chat", s.requireUser(s.generalChatSettings))
+	mux.HandleFunc("POST /settings/general-chat", s.requireUser(s.generalChatSettings))
 	mux.HandleFunc("GET /settings/telephony", s.requireUser(s.telephonySettings))
 	mux.HandleFunc("POST /settings/telephony", s.requireUser(s.telephonySettings))
 	mux.HandleFunc("POST /settings/telephony/number", s.requireUser(s.telephonyNumber))
@@ -907,6 +1052,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /telephony/trunks/{id}", s.requireUser(s.trunkSave))
 	mux.HandleFunc("POST /telephony/trunks/{id}/delete", s.requireUser(s.trunkDelete))
 	mux.HandleFunc("GET /telephony/trunks/{id}/greeting", s.requireUser(s.trunkGreeting))
+	mux.HandleFunc("POST /telephony/tts", s.requireUser(s.telTTS))
 	mux.HandleFunc("POST /telephony/menus", s.requireUser(s.ivrSave))
 	mux.HandleFunc("POST /telephony/callbacks", s.requireUser(s.callbackSave))
 	mux.HandleFunc("POST /telephony/groups", s.requireUser(s.groupSave))
@@ -936,7 +1082,24 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /telephony/rights/{id}/delete", s.requireUser(s.telRoleDelete))
 	mux.HandleFunc("GET /telephony/calls", s.requireUser(s.phoneCalls))
 	mux.HandleFunc("GET /telephony/stats", s.requireUser(s.phoneStats))
+	mux.HandleFunc("GET /telephony/active", s.requireUser(s.phoneMonitor))
+	mux.HandleFunc("GET /telephony/calllists", s.requireUser(s.callLists))
+	mux.HandleFunc("GET /telephony/calllists/{id}", s.requireUser(s.callListPage))
+	mux.HandleFunc("POST /telephony/calllists/{id}", s.requireUser(s.callListClose))
+	mux.HandleFunc("POST /telephony/calllists/{id}/items/{item}", s.requireUser(s.callListItem))
+	mux.HandleFunc("POST /telephony/calllists/{id}/items/{item}/dial", s.requireUser(s.callListDial))
+	mux.HandleFunc("POST /telephony/active/spy", s.requireUser(s.phoneMonitorSpy))
+	mux.HandleFunc("POST /telephony/active/pick", s.requireUser(s.phoneMonitorPick))
 	mux.HandleFunc("POST /telephony/calls/{id}/transcript", s.requireUser(s.phoneTranscript))
+	mux.HandleFunc("POST /telephony/calls/{id}/summary", s.requireUser(s.phoneSummary))
+	mux.HandleFunc("POST /telephony/calls/{id}/fill", s.requireUser(s.phoneFill))
+	mux.HandleFunc("POST /telephony/calls/{id}/assess", s.requireUser(s.phoneAssess))
+	mux.HandleFunc("POST /telephony/scripts", s.requireUser(s.scriptSave))
+	mux.HandleFunc("POST /telephony/scripts/{id}", s.requireUser(s.scriptSave))
+	mux.HandleFunc("POST /telephony/scripts/{id}/delete", s.requireUser(s.scriptDelete))
+	mux.HandleFunc("POST /telephony/sales", s.requireUser(s.salesScriptSave)) // «Скрипты продаж»
+	mux.HandleFunc("POST /telephony/sales/{id}", s.requireUser(s.salesScriptSave))
+	mux.HandleFunc("POST /telephony/sales/{id}/delete", s.requireUser(s.salesScriptDelete))
 	mux.HandleFunc("GET /telephony/calls/{id}/record", s.requireUser(s.phoneRecord))
 	mux.HandleFunc("POST /telephony/calls/{id}/crm", s.requireUser(s.phoneCallCRM))
 	mux.HandleFunc("POST /settings/rooms", s.requireUser(s.roomSave))
@@ -944,6 +1107,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/rooms/{id}/delete", s.requireUser(s.roomDelete))
 	mux.HandleFunc("GET /worktime", s.requireUser(s.timeman))
 	mux.HandleFunc("POST /worktime/day", s.requireUser(s.workdayAction))
+	mux.HandleFunc("POST /worktime/alive", s.requireUser(s.workAlive))
+	mux.HandleFunc("POST /worktime/idle/{id}", s.requireUser(s.answerIdle))
+	mux.HandleFunc("GET /worktime/timecontrol", s.requireUser(s.timeControl))
 	mux.HandleFunc("GET /worktime/table", s.requireUser(s.worksheet))
 	mux.HandleFunc("GET /worktime/meetings", s.requireUser(s.meetingsPage))
 	mux.HandleFunc("GET /worktime/meetings/new", s.requireUser(s.meetingFormPage))
@@ -981,16 +1147,35 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/{set}", s.requireUser(s.fieldAdd))
 	mux.HandleFunc("POST /settings/{set}/{id}/delete", s.requireUser(s.fieldDelete))
 	mux.HandleFunc("POST /settings/{set}/{id}/required", s.requireUser(s.fieldRequired))
+	mux.HandleFunc("POST /settings/{set}/{id}/visible", s.requireUser(s.fieldVisible))
 	mux.HandleFunc("POST /u/{id}/fields", s.requireUser(s.userFields))
+	mux.HandleFunc("POST /u/{id}/interests", s.requireUser(s.userInterests))
 	mux.HandleFunc("GET /company", s.requireUser(s.employees))
 	mux.HandleFunc("GET /company/structure", s.requireUser(s.structure))
+	mux.HandleFunc("GET /company/structure/rights", s.requireUser(s.structRightsPage))
+	mux.HandleFunc("POST /company/structure/rights", s.requireUser(s.structRightsSave))
 	mux.HandleFunc("POST /company/teams", s.requireUser(s.teams))
 	mux.HandleFunc("GET /company/changes", s.requireUser(s.staffChanges))
 	mux.HandleFunc("GET /company/thanks", s.requireUser(s.thanksPage))
 	mux.HandleFunc("GET /company/honor", s.requireUser(s.honorPage))
 	mux.HandleFunc("GET /company/pulse", s.requireUser(s.pulsePage))
+	s.enpsRoutes(mux)
 	mux.HandleFunc("POST /company/honor", s.requireUser(s.honorAdd))
 	mux.HandleFunc("POST /company/honor/{id}/delete", s.requireUser(s.honorDelete))
+	mux.HandleFunc("GET /company/gallery", s.requireUser(s.galleryPage))
+	mux.HandleFunc("POST /company/gallery", s.requireUser(s.galleryAlbumSave))
+	mux.HandleFunc("GET /company/gallery/{id}", s.requireUser(s.galleryAlbumPage))
+	mux.HandleFunc("POST /company/gallery/{id}", s.requireUser(s.galleryAlbumSave))
+	mux.HandleFunc("POST /company/gallery/{id}/delete", s.requireUser(s.galleryAlbumDelete))
+	mux.HandleFunc("POST /company/gallery/{id}/photos", s.requireUser(s.galleryUpload))
+	mux.HandleFunc("GET /company/photos/{id}", s.requireUser(s.galleryPhotoPage))
+	mux.HandleFunc("POST /company/photos/{id}", s.requireUser(s.galleryPhotoSave))
+	mux.HandleFunc("GET /company/photos/{id}/file", s.requireUser(s.galleryFile))
+	mux.HandleFunc("GET /company/photos/{id}/thumb", s.requireUser(s.galleryFile))
+	mux.HandleFunc("POST /company/photos/{id}/delete", s.requireUser(s.galleryPhotoDelete))
+	mux.HandleFunc("POST /company/photos/{id}/like", s.requireUser(s.galleryLike))
+	mux.HandleFunc("POST /company/photos/{id}/comment", s.requireUser(s.galleryComment))
+	mux.HandleFunc("POST /company/photo-comments/{id}/delete", s.requireUser(s.galleryCommentDelete))
 	// «Обучение»: courses, lessons, assignments
 	mux.HandleFunc("GET /company/learning", s.requireUser(s.learningPage))
 	mux.HandleFunc("GET /company/learning/new", s.requireUser(s.learnCourseForm))
@@ -1019,7 +1204,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /company/absences", s.requireUser(s.absenceAdd))
 	mux.HandleFunc("POST /company/absences/{id}", s.requireUser(s.absenceUpdate))
 	mux.HandleFunc("GET /company/absences/report", s.requireUser(s.vacationReport))
+	mux.HandleFunc("GET /company/absences/kinds", s.requireUser(s.absenceKindsPage))
+	mux.HandleFunc("GET /company/absences/sync", s.requireUser(s.absenceSync))
+	mux.HandleFunc("POST /company/absences/sync", s.requireUser(s.absenceSyncSave))
+	mux.HandleFunc("GET /company/absences/feed/{file}", s.absenceFeed)
+	mux.HandleFunc("POST /company/absences/kinds", s.requireUser(s.absenceKindsSave))
 	mux.HandleFunc("POST /company/vacation-remind-off", s.requireUser(s.vacationRemindOff))
+	mux.HandleFunc("POST /company/vacation-settings", s.requireUser(s.vacationSettings))
+	mux.HandleFunc("GET /company/payslips", s.requireUser(s.payslipsPage))
+	mux.HandleFunc("POST /company/payslips", s.requireUser(s.payslipsUpload))
+	mux.HandleFunc("GET /company/payslips/{id}/file", s.requireUser(s.payslipFile))
+	mux.HandleFunc("POST /company/payslips/{id}/delete", s.requireUser(s.payslipDelete))
 	mux.HandleFunc("POST /company/absences/{id}/delete", s.requireUser(s.absenceDelete))
 	mux.HandleFunc("GET /company/birthdays", s.requireUser(s.birthdaysPage))
 	mux.HandleFunc("GET /company/invite", s.requireUser(s.invitePage))
@@ -1033,14 +1228,22 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/employees/link", s.requireUser(s.staffLinkRenew))
 	mux.HandleFunc("GET /register/{token}", s.registerPage) // «Быстрая регистрация»: for people not signed in
 	mux.HandleFunc("POST /register/{token}", s.registerSend)
+	mux.HandleFunc("GET /worktime/terminal/{token}", s.terminalPage) // «Терминал учёта времени»: a tablet, nobody signed in
+	mux.HandleFunc("POST /worktime/terminal/{token}", s.terminalPage)
 	mux.HandleFunc("POST /company/departments", s.requireUser(s.departments))
+	mux.HandleFunc("GET /company/departments/{id}/chats", s.requireUser(s.deptChatsPage))
+	mux.HandleFunc("POST /company/departments/{id}/chats", s.requireUser(s.deptChatsPost))
 	mux.HandleFunc("GET /u/{id}", s.requireUser(s.profile))
 	mux.HandleFunc("POST /u/{id}", s.requireUser(s.saveProfile))
 	mux.HandleFunc("POST /u/{id}/telephony/password", s.requireUser(s.telephonyPassword))
 	mux.HandleFunc("POST /u/{id}/telephony/prefs", s.requireUser(s.telephonyPrefs))
 	mux.HandleFunc("POST /u/{id}/departments", s.requireUser(s.userDepartments))
 	mux.HandleFunc("POST /u/{id}/active", s.requireUser(s.userActive))
+	mux.HandleFunc("POST /company/bulk", s.requireUser(s.employeesBulk))
+	mux.HandleFunc("POST /company/columns", s.requireUser(s.employeesColumns))
 	mux.HandleFunc("POST /u/{id}/hr", s.requireUser(s.userHR))
+	mux.HandleFunc("POST /u/{id}/vacation", s.requireUser(s.userVacation))
+	mux.HandleFunc("POST /u/{id}/payslips", s.requireUser(s.userPayslip))
 	mux.HandleFunc("POST /u/{id}/employee", s.requireUser(s.userEmployee))
 	mux.HandleFunc("POST /u/{id}/photo", s.requireUser(s.userPhoto))
 	mux.HandleFunc("GET /u/{id}/photo", s.requireUser(s.photoFile))
@@ -1052,11 +1255,25 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /u/{id}/sessions/{sid}/end", s.requireUser(s.endSessions))
 	mux.HandleFunc("POST /settings/worktime", s.requireUser(s.saveWorktime))
 	mux.HandleFunc("POST /settings/worktime/reports", s.requireUser(s.saveReportRules))
+	mux.HandleFunc("GET /settings/worktime/rights", s.requireUser(s.worktimeRightsPage))
+	mux.HandleFunc("GET /settings/worktime/terminals", s.requireUser(s.terminalsPage))
+	mux.HandleFunc("POST /settings/worktime/terminals", s.requireUser(s.terminalsSave))
+	mux.HandleFunc("POST /worktime/pin", s.requireUser(s.workPIN))
+	mux.HandleFunc("POST /settings/worktime/rights", s.requireUser(s.worktimeRightsSave))
 	mux.HandleFunc("POST /t/{key}/participants", s.requireUser(s.taskParticipant))
 	mux.HandleFunc("POST /t/{key}/delegate", s.requireUser(s.taskDelegate))
 	mux.HandleFunc("POST /t/{key}/checklist", s.requireUser(s.checklistAdd))
 	mux.HandleFunc("POST /t/{key}/checklist/{id}", s.requireUser(s.checklistChange))
+	mux.HandleFunc("POST /t/{key}/checklist/{id}/files", s.requireUser(s.checklistFileUpload))
+	mux.HandleFunc("POST /t/{key}/checklist/{id}/files/drive", s.requireUser(s.checklistDriveFile))
+	mux.HandleFunc("POST /t/{key}/checklist/{id}/files/{file}/delete", s.requireUser(s.checklistFileDetach))
 	mux.HandleFunc("POST /t/{key}/checklists", s.requireUser(s.checklistList))
+	mux.HandleFunc("POST /t/{key}/copilot/{what}", s.requireUser(s.taskCopilot))
+	mux.HandleFunc("POST /tasks/copilot", s.requireUser(s.taskCopilotTextPost))
+	mux.HandleFunc("GET /tasks/agent", s.requireUser(s.taskAgentPane))
+	mux.HandleFunc("POST /tasks/agent", s.requireUser(s.taskAgentSay))
+	mux.HandleFunc("POST /tasks/agent/{run}/delete", s.requireUser(s.taskAgentDelete))
+	mux.HandleFunc("POST /tasks/agent/{run}/{action}", s.requireUser(s.taskAgentDecide))
 	mux.HandleFunc("POST /t/{key}/checklists/{id}", s.requireUser(s.checklistList))
 	mux.HandleFunc("POST /t/{key}/comments", s.requireUser(s.commentAdd))
 	mux.HandleFunc("GET /t/{key}/messenger", s.requireUser(s.taskMessenger))
@@ -1067,6 +1284,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /t/{key}/timer", s.requireUser(s.timerStart))
 	mux.HandleFunc("POST /t/{key}/dayplan", s.requireUser(s.taskDayPlan))
 	mux.HandleFunc("POST /dayplan", s.requireUser(s.dayPlanAdd))
+	mux.HandleFunc("POST /dayplan/event", s.requireUser(s.dayEventAdd))
 	mux.HandleFunc("POST /timer/stop", s.requireUser(s.timerStop))
 	mux.HandleFunc("POST /t/{key}/time", s.requireUser(s.timeAdd))
 	mux.HandleFunc("POST /t/{key}/time/{id}/delete", s.requireUser(s.timeDelete))
@@ -1148,7 +1366,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/dav/", s.dav)                               // the drives as a network disk: signed in with an API key
 	mux.HandleFunc("/dav", s.dav)
 	mux.HandleFunc("/dav-edit/", s.davEdit) // «Редактировать на компьютере»: one file by a signed link
-	mux.HandleFunc("/caldav/", s.caldav) // the calendars over CalDAV: signed in with an API key
+	mux.HandleFunc("/caldav/", s.caldav)    // the calendars over CalDAV: signed in with an API key
 	mux.HandleFunc("/caldav", s.caldav)
 	mux.HandleFunc("/.well-known/caldav", s.wellKnownCalDAV)
 	mux.HandleFunc("/carddav/", s.carddav) // the employees over CardDAV: signed in with an API key
@@ -1166,6 +1384,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /files/{id}/thumb", s.requireUser(s.fileThumb)) // the tiles of «Диск»: a picture, the first page of a PDF or a document
 	mux.HandleFunc("GET /files/{id}/versions", s.requireUser(s.fileVersions))
 	mux.HandleFunc("GET /files/{id}/versions/{v}", s.requireUser(s.fileVersion))
+	mux.HandleFunc("GET /files/{id}/open", s.requireUser(s.fileOpen))  // a document in the editor, as the person reaches it
 	mux.HandleFunc("GET /files/{id}/about", s.requireUser(s.fileCard)) // «Подробнее»: the card with «Обсуждение»
 	mux.HandleFunc("POST /files/{id}/send", s.requireUser(s.diskSend)) // «Отправить в чат»
 	mux.HandleFunc("GET /disk/chats", s.requireUser(s.diskChats))
@@ -1178,8 +1397,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET "+storageOAuthPath, s.requireUser(s.storageOAuth)) // back from Google, Dropbox, Microsoft
 	mux.HandleFunc("POST /settings/storages/{id}/check", s.requireUser(s.checkStorage))
 	mux.HandleFunc("POST /settings/storages/{id}/delete", s.requireUser(s.deleteStorage))
-	gated := s.sectionsGate(mux)                                          // «Инструменты»: the sections switched off answer «Раздел отключён»
+	gated := s.sectionsGate(mux)                                       // «Инструменты»: the sections switched off answer «Раздел отключён»
 	mux.Handle("/rest/{uid}/{token}/{path...}", s.incomingHook(gated)) // «Входящий вебхук»: REST with the key in the address
+	mux.HandleFunc("/rest/{method}", s.portalApp)                         // an application calls a method by name
+	mux.HandleFunc("GET /rest/download", s.portalDiskDownload)            // DOWNLOAD_URL of disk.file.*
+	mux.HandleFunc("POST /rest/upload", s.portalDiskUploaded)             // uploadUrl of disk.*.uploadfile
+	mux.HandleFunc("GET /rest/imfile", s.portalChatFile)                  // downloadUrl of imbot.v2.File.download, im.v2.File.download
+	mux.HandleFunc("GET /rest/docfile", s.portalDocFileGet)               // download, downloadUrl, pdfUrl of crm.documentgenerator.*
+	mux.HandleFunc("GET /rest/entityfile", s.portalEntityFileGet)         // the files of entity.item.get
 	return s.siteDomains(formAware(gated))
 }
 
@@ -1207,7 +1432,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := randomHex(16)
-	authURL, err := s.OIDC.AuthCodeURL(r.Context(), state)
+	authURL, err := s.OIDC.AuthCodeURL(r.Context(), state, r.URL.Query().Has("again")) // «Войти снова»: a second factor just set up
 	if err != nil {
 		s.fail(w, "oidc", err)
 		return
@@ -1246,6 +1471,18 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	admin := !guest && slices.ContainsFunc(claims.Groups, func(g string) bool { return slices.Contains(s.AdminGroups, g) })
+	verdict, due, err := s.twoFactorGate(r.Context(), userID, admin, guest, claims.AMR)
+	if err != nil {
+		s.fail(w, "two factor", err)
+		return
+	}
+	if verdict == twofactor.Deny { // «Двухэтапная авторизация» is required and its period is over
+		s.Log.Info("login refused: no second factor", "user_id", userID)
+		s.audit(r, audit.Event{Kind: "login_denied_2fa", UserID: userID})
+		w.WriteHeader(http.StatusForbidden)
+		s.render(w, r, "twofactor_need", page{TitleKey: "twofa.need_title", Data: map[string]any{"Due": due, "AccountURL": s.accountURL()}})
+		return
+	}
 	sess := auth.Session{UserID: userID, Email: claims.Email, Name: claims.Name, Admin: admin}
 	if s.DB != nil { // the session is kept on the server too, so that it can be ended (profile → «Безопасность»)
 		if sess.SID, err = s.devices().Start(r.Context(), userID, audit.ClientIP(r), r.UserAgent(), time.Now().Add(s.Sessions.TTL())); err != nil {
@@ -1266,14 +1503,17 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, guestLanding, http.StatusFound)
 		return
 	}
+	next := "/my"
 	if c, err := r.Cookie(backCookie); err == nil {
 		http.SetCookie(w, &http.Cookie{Name: backCookie, Value: "", Path: "/auth", MaxAge: -1})
 		if back, err := url.QueryUnescape(c.Value); err == nil && localPath(back) {
-			http.Redirect(w, r, back, http.StatusFound)
-			return
+			next = back
 		}
 	}
-	http.Redirect(w, r, "/my", http.StatusFound)
+	if verdict == twofactor.Remind { // «Подключите двухэтапную авторизацию до …», then on
+		next = "/security/two-factor?next=" + url.QueryEscape(next)
+	}
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 // localPath: a page of go24 (from the root, not «//host» or «/\host»), safe to send the browser to.
@@ -1288,12 +1528,17 @@ func (s *Server) signIn(ctx context.Context, claims auth.Claims, join string) (u
 		claims.Groups = []string{} // users.groups is NOT NULL
 	}
 	// An employee imported signs in for the first time: take over the imported record
-	// (matched by e-mail), so their tasks and comments become theirs instead of creating a new user.
+	// (matched by e-mail), so their tasks and comments become theirs instead of creating a new user. The same for
+	// one added by REST user.add (oidc_sub 'legacy:invite:…') — and that one is new to go24: welcomed below.
+	added := false
 	if claims.Email != "" {
-		if _, err := s.DB.Exec(ctx, `
-			UPDATE users SET oidc_sub = $1
-			WHERE oidc_sub LIKE 'legacy:%' AND lower(email) = lower($2)
-			  AND NOT EXISTS (SELECT 1 FROM users WHERE oidc_sub = $1)`, claims.Sub, claims.Email); err != nil {
+		err := s.DB.QueryRow(ctx, `
+			WITH o AS (SELECT id, oidc_sub FROM users
+				WHERE oidc_sub LIKE 'legacy:%' AND lower(email) = lower($2)
+				  AND NOT EXISTS (SELECT 1 FROM users WHERE oidc_sub = $1) LIMIT 1)
+			UPDATE users u SET oidc_sub = $1 FROM o WHERE u.id = o.id RETURNING o.oidc_sub LIKE 'legacy:invite:%'`,
+			claims.Sub, claims.Email).Scan(&added)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, false, fmt.Errorf("link imported user: %w", err)
 		}
 	}
@@ -1316,7 +1561,7 @@ func (s *Server) signIn(ctx context.Context, claims auth.Claims, join string) (u
 		RETURNING id, active, guest, xmax = 0`,
 		claims.Sub, claims.Email, claims.Name, claims.Groups, claims.Username, inGuestGroup || invited, inGuestGroup,
 	).Scan(&userID, &active, &guest, &inserted)
-	if err == nil && inserted && !guest {
+	if err == nil && (inserted || added) && !guest {
 		if jerr := s.Company.Joined(ctx, userID, claims.Email); jerr != nil { // invited: into the department chosen
 			s.Log.Warn("invited joined", "err", jerr)
 		}
@@ -1338,11 +1583,23 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// remembersPage: a signed-out request worth reopening after signing in — the page itself, not what it loads in the
+// background (the unread counter's event stream, fetch calls), or the browser lands on raw data after the login.
+func remembersPage(r *http.Request) bool {
+	if r.Method != http.MethodGet || len(r.URL.RequestURI()) > 2000 {
+		return false
+	}
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" {
+		return dest == "document"
+	}
+	return !strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
 func (s *Server) requireUser(next func(http.ResponseWriter, *http.Request, auth.Session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, err := s.Sessions.Get(r)
 		if err != nil {
-			if r.Method == http.MethodGet && len(r.URL.RequestURI()) <= 2000 { // a link followed signed out opens after signing in
+			if remembersPage(r) { // a link followed signed out opens after signing in
 				http.SetCookie(w, &http.Cookie{Name: backCookie, Value: url.QueryEscape(r.URL.RequestURI()), Path: "/auth", MaxAge: 600,
 					HttpOnly: true, SameSite: http.SameSiteLaxMode})
 			}

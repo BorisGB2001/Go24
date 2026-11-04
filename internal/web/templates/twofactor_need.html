@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="login">
+  <div class="card stack">
+    <h1>{{icon "shield-lock"}} {{t "twofa.need_title"}}</h1>
+    {{if $d.Remind}}<p>{{t "twofa.remind" (datetime $d.Due)}}</p>
+    {{else}}<p>{{t "twofa.denied"}}</p>{{end}}
+    <p class="muted small">{{t "twofa.how"}}</p>
+    <div class="row">
+      {{with $d.AccountURL}}<a class="btn primary" href="{{.}}" target="_blank" rel="noopener">{{icon "shield-lock"}} {{t "twofa.setup"}}</a>{{end}}
+      {{if $d.Remind}}<a class="btn ghost" href="{{$d.Next}}">{{t "twofa.later"}}</a>
+      {{else}}<a class="btn" href="/login?again=1">{{icon "lock"}} {{t "twofa.again"}}</a>{{end}}
+    </div>
+  </div>
+</div>
+{{end}}

@@ -19,6 +19,7 @@ type Claims struct {
 	Name     string   `json:"name"`
 	Username string   `json:"preferred_username"`
 	Groups   []string `json:"groups"`
+	AMR      []string `json:"amr"` // how Authentik checked the person: «pwd», «mfa» (a second factor) …
 }
 
 // OIDC discovers the provider lazily, so go24 starts even while Authentik is still booting.
@@ -65,9 +66,14 @@ func (o *OIDC) init(ctx context.Context) error {
 	return nil
 }
 
-func (o *OIDC) AuthCodeURL(ctx context.Context, state string) (string, error) {
+// AuthCodeURL is the sign-in at Authentik; again — even with a live sign-in there, the person signs in anew (a
+// second factor just set up is asked).
+func (o *OIDC) AuthCodeURL(ctx context.Context, state string, again bool) (string, error) {
 	if err := o.init(ctx); err != nil {
 		return "", err
+	}
+	if again {
+		return o.oauth.AuthCodeURL(state, oauth2.SetAuthURLParam("prompt", "login")), nil
 	}
 	return o.oauth.AuthCodeURL(state), nil
 }

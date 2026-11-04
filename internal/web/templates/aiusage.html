@@ -1,0 +1,43 @@
+{{define "aispendcols"}}<th class="right">{{t "ai.usage.calls"}}</th><th class="right">{{t "ai.usage.in"}}</th><th class="right">{{t "ai.usage.out"}}</th>
+<th class="right">{{t "ai.usage.tokens"}}</th><th class="right">{{t "ai.usage.company"}}</th><th class="right">{{t "ai.usage.cost"}}</th>{{end}}
+{{define "aispendcells"}}<td class="right">{{.Calls}}</td><td class="right">{{.In}}</td><td class="right">{{.Out}}</td>
+<td class="right"><b>{{.Tokens}}</b></td><td class="right">{{.Company}}</td><td class="right">{{.Cost}}</td>{{end}}
+
+{{define "content"}}{{$d := .Data}}
+<div class="pagehead"><h1>{{icon "chart-bar"}} {{t "ai.usage.title"}}</h1>
+  <a href="/settings/ai" class="button ghost">{{icon "sparkles"}} {{t "ai.title"}}</a></div>
+<p class="muted small">{{t "ai.usage.hint"}}</p>
+
+{{if $d.Admin}}
+<form method="get" action="/settings/ai/usage" class="row eff-period">
+  <a href="?month={{$d.Prev}}" class="button ghost" title="{{t "eff.prev"}}">{{icon "chevron-left"}}</a>
+  <input type="month" name="month" value="{{$d.Month}}" style="width:auto" aria-label="{{t "ai.usage.month"}}">
+  <button>{{t "eff.show"}}</button>
+  <a href="?month={{$d.Next}}" class="button ghost" title="{{t "eff.next"}}">{{icon "chevron-right"}}</a>
+</form>
+{{if $d.Users}}
+<div class="card flush tlist-wrap"><table class="tlist" id="ai-users">
+  <thead><tr><th>{{t "eff.employee"}}</th>{{template "aispendcols"}}<th>{{t "ai.usage.limit"}}</th></tr></thead>
+  <tbody>{{range $d.Users}}
+  <tr><td>{{if .Name}}{{person .Name}}{{else}}<span class="muted">—</span>{{end}}</td>{{template "aispendcells" .}}
+    <td>{{if .UserID}}<form method="post" action="/settings/ai/usage" class="row nowrap">
+      <input type="hidden" name="user_id" value="{{.UserID}}"><input type="hidden" name="month" value="{{$d.Month}}">
+      <input type="number" min="0" step="1000" name="limit" value="{{.Limit}}" placeholder="{{t "ai.usage.as_conn"}}" style="width:9em" aria-label="{{t "ai.usage.limit"}}">
+      <button class="ghost small">{{t "common.save"}}</button></form>{{end}}</td></tr>
+  {{end}}</tbody>
+  {{if gt (len $d.Users) 1}}<tfoot><tr><th>{{t "ttr.total"}}</th>{{template "aispendcells" $d.Sum}}<th></th></tr></tfoot>{{end}}
+</table></div>
+{{else}}<div class="card empty">{{icon "sparkles"}} {{t "ai.usage.empty"}}</div>{{end}}
+<p class="muted small">{{t "ai.usage.limit_hint"}}</p>
+{{end}}
+
+<h2>{{if $d.Admin}}{{t "ai.usage.months"}}{{else}}{{t "ai.usage.mine"}}{{end}}</h2>
+{{if $d.Months}}
+<div class="card flush tlist-wrap"><table class="tlist" id="ai-months">
+  <thead><tr><th>{{t "ai.usage.month"}}</th>{{template "aispendcols"}}</tr></thead>
+  <tbody>{{range $d.Months}}
+  <tr><td>{{if $d.Admin}}<a href="?month={{.Month}}">{{.Month}}</a>{{else}}{{.Month}}{{end}}</td>{{template "aispendcells" .}}</tr>
+  {{end}}</tbody>
+</table></div>
+{{else}}<div class="card empty">{{icon "sparkles"}} {{t "ai.usage.empty"}}</div>{{end}}
+{{end}}

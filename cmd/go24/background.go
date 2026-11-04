@@ -12,9 +12,52 @@ import (
 // startBackground runs the scheduled work of go24 worker: meeting reminders, regular tasks, cleaning old
 // notifications. (The messenger bridge, its deliveries and the task log start with the Matrix service.)
 func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
-	// open lines: the Telegram bots' messages and the answers to them
+	// open lines: the Telegram, MAX and Viber bots', VK communities', OK groups', Avito accounts', WhatsApp numbers' and applications' channels' messages and the answers to them
 	go srv.OpenLines.RunTelegram(ctx, log)
-	go func() { // meeting, task and CRM activity reminders; CRM robots that waited, mail triggers, recurring deals; task robots; open lines
+	go srv.OpenLines.RunMax(ctx, log)
+	go srv.OpenLines.RunVK(ctx, log)
+	go srv.OpenLines.RunViber(ctx, log)
+	go srv.OpenLines.RunOK(ctx, log)
+	go srv.OpenLines.RunAvito(ctx, log)
+	go srv.OpenLines.RunWhatsApp(ctx, log)
+	go srv.OpenLines.RunConnectors(ctx, log) // the applications' channels (imconnector)
+	go func() { // open lines: CoPilot's summaries of the dialogues just closed — apart, the AI answers slowly
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			srv.OLSummarizeDue(ctx, time.Now())
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // open lines: the AI bot on the knowledge base answers the clients waiting for it
+		t := time.NewTicker(3 * time.Second)
+		defer t.Stop()
+		for {
+			srv.OLAIBotDue(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() { // «Платёжные системы»: the online payments the services have not told about
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			srv.PayCheckDue(ctx)
+		}
+	}()
+	go func() { // meeting, task and CRM activity reminders; CRM waits over; CRM robots that waited, mail triggers, recurring deals; task robots; open lines
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
 		for {
@@ -24,8 +67,14 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			if _, err := srv.Tasks.RemindDue(ctx, time.Now()); err != nil && ctx.Err() == nil {
 				log.Error("task reminders", "err", err)
 			}
+			if _, err := srv.Tasks.TimeOverDue(ctx, time.Now()); err != nil && ctx.Err() == nil { // «Плановые трудозатраты» passed
+				log.Error("task time over", "err", err)
+			}
 			if _, err := srv.CRM.RemindDue(ctx, time.Now()); err != nil && ctx.Err() == nil {
 				log.Error("crm activity reminders", "err", err)
+			}
+			if _, err := srv.CRM.EndWaitsDue(ctx, time.Now()); err != nil && ctx.Err() == nil { // «Ожидание» whose day has come
+				log.Error("crm waits", "err", err)
 			}
 			if _, err := srv.CRM.RunRobotsDue(ctx, time.Now()); err != nil && ctx.Err() == nil {
 				log.Error("crm robots", "err", err)
@@ -84,7 +133,7 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 		}
 	}()
-	go func() { // «Маркетинг»: the campaigns' letters, a hundred a minute
+	go func() { // «Маркетинг»: the campaigns' letters, a hundred a minute; the cards of «Генератор продаж», two hundred
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
 		for {
@@ -92,6 +141,11 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 				log.Error("marketing campaigns", "err", err)
 			} else if n > 0 {
 				log.Info("marketing letters sent", "letters", n)
+			}
+			if n, err := srv.Marketing.MakeSalesGenCards(ctx, ""); err != nil && ctx.Err() == nil { // «Генератор продаж»
+				log.Error("sales generator", "err", err)
+			} else if n > 0 {
+				log.Info("sales generator cards made", "cards", n)
 			}
 			select {
 			case <-ctx.Done():
@@ -126,7 +180,7 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 		}
 	}()
-	go func() { // task and drive trash: what is kept longer than the company setting goes for good, hourly; CRM rates; learning reminders
+	go func() { // task and drive trash: what is kept longer than the company setting goes for good, hourly; CRM rates and scoring; learning reminders
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
@@ -140,6 +194,9 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 				log.Warn("crm currency rates", "err", err)
 			} else if n > 0 {
 				log.Info("crm currency rates", "currencies", n)
+			}
+			if _, err := srv.CRM.TrainScoringDue(ctx, time.Now()); err != nil && ctx.Err() == nil { // «Скоринг сделок»: learned daily
+				log.Error("crm scoring", "err", err)
 			}
 			if n, err := srv.Company.RemindLearning(ctx, time.Now()); err != nil && ctx.Err() == nil { // «Обучение»: due days
 				log.Error("learning reminders", "err", err)
@@ -247,9 +304,10 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 	// «Почта»: the inboxes over IMAP IDLE — new letters and those read on the phone at once
 	go srv.Mail.Watch(ctx)
 	go func() { // «Почта»: new letters of the connected mailboxes (with the rules and automatic replies); snoozed letters
-		// come back; the flags' reminders; the standing «Очистка»
+		// come back; the flags' reminders; the standing «Очистка»; hourly the retention policies («Назначить политику»)
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
+		var retained time.Time
 		for {
 			if err := srv.Mail.WakeDue(ctx); err != nil {
 				log.Warn("mail snooze", "err", err)
@@ -262,6 +320,16 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 			}
 			for _, err := range srv.Mail.SweepDue(ctx) {
 				log.Warn("mail sweep", "err", err)
+			}
+			if time.Since(retained) >= time.Hour {
+				retained = time.Now()
+				n, errs := srv.Mail.RetentionDue(ctx)
+				for _, err := range errs {
+					log.Warn("mail retention", "err", err)
+				}
+				if n > 0 {
+					log.Info("mail retention", "letters", n)
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -334,6 +402,16 @@ func startBackground(ctx context.Context, srv *web.Server, log *slog.Logger) {
 		for t := time.NewTicker(6 * time.Hour); ; <-t.C {
 			if err := srv.Notify.Prune(ctx, 90*24*time.Hour); err != nil && ctx.Err() == nil {
 				log.Error("notify prune", "err", err)
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}()
+	go func() { // «Почта»: letters deleted for good are kept for «Восстановить удалённые элементы» RecoverDays
+		for t := time.NewTicker(6 * time.Hour); ; <-t.C {
+			if err := srv.Mail.ExpireRecoverable(ctx); err != nil && ctx.Err() == nil {
+				log.Error("mail recoverable expire", "err", err)
 			}
 			if ctx.Err() != nil {
 				return

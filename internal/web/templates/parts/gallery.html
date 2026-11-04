@@ -1,0 +1,25 @@
+{{/* «Фотогалерея»: the albums as tiles with covers, and the form of an album (new, inside another, its settings). */}}
+{{define "galleryalbums"}}{{if .}}<div class="galbums">{{range .}}
+  <a class="card galbum" href="/company/gallery/{{.ID}}">
+    <span class="gcover">{{if .CoverID}}<img src="/company/photos/{{.CoverID}}/thumb" alt="" loading="lazy">{{else}}{{icon "photo"}}{{end}}</span>
+    <b>{{.Title}}</b>
+    <span class="muted small">{{t "gallery.n_photos" .Photos}}{{if .Albums}} · {{t "gallery.n_albums" .Albums}}{{end}}</span>
+  </a>{{end}}
+</div>{{end}}{{end}}
+
+{{define "galleryalbumform"}}
+<div class="card" id="{{.Id}}" style="max-width:640px"{{if .Hidden}} hidden{{end}}>
+  <h2 class="row">{{icon "photo"}} {{if .A}}{{t "gallery.settings"}}{{else}}{{t "gallery.new_album"}}{{end}}<span style="flex:1"></span><button type="button" class="link" data-hide="{{.Id}}">{{icon "x"}}</button></h2>
+  <form method="post" action="{{.Action}}">
+    {{with .Parent}}<input type="hidden" name="parent" value="{{.}}">{{end}}
+    <label>{{t "gallery.album_title"}} <span class="req">*</span></label>
+    <input name="title" required maxlength="{{.TitleMax}}" value="{{with .A}}{{.Title}}{{end}}">
+    <label>{{t "gallery.album_desc"}}</label>
+    <textarea name="description" rows="2" maxlength="{{.DescMax}}">{{with .A}}{{.Description}}{{end}}</textarea>
+    <label>{{t "gallery.access"}}</label>
+    {{template "upick" (upick "access" .Access nil "multi" "depts" "ph" (t "gallery.access_all"))}}
+    <p class="muted small">{{t "gallery.access_hint"}}</p>
+    <label class="check"><input type="checkbox" name="anyone_adds" value="1"{{with .A}}{{if .AnyoneAdds}} checked{{end}}{{end}}> {{t "gallery.anyone_adds"}}</label>
+    <p class="row"><button class="primary">{{t "common.save"}}</button><button type="button" class="ghost" data-hide="{{.Id}}">{{t "common.cancel"}}</button></p>
+  </form>
+</div>{{end}}

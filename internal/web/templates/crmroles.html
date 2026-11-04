@@ -1,7 +1,10 @@
 {{define "roleform"}}{{$d := .D}}{{$r := .R}}
 <table class="tlist roletable"><thead><tr><th></th>{{range $d.Actions}}<th>{{t (print "crmroles.action." .)}}</th>{{end}}</tr></thead>
   <tbody>{{range $e := $d.Entities}}<tr><td>{{t (print "crm." (index (dict "deal" "deals" "lead" "leads" "contact" "contacts" "company" "companies") $e))}}</td>
-    {{range $a := $d.Actions}}<td><select name="{{$e}}.{{$a}}">{{range $d.Levels}}<option value="{{.}}" {{if $r}}{{if eq (index (index $r.Perms $e) $a) .}}selected{{end}}{{end}}>{{t (print "crmroles.level." .)}}</option>{{end}}</select></td>{{end}}</tr>{{end}}</tbody></table>
+    {{range $a := $d.Actions}}<td><select name="{{$e}}.{{$a}}">{{range $d.Levels}}<option value="{{.}}" {{if $r}}{{if eq (index (index $r.Perms $e) $a) .}}selected{{end}}{{end}}>{{t (print "crmroles.level." .)}}</option>{{end}}</select></td>{{end}}</tr>{{end}}
+    {{range $p := $d.Pipelines}}{{$e := print "deal:" $p.ID}}<tr class="crmrole-pipe"><td>{{t "crm.deals"}}: {{if $p.Name}}{{$p.Name}}{{else}}{{t (print "crm.pipeline." $p.Code)}}{{end}}</td>
+    {{range $a := $d.Actions}}{{$cur := ""}}{{if $r}}{{with index $r.Perms $e}}{{$cur = index . $a}}{{end}}{{end}}<td><select name="{{$e}}.{{$a}}"><option value="">{{t "crmroles.as_deals"}}</option>{{range $d.Levels}}<option value="{{.}}" {{if eq $cur .}}selected{{end}}>{{t (print "crmroles.level." .)}}</option>{{end}}</select></td>{{end}}</tr>{{end}}</tbody></table>
+  {{if $d.Pipelines}}<p class="small muted">{{t "crmroles.pipes_hint"}}</p>{{end}}
 {{end}}
 
 {{define "content"}}
@@ -18,8 +21,8 @@
   </form>
   {{if $r.Default}}<p class="small muted">{{t "crmroles.default_hint"}}</p>{{else}}
   <div class="row" style="flex-wrap:wrap;gap:6px"><b>{{t "crmroles.members"}}:</b>
-    {{range $r.Members}}<span class="tag">{{.Name}}<form method="post" action="/crm/roles/{{$r.ID}}/members"><input type="hidden" name="op" value="remove"><input type="hidden" name="user_id" value="{{.ID}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
-    <form method="post" action="/crm/roles/{{$r.ID}}/members" class="row">{{template "upick" (upick "user_id" "" $d.Users "required")}}<button>{{icon "plus"}}</button></form></div>
+    {{range $r.Members}}<span class="tag">{{if hasPrefix .ID "dept:"}}{{icon "hierarchy-2"}} {{end}}{{.Name}}<form method="post" action="/crm/roles/{{$r.ID}}/members"><input type="hidden" name="op" value="remove"><input type="hidden" name="user_id" value="{{.ID}}"><button class="ghost" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span>{{else}}<span class="muted small">{{t "common.none"}}</span>{{end}}
+    <form method="post" action="/crm/roles/{{$r.ID}}/members" class="row">{{template "upick" (upick "user_id" "" $d.Users "required" "depts")}}<button>{{icon "plus"}}</button></form></div>
   <form method="post" action="/crm/roles/{{$r.ID}}/delete" data-confirm="{{t "crmroles.delete_confirm"}}"><button class="ghost small">{{icon "trash"}} {{t "crmroles.delete"}}</button></form>{{end}}
 </div>{{end}}
 <details class="card"><summary><b>{{icon "plus"}} {{t "crmroles.new"}}</b></summary>

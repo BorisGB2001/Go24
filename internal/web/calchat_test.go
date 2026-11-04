@@ -19,6 +19,7 @@ import (
 	"go24/internal/auth"
 	"go24/internal/calendar"
 	"go24/internal/db"
+	"go24/internal/matrixsync"
 	"go24/internal/tasks"
 )
 
@@ -48,6 +49,31 @@ func (f *fakeChats) AddToGroup(_ context.Context, userID, room string, ids []str
 		}
 	}
 	return nil
+}
+
+func (f *fakeChats) RemoveFromGroup(_ context.Context, userID, room, otherID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.members[room] = slices.DeleteFunc(f.members[room], func(id string) bool { return id == otherID })
+	return nil
+}
+
+// Rooms are the group chats the person is in (a channel when its name says so).
+func (f *fakeChats) Rooms(_ context.Context, userID string) ([]matrixsync.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []matrixsync.Room
+	for room, ids := range f.members {
+		if slices.Contains(ids, userID) {
+			kind := "group"
+			if strings.HasPrefix(f.names[room], "#") {
+				kind = "channel"
+			}
+			out = append(out, matrixsync.Room{ID: room, Name: f.names[room], Kind: kind})
+		}
+	}
+	slices.SortFunc(out, func(a, b matrixsync.Room) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
 }
 
 func (f *fakeChats) SetGroupTopic(_ context.Context, userID, room, topic string) error {

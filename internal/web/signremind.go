@@ -14,9 +14,12 @@ import (
 
 // SignDue reminds the signers whose turn has lasted (the worker, every minute): the employee by a notification, the
 // client by a letter with the link from the sender's mailbox. Only on working days, 9 to 20; the representative of an
-// HR sending gets one reminder for all of its copies.
+// HR sending gets one reminder for all of its copies. Before that, the documents past their deadline are closed.
 func (s *Server) SignDue(ctx context.Context, now time.Time) error {
 	now = now.Local()
+	if err := s.signExpire(ctx, now); err != nil {
+		return err
+	}
 	if wd := now.Weekday(); wd == time.Saturday || wd == time.Sunday || now.Hour() < 9 || now.Hour() >= 20 {
 		return nil
 	}
@@ -50,6 +53,54 @@ func (s *Server) SignDue(ctx context.Context, now time.Time) error {
 	return nil
 }
 
+// signExpire closes the documents not signed by their deadline: the sender and the observers are told.
+func (s *Server) signExpire(ctx context.Context, now time.Time) error {
+	ids, err := s.Sign.Expire(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		d, err := s.Sign.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		s.Log.Info("sign expired", "doc", d.ID)
+		if _, err := s.DB.Exec(ctx, `INSERT INTO notifications (user_id, kind, body, url) VALUES ($1, 'sign_expired', $2, $3)`,
+			d.AuthorID, d.Title, "/sign/"+d.ID); err != nil {
+			s.Log.Warn("sign notify", "err", err)
+		}
+		s.signTellObservers(ctx, d, "sign_expired", d.Title, "")
+	}
+	return nil
+}
+
+// formDeadline is «Подписать до» of a form.
+func formDeadline(r *http.Request) (*time.Time, error) {
+	return sign.ParseDeadline(r.FormValue("deadline"), time.Now())
+}
+
+// signDeadline: the sender changes the deadline of the document being signed (empty — none).
+func (s *Server) signDeadline(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/sign/" + r.PathValue("id")
+	d, err := s.signOf(r, sess)
+	if err == nil && !s.signEdits(r.Context(), sess, d) {
+		err = sign.ErrNotFound
+	}
+	var deadline *time.Time
+	if err == nil {
+		deadline, err = formDeadline(r)
+	}
+	if err == nil {
+		err = s.Sign.SetDeadline(r.Context(), d.ID, deadline)
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("sign deadline", "user_id", sess.UserID, "doc", d.ID)
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
+}
+
 // formRemind is «Напоминать подписанту» of a form, every day when not given.
 func formRemind(r *http.Request) int {
 	if v := r.FormValue("remind"); v != "" {
@@ -62,7 +113,7 @@ func formRemind(r *http.Request) int {
 func (s *Server) signRemind(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/sign/" + r.PathValue("id")
 	d, err := s.signOf(r, sess)
-	if err == nil && d.AuthorID != sess.UserID && !sess.AdminActive() {
+	if err == nil && !s.signEdits(r.Context(), sess, d) {
 		err = sign.ErrNotFound
 	}
 	if err == nil {
@@ -75,11 +126,11 @@ func (s *Server) signRemind(w http.ResponseWriter, r *http.Request, sess auth.Se
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(s.tr(r, "common.saved")), http.StatusSeeOther)
 }
 
-// signTemplateDelete removes a template of sending (its author or an administrator).
+// signTemplateDelete removes a template of sending (its author, or by the right «templates»).
 func (s *Server) signTemplateDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/sign?f=templates"
 	t, err := s.Sign.Template(r.Context(), r.PathValue("id"))
-	if err == nil && t.AuthorID != sess.UserID && !sess.AdminActive() {
+	if err == nil && t.AuthorID != sess.UserID && !s.signPerms(r.Context(), sess).Has("templates", "all") {
 		err = sign.ErrNotFound
 	}
 	if err == nil {

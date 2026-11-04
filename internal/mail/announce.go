@@ -166,7 +166,8 @@ func (s *Store) notifyRules(ctx context.Context, userID string, ids []string) ([
 		return nil, nil
 	}
 	rows, err := s.db.Query(ctx, `SELECT x.id::text, x.mailbox_id::text, x.folder_id::text, x.from_addr, x.from_name, x.to_addr, x.cc_addr,
-			x.subject, x.body, m.email, EXISTS (SELECT 1 FROM files fl WHERE fl.mail_id = x.id AND fl.content_id = ''), x.importance::int
+			x.subject, x.body, m.email, EXISTS (SELECT 1 FROM files fl WHERE fl.mail_id = x.id AND fl.content_id = ''), x.importance::int,
+			x.sensitivity
 		FROM mail_messages x JOIN mailboxes m ON m.id = x.mailbox_id WHERE x.id::text = ANY($1) AND m.user_id::text = $2`, ids, userID)
 	if err != nil {
 		return nil, err
@@ -175,7 +176,8 @@ func (s *Store) notifyRules(ctx context.Context, userID string, ids []string) ([
 	var out []string
 	for rows.Next() {
 		var f facts
-		if err := rows.Scan(&f.id, &f.mailbox, &f.folder, &f.from, &f.name, &f.to, &f.cc, &f.subject, &f.body, &f.me, &f.attach, &f.importance); err != nil {
+		if err := rows.Scan(&f.id, &f.mailbox, &f.folder, &f.from, &f.name, &f.to, &f.cc, &f.subject, &f.body, &f.me, &f.attach, &f.importance,
+			&f.sensitivity); err != nil {
 			return nil, err
 		}
 		for _, r := range rules { // in their order, up to the one that stops the others

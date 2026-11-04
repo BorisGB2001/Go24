@@ -31,6 +31,7 @@ func (s *Server) apiCollabRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/collabs/{key}/archive", s.api("collabs:write", s.apiCollabArchive))
 	mux.HandleFunc("POST /api/v1/collabs/{key}/owner", s.api("collabs:write", s.apiCollabOwner))
 	mux.HandleFunc("DELETE /api/v1/collabs/{key}", s.api("collabs:write", s.apiCollabDelete))
+	mux.HandleFunc("POST /api/v1/collabs/{key}/join", s.api("collabs:write", s.apiCollabJoin))
 	mux.HandleFunc("GET /api/v1/collabs/{key}/log", s.api("collabs:read", s.apiCollabLog))
 	mux.HandleFunc("GET /api/v1/collabs/{key}/chats", s.api("collabs:read", s.apiCollabChats))
 	mux.HandleFunc("POST /api/v1/collabs/{key}/chats", s.api("collabs:write", s.apiCollabChatCreate))
@@ -72,11 +73,12 @@ type apiCollabSettings struct {
 	EventsInvites bool   `json:"events_invites"`
 	EventsCollab  bool   `json:"events_collab"`
 	StartTool     string `json:"start_tool"` // what the collab opens with: chat | tasks | drive | calendar | feed
+	Open          bool   `json:"open"`       // an open collab: employees join it by its link (POST …/join)
 }
 
 type apiCollabLogEntry struct {
 	At          time.Time `json:"at"`
-	Action      string    `json:"action"` // created | member_added | joined | role_changed | member_removed | left | settings | invite_created | invite_revoked | info | archived | restored | owner_changed
+	Action      string    `json:"action"` // created | member_added | member_joined | joined | role_changed | member_removed | left | settings | invite_created | invite_revoked | info | archived | restored | owner_changed
 	Actor       string    `json:"actor,omitempty"`
 	Target      string    `json:"target,omitempty"`
 	TargetGuest bool      `json:"target_guest,omitempty"`
@@ -426,6 +428,16 @@ func (s *Server) apiCollabSettings(w http.ResponseWriter, r *http.Request, p api
 	return s.writeCollab(w, r, p, c.Key, http.StatusOK)
 }
 
+// apiCollabJoin: the employee joins an open collab themselves; 404 for a closed one, an archived one and a guest.
+func (s *Server) apiCollabJoin(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	c, err := s.Tasks.JoinCollab(r.Context(), p.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	s.Matrix.Wake() // into the collab's chat
+	return s.writeCollab(w, r, p, c.Key, http.StatusOK)
+}
+
 // apiCollabArchive moves the collab to the archive ({"archived": true}) or back.
 func (s *Server) apiCollabArchive(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	var in struct {
@@ -498,9 +510,10 @@ func (s *Server) apiCollabLog(w http.ResponseWriter, r *http.Request, p apikeys.
 
 // apiCollabChat is a chat of a collab: its main chat, or a group chat of it the key's owner is in.
 type apiCollabChat struct {
-	Room string `json:"room"`
-	Name string `json:"name"`
-	Main bool   `json:"main,omitempty"`
+	Room    string `json:"room"`
+	Name    string `json:"name"`
+	Main    bool   `json:"main,omitempty"`
+	CoPilot bool   `json:"copilot,omitempty"` // a «Чат с CoPilot»
 }
 
 // apiCollabChats lists the collab's chats: the main one, then its group chats the key's owner is in.
@@ -523,13 +536,14 @@ func (s *Server) apiCollabChats(w http.ResponseWriter, r *http.Request, p apikey
 		return err
 	}
 	for _, ch := range chats {
-		out = append(out, apiCollabChat{Room: ch.Room, Name: ch.Name})
+		out = append(out, apiCollabChat{Room: ch.Room, Name: ch.Name, CoPilot: ch.CoPilot})
 	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 
-// apiCollabChatCreate makes a group chat in the collab; the people not in it join the collab.
+// apiCollabChatCreate makes a group chat in the collab — with copilot, a «Чат с CoPilot» (named so when no name is
+// given); the people not in it join the collab.
 func (s *Server) apiCollabChatCreate(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	if err := s.needMatrix(); err != nil {
 		return err
@@ -537,6 +551,7 @@ func (s *Server) apiCollabChatCreate(w http.ResponseWriter, r *http.Request, p a
 	var in struct {
 		Name    string   `json:"name"`
 		UserIDs []string `json:"user_ids"`
+		CoPilot bool     `json:"copilot"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
@@ -545,11 +560,20 @@ func (s *Server) apiCollabChatCreate(w http.ResponseWriter, r *http.Request, p a
 	if err != nil {
 		return err
 	}
-	room, err := s.Matrix.CreateCollabChat(r.Context(), p.UserID, c.ID, in.Name, in.UserIDs)
+	in.Name = strings.TrimSpace(in.Name)
+	var room string
+	if in.CoPilot {
+		if in.Name == "" {
+			in.Name = s.tr(r, "collab.copilot_chat")
+		}
+		room, err = s.Matrix.CreateCollabCoPilot(r.Context(), p.UserID, c.ID, in.Name, in.UserIDs)
+	} else {
+		room, err = s.Matrix.CreateCollabChat(r.Context(), p.UserID, c.ID, in.Name, in.UserIDs)
+	}
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusCreated, apiCollabChat{Room: room, Name: strings.TrimSpace(in.Name)})
+	writeJSON(w, http.StatusCreated, apiCollabChat{Room: room, Name: in.Name, CoPilot: in.CoPilot})
 	return nil
 }
 

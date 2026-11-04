@@ -53,3 +53,20 @@ body.lp { margin: 0; }
 .lp .lp-thanks { margin-top: 20px; padding: 20px; border-radius: 10px; background: #e6f4ea; color: #1e5631; max-width: 560px; }
 /* «Онлайн-запись»: the page of a booking link in a frame; bkembed.js inside sets its height */
 .lp .lp-bkframe { display: block; width: 100%; max-width: 760px; min-height: 480px; margin: 16px auto 0; border: 0; background: transparent; }
+/* «Каталог товаров»: the goods in cards, the cart with the order form under them (siteshop.js) */
+.lp .lp-goods { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; margin-top: 24px; }
+.lp .lp-good { display: flex; flex-direction: column; gap: 6px; background: #fff; border-radius: 10px; padding: 16px; }
+.lp .lp-good img, .lp .lp-good .lp-noimg { aspect-ratio: 4 / 3; width: 100%; object-fit: cover; }
+.lp .lp-good h3 { margin: 8px 0 0; }
+.lp .lp-good .lp-desc { color: var(--lp-muted); font-size: 15px; flex: 1; }
+.lp .lp-good select, .lp .lp-cart input[type=number] { font: inherit; padding: 6px 8px; border: 1px solid #cfd5df; border-radius: 8px; background: #fff; }
+.lp .lp-good .lp-btn { border: 0; cursor: pointer; font: inherit; font-weight: 600; align-self: start; }
+.lp .lp-price { font-size: 19px; }
+.lp .lp-cart { margin-top: 32px; background: #fff; border-radius: 10px; padding: 20px; max-width: 640px; }
+.lp .lp-cart h3 { margin: 0; }
+.lp .lp-lines { width: 100%; border-collapse: collapse; font-size: 15px; }
+.lp .lp-lines td { padding: 6px 4px; border-bottom: 1px solid #e6e9ef; }
+.lp .lp-lines td:nth-child(3) { text-align: right; white-space: nowrap; }
+.lp .lp-lines input[type=number] { width: 72px; }
+.lp .lp-cart .lp-del { border: 0; background: none; color: var(--lp-muted); font-size: 20px; cursor: pointer; padding: 0 6px; }
+.lp .lp-total { text-align: right; margin: 0; }

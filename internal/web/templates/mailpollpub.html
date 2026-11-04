@@ -1,0 +1,33 @@
+{{define "content"}}{{$d := .Data}}{{$p := $d.Poll}}
+{{/* the people's page of «Опрос о времени встречи» (web.mailPollPublic), without signing in: who they are, then «Да»,
+   «Возможно», «Нет» for each time */}}
+<div class="share bkpub mpollpub">
+  <div><h2>{{icon "calendar-event"}} {{$p.Title}}</h2>
+    <p class="bk-text">{{t "mail.poll.pub_from" $p.OwnerName}} · {{t "mail.poll.length_n" (printf "%d" $p.Length)}}{{with $p.Where}} · {{.}}{{end}}{{if $p.Video}} · {{icon "video"}} {{t "calendar.video"}}{{end}}</p>
+    {{with $p.Note}}<p>{{nl2br .}}</p>{{end}}</div>
+  {{with $d.Msg}}<div class="flash">{{.}}</div>{{end}}
+  {{if not $p.Open}}<div class="card bk-done">
+    {{if eq $p.Status "scheduled"}}<h3>{{icon "circle-check"}} {{t "mail.poll.pub_scheduled"}}</h3>{{with $p.Chosen}}<p><b>{{.When}}</b></p>{{end}}<p class="small muted">{{t "mail.poll.pub_scheduled_hint"}}</p>
+    {{else}}<h3>{{icon "x"}} {{t "mail.poll.pub_cancelled"}}</h3>{{end}}</div>
+  {{else if $d.Me}}{{$me := $d.Me}}
+  {{if $d.Done}}<div class="flash">{{icon "circle-check"}} {{t "mail.poll.pub_thanks"}}</div>{{end}}
+  <div class="card"><h3>{{t "mail.poll.pub_answer" $me.Label}}</h3>
+    {{if not $d.Signed}}<p class="small"><a href="/mp/{{$p.Token}}">{{t "mail.poll.pub_not_me"}}</a></p>{{end}}
+    <form method="post" action="/mp/{{$p.Token}}" data-native class="mpoll-form">
+      <input type="hidden" name="voter" value="{{$me.ID}}">
+      <table class="tlist mpoll-grid"><thead><tr><th>{{t "mail.poll.time"}}</th><th>{{t "mail.poll.yes"}}</th><th>{{t "mail.poll.maybe"}}</th><th>{{t "mail.poll.no"}}</th><th class="small muted">{{t "mail.poll.pub_so_far"}}</th></tr></thead>
+      <tbody>{{range $p.Options}}{{$o := .}}{{$a := index $me.Answers .ID}}<tr>
+        <td><b>{{.When}}</b></td>
+        {{range list "yes" "maybe" "no"}}<td class="mpoll-a mpoll-{{.}}"><label class="mpoll-pick"><input type="radio" name="a_{{$o.ID}}" value="{{.}}"{{if eq . $a}} checked{{end}} aria-label="{{t (print "mail.poll." .)}}"></label></td>{{end}}
+        <td class="small muted">{{icon "check"}} {{.Yes}} · ? {{.Maybe}}</td></tr>{{end}}</tbody></table>
+      <p><button class="primary">{{icon "check"}} {{if $me.Voted}}{{t "mail.poll.pub_update"}}{{else}}{{t "mail.poll.pub_send"}}{{end}}</button></p>
+      <p class="small muted">{{t "mail.poll.pub_hint"}}</p>
+    </form></div>
+  {{else}}
+  <div class="card"><h3>{{t "mail.poll.pub_who"}}</h3>
+    <div class="mpoll-people">{{range $p.Voters}}<a class="button ghost" href="/mp/{{$p.Token}}?v={{.ID}}">{{if .Voted}}{{icon "circle-check"}} {{end}}{{.Label}}</a>{{end}}</div>
+    <p class="small muted">{{t "mail.poll.pub_who_hint"}}</p></div>
+  {{end}}
+  <p class="muted small share-foot">go24 · {{t "mail.title"}}</p>
+</div>
+{{end}}

@@ -426,7 +426,7 @@ func (s *Store) Report(ctx context.Context, viewer string, id int64, admin bool)
 	}
 	r := list[0]
 	if r.UserID != viewer {
-		if ok, err := s.Manages(ctx, viewer, r.UserID, admin); err != nil {
+		if ok, err := s.Sees(ctx, viewer, r.UserID, admin); err != nil {
 			return r, err
 		} else if !ok {
 			return WorkReport{}, ErrNotFound
@@ -470,7 +470,8 @@ func (s *Store) Reports(ctx context.Context, f ReportFilter) ([]WorkReport, erro
 	return scanReports(s.db.Query(ctx, reportSQL+` WHERE `+strings.Join(where, " AND ")+` ORDER BY r.date_to DESC, u.name LIMIT 500`, args...))
 }
 
-// MarkReport: a manager of the author (or an administrator, but not the author) marks the report, with a comment.
+// MarkReport: one who may change the author's working time (an administrator, but not the author) marks the report,
+// with a comment.
 func (s *Store) MarkReport(ctx context.Context, actor string, id int64, mark, comment string, admin bool, now time.Time) error {
 	if !slices.Contains(ReportMarks, mark) {
 		return i18n.E("err.bad_form")
@@ -479,7 +480,9 @@ func (s *Store) MarkReport(ctx context.Context, actor string, id int64, mark, co
 	if err != nil {
 		return err
 	}
-	if r.UserID == actor {
+	if ok, err := s.Manages(ctx, actor, r.UserID, admin); err != nil {
+		return err
+	} else if !ok || r.UserID == actor {
 		return ErrForbidden
 	}
 	tx, err := s.db.Begin(ctx)

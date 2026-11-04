@@ -170,7 +170,7 @@ func (s *Store) landed(ctx context.Context, owner, id string, news []arrived, ch
 
 // boxFolders: the server folders of a mailbox that hold letters, the inbox first, then those waiting longest.
 func (s *Store) boxFolders(ctx context.Context, mailboxID string) ([]Folder, error) {
-	rows, err := s.db.Query(ctx, `SELECT id::text, mailbox_id::text, name, delim, role, selectable, local, 0, 0 FROM mail_folders
+	rows, err := s.db.Query(ctx, `SELECT id::text, mailbox_id::text, name, delim, role, selectable, local, 0, 0, retention FROM mail_folders
 		WHERE mailbox_id::text = $1 AND selectable AND NOT local ORDER BY role <> 'inbox', synced_at NULLS FIRST, name`, mailboxID)
 	if err != nil {
 		return nil, err
@@ -395,8 +395,9 @@ func (s *Store) save(ctx context.Context, a account, f Folder, m *imap.Message, 
 			refs = p.refs
 		}
 	}
+	auth, via := senderAuth(p.authResults, fromAddr)
 	if f.Role == "sent" || f.Role == "drafts" || strings.EqualFold(fromAddr, a.Email) {
-		p.receiptTo, p.unsub = "", "" // the user's own letter asks the others, not the user
+		p.receiptTo, p.unsub, auth, via = "", "", "", "" // the user's own letter asks the others, not the user
 	}
 	seen, flagged := flagsOf(m.Flags)
 	other, bulk := false, p.bulk || Bulk(fromAddr, nil) // «Отсортированные» or «Другие» (the inbox only)
@@ -409,12 +410,15 @@ func (s *Store) save(ctx context.Context, a account, f Folder, m *imap.Message, 
 	var id string
 	err := s.db.QueryRow(ctx, `INSERT INTO mail_messages (mailbox_id, folder_id, uid, from_addr, from_name, to_addr, cc_addr, subject, body,
 		sent_at, seen, flagged, message_id, thread, body_html, bcc_addr, importance, receipt_to, other, ics, answered,
-		unsubscribe, unsubscribe_one_click, voting, vote, smime_sign, smime_signer, smime_enc)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+		unsubscribe, unsubscribe_one_click, voting, vote, smime_sign, smime_signer, smime_enc, sensitivity, sender_auth, sender_via, no_forward,
+		replies_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32,
+		$33, $34)
 		ON CONFLICT DO NOTHING RETURNING id`, a.ID, f.ID, int64(m.Uid),
 		clip(fromAddr, 300), clip(fromName, 300), clip(to, 2000), clip(cc, 2000), clip(subject, 1000), p.body, sent, seen, flagged, msgID(own),
 		threadOf(own, refs), p.html, clip(bcc, 2000), p.importance, p.receiptTo, other, p.ics, answeredOf(m.Flags),
-		p.unsub, p.oneClick, p.voting, p.vote, sec.sign, sec.signer, sec.enc).Scan(&id)
+		p.unsub, p.oneClick, p.voting, p.vote, sec.sign, sec.signer, sec.enc, p.sensitivity, auth, clip(via, 300), p.noForward,
+		repliesToOf(p.replyTo, fromAddr), p.expires).Scan(&id)
 	files := p.files
 	if errors.Is(err, pgx.ErrNoRows) { // kept already
 		return arrived{}, nil
@@ -487,18 +491,23 @@ func parse(r io.Reader) (string, []Attachment) {
 
 // parsed is what go24 keeps of a letter's source.
 type parsed struct {
-	body, html string // the text; the HTML, cleaned ("" — none)
-	files      []Attachment
-	refs       []string // References, then In-Reply-To: the letters this one answers, the conversation's root first
-	importance int      // -1 low, 0 normal, 1 high
-	receiptTo  string   // the address a read receipt is asked to
-	unsub      string   // List-Unsubscribe: how to leave the newsletter (see unsubscribe.go)
-	oneClick   bool     // List-Unsubscribe-Post offers leaving it in one click (RFC 8058)
-	bulk       bool     // sent to many or by a robot (see Bulk)
-	fwd        bool     // sent on by a mail program itself (see arrived)
-	ics        string   // a meeting it carries: its text/calendar part, else a calendar file (see ics.go)
-	voting     string   // the voting buttons it asks for, the choice it votes for (voting.go)
-	vote       string
+	body, html  string // the text; the HTML, cleaned ("" — none)
+	files       []Attachment
+	refs        []string // References, then In-Reply-To: the letters this one answers, the conversation's root first
+	importance  int      // -1 low, 0 normal, 1 high
+	sensitivity string   // «Конфиденциальность»: "", personal, private, confidential
+	noForward   bool     // «Не пересылать» (noforward.go)
+	replyTo     string   // Reply-To as it is (delivery.go)
+	expires     *time.Time
+	authResults string   // the topmost Authentication-Results: the receiving server's checks (senderauth.go)
+	receiptTo   string   // the address a read receipt is asked to
+	unsub       string   // List-Unsubscribe: how to leave the newsletter (see unsubscribe.go)
+	oneClick    bool     // List-Unsubscribe-Post offers leaving it in one click (RFC 8058)
+	bulk        bool     // sent to many or by a robot (see Bulk)
+	fwd         bool     // sent on by a mail program itself (see arrived)
+	ics         string   // a meeting it carries: its text/calendar part, else a calendar file (see ics.go)
+	voting      string   // the voting buttons it asks for, the choice it votes for (voting.go)
+	vote        string
 }
 
 // parseFull: the text and HTML, the attachments and pictures, the letters it answers, its importance.
@@ -517,6 +526,10 @@ func parseFull(r io.Reader) (out parsed) {
 	out.oneClick = strings.Contains(strings.ToLower(mr.Header.Get("List-Unsubscribe-Post")), "one-click")
 	out.voting, out.vote = votingOf(mr.Header.Text)
 	out.importance = importanceOf(mr.Header.Get("Importance"), mr.Header.Get("X-Priority"), mr.Header.Get("Priority"))
+	out.sensitivity = sensitivityOf(mr.Header.Get("Sensitivity"))
+	out.noForward = noForwardOf(mr.Header.Get(noForwardHeader))
+	out.replyTo, out.expires = mr.Header.Get("Reply-To"), expiryOf(mr.Header.Get)
+	out.authResults = mr.Header.Get("Authentication-Results")
 	if to := mr.Header.Get("Disposition-Notification-To"); to != "" {
 		if a, err := mail.ParseAddress(to); err == nil {
 			out.receiptTo = clip(a.Address, 300)
@@ -617,6 +630,26 @@ func importanceOf(importance, xPriority, priority string) int {
 	}
 	return 0
 }
+
+// Sensitivities are the levels of «Конфиденциальность» a letter is sent with, as in Outlook; "" is «Обычная».
+var Sensitivities = []string{"personal", "private", "confidential"}
+
+// sensitivityHeader is the Sensitivity header (RFC 2156) of each level.
+var sensitivityHeader = map[string]string{"personal": "Personal", "private": "Private", "confidential": "Company-Confidential"}
+
+// sensitivityOf reads the Sensitivity header; an unknown value is normal.
+func sensitivityOf(h string) string {
+	h = strings.ToLower(strings.TrimSpace(h))
+	for k, v := range sensitivityHeader {
+		if h == strings.ToLower(v) || h == k {
+			return k
+		}
+	}
+	return ""
+}
+
+// ValidSensitivity: is it a level of «Конфиденциальность» ("" — normal)?
+func ValidSensitivity(v string) bool { return v == "" || oneOf(v, Sensitivities) }
 
 // msgID is a Message-ID as go24 keeps it: without the angle brackets, lower case.
 func msgID(s string) string {

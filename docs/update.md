@@ -1,26 +1,29 @@
-# Обновление go24
+Русская версия: [ru/update.md](ru/update.md)
 
-Новые версии выходят на GitHub: https://github.com/BorisGB2001/Go24/releases. У каждой есть номер `X.Y.Z` и список
-изменений. Номер устроен так:
+# Updating go24
 
-- **последняя цифра** (0.5.**3**) — исправления и небольшие доработки, обновлять можно смело;
-- **средняя цифра** (0.**6**.0) — новые разделы и крупные изменения; перед обновлением прочитайте список изменений.
+New versions are published on GitHub: https://github.com/BorisGB2001/Go24/releases. Each release has a version number
+`X.Y.Z` and a changelog. The numbering works as follows:
 
-## Схема
+- **last digit** (0.5.**3**) — bug fixes and minor improvements; safe to update at any time;
+- **middle digit** (0.**6**.0) — new sections and major changes; read the changelog before updating.
+
+## Overview
 
 ```
-  1. копия  ──►  2. новый код  ──►  3. новые настройки?  ──►  4. перезапуск  ──►  5. проверка
-  (2 мин)        (git checkout)     (обычно нет)               (make up)          (открыть go24)
+  1. backup  ──►  2. new code    ──►  3. new settings?  ──►  4. restart  ──►  5. verify
+  (2 min)         (git checkout)      (usually none)          (make up)        (open go24)
 ```
 
-База обновляется сама: при запуске go24 применяет новые миграции. Данные, файлы и настройки сохраняются.
+The database is updated automatically: on startup go24 applies any new migrations. Data, files, and settings are
+preserved.
 
-## Шаги
+## Steps
 
-Всё выполняется на сервере от пользователя `go24` в папке `/srv/go24`.
+All commands are run on the server as the `go24` user in `/srv/go24`.
 
-**1. Копия перед обновлением.** На тестовом сервере проще всего сделать снимок виртуальной машины. Если снимков нет —
-копия всех баз:
+**1. Backup before updating.** On a test server the easiest option is a virtual-machine snapshot. If snapshots are
+not available, dump all databases:
 
 ```bash
 cd /srv/go24
@@ -28,51 +31,53 @@ mkdir -p deploy/backups
 docker exec go24-postgres-1 pg_dumpall -U postgres | gzip > deploy/backups/before-$(cat VERSION)-$(date +%F).sql.gz
 ```
 
-Копию базы и файлов можно делать и из самого go24: «Настройки → Резервное копирование → Сделать сейчас».
+A backup of the database and files can also be made from within go24: **Settings → Backup → Back up now**.
 
-**2. Новый код.**
+**2. New code.**
 
 ```bash
 git fetch --tags
-git checkout $(git tag --sort=-v:refname | head -1)   # последняя версия; или конкретная: git checkout v0.5.3
+git checkout $(git tag --sort=-v:refname | head -1)   # latest version; or a specific one: git checkout v0.5.3
 cat VERSION
 ```
 
-**3. Новые настройки.** Покажет параметры, которые появились в новой версии, но которых ещё нет в вашем `deploy/.env`:
+**3. New settings.** Shows parameters that appeared in the new version but are not yet in your `deploy/.env`:
 
 ```bash
 comm -13 <(grep -o '^[A-Z0-9_]*=' deploy/.env | sort) <(grep -o '^[A-Z0-9_]*=' deploy/.env.example | sort)
 ```
 
-- Пусто — переходите к шагу 4.
-- Есть строки — найдите их в `deploy/.env.example` (рядом с каждой есть комментарий) и допишите в `deploy/.env`.
-  Если это пароль или секрет и в примере значение пустое, сгенерируйте его командой `openssl rand -hex 32`.
+- Empty output — proceed to step 4.
+- Lines are shown — find them in `deploy/.env.example` (each has a comment next to it) and append them to
+  `deploy/.env`. If the parameter is a password or secret and the example value is empty, generate one with
+  `openssl rand -hex 32`.
 
-Если в списке изменений версии упомянут мессенджер (Matrix), заново соберите его настройки: `make matrix-config`.
+If the changelog for this version mentions the messenger (Matrix), rebuild its configuration: `make matrix-config`.
 
-**4. Перезапуск.**
+**4. Restart.**
 
 ```bash
 make up
 ```
 
-Собирается новый образ go24, при необходимости скачиваются новые версии других сервисов. Обычно это 3–10 минут;
-go24 недоступен около минуты в конце.
+A new go24 image is built and, if necessary, newer versions of other services are downloaded. This usually takes
+3–10 minutes; go24 is unavailable for about a minute at the end.
 
-**5. Проверка.**
+**5. Verify.**
 
 ```bash
-make ps                  # все сервисы running/healthy
-make logs s=go24         # нет ошибок при старте (Ctrl+C — выйти)
+make ps                  # all services running/healthy
+make logs s=go24         # no errors at startup (Ctrl+C to exit)
 ```
 
-Откройте go24 в браузере и войдите.
+Open go24 in a browser and sign in.
 
-## Если после обновления что-то не работает
+## If something breaks after the update
 
-1. Посмотрите ошибку: `make logs s=go24` и `make logs s=go24-worker`.
-2. Вернуть прежнюю версию кода: `git checkout v<прежняя версия>` и `make up`.
-3. Если новая версия уже изменила базу и прежняя с ней не запускается, восстановите снимок виртуальной машины из шага 1.
+1. Check the error: `make logs s=go24` and `make logs s=go24-worker`.
+2. Roll back the code to the previous version: `git checkout v<previous version>` and `make up`.
+3. If the new version already migrated the database and the previous version no longer starts, restore the
+   virtual-machine snapshot from step 1.
 
-Восстановление базы из копии `pg_dumpall` вручную — операция тонкая. Если понадобится, лучше спросить разработчиков,
-а не делать наугад.
+Restoring a database from a `pg_dumpall` dump manually is a delicate operation. If you need to do it, ask the
+developers rather than guessing.

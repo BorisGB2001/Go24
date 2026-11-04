@@ -2,8 +2,10 @@ package apps
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,8 +15,21 @@ import (
 )
 
 // Places are the places of go24 an application can put its handler into, as placement.bind: a tab of
-// a CRM card and of a task. A smart process's card is CRM_DYNAMIC_<type>_DETAIL_TAB (DynamicPlace).
-var Places = []string{"CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "CRM_CONTACT_DETAIL_TAB", "CRM_COMPANY_DETAIL_TAB", "TASK_VIEW_TAB"}
+// a CRM card and of a task, and the widgets of the messenger (IMPlaces). A smart process's card is
+// CRM_DYNAMIC_<type>_DETAIL_TAB (DynamicPlace).
+var Places = append([]string{"CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "CRM_CONTACT_DETAIL_TAB", "CRM_COMPANY_DETAIL_TAB", "TASK_VIEW_TAB"},
+	IMPlaces...)
+
+// IMPlaces are the widgets of the messenger: a button of the panel by the input field (IM_TEXTAREA), of the chat's
+// header opening the side panel (IM_SIDEBAR), an item of a message's menu (IM_CONTEXT_MENU) and of the messenger's
+// own header — the application instead of a chat (IM_NAVIGATION).
+var IMPlaces = []string{"IM_TEXTAREA", "IM_SIDEBAR", "IM_CONTEXT_MENU", "IM_NAVIGATION"}
+
+// imOptions are the OPTIONS of placement.bind a widget of the messenger keeps.
+var imOptions = []string{"iconName", "context", "role", "color", "width", "height", "extranet"}
+
+// imContexts are the kinds of chats of OPTIONS.context.
+var imContexts = []string{"USER", "CHAT", "LINES", "CRM", "ALL"}
 
 // DynamicPlace is the tab of the cards of a smart process.
 func DynamicPlace(typeID string) string { return "CRM_DYNAMIC_" + typeID + "_DETAIL_TAB" }
@@ -31,6 +46,9 @@ func CardPlace(entity, typeID string) string {
 // Options are PLACEMENT_OPTIONS an application's tab gets for the card it is opened in: {"ID": …} of a CRM card,
 // {"taskId": …} of a task.
 func Options(place, id string) map[string]string {
+	if slices.Contains(IMPlaces, place) { // the chat and the message are the messenger's (web: imAppOptions)
+		return map[string]string{}
+	}
 	if place == "TASK_VIEW_TAB" {
 		return map[string]string{"taskId": id}
 	}
@@ -46,7 +64,67 @@ type Placement struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
-	AppTitle    string    `json:"-"` // the tab's title without its own one
+	// Options are OPTIONS of placement.bind of a widget of the messenger (imOptions), as given
+	Options  PlaceOptions `json:"options"`
+	AppTitle string       `json:"-"` // the tab's title without its own one
+}
+
+// PlaceOptions are OPTIONS of placement.bind: strings, numbers and booleans are taken as text (width 200 as "200").
+type PlaceOptions map[string]string
+
+func (o *PlaceOptions) UnmarshalJSON(b []byte) error {
+	var in map[string]any
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	*o = PlaceOptions{}
+	for k, v := range in {
+		switch x := v.(type) {
+		case string:
+			(*o)[k] = x
+		case float64:
+			(*o)[k] = strconv.FormatFloat(x, 'f', -1, 64)
+		case bool:
+			(*o)[k] = map[bool]string{true: "Y", false: "N"}[x]
+		}
+	}
+	return nil
+}
+
+// Opt is an option of the widget, or what the portal takes without it.
+func (p Placement) Opt(name string) string {
+	if v := p.Options[name]; v != "" {
+		return v
+	}
+	return map[string]string{"context": "ALL", "role": "USER", "extranet": "N", "width": "100", "height": "100"}[name]
+}
+
+// ForChat: the widget is for a chat of the kind (USER, CHAT, LINES or CRM), by its OPTIONS.context.
+func (p Placement) ForChat(kind string) bool {
+	for _, c := range strings.Split(p.Opt("context"), ";") {
+		if c = strings.ToUpper(strings.TrimSpace(c)); c == "ALL" || c == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// For: the widget is for the employee — OPTIONS.role ADMIN is for administrators, extranet Y lets guests see it.
+func (p Placement) For(admin, guest bool) bool {
+	return (admin || !strings.EqualFold(p.Opt("role"), "ADMIN")) && (!guest || strings.EqualFold(p.Opt("extranet"), "Y"))
+}
+
+// Width and Height are the frame's OPTIONS.width and height of IM_TEXTAREA in pixels, within what the panel shows.
+func (p Placement) Width() int { return p.px("width", 100, 800) }
+
+func (p Placement) Height() int { return p.px("height", 50, 600) }
+
+func (p Placement) px(name string, lo, hi int) int {
+	v, err := strconv.Atoi(p.Opt(name))
+	if err != nil {
+		v = 100
+	}
+	return min(max(v, lo), hi)
 }
 
 // Tab is what the card's tab is called.
@@ -114,11 +192,54 @@ func (s *Store) Bind(ctx context.Context, a App, p Placement) (Placement, error)
 	if len([]rune(p.Title)) > 100 || len([]rune(p.Description)) > 500 {
 		return p, i18n.E("err.app_name")
 	}
-	err = s.db.QueryRow(ctx, `INSERT INTO app_placements (app_id, placement, handler_url, title, description) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (app_id, placement, handler_url) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
-		RETURNING id::text, created_at`, a.ID, p.Placement, p.Handler, p.Title, p.Description).Scan(&p.ID, &p.CreatedAt)
+	if p.Options, err = placeOptions(p.Placement, p.Options); err != nil {
+		return p, err
+	}
+	err = s.db.QueryRow(ctx, `INSERT INTO app_placements (app_id, placement, handler_url, title, description, options) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (app_id, placement, handler_url) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description, options = EXCLUDED.options
+		RETURNING id::text, created_at`, a.ID, p.Placement, p.Handler, p.Title, p.Description, p.Options).Scan(&p.ID, &p.CreatedAt)
 	p.AppID = a.ID
 	return p, err
+}
+
+// placeOptions are the OPTIONS a place keeps: of a widget of the messenger, its imOptions (context — of imContexts,
+// role USER or ADMIN, extranet Y or N, sizes in pixels); other places keep none.
+func placeOptions(place string, in PlaceOptions) (PlaceOptions, error) {
+	out := PlaceOptions{}
+	if !slices.Contains(IMPlaces, place) {
+		return out, nil
+	}
+	for k, v := range in {
+		i := slices.IndexFunc(imOptions, func(o string) bool { return strings.EqualFold(o, k) })
+		if v = strings.TrimSpace(v); i < 0 || v == "" {
+			continue
+		}
+		name := imOptions[i]
+		bad := len(v) > 100
+		switch name {
+		case "context":
+			v = strings.ToUpper(v)
+			for _, c := range strings.Split(v, ";") {
+				bad = bad || !slices.Contains(imContexts, strings.TrimSpace(c))
+			}
+		case "role":
+			v = strings.ToUpper(v)
+			bad = bad || v != "USER" && v != "ADMIN"
+		case "extranet":
+			v = strings.ToUpper(v)
+			bad = bad || v != "Y" && v != "N"
+		case "width", "height":
+			n, err := strconv.Atoi(v)
+			bad = bad || err != nil || n <= 0
+		case "color":
+			v = strings.ToUpper(v)
+		}
+		if bad {
+			return nil, i18n.E("err.app_place_option", name, v)
+		}
+		out[name] = v
+	}
+	return out, nil
 }
 
 // Unbind takes the application's handler off the place (placement.unbind); without a handler — every handler of
@@ -129,7 +250,7 @@ func (s *Store) Unbind(ctx context.Context, appID, place, handler string) (int64
 	return tag.RowsAffected(), err
 }
 
-const placeCols = `p.id::text, p.app_id::text, p.placement, p.handler_url, p.title, p.description, p.created_at,
+const placeCols = `p.id::text, p.app_id::text, p.placement, p.handler_url, p.title, p.description, p.created_at, p.options,
 	CASE WHEN a.menu_title <> '' THEN a.menu_title ELSE a.name END`
 
 func (s *Store) placements(ctx context.Context, where string, args ...any) ([]Placement, error) {

@@ -130,7 +130,7 @@
 <script src="{{asset "js/calendar.js"}}"></script>
 {{end}}
 
-{{define "calitem"}}{{if eq .Kind "absence"}}<a class="calitem absence" data-cal="absence" href="/company/absences" title="{{.Title}}: {{t (print "absence.kind." .AbsenceKind)}}">{{.Title}} · {{t (print "absence.kind." .AbsenceKind)}}</a>
+{{define "calitem"}}{{if eq .Kind "absence"}}<a class="calitem absence" data-cal="absence" href="/company/absences" title="{{.Title}}: {{absKind .AbsenceKind}}">{{.Title}} · {{absKind .AbsenceKind}}</a>
 {{else if eq .Kind "birthday"}}<a class="calitem birthday" data-cal="birthday" href="/u/{{.PersonID}}" data-user="{{.PersonID}}" title="{{t "birthdays.title"}}">🎂 {{.Title}}</a>
 {{else if eq .Kind "task"}}<a class="calitem task{{if .Overdue}} over{{end}}" data-cal="task" href="/t/{{.TaskKey}}" title="{{.TaskKey}} {{.Title}}">{{icon "checkbox"}} {{clock .Start}} {{.Title}}</a>
 {{else if eq .Kind "booking"}}<a class="calitem booking bk-{{.Status}}" data-cal="booking" href="/booking?date={{.Start.Format "2006-01-02"}}&amp;b={{.ID}}" title="{{t "booking.title"}}: {{.Title}} · {{.Where}} · {{t (print "booking.st." .Status)}}">{{icon "clock"}} {{clock .Start}} {{.Title}}</a>

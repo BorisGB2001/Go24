@@ -10,21 +10,23 @@
 </div>
 <div class="row structbar"><input type="search" class="structfind" placeholder="{{t "structure.find"}}" aria-label="{{t "structure.find"}}">
   <span class="muted small structnone" hidden>{{t "structure.not_found"}}</span>
-  {{if $d.Admin}}<span class="muted small">{{t "structure.drag_hint"}}</span>{{end}}</div>
-<div class="orgtree"{{if $d.Admin}} data-struct-edit{{end}}>{{template "dept" (deptCtx $d.Root $d)}}</div>
+  {{if $d.Drag}}<span class="muted small">{{t "structure.drag_hint"}}</span>{{end}}
+  {{if $d.Admin}}<a href="/company/structure/rights" class="btn ghost" style="margin-left:auto">{{icon "lock"}} {{t "structrights.title"}}</a>{{end}}</div>
+<div class="orgtree"{{if $d.Drag}} data-struct-edit{{end}}>{{template "dept" (deptCtx $d.Root $d)}}</div>
 <script src="{{asset "js/structure.js"}}"></script>
 {{end}}
 
 {{define "dept"}}{{$n := .Node}}{{$d := .Data}}
-<div class="dept{{if eq $n.Depth 0}} root{{end}}" data-dept="{{$n.ID}}">
+{{$edit := $d.Access.Can "edit" $n.ID}}{{$add := $d.Access.Can "create" $n.ID}}{{$del := and $n.ParentID ($d.Access.Can "delete" $n.ID)}}
+<div class="dept{{if eq $n.Depth 0}} root{{end}}" data-dept="{{$n.ID}}"{{if $edit}} data-can-edit{{end}}{{if $d.Access.Can "staff" $n.ID}} data-can-staff{{end}}>
   <div class="dcard card">
     <div class="dhead">
       <b class="dname"><a href="/company?dept={{$n.ID}}">{{$n.Name}}</a></b>
       <span class="muted small" title="{{t "structure.total"}}">{{icon "users"}} {{$n.Total}}</span>
-      {{if $d.Admin}}
+      {{if or $edit $add $del $d.Admin}}
       <details class="tsettings dmenu"><summary title="{{t "structure.edit"}}">{{icon "edit"}}</summary>
         <div class="pop">
-          <form method="post" action="/company/departments"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{$n.ID}}">
+          {{if $edit}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="update"><input type="hidden" name="id" value="{{$n.ID}}">
             <label>{{t "structure.name"}}</label><input type="text" name="name" value="{{$n.Name}}" required>
             {{if $n.ParentID}}<label>{{t "structure.parent"}}</label>
             <select name="parent">{{range $d.Departments}}<option value="{{.ID}}" {{if eq .ID $n.ParentID}}selected{{end}}>{{indent .Depth}}{{.Name}}</option>{{end}}</select>{{end}}
@@ -32,14 +34,14 @@
             {{template "upick" (upick "head" $n.HeadID $d.Users)}}
             <label>{{t "structure.deputies"}}</label>
             {{template "upick" (upick "deputies" (persons $n.Deputies) $d.Users "multi")}}
-            <p><button class="primary">{{t "common.save"}}</button></p></form>
-          <form method="post" action="/company/departments"><input type="hidden" name="op" value="add"><input type="hidden" name="parent" value="{{$n.ID}}">
+            <p><button class="primary">{{t "common.save"}}</button></p></form>{{end}}
+          {{if $add}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="add"><input type="hidden" name="parent" value="{{$n.ID}}">
             <label>{{t "structure.add_sub"}}</label>
-            <div class="row"><input type="text" name="name" required placeholder="{{t "structure.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>
-          <form method="post" action="/company/teams"><input type="hidden" name="op" value="add"><input type="hidden" name="department" value="{{$n.ID}}">
+            <div class="row"><input type="text" name="name" required placeholder="{{t "structure.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>{{end}}
+          {{if $d.Admin}}<form method="post" action="/company/teams"><input type="hidden" name="op" value="add"><input type="hidden" name="department" value="{{$n.ID}}">
             <label>{{t "team.add"}}</label>
-            <div class="row"><input type="text" name="name" required maxlength="200" placeholder="{{t "team.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>
-          {{if $n.ParentID}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{$n.ID}}">
+            <div class="row"><input type="text" name="name" required maxlength="200" placeholder="{{t "team.name_placeholder"}}" style="flex:1"><button>{{icon "plus"}}</button></div></form>{{end}}
+          {{if $del}}<form method="post" action="/company/departments"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{$n.ID}}">
             <button class="ghost">{{icon "trash"}} {{t "structure.delete"}}</button></form>{{end}}
         </div>
       </details>
@@ -48,6 +50,8 @@
     <div class="dlead">{{if $n.HeadID}}<a href="/u/{{$n.HeadID}}" class="person" data-user="{{$n.HeadID}}">{{photo $n.HeadName $n.HeadPhotoURL false}}<span>{{$n.HeadName}}<span class="muted small"> · {{t "structure.head"}}</span></span></a>
       {{else}}<span class="muted small">{{t "structure.no_head"}}</span>{{end}}
       {{range $n.Deputies}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}<span class="muted small"> · {{t "structure.deputy"}}</span></span></a>{{end}}</div>
+    {{if or $n.Chats ($d.Access.Can "chats" $n.ID)}}<div class="dchats small">{{range $n.Chats}}<a href="/im?room={{.Room}}" class="pill" title="{{if .Channel}}{{t "deptchat.channel"}}{{else}}{{t "deptchat.chat"}}{{end}}">{{if .Channel}}{{icon "speakerphone"}}{{else}}{{icon "messages"}}{{end}} {{or .Name .Room}}</a>{{end}}
+      <a href="/company/departments/{{$n.ID}}/chats" class="muted" title="{{t "deptchat.title"}}">{{if $n.Chats}}{{icon "settings"}}{{else}}{{icon "messages"}} {{t "deptchat.title"}}{{end}}</a></div>{{end}}
     {{if $n.Employees}}
     <details class="dpeople"><summary class="muted small">{{t "structure.employees" (len $n.Employees)}}</summary>
       {{range $n.Employees}}<a href="/u/{{.ID}}" class="person" data-user="{{.ID}}">{{photo .Name .PhotoURL false}}<span>{{.Name}}{{with .Position}}<span class="muted small"> · {{.}}</span>{{end}}</span></a>{{end}}

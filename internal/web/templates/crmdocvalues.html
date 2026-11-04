@@ -6,9 +6,12 @@
 <div class="card" style="max-width:720px">
   <form method="post" action="{{if $d.Doc.ID}}/crm/{{$d.Kind}}/{{$d.ID}}/documents/{{$d.Doc.ID}}{{else}}/crm/{{$d.Kind}}/{{$d.ID}}/document{{end}}" data-docvalues>
     {{if not $d.Doc.ID}}<input type="hidden" name="template" value="{{$d.Template.ID}}">{{end}}
-    {{range $d.Fields}}<label><code>{{"{"}}{{.Name}}{{"}"}}</code></label>
-    {{if gt (len .Value) 80}}<textarea name="v.{{.Name}}" rows="3">{{.Value}}</textarea>{{else}}<input type="text" name="v.{{.Name}}" value="{{.Value}}">{{end}}
+    {{range $d.Fields}}<label>{{with .Title}}{{.}} {{end}}<code{{if .Title}} class="small muted"{{end}}>{{"{"}}{{.Name}}{{"}"}}</code>{{if .Required}} <span class="req" title="{{t "docfields.required"}}">*</span>{{end}}</label>
+    {{if gt (len .Value) 80}}<textarea name="v.{{.Name}}" rows="3"{{if .Required}} required{{end}}>{{.Value}}</textarea>{{else}}<input type="text" name="v.{{.Name}}" value="{{.Value}}"{{if .Required}} required{{end}}>{{end}}
+    {{if .HideRow}}<span class="small muted">{{t "docfields.hidden_when_empty"}}</span>{{end}}
     {{else}}<p class="muted">{{t "docs.no_fields"}}</p>{{end}}
+    {{if $d.Stamps}}<input type="hidden" name="stamps_set" value="1"><label class="check"><input type="checkbox" name="stamps" value="1"{{if $d.StampsOn}} checked{{end}}> {{t "docs.stamps"}}</label>
+    <p class="small muted">{{t "docs.stamps_hint"}}</p>{{end}}
     <p><button class="primary">{{icon "file-plus"}} {{if $d.Doc.ID}}{{t "docs.remake"}}{{else}}{{t "docs.make_doc"}}{{end}}</button> <a class="button ghost" href="{{$d.Back}}">{{t "common.cancel"}}</a></p>
   </form></div>
 {{end}}

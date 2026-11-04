@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"go24/internal/apikeys"
 	"go24/internal/auth"
 	"go24/internal/i18n"
 	"go24/internal/tasks"
@@ -29,6 +30,9 @@ func (s *Server) projectInfo(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	if err == nil && r.FormValue("kind") != "" && r.FormValue("kind") != p.Kind {
 		err = s.Tasks.SetProjectKind(r.Context(), p, r.FormValue("kind"))
+	}
+	if err == nil && !p.Collab() && r.Form.Has("keywords") {
+		err = s.Tasks.SetGroupSubject(r.Context(), p, r.FormValue("subject"), tasks.ParseKeywords(r.FormValue("keywords")))
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
@@ -122,6 +126,67 @@ func (s *Server) projectArchive(w http.ResponseWriter, r *http.Request, sess aut
 	s.Log.Info("project archive", "user_id", sess.UserID, "project", p.Key, "on", r.FormValue("on"))
 	s.Matrix.Wake() // a collab's chat turns read-only (or back)
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// projectCopy makes a copy of the group or project, as «Копировать» (GO24DEV-920).
+func (s *Server) projectCopy(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	back := "/p/" + r.PathValue("key")
+	p, err := s.Tasks.ProjectByKey(r.Context(), sess.UserID, r.PathValue("key"))
+	var key string
+	if err == nil {
+		var o tasks.CopyOptions
+		if o, err = copyOptions(r.FormValue("key"), r.FormValue("name"), r.FormValue("start"),
+			r.FormValue("members") != "", r.FormValue("tasks") != "", r.FormValue("closed") != ""); err == nil {
+			key, err = s.Tasks.CopyProject(r.Context(), sess.UserID, p, o)
+		}
+	}
+	if err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("project copy", "user_id", sess.UserID, "project", p.Key, "copy", key)
+	s.Matrix.Wake() // the copy's messenger room and the threads of its tasks
+	http.Redirect(w, r, "/p/"+key, http.StatusSeeOther)
+}
+
+func copyOptions(key, name, start string, members, withTasks, closed bool) (tasks.CopyOptions, error) {
+	day, err := parseDate(start)
+	return tasks.CopyOptions{Key: key, Name: name, Start: day, Members: members, Tasks: withTasks, Closed: withTasks && closed}, err
+}
+
+// apiProjectCopy is POST /api/v1/projects/{key}/copy {key, name, start, members, tasks, closed}: the copy, as
+// sonet_group copy.
+func (s *Server) apiProjectCopy(w http.ResponseWriter, r *http.Request, pr apikeys.Principal) error {
+	var in struct {
+		Key     string `json:"key"`
+		Name    string `json:"name"`
+		Start   string `json:"start"`
+		Members bool   `json:"members"`
+		Tasks   bool   `json:"tasks"`
+		Closed  bool   `json:"closed"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	p, err := s.Tasks.ProjectByKey(r.Context(), pr.UserID, r.PathValue("key"))
+	if err != nil {
+		return err
+	}
+	o, err := copyOptions(in.Key, in.Name, in.Start, in.Members, in.Tasks, in.Closed)
+	if err != nil {
+		return err
+	}
+	key, err := s.Tasks.CopyProject(r.Context(), pr.UserID, p, o)
+	if err != nil {
+		return err
+	}
+	s.Matrix.Wake()
+	c, err := s.Tasks.ProjectByKey(r.Context(), pr.UserID, key)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, toAPIProject(c))
+	return nil
 }
 
 // inviteAnswer: the invited person accepts (accept=1) or declines an invitation.

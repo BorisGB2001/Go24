@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go24/internal/apps"
 	"go24/internal/auth"
 	"go24/internal/i18n"
 	"go24/internal/mail"
@@ -27,6 +28,10 @@ import (
 func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if s.Matrix == nil {
 		http.Redirect(w, r, "/my", http.StatusFound)
+		return
+	}
+	if r.URL.Query().Get("IM_DIALOG") != "" { // a link of the form (imbotcontext.go)
+		s.imDialogLink(w, r, sess)
 		return
 	}
 	rooms, err := s.Matrix.Rooms(r.Context(), sess.UserID)
@@ -58,17 +63,35 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	if !tasks.IsGuestCtx(r.Context()) && data["NoAccount"] == false { // open chats one is not in: the «Каналы» tab and the search show them
 		s.imOpenChats(r, sess, data)
 	}
+	data["Office"] = s.Office != nil // «Прикрепить»: «Документ», «Таблица», «Презентация»
+	if !tasks.IsGuestCtx(r.Context()) { // «CoPilot» next to «Заметки», when go24 worker made it
+		if id, err := s.Matrix.CoPilotID(r.Context()); err == nil {
+			data["CoPilot"] = id != "" && s.aiOn(r.Context(), sess.UserID, "im")
+		} else {
+			s.Log.Warn("im copilot", "err", err)
+		}
+	}
+	data["Apps"] = s.imApps(r, sess, "") // IM_NAVIGATION; with a chat open — its widgets too
+	if id := r.URL.Query().Get("app"); id != "" && r.URL.Query().Get("room") == "" { // IM_NAVIGATION: the application instead of a chat
+		for _, p := range data["Apps"].(map[string][]apps.Placement)["IM_NAVIGATION"] {
+			if p.ID == id {
+				data["NavApp"] = p
+			}
+		}
+	}
 	if id := r.URL.Query().Get("room"); id != "" {
 		for _, rm := range rooms {
 			if rm.ID == id {
 				data["Current"] = rm
+				data["Apps"] = s.imApps(r, sess, s.imChatKind(r, rm))
 				if pins, err := s.Matrix.Pins(r.Context(), sess.UserID, rm.ID); err == nil {
 					data["Pins"] = pins
 				}
 				if rm.Kind == "group" || rm.Kind == "channel" { // its people in the header; nil — someone else's room of Element, not a group chat
 					if g, err := s.Matrix.GroupInfo(r.Context(), sess.UserID, rm.ID); err == nil {
 						data["Group"] = g
-						data["ReadOnly"] = g != nil && !g.Writer // a channel one only reads
+						data["ReadOnly"] = g != nil && !g.Writer // a channel one only reads — and comments on its posts
+						data["Comments"] = g != nil && g.Channel && !g.Writer
 					} else {
 						s.Log.Warn("im group", "err", err)
 					}
@@ -80,10 +103,17 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 						s.Log.Warn("im auto-delete", "err", err)
 					}
 				}
+				var field bool // a bot switched the input field off (imbot.v2.Chat.TextField.enabled): its buttons answer it
+				if err := s.DB.QueryRow(r.Context(), `SELECT NOT text_field FROM portal_chats WHERE room_id = $1`, rm.ID).Scan(&field); err == nil && field {
+					data["ReadOnly"], data["ReadOnlyKey"], data["Comments"] = true, "im.bot_text_field_off", false
+				}
+				if rm.Kind == "general" && s.Matrix.GeneralClosed(r.Context(), sess.UserID) { // only administrators write in it
+					data["ReadOnly"], data["ReadOnlyKey"], data["Comments"] = true, "im.general_readonly", false
+				}
 				pid := rm.CollabID // a group chat of a collab — or its main chat
 				if rm.Kind == "collab" {
 					if why := s.Matrix.CollabChatClosed(r.Context(), sess.UserID, rm.ID); why != "" { // its «кто может писать в чат»
-						data["ReadOnly"], data["ReadOnlyKey"] = true, matrixsync.ChatClosedKeys[why]
+						data["ReadOnly"], data["ReadOnlyKey"], data["Comments"] = true, matrixsync.ChatClosedKeys[why], false
 					}
 					pid = s.Matrix.RoomCollab(r.Context(), rm.ID)
 				} else if (rm.Kind == "group" || rm.Kind == "channel") && pid == "" && !tasks.IsGuestCtx(r.Context()) {
@@ -263,23 +293,28 @@ func (s *Server) imEdit(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	writeJSON(w, http.StatusOK, map[string]string{"id": m.ID, "html": html})
 }
 
-// imDelete takes back one's own message.
+// imDelete takes back one's own messages: one event or several chosen ones («Выбрать»).
 func (s *Server) imDelete(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if err := s.Matrix.Delete(r.Context(), sess.UserID, r.FormValue("room"), r.FormValue("event")); err != nil {
-		s.jsonErr(w, r, err)
-		return
+	r.ParseForm()
+	for _, ev := range r.Form["event"] {
+		if err := s.Matrix.Delete(r.Context(), sess.UserID, r.FormValue("room"), ev); err != nil {
+			s.jsonErr(w, r, err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// imForward copies a message into another chat of the person (to).
+// imForward copies a message, or several chosen ones in their order, into another chat of the person (to).
 func (s *Server) imForward(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	m, err := s.Matrix.Forward(r.Context(), sess.UserID, r.FormValue("room"), r.FormValue("event"), r.FormValue("to"))
+	r.ParseForm()
+	ms, err := s.Matrix.ForwardAll(r.Context(), sess.UserID, r.FormValue("room"), r.Form["event"], r.FormValue("to"))
 	if err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"id": m.ID, "room": m.RoomID})
+	last := ms[len(ms)-1]
+	writeJSON(w, http.StatusCreated, map[string]any{"id": last.ID, "room": last.RoomID, "count": len(ms)})
 }
 
 // imUpload sends a file into the chat (the paper clip, a dropped or pasted file, a voice message).
@@ -511,6 +546,20 @@ func (s *Server) imNotes(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return
 	}
 	room, err := s.Matrix.NotesChat(r.Context(), sess.UserID, s.I18n.T(s.lang(r), "im.notes"))
+	if err != nil {
+		s.taskErr(w, r, err, "/im")
+		return
+	}
+	http.Redirect(w, r, "/im?room="+url.QueryEscape(room), http.StatusSeeOther)
+}
+
+// imCoPilot opens the person's chat with CoPilot (made on first use).
+func (s *Server) imCoPilot(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if s.Matrix == nil {
+		http.Redirect(w, r, "/my", http.StatusFound)
+		return
+	}
+	room, err := s.Matrix.CoPilotChat(r.Context(), sess.UserID)
 	if err != nil {
 		s.taskErr(w, r, err, "/im")
 		return

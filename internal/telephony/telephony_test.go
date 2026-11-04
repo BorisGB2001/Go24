@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,7 +29,7 @@ func TestRender(t *testing.T) {
 	conf := Render([]Line{
 		{UserID: "1", Name: `Анна "Аня" <Петрова>`, Number: "101", Password: "pw1", WebPassword: "web1"},
 		{UserID: "2", Name: "Борис", Number: "101", Password: "pw2", WebPassword: "web2", Dup: true},
-	}, false)
+	}, false, nil)
 	for _, want := range []string{
 		"[101]\ntype = endpoint\ncontext = go24-phones\n", "[w101]\ntype = endpoint\ncontext = go24-phones\n", "webrtc = yes\n",
 		"callerid = \"Анна Аня Петрова\" <101>\n", "md5_cred = " + md5cred("101", "pw1") + "\n", "md5_cred = " + md5cred("w101", "web1") + "\n",
@@ -41,12 +42,15 @@ func TestRender(t *testing.T) {
 	if strings.Contains(conf, "pw1") || strings.Contains(conf, "Борис") || strings.Count(conf, "type = endpoint") != 2 {
 		t.Errorf("a password in the open or the second 101:\n%s", conf)
 	}
-	if rec := Render([]Line{{UserID: "1", Name: "Анна", Number: "101"}}, true); strings.Count(rec, "set_var = GO24_RECORD=1\n") != 2 ||
+	if rec := Render([]Line{{UserID: "1", Name: "Анна", Number: "101"}}, true, nil); strings.Count(rec, "set_var = GO24_RECORD=1\n") != 2 ||
 		strings.Contains(conf, "GO24_RECORD") {
 		t.Errorf("recording: the dialplan does not know or knows when off:\n%s", rec)
 	}
 	if strings.Count(conf, "set_var = TRANSFER_CONTEXT=go24-transfer\n") != 2 {
 		t.Errorf("a transferred call does not go to go24-transfer:\n%s", conf)
+	}
+	if strings.Contains(conf, "pickup") || strings.Contains(conf, "GO24_PICKOK") {
+		t.Errorf("picking up while it is off:\n%s", conf)
 	}
 	if p := Password(12); len(p) != 12 || strings.ContainsAny(p, "0O1lI") {
 		t.Errorf("password %q", p)
@@ -136,9 +140,15 @@ func TestLines(t *testing.T) {
 
 	// the PBX: the file and the reloads
 	var reloads, dialplans atomic.Int32
+	var off atomic.Value // GO24_OFF as set
 	ari := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, p, _ := r.BasicAuth(); u != "go24" || p != "ari" {
 			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/ari/asterisk/variable" && r.URL.Query().Get("variable") == "GO24_OFF" {
+			off.Store(r.URL.Query().Get("value"))
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if r.Method == http.MethodPut && r.URL.Path == "/ari/asterisk/modules/res_pjsip.so" {
@@ -175,6 +185,16 @@ func TestLines(t *testing.T) {
 	must(pbx.Sync(ctx))
 	if c := read(); !strings.Contains(c, "[101]") || !strings.Contains(c, "[w102]") || strings.Contains(c, "eve") || reloads.Load() != 2 {
 		t.Fatalf("telephony on: %d reloads,\n%s", reloads.Load(), c)
+	}
+	// «Не беспокоить»: the clients' calls pass bob by, no reload for it
+	if o := off.Load(); o != "," {
+		t.Fatalf("nobody off: %v", o)
+	}
+	_, err = pool.Exec(ctx, `UPDATE users SET presence = 'dnd' WHERE id = $1`, bob)
+	must(err)
+	must(pbx.Sync(ctx))
+	if o := off.Load(); o != ",102," || reloads.Load() != 2 {
+		t.Fatalf("bob is not off: %v, %d reloads", o, reloads.Load())
 	}
 	must(s.SetNumber(ctx, bob, ""))
 	must(pbx.Sync(ctx))
@@ -261,19 +281,21 @@ func TestLines(t *testing.T) {
 		t.Fatal("a new line without its password")
 	}
 	for _, bad := range []Trunk{{Name: "", Host: "h", Username: "u", Number: "1", Password: "p"}, {Name: "x", Host: "bad host", Username: "u", Number: "1", Password: "p"},
-		{Name: "x", Host: "h", Username: "u;x", Number: "1", Password: "p"}, {Name: "x", Host: "h", Username: "u", Number: "12a", Password: "p"}} {
+		{Name: "x", Host: "h", Username: "u;x", Number: "1", Password: "p"}, {Name: "x", Host: "h", Username: "u", Number: "12a", Password: "p"},
+		{Name: "x", Host: "h", Username: "u", Number: "1", Password: "p", WorkTZ: "Mars/Base"}, {Name: "x", Host: "h", Username: "u", Number: "1", Password: "p", Holidays: []string{"31.12"}}} {
 		if _, err := s.SaveTrunk(ctx, ann, bad); !errors.As(err, &ie) {
 			t.Errorf("a bad line saved: %+v %v", bad, err)
 		}
 	}
 	tid, err := s.SaveTrunk(ctx, ann, Trunk{Name: "Основной", Host: "sip.example.ru:5060", Username: "go24", Password: "p;w", Number: "+7 495 123-45-67",
-		Register: true, RingMode: "queue", Ring: []string{bob, ann}, OutAll: false, Out: []string{bob}})
+		Register: true, RingMode: "queue", Ring: []string{bob, ann}, OutAll: false, Out: []string{bob}, WorkTZ: "Asia/Tokyo", Holidays: []string{"12-31", "01-01", "12-31"}})
 	must(err)
 	dir2 := dialplans.Load()
 	must(pbx.Sync(ctx))
 	trunks, err := s.Trunks(ctx)
 	must(err)
-	if len(trunks) != 1 || trunks[0].Password != "p;w" || trunks[0].Number != "+74951234567" || trunks[0].RingMode != "queue" || len(trunks[0].Ring) != 2 {
+	if len(trunks) != 1 || trunks[0].Password != "p;w" || trunks[0].Number != "+74951234567" || trunks[0].RingMode != "queue" || len(trunks[0].Ring) != 2 ||
+		trunks[0].WorkTZ != "Asia/Tokyo" || !slices.Equal(trunks[0].Holidays, []string{"01-01", "12-31"}) {
 		t.Fatalf("the line: %+v", trunks)
 	}
 	k := trunks[0].Key()
@@ -390,6 +412,12 @@ func TestLines(t *testing.T) {
 		t.Fatalf("a call from the line: %+v", got)
 	} else if n, dir, emp := got[0].Outside(); n != "+79001234567" || dir != "in" || emp != bob {
 		t.Fatalf("its outside: %s %s %s", n, dir, emp)
+	}
+	if got, _ := s.Calls(ctx, CallFilter{Line: "+74951234567"}); len(got) != 1 || got[0].ID == "" {
+		t.Fatalf("the line's calls: %+v", got)
+	}
+	if got, _ := s.Calls(ctx, CallFilter{Line: "+74950000000"}); len(got) != 0 {
+		t.Fatalf("another line's calls: %+v", got)
 	}
 	// transferred: by whom and to whom, with their names; nonsense dropped
 	_, err = s.SaveCall(ctx, CDR{UniqueID: "2.2", From: "+79001234568", To: "+74951234567", By: "105", Line: "+74951234567", Dial: "ANSWER",
@@ -515,5 +543,22 @@ func TestGreeting(t *testing.T) {
 	}
 	if b := Beep(); len(b) != 44+8000 {
 		t.Errorf("beep: %d bytes", len(b))
+	}
+}
+
+// TestTrunkCreates: «Создавать в CRM» of a line — its own choice for its calls, else the company's lead of incoming ones.
+func TestTrunkCreates(t *testing.T) {
+	for _, c := range []struct {
+		create, calls, dir string
+		lead               bool
+		want               string
+	}{
+		{"", "in", "in", true, CRMLead}, {"", "in", "in", false, ""}, {"", "in", "out", true, ""},
+		{CRMNone, "all", "in", true, ""}, {CRMDeal, "in", "in", false, CRMDeal}, {CRMDeal, "in", "out", true, ""},
+		{CRMLead, "out", "out", false, CRMLead}, {CRMLead, "out", "in", true, ""}, {CRMDeal, "all", "out", false, CRMDeal},
+	} {
+		if got := (Trunk{CRMCreate: c.create, CRMCreateType: c.calls}).Creates(c.dir, c.lead); got != c.want {
+			t.Errorf("%+v: %q", c, got)
+		}
 	}
 }

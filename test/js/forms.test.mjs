@@ -185,3 +185,48 @@ console.log('forms action field: ok');
   assert.equal(f.getAttribute('src'), '/apps/tab/p1?id=d1&x', 'opened again: the frame stays');
 }
 console.log('forms app tab: ok');
+
+// «CoPilot» of a task's description: the answer shows under the field, «Вставить» replaces the text, «Добавить в
+// конец» appends it, «Отмена» drops it; a mistake shows in the same place without the insert buttons
+{
+  const dom = new JSDOM(`<!doctype html><body><form method="post" action="/tasks/new"><input name="title" value="Лендинг">
+    <textarea name="description">Старый текст</textarea>
+    <div data-copilot="/tasks/copilot" data-wait="CoPilot пишет…"><button type="button" data-copilot-mode="write">w</button>
+      <button type="button" data-copilot-mode="shorten">s</button>
+      <div data-copilot-out hidden><div data-copilot-text></div><button type="button" data-copilot-put="replace">r</button>
+        <button type="button" data-copilot-put="append">a</button><button type="button" data-copilot-put="">c</button></div></div>
+    </form></body>`, { runScripts: 'outside-only', url: 'http://go24.test/tasks/new' });
+  const w = dom.window, d = w.document;
+  let answer = { text: 'Новый текст' }, sent = null;
+  w.fetch = async (url, opts) => { sent = { url: String(url), body: new URLSearchParams(String(opts.body)) };
+    return { ok: true, status: 200, json: async () => answer }; };
+  w.eval(script);
+  const area = d.querySelector('textarea'), out = d.querySelector('[data-copilot-out]'), view = d.querySelector('[data-copilot-text]');
+  const put = how => d.querySelector(`[data-copilot-put="${how}"]`);
+  const ask = async mode => { d.querySelector(`[data-copilot-mode="${mode}"]`).click(); await new Promise(r => setTimeout(r, 10)); };
+  await ask('write');
+  assert.equal(sent.url, '/tasks/copilot');
+  assert.equal(sent.body.get('mode'), 'write');
+  assert.equal(sent.body.get('title'), 'Лендинг');
+  assert.equal(sent.body.get('text'), 'Старый текст');
+  assert.equal(out.hidden, false);
+  assert.equal(view.textContent, 'Новый текст');
+  assert.equal(put('replace').hidden, false);
+  assert.equal(area.value, 'Старый текст', 'nothing changes before «Вставить»');
+  put('append').click();
+  assert.equal(area.value, 'Старый текст\n\nНовый текст');
+  assert.equal(out.hidden, true);
+  await ask('shorten');
+  put('replace').click();
+  assert.equal(area.value, 'Новый текст');
+  await ask('shorten');
+  put('').click();
+  assert.equal(area.value, 'Новый текст', '«Отмена» keeps the text');
+  answer = { error: 'Описание пусто' };
+  await ask('shorten');
+  assert.equal(view.textContent, 'Описание пусто');
+  assert.ok(out.classList.contains('error'));
+  assert.equal(put('replace').hidden, true);
+  assert.equal(put('').hidden, false);
+}
+console.log('forms copilot: ok');

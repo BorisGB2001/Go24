@@ -57,6 +57,10 @@ type Connection struct {
 	CheckedAt  *time.Time
 	CheckError string
 	CreatedAt  time.Time
+	// the prices per million tokens of the input and of the output, in US dollars (0 — not given)
+	PriceIn, PriceOut float64
+	// the company's: the tokens an employee may spend a month (0 — no limit; ai_limits — their own over it)
+	MonthlyLimit int64
 }
 
 // URL is the API address the connection calls.
@@ -72,12 +76,16 @@ type Store struct {
 	key []byte // AES-256 key for the provider keys
 	// HTTP calls the providers (a check of a connection)
 	HTTP *http.Client
+	// Calls calls the models: an answer may take minutes (nil — HTTP)
+	Calls *http.Client
+	// Text gives an error of a tool to the model in words (nil — the error's own text)
+	Text func(err error) string
 }
 
 // NewStore: secret is go24's own secret (the session secret); the key of the provider keys is derived from it.
 func NewStore(db *pgxpool.Pool, secret string) *Store {
 	k := sha256.Sum256([]byte("go24 ai keys\x00" + secret))
-	return &Store{db: db, key: k[:], HTTP: &http.Client{Timeout: 20 * time.Second}}
+	return &Store{db: db, key: k[:], HTTP: &http.Client{Timeout: 20 * time.Second}, Calls: &http.Client{Timeout: 5 * time.Minute}}
 }
 
 func (s *Store) seal(plain string) ([]byte, error) {
@@ -115,11 +123,13 @@ func (s *Store) open(sealed []byte) (string, error) {
 	return string(plain), err
 }
 
-const cols = `id, COALESCE(owner_id::text, ''), name, provider, base_url, model, key_tail, is_default, checked_at, check_error, created_at`
+const cols = `id, COALESCE(owner_id::text, ''), name, provider, base_url, model, key_tail, is_default, checked_at, check_error, created_at,
+	price_in::float8, price_out::float8, monthly_limit`
 
 func scan(row pgx.Row) (Connection, error) {
 	var c Connection
-	err := row.Scan(&c.ID, &c.Owner, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.KeyTail, &c.Default, &c.CheckedAt, &c.CheckError, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.Owner, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.KeyTail, &c.Default, &c.CheckedAt, &c.CheckError, &c.CreatedAt,
+		&c.PriceIn, &c.PriceOut, &c.MonthlyLimit)
 	return c, err
 }
 
@@ -162,6 +172,11 @@ func (s *Store) Save(ctx context.Context, by string, c Connection, key string) (
 		return "", i18n.E("err.ai_provider")
 	case c.Provider == "compatible" && c.BaseURL == "":
 		return "", i18n.E("err.ai_url_required")
+	case c.PriceIn < 0 || c.PriceOut < 0 || c.MonthlyLimit < 0:
+		return "", i18n.E("err.ai_negative")
+	}
+	if c.Owner != "" {
+		c.MonthlyLimit = 0 // one's own connection is paid by its owner
 	}
 	if c.BaseURL != "" {
 		if u, err := url.Parse(c.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -196,16 +211,18 @@ func (s *Store) Save(ctx context.Context, by string, c Connection, key string) (
 		if key == "" && c.Provider != "compatible" {
 			return "", i18n.E("err.ai_key_required")
 		}
-		err = tx.QueryRow(ctx, `INSERT INTO ai_connections (owner_id, name, provider, base_url, model, key_sealed, key_tail, is_default, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-			owner, c.Name, c.Provider, c.BaseURL, c.Model, sealed, tail, c.Default, by).Scan(&c.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO ai_connections (owner_id, name, provider, base_url, model, key_sealed, key_tail, is_default, created_by,
+			price_in, price_out, monthly_limit)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+			owner, c.Name, c.Provider, c.BaseURL, c.Model, sealed, tail, c.Default, by, c.PriceIn, c.PriceOut, c.MonthlyLimit).Scan(&c.ID)
 	} else {
 		var tag pgconn.CommandTag
 		tag, err = tx.Exec(ctx, `UPDATE ai_connections SET name = $3, provider = $4, base_url = $5, model = $6, is_default = $7,
 			key_sealed = CASE WHEN $8::bytea IS NULL THEN key_sealed ELSE $8 END,
-			key_tail = CASE WHEN $8::bytea IS NULL THEN key_tail ELSE $9 END, checked_at = NULL, check_error = ''
+			key_tail = CASE WHEN $8::bytea IS NULL THEN key_tail ELSE $9 END, checked_at = NULL, check_error = '',
+			price_in = $10, price_out = $11, monthly_limit = $12
 			WHERE id::text = $1 AND owner_id IS NOT DISTINCT FROM $2`,
-			c.ID, owner, c.Name, c.Provider, c.BaseURL, c.Model, c.Default, sealed, tail)
+			c.ID, owner, c.Name, c.Provider, c.BaseURL, c.Model, c.Default, sealed, tail, c.PriceIn, c.PriceOut, c.MonthlyLimit)
 		if err == nil && tag.RowsAffected() == 0 {
 			return "", ErrNotFound
 		}
@@ -272,7 +289,8 @@ func (s *Store) For(ctx context.Context, userID string) (Connection, string, err
 	err := s.db.QueryRow(ctx, `SELECT `+cols+`, key_sealed FROM ai_connections
 		WHERE owner_id IS NULL OR owner_id = $1
 		ORDER BY (id = (SELECT connection_id FROM ai_choice WHERE user_id = $1)) IS TRUE DESC, owner_id IS NULL, is_default DESC, created_at
-		LIMIT 1`, userID).Scan(&c.ID, &c.Owner, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.KeyTail, &c.Default, &c.CheckedAt, &c.CheckError, &c.CreatedAt, &sealed)
+		LIMIT 1`, userID).Scan(&c.ID, &c.Owner, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.KeyTail, &c.Default, &c.CheckedAt, &c.CheckError, &c.CreatedAt,
+		&c.PriceIn, &c.PriceOut, &c.MonthlyLimit, &sealed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, "", ErrNone
 	}

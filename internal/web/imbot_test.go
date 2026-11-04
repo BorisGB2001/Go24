@@ -25,10 +25,21 @@ func TestIMBots(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := b.String()
+	if strings.Contains(head, `href="/im/copilot"`) {
+		t.Error("«CoPilot» without CoPilot")
+	}
 	head = head[strings.Index(head, `class="im-head"><b style="flex:1">`):]
 	head = head[:strings.Index(head, `class="im-pins"`)]
 	if !strings.Contains(head, "Чат-бот") || strings.Contains(head, "data-presence-text") || strings.Contains(head, "/call?") {
 		t.Errorf("the head of a bot's chat:\n%s", head)
+	}
+
+	b.Reset()
+	if err := im.Execute(&b, page{Data: map[string]any{"Rooms": []matrixsync.Room{bot}, "CoPilot": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `<a href="/im/copilot" class="button ghost" title="CoPilot — чат с ИИ`) {
+		t.Error("no «CoPilot» in the head of the chats")
 	}
 
 	b.Reset()

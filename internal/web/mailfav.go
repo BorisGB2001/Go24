@@ -10,13 +10,14 @@ import (
 	"go24/internal/mail"
 )
 
-// mailFav is a place of «Избранное» in the folder pane: one of the user's folders, categories, saved searches or a
-// virtual folder (flagged, snoozed, all inboxes — the name is the template's).
+// mailFav is a place of «Избранное» in the folder pane: one of the user's folders, categories, saved searches, a
+// favorite person or a virtual folder (flagged, snoozed, all inboxes — the name is the template's).
 type mailFav struct {
 	Ref     string
 	Folder  *mail.Folder
 	Cat     *mail.Category
 	Search  *mail.Search
+	Person  *mail.FavPerson
 	Virtual bool
 	Box     string // the folder's mailbox, when there are several
 }
@@ -39,6 +40,16 @@ func (s *Server) mailFavs(ctx context.Context, userID string, boxes []mailBox, c
 	if err != nil {
 		return nil, nil, err
 	}
+	var emails []string
+	for _, ref := range refs {
+		if strings.HasPrefix(ref, mail.PersonFolder) {
+			emails = append(emails, ref[len(mail.PersonFolder):])
+		}
+	}
+	people, err := s.Mail.FavPeople(ctx, userID, emails)
+	if err != nil {
+		return nil, nil, err
+	}
 	var list []mailFav
 	set := map[string]bool{}
 	for _, ref := range refs {
@@ -51,6 +62,10 @@ func (s *Server) mailFavs(ctx context.Context, userID string, boxes []mailBox, c
 				if cats[i].ID == ref[len(mail.CategoryFolder):] {
 					fav.Cat = &cats[i]
 				}
+			}
+		case strings.HasPrefix(ref, mail.PersonFolder):
+			if p, ok := people[ref[len(mail.PersonFolder):]]; ok && len(boxes) > 0 {
+				fav.Person = &p
 			}
 		case strings.HasPrefix(ref, mail.SearchFolder):
 			for i := range searches {
@@ -70,7 +85,7 @@ func (s *Server) mailFavs(ctx context.Context, userID string, boxes []mailBox, c
 				}
 			}
 		}
-		if fav.Virtual || fav.Folder != nil || fav.Cat != nil || fav.Search != nil {
+		if fav.Virtual || fav.Folder != nil || fav.Cat != nil || fav.Search != nil || fav.Person != nil {
 			list = append(list, fav)
 			set[ref] = true
 		}
@@ -78,9 +93,16 @@ func (s *Server) mailFavs(ctx context.Context, userID string, boxes []mailBox, c
 	return list, set, nil
 }
 
-// mailFavSet is «Добавить в избранное» (on=1) and «Удалить из избранного» of a folder pane's menu.
+// mailPersonRef is the «Избранное» ref of a sender (mail.PersonRef; the templates' mailPerson).
+func mailPersonRef(email string) string { return mail.PersonRef(email) }
+
+// mailFavSet is «Добавить в избранное» (on=1) and «Удалить из избранного» of a folder pane's menu, and of a sender in
+// the reading pane (ref=person:e-mail).
 func (s *Server) mailFavSet(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	ref := r.FormValue("ref")
+	if strings.HasPrefix(ref, mail.PersonFolder) {
+		ref = mail.PersonRef(ref[len(mail.PersonFolder):])
+	}
 	if ref == "" || len(ref) > 100 {
 		s.mailErr(w, r, i18n.E("err.bad_form"), "/mail")
 		return

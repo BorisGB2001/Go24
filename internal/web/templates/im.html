@@ -1,16 +1,18 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="im{{if $d.ReadOnly}} read-only{{end}}{{with $d.Settings}}{{with .Background}} im-bg-{{.}}{{end}}{{if .AlignLeft}} im-left{{end}}{{end}}" data-im{{with $d.Settings}}{{if .CtrlEnter}} data-ctrl-enter{{end}}{{end}} data-room="{{$d.Room}}" data-thread="{{$d.Thread}}" data-at="{{$d.At}}" data-tab="{{$d.Tab}}" data-failed="{{t "chat.failed"}}" data-drop="{{t "im.drop"}}" data-uploading="{{t "im.uploading"}}"
+<div class="im{{if $d.ReadOnly}} read-only{{end}}{{with $d.Group}}{{if .Channel}} channel{{end}}{{end}}{{with $d.Settings}}{{with .Background}} im-bg-{{.}}{{end}}{{if .AlignLeft}} im-left{{end}}{{end}}" data-im{{with $d.Settings}}{{if .CtrlEnter}} data-ctrl-enter{{end}}{{end}} data-room="{{$d.Room}}" data-thread="{{$d.Thread}}" data-at="{{$d.At}}" data-tab="{{$d.Tab}}" data-failed="{{t "chat.failed"}}" data-drop="{{t "im.drop"}}" data-uploading="{{t "im.uploading"}}"
   data-secure="{{$d.Secure}}" data-voice-https="{{t "im.voice_https"}}" data-mic-denied="{{t "im.mic_denied"}}" data-voice-wait="{{t "im.voice_wait"}}"
-  data-delete-confirm="{{t "im.delete_confirm"}}" data-copied="{{t "task.copied"}}" data-edit-hint="{{t "im.editing"}}" data-reply-hint="{{t "im.replying"}}" data-forwarded-ok="{{t "im.forwarded_ok"}}" data-search-in="{{t "im.search_messages"}}" data-search-here="{{t "im.search_title"}}" data-search-all-title="{{t "im.search_all_title"}}" data-pin-label="{{t "im.pin"}}" data-unpin-label="{{t "im.unpin"}}" data-save-label="{{t "im.save"}}" data-unsave-label="{{t "im.unsave"}}" data-saved-title="{{t "im.saved"}}" data-media-title="{{t "im.media_title"}}" data-threads-title="{{t "im.threads"}}" data-replies-fmt="{{t "im.replies" "%s"}}" data-replies-new-fmt="{{t "im.replies_new" "%s"}}" data-poll-end-confirm="{{t "im.poll_end_confirm"}}"
+  data-delete-confirm="{{t "im.delete_confirm"}}" data-copied="{{t "task.copied"}}" data-edit-hint="{{t "im.editing"}}" data-reply-hint="{{t "im.replying"}}" data-forwarded-ok="{{t "im.forwarded_ok"}}" data-search-in="{{t "im.search_messages"}}" data-search-here="{{t "im.search_title"}}" data-search-all-title="{{t "im.search_all_title"}}" data-pin-label="{{t "im.pin"}}" data-unpin-label="{{t "im.unpin"}}" data-save-label="{{t "im.save"}}" data-unsave-label="{{t "im.unsave"}}" data-saved-title="{{t "im.saved"}}" data-media-title="{{t "im.media_title"}}" data-threads-title="{{t "im.threads"}}" data-replies-fmt="{{t (or (and $d.Group $d.Group.Channel "im.comments") "im.replies") "%s"}}" data-replies-new-fmt="{{t "im.replies_new" "%s"}}" data-poll-end-confirm="{{t "im.poll_end_confirm"}}"
   data-read-by="{{t "im.read_by" "%s"}}" data-view-prev="{{t "disk.prev"}}" data-view-next="{{t "disk.next"}}" data-view-download="{{t "disk.download"}}" data-view-goto="{{t "im.file_goto"}}" data-view-close="{{t "im.file_close"}}" data-view-none="{{t "disk.no_preview"}}" data-view-loading="{{t "disk.loading"}}" data-typing-one="{{t "im.typing_one" "%s"}}" data-typing-many="{{t "im.typing_many" "%s"}}">
   <aside class="im-rooms" data-pane="im-rooms" data-pane-var="--im-rooms">
     <div class="im-head"><b>{{t "nav.messenger"}}</b>
       <button type="button" class="ghost" data-read-all title="{{t "im.read_all"}}">{{icon "checks"}}</button>
       <button type="button" class="ghost" data-saved-open title="{{t "im.saved"}}">{{icon "star"}}</button>
       <a href="/im/notes" class="button ghost" title="{{t "im.notes_hint"}}">{{icon "notebook"}}</a>
+      {{if $d.CoPilot}}<a href="/im/copilot" class="button ghost" title="{{t "im.copilot_hint"}}">{{icon "sparkles"}}</a>{{end}}
       {{if $d.Settings}}<button type="button" class="ghost" data-settings-open title="{{t "im.settings"}}">{{icon "settings"}}</button>{{end}}
       {{with $d.Element}}<a href="{{.}}" target="_blank" rel="noopener" class="muted small" title="{{t "im.element_hint"}}">Element ↗</a>{{end}}</div>
+    {{with imWidgets $d.Apps "IM_NAVIGATION"}}<nav class="im-navapps">{{range .}}<a href="/im?app={{.ID}}" class="small{{if and $d.NavApp (eq .ID $d.NavApp.ID)}} on{{end}}" title="{{or .Description .Tab}}"{{with imAppColor (.Opt "color")}} style="--app-color:{{.}}"{{end}}>{{icon (imAppIcon (.Opt "iconName"))}} {{.Tab}}</a>{{end}}</nav>{{end}}
     {{with $d.Settings}}{{$set := .}}
     <dialog class="im-settings" data-settings><form method="post" action="/im/settings"><input type="hidden" name="room" value="{{$d.Room}}">
       <div class="row"><b style="flex:1">{{t "im.settings"}}</b><button type="button" class="ghost" data-settings-close>{{icon "x"}}</button></div>
@@ -51,7 +53,7 @@
       {{range $d.Rooms}}
       <div class="im-row" data-row data-favorite="{{if .Favorite}}1{{end}}" data-muted="{{if .Muted}}1{{end}}" data-marked="{{if .Marked}}1{{end}}" data-hidden="{{if and .Hidden (ne .ID $d.Room)}}1{{end}}">
       <a href="/im?room={{.ID}}" class="im-room{{if eq .ID $d.Room}} on{{end}}" data-room-id="{{.ID}}" data-name="{{.Name}}" data-kind="{{.Kind}}"{{if .CollabID}} data-in="collab"{{end}}>
-        {{if eq .Kind "dm"}}<span class="pr-ava" data-presence="{{.PeerID}}">{{photo .Name (photoURL .PeerID .PeerPhoto) false}}</span>{{else if .Photo}}<img class="im-ico" src="/im/photo?room={{urlquery .ID}}" alt="">{{else}}<span class="im-ico k-{{.Kind}}">{{if eq .Kind "feed"}}{{icon "news"}}{{else if eq .Kind "task"}}{{icon "checkbox"}}{{else if eq .Kind "collab"}}{{icon "users-group"}}{{else if eq .Kind "group"}}{{icon "users"}}{{else if eq .Kind "channel"}}{{icon "speakerphone"}}{{else if eq .Kind "notes"}}{{icon "notebook"}}{{else}}#{{end}}</span>{{end}}
+        {{if eq .Kind "dm"}}<span class="pr-ava" data-presence="{{.PeerID}}">{{photo .Name (photoURL .PeerID .PeerPhoto) false}}</span>{{else if .Photo}}<img class="im-ico" src="/im/photo?room={{urlquery .ID}}" alt="">{{else}}<span class="im-ico k-{{.Kind}}">{{if eq .Kind "feed"}}{{icon "news"}}{{else if eq .Kind "general"}}{{icon "messages"}}{{else if eq .Kind "task"}}{{icon "checkbox"}}{{else if eq .Kind "collab"}}{{icon "users-group"}}{{else if eq .Kind "group"}}{{icon "users"}}{{else if eq .Kind "channel"}}{{icon "speakerphone"}}{{else if eq .Kind "notes"}}{{icon "notebook"}}{{else}}#{{end}}</span>{{end}}
         <span class="im-meta"><b>{{.Name}}{{with .CollabName}} <span class="muted small" title="{{t "collab.chat_of"}}">· {{.}}</span>{{end}}</b>
           <span class="muted small" data-preview{{if and .Draft (ne .ID $d.Room)}} data-draft{{end}}>{{if and .Draft (ne .ID $d.Room)}}<span class="im-draft">{{t "im.draft"}}:</span> {{implain .Draft}}{{else}}{{with .Last}}{{if .Encrypted}}🔒 {{t "im.encrypted"}}{{else if .Event}}{{template "imevent" .}}{{else}}{{.SenderName}}: {{implain .Body}}{{end}}{{end}}{{end}}</span></span>
         <span class="im-marks">{{icon "pin"}}{{icon "bell-off"}}</span>
@@ -72,7 +74,7 @@
   </aside>
   <section class="im-chat">
     {{with $d.Current}}
-    <div class="im-head"><b style="flex:1">{{if and (eq .Kind "dm") .PeerID (not .PeerBot)}}<a href="/u/{{.PeerID}}" class="im-peer" data-user="{{.PeerID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}{{if .PeerBot}} <span class="pill">{{icon "robot"}} {{t "im.bot"}}</span>{{end}}{{if eq .Kind "channel"}} <span class="pill">{{icon "speakerphone"}} {{t "im.channel"}}</span>{{end}}{{with $d.Group}}{{if .Open}} <span class="pill" title="{{t "im.open_hint"}}">{{icon "world"}} {{t "im.open"}}</span>{{end}}{{end}}{{if eq .Kind "notes"}}<span class="small muted im-topic">{{t "im.notes_sub"}}</span>{{end}}{{if and (eq .Kind "dm") .PeerID (not .PeerBot)}}<span class="small muted pr-line" data-presence="{{.PeerID}}" data-presence-text></span>{{end}}{{with $d.Group}}{{with .Topic}}<span class="small muted im-topic" title="{{.}}">{{.}}</span>{{end}}{{end}}{{with $d.Collab}}
+    <div class="im-head"><b style="flex:1">{{if and (eq .Kind "dm") .PeerID (not .PeerBot)}}<a href="/u/{{.PeerID}}" class="im-peer" data-user="{{.PeerID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}{{if .PeerBot}} <span class="pill">{{icon "robot"}} {{t "im.bot"}}</span>{{end}}{{if eq .Kind "channel"}} <span class="pill">{{icon "speakerphone"}} {{t "im.channel"}}</span>{{end}}{{if eq .Kind "general"}} <span class="pill" title="{{t "im.general_hint"}}">{{icon "messages"}} {{t "im.general"}}</span>{{if and $.User $.User.Admin}} <a href="/settings/general-chat" class="small" title="{{t "imgeneral.title"}}">{{icon "settings"}}</a>{{end}}{{end}}{{with $d.Group}}{{if .Open}} <span class="pill" title="{{t "im.open_hint"}}">{{icon "world"}} {{t "im.open"}}</span>{{end}}{{end}}{{if eq .Kind "notes"}}<span class="small muted im-topic">{{t "im.notes_sub"}}</span>{{end}}{{if and (eq .Kind "dm") .PeerID (not .PeerBot)}}<span class="small muted pr-line" data-presence="{{.PeerID}}" data-presence-text></span>{{end}}{{with $d.Group}}{{with .Topic}}<span class="small muted im-topic" title="{{.}}">{{.}}</span>{{end}}{{end}}{{with $d.Collab}}
       <span class="small im-collab"><a href="/p/{{.Key}}">{{icon "list-check"}} {{t "collab.tasks"}}</a>{{if .Overdue}} <a href="/my?view=overdue&amp;project={{.Key}}" class="cnt red" title="{{t "counter.overdue"}}">{{.Overdue}}</a>{{end}}{{if .Comments}} <a href="/my?view=comments&amp;project={{.Key}}" class="cnt green" title="{{t "counter.comments"}}">{{.Comments}}</a>{{end}}
         <a href="/disk/p/{{.Key}}">{{icon "folder"}} {{t "collab.drive"}}</a>
         <a href="/calendar?project={{.Key}}">{{icon "calendar-event"}} {{t "collab.calendar"}}</a>
@@ -80,6 +82,7 @@
       {{with $d.CollabInvite}}<a href="/p/{{$d.Collab.Key}}#{{.}}" class="button ghost" title="{{t "guests.invite"}}">{{icon "user-plus"}}</a>{{end}}
       {{if $d.CollabSign}}<a href="/sign/new?collab={{$d.Collab.Key}}" class="button ghost" title="{{t "sign.collab.button"}}">{{icon "signature"}}</a>{{end}}
       {{with $d.Collab}}{{template "imcchats" (dict "C" . "D" $d)}}{{end}}
+      {{range imWidgets $d.Apps "IM_SIDEBAR"}}{{template "imappbtn" .}}{{end}}
       <button type="button" class="ghost" data-search-open title="{{t "im.search_chat"}}">{{icon "search"}}</button>
       <button type="button" class="ghost" data-media-open title="{{t "im.media_title"}}">{{icon "photo"}}</button>
       <button type="button" class="ghost im-threads-btn" data-threads-open title="{{t "im.threads"}}">{{icon "messages"}}<span class="cnt" data-threads-cnt {{if not .Threads}}hidden{{end}}>{{.Threads}}</span></button>
@@ -123,8 +126,11 @@
       <button type="button" data-remind-at="1h">{{t "im.remind_1h"}}</button><button type="button" data-remind-at="tomorrow">{{t "im.remind_tomorrow"}}</button>
       <label class="small">{{t "im.remind_pick"}} <input type="datetime-local" data-remind-pick></label><button type="button" data-remind-at="pick">{{t "common.save"}}</button>
       <button type="button" class="ghost" data-remind-at="">{{t "im.remind_off"}}</button><button class="ghost">{{t "common.cancel"}}</button></form></dialog>
+    {{template "imselbar"}}
+    {{with imWidgets $d.Apps "IM_TEXTAREA"}}<div class="im-apppop" data-app-pop hidden><div class="row"><b class="small" data-app-title></b><span class="spacer"></span><button type="button" class="ghost" data-app-close>{{icon "x"}}</button></div><div data-app-box></div></div>{{end}}
+    {{with imWidgets $d.Apps "IM_CONTEXT_MENU"}}<template data-ctx-apps>{{range .}}<button type="button" class="im-ctxapp" data-im-app="{{.ID}}" data-place="{{.Placement}}" data-title="{{.Tab}}">{{icon (imAppIcon (.Opt "iconName"))}} {{.Tab}}</button>{{end}}</template>{{end}}
     {{if $d.ReadOnly}}<div class="im-readonly small muted" data-readonly>{{icon "speakerphone"}} {{t (or $d.ReadOnlyKey "im.channel_readonly")}}</div>{{else}}
-    <form class="chatform" data-send><label class="ghost attach" title="{{t "im.attach"}}">{{icon "paperclip"}}<input type="file" multiple hidden data-attach></label><button type="button" class="ghost attach voice" title="{{t "im.voice"}}" data-voice>{{icon "microphone"}}<span data-voice-time></span></button><button type="button" class="ghost attach" title="{{t "im.poll_new"}}" data-poll-new>{{icon "chart-bar"}}</button><button type="button" class="ghost attach" title="{{t "im.emoji"}}" data-emoji>☺</button>
+    <form class="chatform" data-send>{{template "imattachmenu" (dict "Guest" $.Guest "Office" $d.Office "Poll" true "Room" $d.Current.ID)}}<button type="button" class="ghost attach voice" title="{{t "im.voice"}}" data-voice>{{icon "microphone"}}<span data-voice-time></span></button><button type="button" class="ghost attach" title="{{t "im.emoji"}}" data-emoji>☺</button>{{range imWidgets $d.Apps "IM_TEXTAREA"}}{{template "imappbtn" .}}{{end}}
       <textarea name="body" rows="1" required placeholder="{{t "chat.placeholder"}}" data-mention{{with .Draft}} data-draft="{{.}}"{{end}}></textarea>
       <button class="primary send" title="{{t "comments.send"}}">{{icon "send"}}</button></form>{{end}}
     {{else}}{{with $d.OpenChat}}
@@ -133,9 +139,12 @@
     <div class="im-msgs" data-msgs><div class="muted small" style="margin:auto">…</div></div>
     <form method="post" action="/im/group/join" class="im-join"><input type="hidden" name="room" value="{{.ID}}"><span class="small muted">{{t "im.join_hint"}}</span>
       <button class="primary">{{icon "user-plus"}} {{t "im.join"}}</button></form>
+    {{else}}{{with $d.NavApp}}
+    <div class="im-head"><b style="flex:1">{{icon (imAppIcon (.Opt "iconName"))}} {{.Tab}}</b>{{with .Description}}<span class="small muted im-topic">{{.}}</span>{{end}}</div>
+    <iframe class="im-appnav" title="{{.Tab}}" data-tab="{{.ID}}" data-src="/apps/tab/{{.ID}}" data-im-nav allow="clipboard-read; clipboard-write; camera; microphone; fullscreen"></iframe>
     {{else}}
     <div class="chat-empty muted"><p>{{icon "message-circle"}}</p><p>{{t "im.pick"}}</p></div>
-    {{end}}{{end}}
+    {{end}}{{end}}{{end}}
   </section>
   <aside class="im-thread im-search" data-search-pane data-pane="im-side" data-pane-var="--im-side" data-pane-side="left" hidden>
     <div class="im-head"><b style="flex:1" data-search-title>{{t "im.search_title"}}</b><button type="button" class="ghost" data-close-search>{{icon "x"}}</button></div>
@@ -144,15 +153,24 @@
     <div class="im-hits" data-hits></div>
   </aside>
   <aside class="im-thread" data-thread-pane data-pane="im-side" data-pane-var="--im-side" data-pane-side="left" hidden>
-    <div class="im-head"><b>{{t "im.thread"}}</b><button type="button" class="ghost" data-close-thread>{{icon "x"}}</button></div>
+    <div class="im-head"><b>{{if and $d.Group $d.Group.Channel}}{{t "im.comments_title"}}{{else}}{{t "im.thread"}}{{end}}</b><button type="button" class="ghost" data-close-thread>{{icon "x"}}</button></div>
     <div class="im-msgs" data-thread-msgs></div>
-    {{if not $d.ReadOnly}}<form class="chatform" data-send-thread><label class="ghost attach" title="{{t "im.attach"}}">{{icon "paperclip"}}<input type="file" multiple hidden data-attach></label><button type="button" class="ghost attach voice" title="{{t "im.voice"}}" data-voice>{{icon "microphone"}}<span data-voice-time></span></button><button type="button" class="ghost attach" title="{{t "im.poll_new"}}" data-poll-new>{{icon "chart-bar"}}</button><button type="button" class="ghost attach" title="{{t "im.emoji"}}" data-emoji>☺</button>
-      <textarea name="body" rows="1" required placeholder="{{t "im.reply"}}" data-mention></textarea>
+    {{template "imselbar"}}
+    {{if or (not $d.ReadOnly) $d.Comments}}<form class="chatform" data-send-thread>{{template "imattachmenu" (dict "Guest" $.Guest "Office" $d.Office "Poll" (not $d.Comments))}}<button type="button" class="ghost attach voice" title="{{t "im.voice"}}" data-voice>{{icon "microphone"}}<span data-voice-time></span></button><button type="button" class="ghost attach" title="{{t "im.emoji"}}" data-emoji>☺</button>
+      <textarea name="body" rows="1" required placeholder="{{if and $d.Group $d.Group.Channel}}{{t "im.comment_ph"}}{{else}}{{t "im.reply"}}{{end}}" data-mention></textarea>
       <button class="primary send">{{icon "send"}}</button></form>{{end}}
   </aside>
+  {{if or (imWidgets $d.Apps "IM_SIDEBAR") (imWidgets $d.Apps "IM_CONTEXT_MENU")}}<aside class="im-thread im-apppane" data-app-pane data-pane="im-side" data-pane-var="--im-side" data-pane-side="left" hidden>
+    <div class="im-head"><b style="flex:1" data-app-title></b><button type="button" class="ghost" data-app-close>{{icon "x"}}</button></div>
+    <div class="im-appbox" data-app-box></div>
+  </aside>{{end}}
 </div>
-<script src="{{asset "js/im.js"}}"></script>
+{{if $d.Apps}}{{template "appsel"}}<script src="{{asset "js/apphost.js"}}"></script>{{end}}
+<script src="{{asset "js/drivepick.js"}}"></script><script src="{{asset "js/im.js"}}"></script>
 {{end}}
+
+{{/* a button of an application's widget in the chat (IM_SIDEBAR, IM_TEXTAREA; im.js opens its frame) */}}
+{{define "imappbtn"}}<button type="button" class="ghost{{if eq .Placement "IM_TEXTAREA"}} attach{{end}}" title="{{.Tab}}" data-im-app="{{.ID}}" data-place="{{.Placement}}" data-title="{{.Tab}}" data-w="{{.Width}}" data-h="{{.Height}}"{{with imAppColor (.Opt "color")}} style="color:{{.}}"{{end}}>{{icon (imAppIcon (.Opt "iconName"))}}</button>{{end}}
 
 {{define "imgroup"}}{{$g := .G}}{{$room := .Room.ID}}
 <details class="im-group" data-group><summary class="button ghost" title="{{t "im.group_members"}}">{{icon "users"}} {{len $g.Members}}</summary>
@@ -167,6 +185,8 @@
       <button class="ghost small">{{icon "speakerphone"}} {{if $g.Channel}}{{t "im.channel_off"}}{{else}}{{t "im.channel_on"}}{{end}}</button></form>
     {{if $g.CanOpen}}<form method="post" action="/im/group/open"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="on" value="{{if $g.Open}}0{{else}}1{{end}}">
       <button class="ghost small">{{if $g.Open}}{{icon "lock"}} {{t "im.open_off"}}{{else}}{{icon "world"}} {{t "im.open_on"}}{{end}}</button></form>{{end}}
+    {{if $g.CanHist}}<form method="post" action="/im/group/history" title="{{t "im.history_new_hint"}}"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="on" value="{{if $g.History}}0{{else}}1{{end}}">
+      <button class="ghost small">{{icon "history"}} {{if $g.History}}{{t "im.history_new_off"}}{{else}}{{t "im.history_new_on"}}{{end}}</button></form>{{end}}
     <details class="im-rights"><summary class="small">{{icon "lock"}} {{t "im.rights"}}</summary>
       <form method="post" action="/im/group/rights"><input type="hidden" name="room" value="{{$room}}">
         <label class="small">{{t "im.rights_add"}} <select name="add">{{template "imright" $g.Rights.Add}}</select></label>
@@ -187,6 +207,7 @@
       <select name="collab" required aria-label="{{t "collab.chat_add_to"}}"><option value="">{{t "collab.chat_add_to"}}</option>{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><button>{{t "collab.chat_add_btn"}}</button></form>{{end}}
     {{if .D.CollabChatRemove}}<form method="post" action="/im/collab/remove" data-confirm="{{t "collab.chat_remove_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><button class="ghost">{{icon "unlink"}} {{t "collab.chat_remove"}}</button></form>{{end}}
     <form method="post" action="/im/group/leave" data-confirm="{{t "im.group_leave_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><button class="ghost danger">{{icon "logout"}} {{t "im.group_leave"}}</button></form>
+    {{if $g.Owner}}<form method="post" action="/im/group/delete" data-confirm="{{t "im.group_delete_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><button class="ghost danger">{{icon "trash"}} {{t "im.group_delete"}}</button></form>{{end}}
   </div>
 </details>
 {{end}}
@@ -196,7 +217,9 @@
   <div class="pop">
     <b class="small">{{t "collab.chats"}}</b>
     <ul class="im-cchats">{{with $d.CollabMain}}<li><a href="/im?room={{urlquery .}}"{{if eq . $d.Room}} class="on"{{end}}>{{icon "users-group"}} {{t "collab.chat_main"}}</a></li>{{end}}
-      {{range $d.CollabChats}}<li><a href="/im?room={{urlquery .ID}}"{{if eq .ID $d.Room}} class="on"{{end}}>{{if eq .Kind "channel"}}{{icon "speakerphone"}}{{else}}{{icon "users"}}{{end}} {{.Name}}</a></li>{{end}}</ul>
+      {{range $d.CollabChats}}<li><a href="/im?room={{urlquery .ID}}"{{if eq .ID $d.Room}} class="on"{{end}}>{{if .CoPilot}}{{icon "sparkles"}}{{else if eq .Kind "channel"}}{{icon "speakerphone"}}{{else}}{{icon "users"}}{{end}} {{.Name}}</a></li>{{end}}</ul>
+    {{if and $d.CoPilot (not $c.Project.Archived)}}<form method="post" action="/im/collab/copilot"><input type="hidden" name="collab" value="{{$c.ID}}"><input type="hidden" name="room" value="{{$d.Room}}">
+      <button class="ghost" title="{{t "collab.copilot_chat_hint"}}">{{icon "sparkles"}} {{t "collab.copilot_chat_new"}}</button></form>{{end}}
     {{if not $c.Project.Archived}}<form method="post" action="/im/collab/create" class="im-group-new"><input type="hidden" name="collab" value="{{$c.ID}}"><input type="hidden" name="room" value="{{$d.Room}}">
       <b class="small">{{t "collab.chat_new"}}</b>
       <input name="name" placeholder="{{t "im.group_name"}}" maxlength="200" required>
@@ -228,7 +251,9 @@
   <a href="#" class="on" data-media-tab="media">{{t "im.media"}} <span class="muted">{{len .Media}}</span></a>
   <a href="#" data-media-tab="files">{{t "im.media_files"}} <span class="muted">{{len .Files}}</span></a>
   <a href="#" data-media-tab="audio">{{t "im.media_audio"}} <span class="muted">{{len .Audio}}</span></a>
-  <a href="#" data-media-tab="links">{{t "im.media_links"}} <span class="muted">{{len .Links}}</span></a></div>
+  <a href="#" data-media-tab="links">{{t "im.media_links"}} <span class="muted">{{len .Links}}</span></a>
+  <a href="#" data-media-tab="tasks">{{t "im.media_tasks"}} <span class="muted">{{len .Tasks}}</span></a>
+  <a href="#" data-media-tab="events">{{t "im.media_events"}} <span class="muted">{{len .Events}}</span></a></div>
 <div class="im-media-grid" data-media-list="media">{{range .Media}}<a href="#" data-goto="{{.ID}}"{{with .ThreadRoot}} data-goto-thread="{{.}}"{{end}} title="{{.SenderName}} · {{day .At}} {{clock .At}} · {{.File.Name}}">
   {{if eq .File.Kind "image"}}<img loading="lazy" src="/im/file?room={{urlquery $room}}&amp;event={{urlquery .ID}}" alt="{{.File.Name}}">{{else}}<span class="im-media-video">{{icon "video"}}</span>{{end}}</a>
   {{else}}<p class="muted small">{{t "im.media_none"}}</p>{{end}}</div>
@@ -239,7 +264,21 @@
 <div data-media-list="links" hidden>{{range .Links}}<div class="im-hit im-media-file"><a href="{{.URL}}" target="_blank" rel="noopener">{{.URL}}</a>
   <span class="small muted">{{.SenderName}} · <a href="#" data-goto="{{.MessageID}}"{{with .ThreadRoot}} data-goto-thread="{{.}}"{{end}}>{{day .At}} {{clock .At}}</a></span></div>
   {{else}}<p class="muted small">{{t "im.media_none"}}</p>{{end}}</div>
+<div data-media-list="tasks" hidden><p><a class="button small" href="/tasks/new?im_room={{urlquery $room}}">{{icon "plus"}} {{t "im.task_new"}}</a></p>
+  {{range .Tasks}}<div class="im-hit im-media-file"><a href="/t/{{.Key}}" target="_blank" rel="noopener">{{icon "checkbox"}} {{.Key}} {{.Title}}</a>
+  <span class="small muted">{{t (print "status." .Status)}}{{with .Deadline}} · {{t "im.item_deadline"}} {{day .}} {{clock .}}{{end}} · {{.ResponsibleName}}{{with .Message}} · <a href="#" data-goto="{{.}}">{{t "im.to_message"}}</a>{{end}}</span></div>
+  {{else}}<p class="muted small">{{t "im.media_none"}}</p>{{end}}</div>
+<div data-media-list="events" hidden><p><a class="button small" href="/calendar/new?im_room={{urlquery $room}}">{{icon "plus"}} {{t "im.event_new"}}</a></p>
+  {{range .Events}}<div class="im-hit im-media-file"><a href="/calendar/{{.ID}}" target="_blank" rel="noopener">{{icon "calendar-event"}} {{.Title}}</a>
+  <span class="small muted">{{day .Start}}{{if not .AllDay}} {{clock .Start}}–{{clock .End}}{{end}}{{with .Where}} · {{.}}{{end}}{{with .Message}} · <a href="#" data-goto="{{.}}">{{t "im.to_message"}}</a>{{end}}</span></div>
+  {{else}}<p class="muted small">{{t "im.media_none"}}</p>{{end}}</div>
 {{end}}
+
+{{define "imselbar"}}<div class="im-selbar" data-selbar hidden><b class="small" data-sel-count data-fmt="{{t "im.selected" "%s"}}"></b>
+  <button type="button" class="small" data-sel="forward">{{icon "arrow-forward-up"}} {{t "im.forward"}}</button>
+  <button type="button" class="small" data-sel="copy">{{icon "copy"}} {{t "im.copy"}}</button>
+  <button type="button" class="small danger" data-sel="delete" title="{{t "im.select_own"}}">{{icon "trash"}} {{t "common.delete"}}</button>
+  <button type="button" class="small ghost" data-sel="cancel">{{t "common.cancel"}}</button></div>{{end}}
 
 {{define "imlist"}}{{range .}}{{template "immsg" .}}{{end}}{{end}}
 
@@ -268,6 +307,7 @@
       <a href="/calendar/new?im_room={{urlquery .RoomID}}&amp;im_event={{urlquery .ID}}" data-act-link>{{icon "calendar-event"}} {{t "im.make_event"}}</a>
       <a href="/feed?im_room={{urlquery .RoomID}}&amp;im_event={{urlquery .ID}}" data-act-link>{{icon "news"}} {{t "im.make_post"}}</a>
       {{if .Pinned}}<button type="button" data-act="unpin">{{icon "pin"}} {{t "im.unpin"}}</button>{{else}}<button type="button" data-act="pin">{{icon "pin"}} {{t "im.pin"}}</button>{{end}}
+      <button type="button" data-act="select">{{icon "checks"}} {{t "im.select"}}</button>
       {{if .Editable}}<button type="button" data-act="edit">{{icon "edit"}} {{t "im.edit"}}</button>{{end}}
       {{if .Mine}}<button type="button" data-act="delete" class="danger">{{icon "trash"}} {{t "common.delete"}}</button>{{end}}
     </div></details>{{end}}
@@ -290,10 +330,21 @@
     <div class="reacts">{{range .Reactions}}<button type="button" class="react{{if .Mine}} mine{{end}}" data-react="{{.Key}}" title="{{.Names}}">{{.Key}} <b>{{.Count}}</b></button>{{end}}
       {{if not .Encrypted}}<details class="react-add"><summary title="{{t "chat.react"}}">☺</summary>
         <div class="react-pick">{{range quickReactions}}<button type="button" data-react="{{.}}">{{.}}</button>{{end}}</div></details>{{end}}</div>
-    {{if not .ThreadRoot}}<button type="button" class="link small im-thlink{{if .NewReplies}} new{{end}}" data-open-thread="{{.ID}}" data-replies="{{.Replies}}" data-new="{{.NewReplies}}">{{icon "message-circle"}} <span data-replies-text>{{if .Replies}}{{t "im.replies" .Replies}}{{else}}{{t "im.reply_thread"}}{{end}}</span><span class="im-thnew" data-new-text {{if not .NewReplies}}hidden{{end}}>{{t "im.replies_new" .NewReplies}}</span></button>{{end}}
+    {{if not .ThreadRoot}}<button type="button" class="link small im-thlink{{if .NewReplies}} new{{end}}" data-open-thread="{{.ID}}" data-replies="{{.Replies}}" data-new="{{.NewReplies}}">{{icon "message-circle"}} <span data-replies-text>{{if .Replies}}<span class="th-reply">{{t "im.replies" .Replies}}</span><span class="th-comment">{{t "im.comments" .Replies}}</span>{{else}}<span class="th-reply">{{t "im.reply_thread"}}</span><span class="th-comment">{{t "im.comment"}}</span>{{end}}</span><span class="im-thnew" data-new-text {{if not .NewReplies}}hidden{{end}}>{{t "im.replies_new" .NewReplies}}</span></button>{{end}}
   </div>
 </div>
 {{end}}{{end}}
+
+{{/* «Прикрепить»: a file from the computer or a drive, a new document, a poll; in the chat itself
+also a task and a meeting of the chat (Room) */}}
+{{define "imattachmenu"}}<span class="im-attach-wrap"><button type="button" class="ghost attach" title="{{t "im.attach"}}" aria-haspopup="menu" aria-expanded="false" data-attach-menu>{{icon "paperclip"}}</button>
+  <span class="im-attach-menu" role="menu" hidden data-attach-pop>
+    <label role="menuitem" tabindex="0">{{icon "device-desktop"}} {{t "im.attach_pc"}}<input type="file" multiple hidden data-attach></label>
+    {{if not .Guest}}<button type="button" role="menuitem" data-disk-pick data-event {{template "diskPickL"}}>{{icon "folders"}} {{t "disk.pick"}}</button>
+    {{if .Office}}<button type="button" role="menuitem" data-im-doc="docx">{{icon "file-text"}} {{t "office.new_docx"}}</button><button type="button" role="menuitem" data-im-doc="xlsx">{{icon "table"}} {{t "office.new_xlsx"}}</button><button type="button" role="menuitem" data-im-doc="pptx">{{icon "presentation"}} {{t "office.new_pptx"}}</button>{{end}}{{end}}
+    {{if .Poll}}<button type="button" role="menuitem" data-poll-new>{{icon "chart-bar"}} {{t "im.poll"}}</button>{{end}}
+    {{with .Room}}<a role="menuitem" href="/tasks/new?im_room={{urlquery .}}">{{icon "checkbox"}} {{t "im.make_task"}}</a><a role="menuitem" href="/calendar/new?im_room={{urlquery .}}">{{icon "calendar-event"}} {{t "im.make_event"}}</a>{{end}}
+  </span></span>{{end}}
 
 {{define "imattach"}}<div class="im-attach"{{with .Color}} style="border-left-color:{{.}};"{{end}}>{{range .Blocks}}
   {{if eq .Kind "message"}}<div class="im-at-msg">{{imtext .Text}}</div>
@@ -332,7 +383,8 @@
 
 {{define "imcalls"}}{{$video := .Video}}
 <div class="tabs im-calls-tabs"><a href="#" data-calls-filter=""{{if not .Missed}} class="on"{{end}}>{{t "im.calls_all"}}</a>
-  <a href="#" data-calls-filter="1"{{if .Missed}} class="on"{{end}}>{{t "im.calls_missed"}}</a></div>
+  <a href="#" data-calls-filter="1"{{if .Missed}} class="on"{{end}}>{{t "im.calls_missed"}}</a>
+  {{if $video}}<a href="/call/conferences" class="im-calls-conf" style="margin-left:auto" title="{{t "call.conf_hint"}}">{{icon "video"}} {{t "call.conf_title"}}</a>{{end}}</div>
 {{range .Calls}}<div class="im-row im-call k-{{.Kind}}" data-call data-name="{{.Room.Name}} {{.ByName}}">
   <a href="{{if ne .Room.Kind "gone"}}/im?room={{urlquery .Room.ID}}{{else}}#{{end}}" class="im-room" title="{{join .Names ", "}}">
     {{if eq .Room.Kind "dm"}}{{photo .Room.Name (photoURL .Room.PeerID .Room.PeerPhoto) false}}{{else if eq .Room.Kind "gone"}}{{photo .ByName "" false}}{{else}}<span class="im-ico k-{{.Room.Kind}}">{{if eq .Room.Kind "collab"}}{{icon "users-group"}}{{else}}{{icon "users"}}{{end}}</span>{{end}}

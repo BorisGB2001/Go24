@@ -21,7 +21,7 @@ var forEvent = strings.ReplaceAll(appFor, "$1", "u.id")
 
 // Events are what an application can subscribe its handler to, as event.bind (see migration 323): the
 // cards of CRM (a smart process's — ONCRMDYNAMICITEM…), tasks, a new employee, the application's own uninstall, a call of
-// telephony that ended and what its chat bots hear (imbot.register binds their handlers; migration 329).
+// telephony that ended, what its chat bots hear and the answers to its channels of the open lines (imbot.register binds their handlers; migration 329).
 var Events = []string{
 	"ONCRMLEADADD", "ONCRMLEADUPDATE", "ONCRMLEADDELETE",
 	"ONCRMDEALADD", "ONCRMDEALUPDATE", "ONCRMDEALDELETE",
@@ -31,6 +31,11 @@ var Events = []string{
 	"ONTASKADD", "ONTASKUPDATE", "ONTASKDELETE",
 	"ONUSERADD", "ONAPPUNINSTALL", "ONVOXIMPLANTCALLEND", // a call of the log ended (web.phoneEvents)
 	"ONIMBOTMESSAGEADD", "ONIMBOTJOINCHAT", "ONIMBOTDELETE", "ONIMCOMMANDADD", // of the application's chat bots (matrixsync.Bot)
+	// of its bots of imbot.v2 with eventMode «webhook» (matrixsync.BotV2Events; Bot.register binds them)
+	"ONIMBOTV2MESSAGEADD", "ONIMBOTV2MESSAGEUPDATE", "ONIMBOTV2MESSAGEDELETE", "ONIMBOTV2JOINCHAT", "ONIMBOTV2DELETE", "ONIMBOTV2COMMANDADD",
+	"ONIMBOTV2REACTIONCHANGE", "ONIMBOTV2CONTEXTGET",
+	// of its channels of the open lines (imconnector; openlines.SendConnectors)
+	"ONIMCONNECTORMESSAGEADD", "ONIMCONNECTORDIALOGFINISH", "ONIMCONNECTORSTATUSDELETE",
 }
 
 // Event is a handler of an application subscribed to an event.
@@ -45,6 +50,7 @@ type Event struct {
 	LastError  string     `json:"last_error"`
 	CreatedAt  time.Time  `json:"created_at"`
 	Pending    int        `json:"pending"`
+	Portal     bool       `json:"-"` // bound by the name: posted posts (migration 664)
 }
 
 // BindEvent subscribes the application's handler (on its host) to the event (event.bind) for the employee whose
@@ -57,9 +63,9 @@ func (s *Store) BindEvent(ctx context.Context, a App, e Event) (Event, error) {
 	if u, err := url.Parse(e.Handler); err != nil || checkURL(e.Handler, true) != nil || !a.Owns(u) {
 		return e, i18n.E("err.app_handler_host")
 	}
-	err := s.db.QueryRow(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id) SELECT $1, $2, $3, u.id FROM users u
-		WHERE u.id::text = $4 AND u.active ON CONFLICT (app_id, event, handler_url) DO UPDATE SET user_id = EXCLUDED.user_id
-		RETURNING id::text, created_at`, a.ID, e.Event, e.Handler, e.UserID).Scan(&e.ID, &e.CreatedAt)
+	err := s.db.QueryRow(ctx, `INSERT INTO app_events (app_id, event, handler_url, user_id, portal) SELECT $1, $2, $3, u.id, $5 FROM users u
+		WHERE u.id::text = $4 AND u.active ON CONFLICT (app_id, event, handler_url) DO UPDATE SET user_id = EXCLUDED.user_id, portal = EXCLUDED.portal
+		RETURNING id::text, created_at`, a.ID, e.Event, e.Handler, e.UserID, e.Portal).Scan(&e.ID, &e.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = i18n.E("err.app_event_user")
 	}
@@ -78,8 +84,8 @@ func (s *Store) UnbindEvent(ctx context.Context, appID, event, handler string) (
 // AppEvents are the subscriptions of an application (event.get), or of all, by application, with appID "".
 func (s *Store) AppEvents(ctx context.Context, appID string) ([]Event, error) {
 	rows, err := s.db.Query(ctx, `SELECT e.id::text, e.app_id::text, e.event, e.handler_url, coalesce(e.user_id::text, ''), e.last_at,
-		e.last_status, e.last_error, e.created_at, (SELECT count(*) FROM app_event_deliveries d WHERE d.event_id = e.id AND d.done_at IS NULL)::int
-		FROM app_events e WHERE $1 = '' OR e.app_id::text = $1 ORDER BY e.created_at, e.event`, appID)
+		e.last_status, e.last_error, e.created_at, (SELECT count(*) FROM app_event_deliveries d WHERE d.event_id = e.id AND d.done_at IS NULL)::int,
+		e.portal FROM app_events e WHERE $1 = '' OR e.app_id::text = $1 ORDER BY e.created_at, e.event`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +104,7 @@ func (s *Store) DeliverEvents(ctx context.Context, now time.Time, base string) (
 		return 0, []error{err}
 	}
 	rows, err := s.db.Query(ctx, `SELECT d.id, d.event, d.data::text, d.attempts, e.id::text, e.handler_url, e.app_id::text,
-		CASE WHEN u.active AND `+forEvent+` THEN u.id::text ELSE '' END
+		CASE WHEN u.active AND `+forEvent+` THEN u.id::text ELSE '' END, e.portal, coalesce(u.num, 0)
 		FROM app_event_deliveries d JOIN app_events e ON e.id = d.event_id JOIN apps a ON a.id = e.app_id LEFT JOIN users u ON u.id = e.user_id
 		WHERE d.done_at IS NULL AND d.next_at <= $1 AND a.installed_at IS NOT NULL ORDER BY d.id LIMIT 50`, now)
 	if err != nil {
@@ -110,10 +116,12 @@ func (s *Store) DeliverEvents(ctx context.Context, now time.Time, base string) (
 		attempts                 int
 		handlerID, target, appID string
 		userID                   string
+		portal                   bool
+		userNum                  int64
 	}
 	jobs, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (job, error) {
 		var j job
-		err := r.Scan(&j.id, &j.event, &j.data, &j.attempts, &j.handlerID, &j.target, &j.appID, &j.userID)
+		err := r.Scan(&j.id, &j.event, &j.data, &j.attempts, &j.handlerID, &j.target, &j.appID, &j.userID, &j.portal, &j.userNum)
 		return j, err
 	})
 	if err != nil {
@@ -142,9 +150,30 @@ func (s *Store) DeliverEvents(ctx context.Context, now time.Time, base string) (
 			}
 			auth = Auth(a, t, base)
 		}
-		body, _ := json.Marshal(map[string]any{"event": j.event, "event_handler_id": j.handlerID, "data": json.RawMessage(j.data),
-			"ts": now.Unix(), "auth": auth})
-		status, err := s.post(ctx, j.target, a.ClientSecret, j.event, body)
+		var data map[string]any
+		dec := json.NewDecoder(strings.NewReader(j.data))
+		dec.UseNumber()
+		if err := dec.Decode(&data); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		data = portalData(data, j.portal)
+		portalIDs(data, j.portal)
+		if bot, ok := data["bot"].(map[string]any); ok && strings.HasPrefix(j.event, "ONIMBOTV2") {
+			bot["auth"] = auth // the bot's tokens for its calls back, as imbot.v2 posts them
+		}
+		ev := map[string]any{"event": j.event, "event_handler_id": j.handlerID, "data": data, "ts": now.Unix(), "auth": auth}
+		ctype, body := "application/json", []byte(nil)
+		if j.portal {
+			auth["client_endpoint"] = strings.TrimRight(base, "/") + "/rest/"
+			if j.userID != "" {
+				auth["user_id"] = j.userNum
+			}
+			ctype, body = "application/x-www-form-urlencoded", []byte(PHPForm(ev).Encode())
+		} else {
+			body, _ = json.Marshal(ev)
+		}
+		status, err := s.postAs(ctx, j.target, a.ClientSecret, j.event, ctype, body)
 		msg := ""
 		if err != nil {
 			msg = err.Error()
@@ -173,6 +202,60 @@ func (s *Store) DeliverEvents(ctx context.Context, now time.Time, base string) (
 		}
 	}
 	return sent, errs
+}
+
+// portalIDs leaves one id of a record in the event's data: its number (Portal_ID) for a handler, the go24 id
+// for the others.
+func portalIDs(data map[string]any, portal bool) {
+	if n, ok := data["Portal_ID"]; ok {
+		if delete(data, "Portal_ID"); portal {
+			data["ID"] = n
+		}
+	}
+	for _, v := range data {
+		if m, ok := v.(map[string]any); ok {
+			portalIDs(m, portal)
+		}
+	}
+}
+
+// portalData is the event's data for the handler: the copy made for the portal (Portal_DATA, a bot event with numbers for
+// go24's ids) when the handler is and the event has one, go24's own otherwise.
+func portalData(data map[string]any, portal bool) map[string]any {
+	alt, ok := data["Portal_DATA"].(map[string]any)
+	delete(data, "Portal_DATA")
+	if ok && portal {
+		return alt
+	}
+	return data
+}
+
+// PHPForm is a form of PHP arrays posts its events: data[FIELDS][ID]=5; numbers and booleans as text.
+func PHPForm(m map[string]any) url.Values {
+	out := url.Values{}
+	var walk func(prefix string, v any)
+	walk = func(prefix string, v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, y := range x {
+				walk(prefix+"["+k+"]", y)
+			}
+		case []any:
+			for i, y := range x {
+				walk(prefix+"["+strconv.Itoa(i)+"]", y)
+			}
+		case nil:
+			out.Add(prefix, "")
+		case bool:
+			out.Add(prefix, map[bool]string{true: "1", false: "0"}[x])
+		default:
+			out.Add(prefix, fmt.Sprint(x))
+		}
+	}
+	for k, v := range m {
+		walk(k, v)
+	}
+	return out
 }
 
 // uninstalled tells the handlers of ONAPPUNINSTALL the application is taken off, at once and once: its tokens are

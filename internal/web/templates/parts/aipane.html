@@ -1,0 +1,33 @@
+{{/* CoPilot of a section: the button over the page opens a pane on the right with a conversation with
+the section's agent; the actions that change data wait for «Подтвердить» (web.aiPane, static/js/aipane.js). The page
+gives the pane its address (data-ai-url) and what is open (data-ai-task). */}}
+{{define "aitoggle"}}<button type="button" class="button ghost aitoggle" data-ai-toggle aria-expanded="false" aria-controls="aipane" title="{{.}}">{{icon "sparkles"}} CoPilot</button>{{end}}
+{{define "aiaside"}}<aside class="card aipane" id="aipane" data-ai data-ai-url="{{.URL}}"{{with .Task}} data-ai-task="{{.}}"{{end}} hidden aria-label="CoPilot"></aside>
+<script src="{{asset "js/aipane.js"}}"></script>{{end}}
+
+{{define "aipane"}}<div class="row aipane-head"><b class="mai-title">{{icon "sparkles"}} CoPilot</b>
+  {{if .Runs}}<details class="mai-runs"><summary class="button ghost small" title="{{t "mail.ai.runs"}}" aria-label="{{t "mail.ai.runs"}}">{{icon "history"}}</summary>
+    <div class="card mai-runs-pop">{{range .Runs}}<button type="button" class="ghost small{{if eq .ID $.Run.ID}} on{{end}}" data-ai-run="{{.ID}}">{{.Title}}</button>{{end}}</div></details>{{end}}
+  {{if .Run.ID}}<button type="button" class="ghost small" data-ai-run="" title="{{t "mail.ai.new"}}" aria-label="{{t "mail.ai.new"}}">{{icon "plus"}}</button>
+  <button type="button" class="ghost small" data-ai-delete="{{.Run.ID}}" title="{{t "mail.ai.delete"}}" aria-label="{{t "mail.ai.delete"}}">{{icon "trash"}}</button>{{end}}
+  <button type="button" class="ghost small" data-ai-close title="{{t "ai.pane.close"}}" aria-label="{{t "ai.pane.close"}}">{{icon "x"}}</button></div>
+{{if not .On}}<p class="muted small">{{t "mail.ai.off"}}</p><a class="button small" href="/settings/ai">{{t "mail.ai.connect"}}</a>
+{{else}}<div class="mai-log" data-ai-log data-run="{{.Run.ID}}" aria-live="polite">
+  {{if not .Items}}<p class="muted small">{{.Hello}}</p>{{end}}
+  {{range .Items}}{{if .Me}}<div class="mai-me">{{nl2br .Text}}</div>{{else}}<div class="mai-bot">{{with .Text}}<div>{{imtext .}}</div>{{end}}
+    {{range .Acts}}{{template "aiact" .}}{{end}}</div>{{end}}{{end}}
+  {{with .Error}}<p class="mai-err small">{{icon "alert-triangle"}} {{.}}</p>{{end}}
+  <p class="muted small mai-wait" data-ai-wait hidden>{{icon "sparkles"}} {{t "mail.ai.thinking"}}</p></div>
+<div class="mai-quick">{{range .Quick}}<button type="button" class="ghost small"{{if .Fill}} data-ai-fill="{{.Say}}"{{else}} data-ai-say="{{.Say}}"{{end}}{{if .Open}} data-ai-open{{end}}>{{icon .Icon}} {{.Label}}</button>{{end}}</div>
+<form class="mai-form" data-ai-form><textarea name="text" rows="3" placeholder="{{.Holder}}"{{if .Pending}} title="{{t "mail.ai.pending"}}"{{end}}></textarea>
+  <button class="small" title="{{t "mail.ai.send"}}" aria-label="{{t "mail.ai.send"}}">{{icon "send"}}</button></form>
+<p class="muted small">{{t "mail.ai.note"}}</p>{{end}}{{end}}
+
+{{define "aiact"}}<div class="mai-act {{.Status}}{{if .Write}} write{{end}}">
+  {{if .Write}}<b class="small">{{icon .Icon}} {{.Title}}</b>{{with .Lines}}<div class="mai-draft">{{range .}}<div>{{nl2br .}}</div>{{end}}</div>{{end}}
+  {{else}}<span class="muted small">{{icon "check"}} {{.Title}}</span>{{end}}
+  {{if eq .Status "pending"}}<div class="row"><button type="button" class="small" data-ai-decide="{{.ID}}" data-yes="1">{{icon "check"}} {{t "mail.ai.confirm"}}</button>
+    <button type="button" class="ghost small" data-ai-decide="{{.ID}}" data-yes="0">{{t "mail.ai.reject"}}</button></div>
+  {{else if and .Write (eq .Status "done")}}<span class="small mai-done">{{icon "check"}} {{t "mail.ai.done"}}{{with .URL}} · <a href="{{.}}">{{t "ai.pane.open"}}</a>{{end}}</span>
+  {{else if eq .Status "rejected"}}<span class="muted small">{{t "mail.ai.rejected"}}</span>
+  {{else if eq .Status "error"}}<span class="mai-err small">{{.Result}}</span>{{end}}</div>{{end}}

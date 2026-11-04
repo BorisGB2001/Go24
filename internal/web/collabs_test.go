@@ -282,6 +282,37 @@ func TestCollabsHTTP(t *testing.T) {
 	if ownerID != outsider {
 		t.Error("the collab is not handed over")
 	}
+
+	// an open collab (GO24DEV-745): its link shows an employee «Вступить», the search finds it; a guest gets nothing
+	beta, err := ts.CollabByKey(ctx, other, "CL2")
+	must(err)
+	if _, body, _ := do(other, "GET", "/p/CL2", nil); !strings.Contains(body, `<select name="open">`) || !strings.Contains(body, `/c/CL2`) {
+		t.Error("no «Тип коллаба» or its link in the settings")
+	}
+	set, err := ts.CollabSettings(ctx, beta)
+	must(err)
+	set.Open = true
+	must(ts.SetCollabSettings(ctx, beta, other, set))
+	if st, body, _ := do(outsider, "GET", "/c/CL2", nil); st != http.StatusOK || !strings.Contains(body, `action="/c/CL2/join"`) {
+		t.Errorf("the link of an open collab: %d", st)
+	}
+	if st, _, _ := do(client, "GET", "/c/CL2", nil); st != http.StatusNotFound {
+		t.Errorf("a guest opens another's open collab: %d", st)
+	}
+	if st, _, _ := do(client, "POST", "/c/CL2/join", url.Values{}); st != http.StatusNotFound {
+		t.Errorf("a guest joins an open collab: %d", st)
+	}
+	if _, body, _ := do(outsider, "GET", "/collabs?q=Бета", nil); !strings.Contains(body, `action="/c/CL2/join"`) {
+		t.Error("the search does not find the open collab")
+	}
+	if st, _, loc := do(outsider, "POST", "/c/CL2/join", url.Values{}); st != http.StatusSeeOther || !strings.HasPrefix(loc, "/p/CL2") {
+		t.Errorf("join: %d %s", st, loc)
+	}
+	if _, body, _ := do(outsider, "GET", "/collabs?q=Бета", nil); strings.Contains(body, `action="/c/CL2/join"`) || !strings.Contains(body, `href="/c/CL2"`) {
+		t.Error("the joined collab is not among one's own")
+	}
+	api(token(outsider, full...), "POST", "/api/v1/collabs/CL2/join", nil, http.StatusNotFound) // a member already
+	api(ot, "POST", "/api/v1/collabs/CL2/join", nil, http.StatusOK)
 }
 
 // TestCollabLogLine: a line of the collab's log as the bot tells it in the chat — worded as on the page, the

@@ -83,3 +83,44 @@ func (s *Store) SetArchived(ctx context.Context, p Project, on bool) error {
 	}
 	return logCollab(ctx, s.db, p.ID, Viewer(ctx), action, "", "")
 }
+
+// TransferProject hands the group or project over, as «Сменить владельца» (GO24DEV-926): the owner (or
+// an administrator) makes another employee among its members the owner, the former owner stays a moderator; the new
+// owner is told. A collab goes by TransferCollab.
+func (s *Store) TransferProject(ctx context.Context, p Project, actorID, userID string) error {
+	if p.Collab() {
+		return s.TransferCollab(ctx, p, actorID, userID)
+	}
+	if p.MyRole != "owner" && p.MyRole != "admin" {
+		return ErrForbidden
+	}
+	if p.Archived {
+		return invalid("err.project_archived")
+	}
+	return s.transferOwner(ctx, p, actorID, userID, "project_owner", "err.project_owner_member", "err.project_owner_guest")
+}
+
+// DeleteProject deletes the group or project for good, as «Удалить группу» (GO24DEV-926): the owner or
+// an administrator, the name typed again. As there, a group with tasks is not deleted — they are moved or deleted
+// first (those in the trash go with it). A collab goes by DeleteCollab, its tasks with it.
+func (s *Store) DeleteProject(ctx context.Context, p Project, actorID, confirm string) error {
+	if p.Collab() {
+		return s.DeleteCollab(ctx, p, actorID, confirm)
+	}
+	if p.MyRole != "owner" && p.MyRole != "admin" {
+		return ErrForbidden
+	}
+	if strings.TrimSpace(confirm) != strings.TrimSpace(p.Name) {
+		return invalid("err.project_delete_confirm")
+	}
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE project_id = $1`, p.ID).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return invalid("err.project_has_tasks", n)
+		}
+		return deleteProjectTx(ctx, tx, p.ID)
+	})
+}

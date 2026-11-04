@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"math/big"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,7 +25,9 @@ import (
 	"go24/internal/docgen"
 	"go24/internal/i18n"
 	"go24/internal/mail"
+	"go24/internal/payqr"
 	"go24/internal/sign"
+	"go24/internal/sms"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -39,7 +43,12 @@ func (s *Server) signPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	if !slices.Contains(sign.Filters, f) {
 		f = ""
 	}
-	docs, err := s.Sign.List(r.Context(), sess.UserID, f, sess.AdminActive())
+	lf := signListFilter(r)
+	all, err := s.signListScope(r.Context(), sess, &lf)
+	var docs []sign.Doc
+	if err == nil {
+		docs, err = s.Sign.Find(r.Context(), sess.UserID, f, all, lf)
+	}
 	if err != nil {
 		s.fail(w, "sign", err)
 		return
@@ -49,8 +58,25 @@ func (s *Server) signPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.fail(w, "sign", err)
 		return
 	}
+	view := r.URL.Query().Get("view")
+	if view != "kanban" {
+		view = "list"
+	}
 	data := map[string]any{"Docs": docs, "Filter": f, "Filters": sign.Filters, "Waiting": waiting, "Me": sess.UserID,
-		"HR": s.signHRAllowed(r, sess)}
+		"HR": s.signHRAllowed(r, sess), "LF": lf, "View": view, "Query": signListQuery(lf, view),
+		"Base": signListQuery(lf, ""), "To": ""}
+	if !lf.To.IsZero() {
+		data["To"] = lf.To.AddDate(0, 0, -1).Format(time.DateOnly)
+	}
+	if view == "kanban" {
+		data["Columns"] = signColumns(docs)
+	}
+	if !slices.Contains([]string{"hr", "safe", "templates"}, f) {
+		if data["Users"], err = s.Tasks.ListUsers(r.Context()); err != nil {
+			s.fail(w, "sign", err)
+			return
+		}
+	}
 	self, err := s.signSelfTemplates(r, sess)
 	if err != nil {
 		s.fail(w, "sign", err)
@@ -63,20 +89,85 @@ func (s *Server) signPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			return
 		}
 	}
+	if f == "safe" {
+		if err := s.signSafeData(r, sess, data); err != nil {
+			s.fail(w, "sign", err)
+			return
+		}
+	}
 	if f == "templates" {
 		if data["Templates"], err = s.Sign.Templates(r.Context()); err != nil {
 			s.fail(w, "sign", err)
 			return
 		}
-		data["Admin"] = sess.AdminActive()
+		data["TplAll"] = s.signPerms(r.Context(), sess).Has("templates", "all")
 	}
+	data["Admin"], data["Send"] = sess.Admin, s.signPerms(r.Context(), sess).Has("send", "all")
 	s.render(w, r, "sign", page{TitleKey: "sign.title", Nav: "sign", Data: data})
+}
+
+// signListFilter is the filter of the list of the query: q, author, from, to (YYYY-MM-DD, local days).
+func signListFilter(r *http.Request) sign.ListFilter {
+	q := r.URL.Query()
+	lf := sign.ListFilter{Q: strings.TrimSpace(q.Get("q")), Author: q.Get("author")}
+	lf.From, _ = time.ParseInLocation(time.DateOnly, q.Get("from"), time.Local)
+	if to, err := time.ParseInLocation(time.DateOnly, q.Get("to"), time.Local); err == nil {
+		lf.To = to.AddDate(0, 0, 1)
+	}
+	return lf
+}
+
+// signListQuery is the filter and the view as the query of the list, kept by its tabs.
+func signListQuery(lf sign.ListFilter, view string) template.URL {
+	v := url.Values{}
+	for k, x := range map[string]string{"q": lf.Q, "author": lf.Author} {
+		if x != "" {
+			v.Set(k, x)
+		}
+	}
+	if !lf.From.IsZero() {
+		v.Set("from", lf.From.Format(time.DateOnly))
+	}
+	if !lf.To.IsZero() {
+		v.Set("to", lf.To.AddDate(0, 0, -1).Format(time.DateOnly))
+	}
+	if view == "kanban" {
+		v.Set("view", view)
+	}
+	return template.URL(v.Encode())
+}
+
+// signColumn is a column of the kanban of «Подпись»: the documents of a status.
+type signColumn struct {
+	Status string
+	Docs   []sign.Doc
+}
+
+// signStatuses are the kanban's columns, as the stages of the documents: being signed, signed, then how it failed.
+var signStatuses = []string{"signing", "done", "refused", "expired", "cancelled"}
+
+// signColumns groups the documents by status into the kanban's columns.
+func signColumns(docs []sign.Doc) []signColumn {
+	cols := make([]signColumn, len(signStatuses))
+	for i, st := range signStatuses {
+		cols[i].Status = st
+	}
+	for _, d := range docs {
+		if i := slices.Index(signStatuses, d.Status); i >= 0 {
+			cols[i].Docs = append(cols[i].Docs, d)
+		}
+	}
+	return cols
 }
 
 // signNew is the form to send a document for signing: a document of a CRM card (?kind=&id=&doc=) or a file to upload.
 func (s *Server) signNew(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if !s.signPerms(r.Context(), sess).Has("send", "all") {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
 	q := r.URL.Query()
-	data := map[string]any{"Me": sess.UserID, "ClientName": "", "ClientEmail": "", "Signers": []string{sess.UserID}, "Remind": 1}
+	data := map[string]any{"Me": sess.UserID, "ClientName": "", "ClientEmail": "", "ClientPhone": "", "Chat": "", "InChat": "", "Signers": []string{sess.UserID}, "Remind": 1}
 	if id := q.Get("tpl"); id != "" { // a template of sending: its document, signers and reminders
 		t, err := s.Sign.Template(r.Context(), id)
 		if err != nil {
@@ -84,6 +175,9 @@ func (s *Server) signNew(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			return
 		}
 		data["Tpl"], data["Title"], data["Signers"], data["Remind"] = t, t.Title, t.Signers, t.RemindDays
+		if dl := sign.DeadlineIn(time.Now(), t.DeadlineDays); dl != nil {
+			data["Deadline"] = dl.Format(time.DateOnly)
+		}
 		data["Reviewers"], data["Observers"] = t.Reviewers, t.Observers
 	}
 	if q.Get("doc") != "" {
@@ -98,6 +192,13 @@ func (s *Server) signNew(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		data["Title"] = signDocTitle(doc)
 		data["ClientName"] = cmp.Or(v["Client.Director"], v["Contact"], v["Name"], v["Client.Title"])
 		data["ClientEmail"] = cmp.Or(v["Client.Email"], v["Email"])
+		data["ClientPhone"] = cmp.Or(v["Client.Phone"], v["Phone"])
+		if s.SignChatReady(r.Context(), docEntity(kind), id) { // «В чат», chosen when the client has no other way
+			data["Chat"] = "1"
+			if data["ClientEmail"] == "" && data["ClientPhone"] == "" {
+				data["InChat"] = "1"
+			}
+		}
 	}
 	if key := q.Get("collab"); key != "" { // from a collab's chat: its guests are offered as the client
 		p, err := s.signCollab(r.Context(), sess, key)
@@ -116,7 +217,7 @@ func (s *Server) signNew(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		s.fail(w, "sign", err)
 		return
 	}
-	data["Users"], data["SideMax"] = users, sign.SideMax
+	data["Users"], data["SideMax"], data["Today"] = users, sign.SideMax, time.Now().Format(time.DateOnly)
 	s.render(w, r, "signnew", page{TitleKey: "sign.new", Nav: "sign", Data: data})
 }
 
@@ -138,10 +239,39 @@ func (s *Server) signSource(r *http.Request, sess auth.Session, kind, id, docID 
 	return s.CRM.Document(r.Context(), docEntity(kind), id, docID)
 }
 
+// SignRobot is the hook of the CRM robot «Отправить на подпись» (crm.Store.SendSign): the card's document sent by the
+// user for signing by the employees, then by the client; says the signing's title.
+func (s *Server) SignRobot(ctx context.Context, userID, entity, entityID, docID string, signers []string, client, email, phone string) (string, error) {
+	doc, err := s.CRM.Document(ctx, entity, entityID, docID)
+	if err != nil {
+		return "", err
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	if err != nil {
+		return "", err
+	}
+	m, err := s.Storages.FileMeta(ctx, doc.FileID)
+	var data []byte
+	if err == nil {
+		data, err = s.readFile(r, m, signMax)
+	}
+	if err != nil {
+		return "", err
+	}
+	d := sign.Doc{Title: signDocTitle(doc), AuthorID: userID, RemindDays: 1, Entity: entity, EntityID: entityID, CRMDocID: doc.ID}
+	_, err = s.signStart(r, auth.Session{UserID: userID}, d, data, m.Name, signWho{Signers: signers,
+		Clients: []sign.Party{{Name: client, Email: email, Phone: phone}}})
+	return d.Title, err
+}
+
 // signCreate sends the document for signing: a copy of the file is kept with it, the employee is asked to sign first,
 // then the client gets the link by e-mail.
 func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/sign/new"
+	if !s.signPerms(r.Context(), sess).Has("send", "all") {
+		http.Error(w, s.tr(r, "err.forbidden"), http.StatusForbidden)
+		return
+	}
 	if err := r.ParseMultipartForm(signMax); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		s.taskErr(w, r, i18n.E("sign.err.file"), back)
 		return
@@ -190,22 +320,22 @@ func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Se
 		}
 		name, d.Title = m.Name, cmp.Or(strings.TrimSpace(d.Title), t.Title)
 	} else {
-		f, h, err := r.FormFile("file")
-		if err == nil {
-			defer f.Close()
-			data, err = io.ReadAll(io.LimitReader(f, signMax+1))
-			name = h.Filename
-		}
-		if err != nil || len(data) > signMax {
-			s.taskErr(w, r, i18n.E("sign.err.file"), back)
+		var err error
+		if data, name, err = s.signUploads(r, sess.UserID); err != nil {
+			s.taskErr(w, r, err, back)
 			return
 		}
 		if strings.TrimSpace(d.Title) == "" {
 			d.Title = strings.TrimSuffix(name, path.Ext(name))
 		}
 	}
-	id, err := s.signStart(r, sess, d, data, name, signWho{Signers: r.Form["signer"], Reviewers: r.Form["reviewer"],
-		Observers: r.Form["observer"], Clients: signClients(r.Form["client_name"], r.Form["client_email"])})
+	var err error
+	if d.Deadline, err = formDeadline(r); err != nil {
+		s.taskErr(w, r, err, back)
+		return
+	}
+	id, err = s.signStart(r, sess, d, data, name, signWho{Signers: r.Form["signer"], Reviewers: r.Form["reviewer"],
+		Observers: r.Form["observer"], Clients: signClients(r.Form["client_name"], r.Form["client_email"], r.Form["client_phone"], r.Form["client_via"]...), QES: r.FormValue("qes")})
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
@@ -217,7 +347,7 @@ func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	if r.FormValue("save_template") == "1" && r.FormValue("doc") == "" && r.FormValue("tpl") == "" { // «Сохранить как шаблон»
 		t := sign.Template{Title: d.Title, Signers: r.Form["signer"], Reviewers: r.Form["reviewer"], Observers: r.Form["observer"],
-			RemindDays: d.RemindDays, AuthorID: sess.UserID}
+			RemindDays: d.RemindDays, DeadlineDays: sign.Days(time.Now(), d.Deadline), AuthorID: sess.UserID}
 		if t.FileID, err = s.signKeep(r, sess.UserID, data, name); err == nil {
 			_, err = s.Sign.NewTemplate(r.Context(), t)
 		}
@@ -228,18 +358,22 @@ func (s *Server) signCreate(w http.ResponseWriter, r *http.Request, sess auth.Se
 	http.Redirect(w, r, "/sign/"+id+"?msg="+url.QueryEscape(s.tr(r, "sign.sent")), http.StatusSeeOther)
 }
 
-// signClients are the clients signing of a form: the rows of names and e-mails, the empty ones left out.
-func signClients(names, emails []string) []sign.Party {
+// signClients are the clients signing of a form: the rows of names, e-mails and phones, the empty ones left out; vias
+// (when given) are how each gets the link: "chat" — in the card's chat of the open lines (signStart finds it).
+func signClients(names, emails, phones []string, vias ...string) []sign.Party {
 	var out []sign.Party
-	for i := range max(len(names), len(emails)) {
-		var p sign.Party
-		if i < len(names) {
-			p.Name = strings.TrimSpace(names[i])
+	at := func(list []string, i int) string {
+		if i < len(list) {
+			return strings.TrimSpace(list[i])
 		}
-		if i < len(emails) {
-			p.Email = strings.TrimSpace(emails[i])
+		return ""
+	}
+	for i := range max(len(names), len(emails), len(phones)) {
+		p := sign.Party{Name: at(names, i), Email: at(emails, i), Phone: at(phones, i)}
+		if at(vias, i) == "chat" {
+			p.Chat = "chat"
 		}
-		if p.Name != "" || p.Email != "" {
+		if p.Name != "" || p.Email != "" || p.Phone != "" {
 			out = append(out, p)
 		}
 	}
@@ -251,13 +385,16 @@ func signClients(names, emails []string) []sign.Party {
 type signWho struct {
 	Signers, Reviewers, Observers []string
 	Clients                       []sign.Party
+	QES                           string // who signs with КЭП: "" — none (a simple signature), company — the employees, all — the clients too
 }
 
-// signStart sends the Word document (data; name — its file's) for approving by the reviewers and signing by the
-// employees in turn, then by the clients when given, in turn; the pages and the REST API send by it.
+// signStart sends the document (data; name — its file's: Word, PDF, a picture or another office document, see
+// signPrepare) for approving by the reviewers and signing by the employees in turn, then by the clients when given, in
+// turn; the pages and the REST API send by it.
 func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data []byte, name string, who signWho) (string, error) {
-	if _, err := docgen.Names(data); err != nil || !strings.EqualFold(path.Ext(name), ".docx") {
-		return "", i18n.E("sign.err.file")
+	data, name, err := s.signPrepare(r, sess.UserID, data, name)
+	if err != nil {
+		return "", err
 	}
 	user := func(id string) (tasks.User, error) {
 		var u tasks.User
@@ -286,7 +423,7 @@ func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data 
 			if err != nil {
 				return "", err
 			}
-			parties = append(parties, sign.Party{UserID: u.ID, Name: u.Name, Email: u.Email, Role: role})
+			parties = append(parties, sign.Party{UserID: u.ID, Name: u.Name, Email: u.Email, Role: role, Method: signMethod(who.QES != "")})
 			n++
 		}
 		if n > sign.SideMax {
@@ -311,16 +448,28 @@ func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data 
 		d.Observers = append(d.Observers, sign.Observer{UserID: u.ID, Name: u.Name})
 	}
 	if len(clients) > 0 {
+		mailed := false
 		for _, c := range clients {
-			parties = append(parties, sign.Party{Name: c.Name, Email: c.Email})
+			if c.Chat, err = s.signChatOf(r.Context(), d, c); err != nil {
+				return "", err
+			}
+			if c.Phone != "" { // the phone: for the link and the code by SMS, the only way when there is no e-mail
+				if c.Phone = sms.Normalize(c.Phone); c.Phone == "" {
+					return "", i18n.E("err.sms_phone")
+				}
+				if c.Email == "" && !s.signSMSReady(r.Context()) {
+					return "", i18n.E("sign.err.no_sms")
+				}
+			}
+			mailed = mailed || c.Email != ""
+			parties = append(parties, sign.Party{Name: c.Name, Email: c.Email, Phone: c.Phone, Chat: c.Chat, Method: signMethod(who.QES == "all")})
 		}
-		if s.Mail != nil { // the clients get the link and the code from the sender's mailbox
+		if s.Mail != nil && mailed { // the clients get the link and the code from the sender's mailbox
 			if boxes, err := s.Mail.Mailboxes(r.Context(), sess.UserID); err != nil || len(boxes) == 0 {
 				return "", i18n.E("sign.err.no_mailbox")
 			}
 		}
 	}
-	var err error
 	d.AuthorID, d.Hash = sess.UserID, sign.Hash(data)
 	d.FileID, err = s.signKeep(r, sess.UserID, data, name)
 	if err == nil {
@@ -339,14 +488,172 @@ func (s *Server) signStart(r *http.Request, sess auth.Session, d sign.Doc, data 
 	return d.ID, nil
 }
 
-// signKeep keeps the Word document sent for signing as a file of go24 of its own; its id.
+// signMethod is the method of a signer: qes — КЭП, "" — a simple signature.
+func signMethod(qualified bool) string {
+	if qualified {
+		return "qes"
+	}
+	return ""
+}
+
+// signPrepare is the document to sign of the file sent: Word (.docx) and PDF as they are, a picture
+// (JPEG, PNG) as a page of PDF, DOC, ODT and RTF as the PDF the document server makes of them.
+func (s *Server) signPrepare(r *http.Request, userID string, data []byte, name string) ([]byte, string, error) {
+	ext := strings.ToLower(path.Ext(name))
+	pdfName := strings.TrimSuffix(name, path.Ext(name)) + ".pdf"
+	switch ext {
+	case ".docx":
+		if _, err := docgen.Names(data); err == nil {
+			return data, name, nil
+		}
+	case ".pdf":
+		if docgen.IsPDF(data) {
+			return data, name, nil
+		}
+	case ".jpg", ".jpeg", ".png":
+		if pdf, err := docgen.ImagePDF(data); err == nil {
+			return pdf, pdfName, nil
+		}
+	case ".doc", ".odt", ".rtf":
+		if s.Office == nil {
+			break
+		}
+		pdf, err := s.signOfficePDF(r, userID, data, name)
+		if err != nil {
+			return nil, "", err
+		}
+		return pdf, pdfName, nil
+	}
+	return nil, "", i18n.E("sign.err.file")
+}
+
+// signOfficePDF is the office document (name — its file's) made a PDF by the document server.
+func (s *Server) signOfficePDF(r *http.Request, userID string, data []byte, name string) ([]byte, error) {
+	if s.Office == nil {
+		return nil, i18n.E("docs.pdf_failed")
+	}
+	src, err := s.signKeep(r, userID, data, name)
+	if err != nil {
+		return nil, err
+	}
+	pdf, err := s.officePDF(r, src, userID, "sign")
+	defer func() {
+		_, _ = s.DB.Exec(r.Context(), `DELETE FROM files WHERE id::text = ANY($1)`, []string{src, pdf})
+	}()
+	if err != nil {
+		return nil, err
+	}
+	var m storages.FileMeta
+	if m, err = s.Storages.FileMeta(r.Context(), pdf); err == nil {
+		data, err = s.readFile(r, m, signMax)
+	}
+	if err != nil || !docgen.IsPDF(data) {
+		return nil, i18n.E("docs.pdf_failed")
+	}
+	return data, nil
+}
+
+// signFilesMax is how many files are sent for signing at once (joined into one document).
+const signFilesMax = 50
+
+// signUploads is the document of the form's «file» fields: one file as it is, or several (scanned pages, say) joined
+// into one PDF in their order by signJoin; signMax in all.
+func (s *Server) signUploads(r *http.Request, userID string) ([]byte, string, error) {
+	if r.MultipartForm == nil {
+		if _, _, err := r.FormFile("file"); err != nil {
+			return nil, "", i18n.E("sign.err.file")
+		}
+	}
+	hdrs := r.MultipartForm.File["file"]
+	if len(hdrs) == 0 || len(hdrs) > signFilesMax {
+		return nil, "", i18n.E("sign.err.file")
+	}
+	var parts [][]byte
+	var names []string
+	total := 0
+	for _, h := range hdrs {
+		f, err := h.Open()
+		if err != nil {
+			return nil, "", i18n.E("sign.err.file")
+		}
+		data, err := io.ReadAll(io.LimitReader(f, int64(signMax-total+1)))
+		f.Close()
+		if total += len(data); err != nil || total > signMax {
+			return nil, "", i18n.E("sign.err.file")
+		}
+		parts, names = append(parts, data), append(names, h.Filename)
+	}
+	if len(parts) == 1 {
+		return parts[0], names[0], nil
+	}
+	data, err := s.signJoin(r, userID, parts, names)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, strings.TrimSuffix(names[0], path.Ext(names[0])) + ".pdf", nil
+}
+
+// signJoin makes one PDF of the files (see signPrepare): the pictures in a row become pages of their own, a PDF goes
+// in as it is, an office document — as the document server makes it a PDF.
+func (s *Server) signJoin(r *http.Request, userID string, parts [][]byte, names []string) ([]byte, error) {
+	var pdfs, pics [][]byte
+	flush := func() error {
+		if len(pics) == 0 {
+			return nil
+		}
+		pdf, err := docgen.ImagesPDF(pics...)
+		pdfs, pics = append(pdfs, pdf), nil
+		return err
+	}
+	for i, data := range parts {
+		switch strings.ToLower(path.Ext(names[i])) {
+		case ".jpg", ".jpeg", ".png":
+			pics = append(pics, data)
+			continue
+		}
+		if err := flush(); err != nil {
+			return nil, i18n.E("sign.err.file")
+		}
+		data, name, err := s.signPrepare(r, userID, data, names[i])
+		if err == nil && !strings.EqualFold(path.Ext(name), ".pdf") { // Word
+			data, err = s.signOfficePDF(r, userID, data, name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		pdfs = append(pdfs, data)
+	}
+	if err := flush(); err != nil {
+		return nil, i18n.E("sign.err.file")
+	}
+	if len(pdfs) == 1 {
+		return pdfs[0], nil
+	}
+	out, err := docgen.JoinPDF(r.Context(), pdfs...)
+	if err != nil {
+		s.Log.Error("sign join", "err", err)
+		return nil, i18n.E("docs.pdf_failed")
+	}
+	return out, nil
+}
+
+// signKeep keeps the document sent for signing as a file of go24 of its own; its id.
 func (s *Server) signKeep(r *http.Request, userID string, data []byte, name string) (string, error) {
 	name = strings.NewReplacer("/", "-", "\\", "-", "\"", "").Replace(name)
 	key := path.Join("go24", "sign", randomHex(16), name)
-	if err := s.Storages.Put(r.Context(), userID, false, "", key, bytes.NewReader(data), int64(len(data)), docxType); err != nil {
+	ctype := docxType
+	if ext := strings.ToLower(path.Ext(name)); ext != ".docx" {
+		ctype = cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
+	}
+	if err := s.Storages.Put(r.Context(), userID, false, "", key, bytes.NewReader(data), int64(len(data)), ctype); err != nil {
 		return "", err
 	}
-	return s.Storages.AddFile(r.Context(), storages.NewFile{Key: key, Name: name, ContentType: docxType, Size: int64(len(data)), UploadedBy: userID})
+	return s.Storages.AddFile(r.Context(), storages.NewFile{Key: key, Name: name, ContentType: ctype, Size: int64(len(data)), UploadedBy: userID})
+}
+
+// signIsPDF tells the document sent as a PDF (a PDF, a picture, an office document but Word) from a Word one.
+func signIsPDF(m storages.FileMeta) bool {
+	return strings.EqualFold(path.Ext(m.Name), ".pdf")
 }
 
 // signTurn tells the signer it is their turn: the employee by a notification (not when they act themselves), the
@@ -378,15 +685,41 @@ func (s *Server) signTell(ctx context.Context, lang string, d sign.Doc, p *sign.
 	if again {
 		mail = "sign.mail.remind_"
 	}
-	ok := s.signMailTo(ctx, d, p.Email, s.I18n.T(lang, mail+"subject", d.Title),
-		s.I18n.T(lang, mail+"body", p.Name, d.Author, d.Title, s.BaseURL+"/sg/"+p.Token))
+	link := s.BaseURL + "/sg/" + p.Token
+	if p.Chat != "" && s.signChat(ctx, d, p.Chat, s.I18n.T(lang, "sign.chat.link", d.Author, d.Title, link)) {
+		s.signLog(ctx, d, p, again, true, "chat")
+		return true
+	}
+	ok := p.Email != "" && s.signMailTo(ctx, d, p.Email, s.I18n.T(lang, mail+"subject", d.Title),
+		s.I18n.T(lang, mail+"body", p.Name, d.Author, d.Title, link))
+	if !ok && p.Phone != "" { // no e-mail or the letter did not go: the link by SMS
+		ok = s.signSMS(ctx, d, p.Phone, s.I18n.T(lang, "sign.sms.link", d.Author, d.Title, link))
+	}
 	s.signLog(ctx, d, p, again, ok)
 	return ok
 }
 
+// signSMSReady: the clients may get the link and the code by SMS — a provider of SMS is set up in the CRM.
+func (s *Server) signSMSReady(ctx context.Context) bool {
+	return s.SMS != nil && s.SMS.Ready(ctx)
+}
+
+// signSMS sends an SMS of «Подпись» from the document's sender (kept in the log of SMS, not on the CRM card: a code
+// must not be seen there); false — it did not go.
+func (s *Server) signSMS(ctx context.Context, d sign.Doc, phone, text string) bool {
+	if !s.signSMSReady(ctx) {
+		return false
+	}
+	if _, err := s.SMS.Send(ctx, sms.Out{Phone: phone, Text: text, AuthorID: d.AuthorID}); err != nil {
+		s.Log.Warn("sign sms", "doc", d.ID, "err", err)
+		return false
+	}
+	return true
+}
+
 // signLog puts the signer's being told into the document's history (not for the reminder of an HR sending's
-// representative: it is of many documents).
-func (s *Server) signLog(ctx context.Context, d sign.Doc, p *sign.Party, again, ok bool) {
+// representative: it is of many documents); via — how the client was told, when not the usual way ("chat").
+func (s *Server) signLog(ctx context.Context, d sign.Doc, p *sign.Party, again, ok bool, via ...string) {
 	kind := sign.EvSent
 	if again {
 		kind = sign.EvReminded
@@ -394,7 +727,7 @@ func (s *Server) signLog(ctx context.Context, d sign.Doc, p *sign.Party, again, 
 	if strings.HasPrefix(d.ID, "batch/") {
 		return
 	}
-	if err := s.Sign.Log(ctx, d.ID, p.ID, "", kind, ok, "", ""); err != nil {
+	if err := s.Sign.Log(ctx, d.ID, p.ID, "", kind, ok, "", strings.Join(via, "")); err != nil {
 		s.Log.Warn("sign log", "doc", d.ID, "err", err)
 	}
 }
@@ -460,21 +793,38 @@ func (s *Server) signDoc(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 			mySig = "data:image/png;base64," + base64.StdEncoding.EncodeToString(img)
 		}
 	}
-	s.render(w, r, "signdoc", page{Title: d.Title, Nav: "sign", Data: map[string]any{"Doc": d, "Me": sess.UserID,
-		"MySig": mySig, "MyName": myName, "Mine": mine, "Review": mine && cur.Reviewer(), "Author": d.AuthorID == sess.UserID, "PDF": s.Office != nil, "Link": s.BaseURL + "/sg/", "Card": card,
-		"Collab": collab, "Events": events, "Viewed": viewed}})
+	blocks, err := s.Sign.Blocks(r.Context(), d.ID)
+	if err != nil {
+		s.taskErr(w, r, err, "/sign")
+		return
+	}
+	var fields, filled []sign.Block
+	if mine {
+		fields = s.signMyFields(r, d, cur)
+	}
+	for _, b := range blocks {
+		if b.Kind == "field" && b.Value != "" {
+			filled = append(filled, b)
+		}
+	}
+	s.render(w, r, "signdoc", page{Title: d.Title, Nav: "sign", Data: map[string]any{"Doc": d, "Fields": fields, "Filled": filled, "CheckCode": sign.ShowCode(d.VerifyCode), "Me": sess.UserID, "Today": time.Now().Format(time.DateOnly),
+		"MySig": mySig, "MyName": myName, "Mine": mine, "Review": mine && cur.Reviewer(), "QES": mine && cur.Qualified(), "Author": s.signEdits(r.Context(), sess, d), "PDF": s.Office != nil, "Link": s.BaseURL + "/sg/", "Card": card,
+		"Collab": collab, "Events": events, "Viewed": viewed, "Blocks": len(blocks), "BlocksEdit": signBlocksEditable(d) && s.signEdits(r.Context(), sess, d)}})
 }
 
-// signOf is the document of the path for those who see it (the sender, the signers; administrators).
+// signOf is the document of the path for those who see it (the sender, the signers, the observers; by the rights
+// «docs» and «edit»; administrators).
 func (s *Server) signOf(r *http.Request, sess auth.Session) (sign.Doc, error) {
 	d, err := s.Sign.Get(r.Context(), r.PathValue("id"))
-	if err == nil && !d.Sees(sess.UserID) && !sess.AdminActive() && !s.signCollabSees(r, d) {
+	if err == nil && !d.Sees(sess.UserID) && !s.signLevel(r.Context(), sess, "docs", d.AuthorID) && !s.signEdits(r.Context(), sess, d) &&
+		!s.signCollabSees(r, d) && !s.signSafeSees(r, sess, d) {
 		err = sign.ErrNotFound
 	}
 	return d, err
 }
 
-// signFile gives the document: pdf (to read it), docx (the file as sent) or result (signed); inline=1 — shown.
+// signFile gives the document: pdf (to read it), docx (the file as sent: Word or PDF) or result (signed); inline=1 —
+// shown.
 func (s *Server) signFile(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d, err := s.signOf(r, sess)
 	if err != nil {
@@ -493,11 +843,7 @@ func (s *Server) signSend(w http.ResponseWriter, r *http.Request, d sign.Doc) {
 	case "result":
 		id = d.ResultFile
 	case "pdf":
-		if id = d.PDFFileID; id == "" {
-			if id, err = s.officePDF(r, d.FileID, d.AuthorID, "sign"); err == nil {
-				err = s.Sign.SetPDF(r.Context(), d.ID, id)
-			}
-		}
+		id, err = s.signPDFID(r, d)
 	}
 	var m storages.FileMeta
 	if err == nil && id != "" {
@@ -515,6 +861,23 @@ func (s *Server) signSend(w http.ResponseWriter, r *http.Request, d sign.Doc) {
 	s.sendFile(w, r, m, disposition)
 }
 
+// signPDFID is the file of the document in PDF, to read it: the file sent, when a PDF, or its PDF made by the
+// document server (once).
+func (s *Server) signPDFID(r *http.Request, d sign.Doc) (string, error) {
+	if d.PDFFileID != "" {
+		return d.PDFFileID, nil
+	}
+	src, err := s.Storages.FileMeta(r.Context(), d.FileID)
+	if err == nil && signIsPDF(src) {
+		return d.FileID, nil
+	}
+	id, err := s.officePDF(r, d.FileID, d.AuthorID, "sign")
+	if err == nil {
+		err = s.Sign.SetPDF(r.Context(), d.ID, id)
+	}
+	return id, err
+}
+
 // signSign: the employee whose turn it is signs (having read the document), or refuses with the reason (refuse=1).
 func (s *Server) signSign(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/sign/" + r.PathValue("id")
@@ -528,8 +891,14 @@ func (s *Server) signSign(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	}
 	refuse := r.FormValue("refuse") == "1"
 	var sig []byte
-	if err == nil && !refuse && !cur.Reviewer() {
+	if err == nil && !refuse && !cur.Reviewer() && !cur.Qualified() {
 		sig, err = sign.Signature(r.FormValue("signature"))
+	}
+	if err == nil && !refuse {
+		err = s.signFields(r, d, cur, signFieldsForm(r))
+	}
+	if err == nil && !refuse && cur.Qualified() {
+		err = s.signQES(r, d, cur, []byte(r.FormValue("cms")))
 	}
 	if err == nil && !refuse && r.FormValue("keep") == "1" && sig != nil {
 		err = s.Sign.KeepMySignature(r.Context(), sess.UserID, sig)
@@ -580,7 +949,7 @@ func (s *Server) signDo(r *http.Request, d sign.Doc, p *sign.Party, code, actor 
 		return "", err
 	}
 	s.Log.Info("sign", "doc", d.ID, "party", p.ID, "done", done)
-	if sig == nil && p.Employee() && !p.Reviewer() {
+	if sig == nil && p.Employee() && !p.Reviewer() && !p.Qualified() {
 		if sig, err = s.Sign.MySignature(r.Context(), p.UserID); err != nil {
 			s.Log.Warn("sign my signature", "user_id", p.UserID, "err", err)
 		}
@@ -645,6 +1014,11 @@ func (s *Server) signFinish(r *http.Request, id string) {
 		s.Log.Warn("sign notify", "err", err)
 	}
 	s.signTellObservers(r.Context(), d, "sign_done", d.Title, "")
+	if d.Entity != "" && d.EntityID != "" {
+		if err := s.CRM.DocumentSigned(r.Context(), d.Entity, d.EntityID, d.AuthorID, d.Title); err != nil {
+			s.Log.Warn("sign crm", "doc", d.ID, "err", err)
+		}
+	}
 	if result == "" {
 		return
 	}
@@ -658,9 +1032,14 @@ func (s *Server) signFinish(r *http.Request, id string) {
 	}
 	s.signCollabDone(r, d, m.Name, m.ContentType, data)
 	for _, p := range d.Parties {
-		if !p.Employee() {
+		switch {
+		case p.Employee():
+		case p.Chat != "" && s.signChat(r.Context(), d, p.Chat, s.tr(r, "sign.chat.done", d.Title, s.BaseURL+"/sg/"+p.Token)):
+		case p.Email != "":
 			s.signMail(r, d, p.Email, s.tr(r, "sign.mail.done_subject", d.Title), s.tr(r, "sign.mail.done_body", p.Name, d.Title),
 				mail.Attachment{Name: m.Name, ContentType: m.ContentType, Data: data})
+		case p.Phone != "": // with no e-mail: the link to the signed document by SMS
+			s.signSMS(r.Context(), d, p.Phone, s.tr(r, "sign.sms.done", d.Title, s.BaseURL+"/sg/"+p.Token))
 		}
 	}
 }
@@ -675,6 +1054,9 @@ func (s *Server) signResult(r *http.Request, d sign.Doc) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if signIsPDF(m) {
+		return s.signResultPDF(r, d, m.Name, src)
+	}
 	out, err := docgen.AppendSheet(src, s.signSheet(r, d))
 	if err != nil {
 		return "", err
@@ -688,15 +1070,69 @@ func (s *Server) signResult(r *http.Request, d sign.Doc) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	hash := sign.Hash(out)
 	if s.Office != nil {
 		if pdf, err := s.officePDF(r, file, d.AuthorID, "sign"); err == nil {
 			_, _ = s.DB.Exec(r.Context(), `DELETE FROM files WHERE id::text = $1`, file)
-			file = pdf
+			file, hash = pdf, ""
+			if pm, err := s.Storages.FileMeta(r.Context(), pdf); err == nil {
+				if data, err := s.readFile(r, pm, signMax); err == nil {
+					hash = sign.Hash(data)
+					if out, ok := s.signStamp(r, d, data); ok {
+						if f, err := s.signKeep(r, d.AuthorID, out, pm.Name); err == nil {
+							_, _ = s.DB.Exec(r.Context(), `DELETE FROM files WHERE id::text = $1`, pdf)
+							file, hash = f, sign.Hash(out)
+						}
+					}
+				}
+			}
 		} else {
 			s.Log.Warn("sign result pdf", "doc", d.ID, "err", err)
 		}
 	}
-	return file, s.Sign.SetResult(r.Context(), d.ID, file)
+	return file, s.Sign.SetResult(r.Context(), d.ID, file, hash)
+}
+
+// signResultPDF is signResult of a document sent as a PDF: the signing sheet is made a PDF of its own by the
+// document server and put after the document's pages.
+func (s *Server) signResultPDF(r *http.Request, d sign.Doc, name string, src []byte) (string, error) {
+	sheet, err := docgen.SheetDoc(s.signSheet(r, d))
+	if err != nil {
+		return "", err
+	}
+	if s.Office == nil {
+		return "", i18n.E("docs.pdf_failed")
+	}
+	tmp, err := s.signKeep(r, d.AuthorID, sheet, s.tr(r, "sign.sheet.title")+".docx")
+	if err != nil {
+		return "", err
+	}
+	pdf, err := s.officePDF(r, tmp, d.AuthorID, "sign")
+	defer func() {
+		_, _ = s.DB.Exec(r.Context(), `DELETE FROM files WHERE id::text = ANY($1)`, []string{tmp, pdf})
+	}()
+	var page []byte
+	if err == nil {
+		var m storages.FileMeta
+		if m, err = s.Storages.FileMeta(r.Context(), pdf); err == nil {
+			page, err = s.readFile(r, m, signMax)
+		}
+	}
+	var out []byte
+	if err == nil {
+		if stamped, ok := s.signStamp(r, d, src); ok {
+			src = stamped
+		}
+		out, err = docgen.JoinPDF(r.Context(), src, page)
+	}
+	if err != nil {
+		return "", err
+	}
+	file, err := s.signKeep(r, d.AuthorID, out, strings.TrimSuffix(name, path.Ext(name))+" — "+s.tr(r, "sign.signed_suffix")+".pdf")
+	if err != nil {
+		return "", err
+	}
+	return file, s.Sign.SetResult(r.Context(), d.ID, file, sign.Hash(out))
 }
 
 // signSheet is «Лист подписания»: the document, its checksum and who signed it, when, how and from where.
@@ -714,6 +1150,9 @@ func (s *Server) signSheet(r *http.Request, d sign.Doc) docgen.Sheet {
 		s.tr(r, "sign.sheet.about"),
 	}, Header: []string{"№", s.tr(r, "sign.sheet.signer"), s.tr(r, "sign.sheet.side"), s.tr(r, "sign.sheet.how"),
 		s.tr(r, "sign.sheet.when"), s.tr(r, "sign.sheet.ip")}}
+	if slices.ContainsFunc(d.Parties, func(p sign.Party) bool { return p.QES != nil }) {
+		sh.Lines = append(sh.Lines, s.tr(r, "sign.sheet.about_qes"))
+	}
 	pics := slices.ContainsFunc(d.Parties, func(p sign.Party) bool { return p.HasSignature })
 	if pics {
 		sh.Header, sh.Images = append(sh.Header, s.tr(r, "sign.sheet.signature")), map[int]docgen.Image{}
@@ -726,10 +1165,21 @@ func (s *Server) signSheet(r *http.Request, d sign.Doc) docgen.Sheet {
 			how = s.tr(r, "sign.how.reviewer")
 		} else if !p.Employee() {
 			side, how = s.tr(r, "sign.side.client"), s.tr(r, "sign.how.code", p.Email)
+			switch p.CodeVia {
+			case "sms":
+				how = s.tr(r, "sign.how.sms", p.Phone)
+			case "chat":
+				how = s.tr(r, "sign.how.chat")
+			}
+		}
+		if p.QES != nil {
+			how = s.signQESLine(r, p.QES)
 		}
 		who := p.Name
-		if p.Email != "" {
-			who += "\n" + p.Email
+		for _, c := range []string{p.Email, p.Phone} {
+			if c != "" {
+				who += "\n" + c
+			}
 		}
 		row := []string{fmt.Sprint(p.Ord), who, side, how, when(p.SignedAt), p.IP}
 		if pics {
@@ -739,6 +1189,11 @@ func (s *Server) signSheet(r *http.Request, d sign.Doc) docgen.Sheet {
 			}
 		}
 		sh.Rows = append(sh.Rows, row)
+	}
+	link := s.signCheckURL(d)
+	sh.Check = []string{s.tr(r, "sign.sheet.check", sign.ShowCode(d.VerifyCode)), s.tr(r, "sign.sheet.check_at", link)}
+	if png, err := payqr.PNG(link); err == nil {
+		sh.CheckPic = &docgen.Image{Data: png, Width: docgen.Cm(2.5)}
 	}
 	return sh
 }
@@ -782,7 +1237,7 @@ func (s *Server) signForget(w http.ResponseWriter, r *http.Request, sess auth.Se
 func (s *Server) signCancel(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	back := "/sign/" + r.PathValue("id")
 	d, err := s.signOf(r, sess)
-	if err == nil && d.AuthorID != sess.UserID && !sess.AdminActive() {
+	if err == nil && !s.signEdits(r.Context(), sess, d) {
 		err = sign.ErrNotFound
 	}
 	if err == nil {
@@ -802,14 +1257,18 @@ func (s *Server) signResend(w http.ResponseWriter, r *http.Request, sess auth.Se
 	back := "/sign/" + r.PathValue("id")
 	d, err := s.signOf(r, sess)
 	cur := d.Current()
-	if err == nil && (d.AuthorID != sess.UserID || cur == nil || cur.Employee() || d.Status != "signing") {
+	if err == nil && (!s.signEdits(r.Context(), sess, d) || cur == nil || cur.Employee() || d.Status != "signing") {
 		err = sign.ErrTurn
 	}
 	if err != nil {
 		s.taskErr(w, r, err, back)
 		return
 	}
-	msg := s.tr(r, "sign.resent", cur.Email)
+	to := cmp.Or(cur.Email, cur.Phone)
+	if cur.Chat != "" {
+		to = s.tr(r, "sign.chat.to")
+	}
+	msg := s.tr(r, "sign.resent", to)
 	if !s.signTurn(r, d, cur, sess.UserID) {
 		msg = s.tr(r, "sign.not_mailed")
 	} else if err := s.Sign.Reminded(r.Context(), cur.ID); err != nil {
@@ -837,9 +1296,29 @@ func (s *Server) signPublic(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("sign log", "doc", d.ID, "err", err)
 		}
 	}
-	s.render(w, r, "signpub", page{Title: d.Title, Data: map[string]any{"Doc": d, "Party": p, "Token": p.Token,
-		"Turn": turn, "PDF": s.Office != nil, "Email": maskEmail(p.Email),
+	var fields []sign.Block
+	if turn {
+		fields = s.signMyFields(r, d, p)
+	}
+	s.render(w, r, "signpub", page{Title: d.Title, Data: map[string]any{"Doc": d, "Party": p, "Token": p.Token, "Fields": fields,
+		"Turn": turn, "PDF": s.Office != nil, "Email": maskEmail(p.Email), "Phone": maskPhone(p.Phone),
+		"SMS": p.Phone != "" && s.signSMSReady(r.Context()), "Chat": p.Chat != "" && s.OpenLines != nil,
 		"Msg": r.URL.Query().Get("msg"), "Code": r.URL.Query().Get("code") == "1"}})
+}
+
+// signCodeVia is how the client's code goes: as asked for when the client has the way (mail, sms, chat), else in the
+// chat the link went to, by e-mail, by SMS.
+func signCodeVia(p sign.Party, asked string) string {
+	has := map[string]bool{"mail": p.Email != "", "sms": p.Phone != "", "chat": p.Chat != ""}
+	if has[asked] {
+		return asked
+	}
+	for _, via := range []string{"chat", "mail", "sms"} {
+		if has[via] {
+			return via
+		}
+	}
+	return "mail"
 }
 
 // maskEmail hides the most of the address: a***@example.com.
@@ -850,6 +1329,14 @@ func maskEmail(e string) string {
 	}
 	r := []rune(user)
 	return string(r[:1]) + "***@" + host
+}
+
+// maskPhone hides the most of the number: +7 *** ***-45-67.
+func maskPhone(p string) string {
+	if len(p) < 8 {
+		return p
+	}
+	return p[:max(1, len(p)-10)] + " *** ***-" + p[len(p)-4:len(p)-2] + "-" + p[len(p)-2:]
 }
 
 func (s *Server) signPublicFile(w http.ResponseWriter, r *http.Request) {
@@ -874,25 +1361,42 @@ func (s *Server) signCode(w http.ResponseWriter, r *http.Request) {
 	if err == nil && d.Status != "signing" {
 		err = sign.ErrTurn
 	}
+	via := signCodeVia(*p, r.FormValue("via"))
 	if err == nil {
-		err = s.Sign.SetCode(r.Context(), p.ID, code)
+		err = s.Sign.SetCodeVia(r.Context(), p.ID, code, via)
+	}
+	sent := func() bool {
+		switch via {
+		case "sms":
+			return s.signSMS(r.Context(), d, p.Phone, s.tr(r, "sign.sms.code", code, int(sign.CodeTTL.Minutes())))
+		case "chat":
+			return s.signChat(r.Context(), d, p.Chat, s.tr(r, "sign.chat.code", code, int(sign.CodeTTL.Minutes())))
+		}
+		return s.signMail(r, d, p.Email, s.tr(r, "sign.mail.code_subject", code), s.tr(r, "sign.mail.code_body", code, d.Title, int(sign.CodeTTL.Minutes())))
+	}
+	to := maskEmail(p.Email)
+	switch via {
+	case "sms":
+		to = maskPhone(p.Phone)
+	case "chat":
+		to = s.tr(r, "sign.chat.to")
 	}
 	msg, more := "", "&code=1"
 	switch {
 	case err != nil:
 		msg, more = s.signErr(r, err), ""
-	case !s.signMail(r, d, p.Email, s.tr(r, "sign.mail.code_subject", code), s.tr(r, "sign.mail.code_body", code, d.Title, int(sign.CodeTTL.Minutes()))):
+	case !sent():
 		msg, more = s.tr(r, "sign.err.code_mail"), ""
 		if err := s.Sign.ClearCode(r.Context(), p.ID); err != nil {
 			s.Log.Warn("sign code", "err", err)
 		}
-		if err := s.Sign.Log(r.Context(), d.ID, p.ID, "", sign.EvCode, false, clientIP(r), ""); err != nil {
+		if err := s.Sign.Log(r.Context(), d.ID, p.ID, "", sign.EvCode, false, clientIP(r), via); err != nil {
 			s.Log.Warn("sign log", "doc", d.ID, "err", err)
 		}
 	default:
-		msg = s.tr(r, "sign.code_sent", maskEmail(p.Email))
-		s.Log.Info("sign code", "doc", d.ID, "party", p.ID)
-		if err := s.Sign.Log(r.Context(), d.ID, p.ID, "", sign.EvCode, true, clientIP(r), ""); err != nil {
+		msg = s.tr(r, "sign.code_sent", to)
+		s.Log.Info("sign code", "doc", d.ID, "party", p.ID, "via", via)
+		if err := s.Sign.Log(r.Context(), d.ID, p.ID, "", sign.EvCode, true, clientIP(r), via); err != nil {
 			s.Log.Warn("sign log", "doc", d.ID, "err", err)
 		}
 	}
@@ -912,8 +1416,14 @@ func (s *Server) signPublicSign(w http.ResponseWriter, r *http.Request) {
 	refuse := r.FormValue("refuse") == "1"
 	var sig []byte
 	var err2 error
-	if !refuse {
+	if !refuse && !p.Qualified() {
 		sig, err2 = sign.Signature(r.FormValue("signature"))
+	}
+	if !refuse && err2 == nil && r.FormValue("agree") == "1" {
+		err2 = s.signFields(r, d, p, signFieldsForm(r))
+	}
+	if !refuse && err2 == nil && r.FormValue("agree") == "1" && p.Qualified() {
+		err2 = s.signQES(r, d, p, []byte(r.FormValue("cms")))
 	}
 	if !refuse && r.FormValue("agree") != "1" {
 		msg, more = s.tr(r, "sign.err.agree"), "&code=1"

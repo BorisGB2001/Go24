@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 // Bot is a chat bot of an application.
 type Bot struct {
 	ID             string    `json:"id"`
+	Num            int64     `json:"num"` // BOT_ID, from the employees' row of numbers
 	AppID          string    `json:"-"`
 	Code           string    `json:"code"`
 	Type           string    `json:"type"` // B — a bot; H — a bot answering as a person would; S — it gets every message of its group chats
@@ -36,9 +38,18 @@ type Bot struct {
 	MessageHandler string    `json:"event_message_add"`
 	WelcomeHandler string    `json:"event_welcome_message"`
 	DeleteHandler  string    `json:"event_bot_delete"`
-	UserID         string    `json:"user_id"` // who registered it
+	UserID         string    `json:"user_id"`           // who registered it
+	Builtin        string    `json:"builtin,omitempty"` // a bot of go24 itself: "copilot" (no application)
 	CreatedAt      time.Time `json:"created_at"`
-	mxid, since    string
+	// a bot of imbot.v2 (migration 899): EventMode fetch or webhook instead of the handlers, BotToken its sha256
+	EventMode   string `json:"event_mode,omitempty"`
+	WebhookURL  string `json:"webhook_url,omitempty"`
+	BotToken    string `json:"-"`
+	Hidden      bool   `json:"hidden,omitempty"` // in no people picker: people reach it by a link or a chat it made
+	Reactions   bool   `json:"-"`
+	Openline    bool   `json:"-"`
+	Background  string `json:"-"`
+	mxid, since string
 }
 
 // FullName is how the messenger shows the bot.
@@ -54,13 +65,23 @@ const (
 var errBotCode = i18n.E("err.imbot_code")
 
 const botCols = `b.id::text, coalesce(b.app_id::text, ''), b.code, b.type, b.name, b.last_name, b.work_position, b.color,
-	b.message_handler, b.welcome_handler, b.delete_handler, coalesce(b.user_id::text, ''), b.created_at, b.mxid, b.since`
+	b.message_handler, b.welcome_handler, b.delete_handler, coalesce(b.user_id::text, ''), b.builtin, b.created_at, b.mxid, b.since, b.num,
+	b.event_mode, b.webhook_url, b.bot_token, b.hidden, b.reactions, b.openline, b.background`
+
+// liveBotSQL: the bot b is in the messenger — built into go24 or of an installed application.
+const liveBotSQL = `(b.builtin <> '' OR EXISTS (SELECT 1 FROM apps a WHERE a.id = b.app_id AND a.installed_at IS NOT NULL))`
 
 func scanBot(r pgx.Row) (Bot, error) {
 	var b Bot
-	err := r.Scan(&b.ID, &b.AppID, &b.Code, &b.Type, &b.Name, &b.LastName, &b.WorkPosition, &b.Color,
-		&b.MessageHandler, &b.WelcomeHandler, &b.DeleteHandler, &b.UserID, &b.CreatedAt, &b.mxid, &b.since)
+	err := r.Scan(b.dest()...)
 	return b, err
+}
+
+// dest are the fields of the bot in the order of botCols.
+func (b *Bot) dest() []any {
+	return []any{&b.ID, &b.AppID, &b.Code, &b.Type, &b.Name, &b.LastName, &b.WorkPosition, &b.Color,
+		&b.MessageHandler, &b.WelcomeHandler, &b.DeleteHandler, &b.UserID, &b.Builtin, &b.CreatedAt, &b.mxid, &b.since, &b.Num,
+		&b.EventMode, &b.WebhookURL, &b.BotToken, &b.Hidden, &b.Reactions, &b.Openline, &b.Background}
 }
 
 // normBot checks what the application gives for a bot.
@@ -90,10 +111,14 @@ func (s *Service) RegisterBot(ctx context.Context, appID, userID string, b Bot) 
 		return b, err
 	}
 	b.mxid = s.M.UserID("bot." + hex.EncodeToString(n))
+	if !b.V2() {
+		b.Reactions = true
+	}
 	row := s.DB.QueryRow(ctx, `INSERT INTO im_bots AS b (app_id, code, type, name, last_name, work_position, color, mxid, user_id,
-		message_handler, welcome_handler, delete_handler) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9, '')::uuid, $10, $11, $12)
+		message_handler, welcome_handler, delete_handler, event_mode, webhook_url, bot_token, hidden, reactions, openline, background)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9, '')::uuid, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT DO NOTHING RETURNING `+botCols, appID, b.Code, b.Type, b.Name, b.LastName, b.WorkPosition, b.Color, b.mxid, userID,
-		b.MessageHandler, b.WelcomeHandler, b.DeleteHandler)
+		b.MessageHandler, b.WelcomeHandler, b.DeleteHandler, b.EventMode, b.WebhookURL, b.BotToken, b.Hidden, b.Reactions, b.Openline, b.Background)
 	out, err := scanBot(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return b, errBotCode
@@ -151,20 +176,23 @@ func (s *Service) DeleteBot(ctx context.Context, appID, id string) error {
 	return err
 }
 
-// AppBot is a bot of the application by its ID or, failing that, its code.
+// AppBot is a bot of the application by its ID, its number (BOT_ID) or, failing that, its code.
 func (s *Service) AppBot(ctx context.Context, appID, id string) (Bot, error) {
 	b, err := scanBot(s.DB.QueryRow(ctx, `SELECT `+botCols+` FROM im_bots b WHERE b.app_id::text = $1
-		AND (b.id::text = $2 OR upper(b.code) = upper($2)) ORDER BY b.id::text = $2 DESC LIMIT 1`, appID, strings.TrimSpace(id)))
+		AND (b.id::text = $2 OR b.num::text = $2 OR upper(b.code) = upper($2))
+		ORDER BY b.id::text = $2 DESC, b.num::text = $2 DESC LIMIT 1`, appID, strings.TrimSpace(id)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return b, i18n.E("err.not_found")
 	}
 	return b, err
 }
 
-// Bots are the bots of the application (imbot.bot.list), or of every installed application with appID "".
+// Bots are the bots of the application (imbot.bot.list), or with appID "" those of every application and of go24
+// itself (CoPilot).
 func (s *Service) Bots(ctx context.Context, appID string) ([]Bot, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+botCols+` FROM im_bots b JOIN apps a ON a.id = b.app_id
-		WHERE ($1 = '' OR b.app_id::text = $1) ORDER BY b.created_at, b.code`, appID)
+	rows, err := s.DB.Query(ctx, `SELECT `+botCols+` FROM im_bots b
+		WHERE CASE WHEN $1 = '' THEN b.builtin <> '' OR b.app_id IS NOT NULL ELSE b.app_id::text = $1 END
+		ORDER BY b.builtin = '', b.created_at, b.code`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +201,7 @@ func (s *Service) Bots(ctx context.Context, appID string) ([]Bot, error) {
 
 // botPuppet is puppet for a bot: its Matrix ID and token (logged in on first use); none for a bot that is gone.
 func (s *Service) botPuppet(ctx context.Context, id string) (mxid, token string, err error) {
-	err = s.DB.QueryRow(ctx, `SELECT mxid, token FROM im_bots WHERE id::text = $1 AND app_id IS NOT NULL`, id).Scan(&mxid, &token)
+	err = s.DB.QueryRow(ctx, `SELECT mxid, token FROM im_bots WHERE id::text = $1 AND (app_id IS NOT NULL OR builtin <> '')`, id).Scan(&mxid, &token)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
 	}
@@ -189,8 +217,23 @@ func (s *Service) botPuppet(ctx context.Context, id string) (mxid, token string,
 
 // botQueue queues an event of the bot to its handler, when it has one and the application is installed.
 func (s *Service) botQueue(ctx context.Context, b Bot, event, handler string, data map[string]any) error {
+	if b.V2() {
+		return s.queueV2(ctx, b, event, data)
+	}
 	if handler == "" || b.AppID == "" {
 		return nil
+	}
+	var portal bool // a handler bound by the REST gets the event with numbers
+	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app_events WHERE app_id::text = $1 AND event = $2 AND handler_url = $3 AND portal)`,
+		b.AppID, event, handler).Scan(&portal); err != nil {
+		return err
+	}
+	if portal {
+		alt, err := s.portalEvent(ctx, b, data)
+		if err != nil {
+			return err
+		}
+		data["Portal_DATA"] = alt
 	}
 	data["BOT"] = map[string]any{b.ID: map[string]any{"BOT_ID": b.ID, "BOT_CODE": b.Code}}
 	raw, err := json.Marshal(data)
@@ -249,7 +292,7 @@ func (s *Service) botLoop(ctx context.Context) {
 
 // closeBots deactivates the Matrix accounts of the bots that are gone (unregistered, their application taken off).
 func (s *Service) closeBots(ctx context.Context) error {
-	rows, err := s.DB.Query(ctx, `SELECT id::text, mxid FROM im_bots WHERE app_id IS NULL AND closed_at IS NULL`)
+	rows, err := s.DB.Query(ctx, `SELECT id::text, mxid FROM im_bots WHERE app_id IS NULL AND builtin = '' AND closed_at IS NULL`)
 	if err != nil {
 		return err
 	}
@@ -270,7 +313,10 @@ func (s *Service) closeBots(ctx context.Context) error {
 			}
 		}
 		// the events already queued stay: they are the application's; the row stays for the bot's name on its messages
-		if _, err := s.DB.Exec(ctx, `UPDATE im_bots SET closed_at = now(), token = '' WHERE id::text = $1 AND app_id IS NULL`, g.id); err != nil {
+		if _, err := s.DB.Exec(ctx, `UPDATE im_bots SET closed_at = now(), token = '' WHERE id::text = $1 AND app_id IS NULL AND builtin = ''`, g.id); err != nil {
+			return err
+		}
+		if _, err := s.DB.Exec(ctx, `DELETE FROM im_bot_events WHERE bot_id::text = $1`, g.id); err != nil {
 			return err
 		}
 	}
@@ -322,8 +368,7 @@ func (s *Service) botSync(ctx context.Context, b Bot) {
 // botEvent turns one event of a bot's chat into its event for the application: a message to the bot, the bot
 // joining a chat it was invited into (a private chat opened with it, a group chat it was added to).
 func (s *Service) botEvent(ctx context.Context, botID, room string, ev matrix.Event) error {
-	b, err := scanBot(s.DB.QueryRow(ctx, `SELECT `+botCols+` FROM im_bots b JOIN apps a ON a.id = b.app_id
-		WHERE b.id::text = $1 AND a.installed_at IS NOT NULL`, botID))
+	b, err := scanBot(s.DB.QueryRow(ctx, `SELECT `+botCols+` FROM im_bots b WHERE b.id::text = $1 AND `+liveBotSQL, botID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -333,6 +378,14 @@ func (s *Service) botEvent(ctx context.Context, botID, room string, ev matrix.Ev
 	_, tok, err := s.botPuppet(ctx, b.ID)
 	if err != nil || tok == "" {
 		return err
+	}
+	if rel, _ := ev.Content["m.relates_to"].(map[string]any); b.V2() && ev.Sender != b.mxid &&
+		(ev.Type == "m.room.redaction" || ev.Type == "m.reaction" || ev.Type == "m.room.message" && rel["rel_type"] == "m.replace") {
+		who, err := s.people(ctx, []string{ev.Sender})
+		if err != nil || who[ev.Sender].ID == "" || who[ev.Sender].Bot {
+			return err
+		}
+		return s.botV2Change(ctx, b, tok, room, ev, who[ev.Sender])
 	}
 	switch {
 	case ev.Type == "m.room.member" && ev.StateKey != nil && *ev.StateKey == b.mxid:
@@ -347,6 +400,18 @@ func (s *Service) botEvent(ctx context.Context, botID, room string, ev matrix.Ev
 		private, peer := s.botPeer(ctx, b.mxid, mem)
 		if private && peer.ID == "" {
 			return nil
+		}
+		if b.Builtin == CoPilot {
+			hello := "" // a «Чат с CoPilot» of a collab may start with one person, as a private chat
+			if s.CoPilotCollab(ctx, room) != "" {
+				hello = s.CoPilotCollabHello
+			} else if private {
+				hello = s.CoPilotHello
+			}
+			if hello != "" {
+				_, err = s.BotSend(ctx, b.ID, room, hello, "", BotParts{})
+			}
+			return err
 		}
 		params := map[string]any{"DIALOG_ID": room, "CHAT_TYPE": "C", "MESSAGE_TYPE": "C", "CHAT_ID": room}
 		if private {
@@ -376,7 +441,17 @@ func (s *Service) botEvent(ctx context.Context, botID, room string, ev matrix.Ev
 			return err
 		}
 		private, _ := s.botPeer(ctx, b.mxid, mem)
-		if !private && b.Type != "S" && !mentions(ev.Content, b.mxid) && !s.answers(ctx, tok, room, ev, b.mxid) {
+		collab := "" // a «Чат с CoPilot» of a collab: CoPilot answers every message there
+		if b.Builtin == CoPilot {
+			collab = s.CoPilotCollab(ctx, room)
+		}
+		if !private && collab == "" && b.Type != "S" && !mentions(ev.Content, b.mxid) && !s.answers(ctx, tok, room, ev, b.mxid) {
+			return nil
+		}
+		if b.Builtin == CoPilot {
+			if !from.Guest {
+				go s.copilotAnswer(context.WithoutCancel(ctx), b, tok, room, collab, from.ID, ev)
+			}
 			return nil
 		}
 		if cmd, err := s.botHasCommand(ctx, b.ID, body); err != nil || cmd {
@@ -450,5 +525,6 @@ func (s *Service) ChatBots(ctx context.Context, userID string) ([]Bot, error) {
 	if err := s.DB.QueryRow(ctx, `SELECT `+tasks.GuestSQL("$1"), userID).Scan(&guest); err != nil || guest {
 		return nil, err
 	}
-	return s.Bots(ctx, "")
+	list, err := s.Bots(ctx, "")
+	return slices.DeleteFunc(list, func(b Bot) bool { return b.Hidden }), err
 }

@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="pagehead"><h1>{{icon "speakerphone"}} {{t "tel.active"}}</h1><a class="button ghost" href="/telephony/calls">{{icon "list"}} {{t "tel.calls"}}</a>
+  <a class="button ghost" href="/telephony/stats">{{icon "chart-bar"}} {{t "tel.stats"}}</a></div>
+<p class="muted small">{{t "tel.active_hint"}}</p>
+{{if not $d.HasLine}}<div class="card muted">{{t "tel.spy_no_line"}}</div>{{end}}
+<div class="card flush" id="telactive" data-telactive>
+  {{if $d.Calls}}<div class="tablewrap"><table class="tlist">
+    <thead><tr><th>{{t "tel.col.employee"}}</th><th>{{t "tel.active_peer"}}</th><th>{{t "tel.col.status"}}</th><th class="right">{{t "tel.col.duration"}}</th><th></th></tr></thead>
+    <tbody>{{range $d.Calls}}<tr>
+      <td><span class="person">{{.Name}}</span> <span class="muted small">{{.Number}}</span></td>
+      <td class="nowrap"><span class="muted" title="{{if .Out}}{{t "tel.kind.out"}}{{else}}{{t "tel.kind.in"}}{{end}}">{{if .Out}}↗{{else}}↙{{end}}</span> {{or .Peer "—"}}{{with .PeerName}} <span class="muted small">{{.}}</span>{{end}}</td>
+      <td class="small">{{if .Up}}<span class="pill tel-in">{{t "tel.active_talking"}}</span>{{else}}<span class="pill tel-missed">{{t "tel.active_ringing"}}</span>{{end}}</td>
+      <td class="right nowrap" data-since="{{.Since.Unix}}">{{talk .Seconds}}</td>
+      <td class="right nowrap">{{if and .Up (not .Mine) $d.HasLine}}<form method="post" action="/telephony/active/spy" class="row nowrap" style="gap:4px;justify-content:flex-end">
+        <input type="hidden" name="channel" value="{{.Channel}}">
+        <button class="ghost small" name="mode" value="listen" title="{{t "tel.spy.listen_hint"}}">{{icon "speakerphone"}} {{t "tel.spy.listen"}}</button>
+        <button class="ghost small" name="mode" value="whisper" title="{{t "tel.spy.whisper_hint"}}">{{icon "message-circle"}} {{t "tel.spy.whisper"}}</button>
+        <button class="ghost small" name="mode" value="barge" title="{{t "tel.spy.barge_hint"}}">{{icon "users"}} {{t "tel.spy.barge"}}</button>
+      </form>{{else if and (not .Up) (not .Mine) $d.HasLine $d.Pick}}<form method="post" action="/telephony/active/pick" class="row nowrap" style="justify-content:flex-end">
+        <input type="hidden" name="channel" value="{{.Channel}}">
+        <button class="ghost small" title="{{t "tel.pick_hint"}}">{{icon "phone"}} {{t "tel.pick"}}</button>
+      </form>{{end}}</td>
+    </tr>{{end}}</tbody></table></div>
+  {{else}}<p class="muted" style="padding:16px">{{t "tel.active_none"}}</p>{{end}}
+</div>
+<script src="{{asset "js/telmonitor.js"}}"></script>
+{{end}}

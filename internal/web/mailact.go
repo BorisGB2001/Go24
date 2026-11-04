@@ -145,6 +145,10 @@ func (s *Server) mailAct(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	case "quick":
 		s.mailQuickDo(w, r, sess, ids, arg, back)
 		return
+	case "cleanup": // «Очистить беседу»
+		n, err := s.Mail.CleanUpConversations(r.Context(), sess.UserID, ids)
+		s.mailCleanedUp(w, r, sess.UserID, n, err, back)
+		return
 	}
 	if leaves(action) {
 		back = withLetter(back, r.FormValue("next"))
@@ -163,6 +167,35 @@ func (s *Server) mailAct(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// mailFolderCleanUp is «Очистить папку» of the folder's menu (sub — «… и вложенные папки»).
+func (s *Server) mailFolderCleanUp(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	n, err := s.Mail.CleanUpFolder(r.Context(), sess.UserID, r.PathValue("id"), r.FormValue("sub") != "")
+	s.mailCleanedUp(w, r, sess.UserID, n, err, "/mail?folder="+url.QueryEscape(r.PathValue("id")))
+}
+
+// mailCleanedUp: back with how many letters «Очистить» moved (Outlook says so when there were none).
+func (s *Server) mailCleanedUp(w http.ResponseWriter, r *http.Request, userID string, n int, err error, back string) {
+	if err != nil {
+		s.mailErr(w, r, err, back)
+		return
+	}
+	s.Log.Info("mail clean up", "user_id", userID, "letters", n)
+	msg := s.tr(r, "mail.cleanup.none")
+	if n > 0 {
+		back = withoutLetter(back)
+		msg = s.tr(r, "mail.cleanup.done", n)
+	}
+	if r.Header.Get("Accept") == "application/json" {
+		writeJSON(w, http.StatusOK, map[string]any{"letters": n, "message": msg})
+		return
+	}
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	http.Redirect(w, r, back+sep+"msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // leaves: the action takes the letter out of the folder (the tab).

@@ -9,23 +9,37 @@
   <a href="/bp/lists">{{t "lists.title"}}</a>
 </div>
 {{if not $d.Tab}}<div class="kbspaces">{{range $d.Templates}}<a class="card kbcard" href="/bp/start/{{.ID}}"><b>⚙ {{.Name}}</b>{{with .Description}}<span class="small muted">{{.}}</span>{{end}}</a>{{else}}<div class="empty card">{{t "bp.no_templates"}}</div>{{end}}</div>
-{{else if eq $d.Tab "approvals"}}<div class="card flush">{{range $d.Approvals}}<div class="bpapproval">
-  <div><a href="/bp/i/{{.InstanceID}}"><b>{{.Name}}</b></a> <span class="muted small">· {{.StartedBy}} · {{datetime .CreatedAt}}</span><div>{{.Text}}</div></div>
-  {{template "bpanswer" (dict "A" . "Back" "/bp?tab=approvals")}}
+{{else if eq $d.Tab "approvals"}}<form method="get" action="/bp" class="row filters"><input type="hidden" name="tab" value="approvals">
+  <select name="state" onchange="this.form.submit()">{{range $d.States}}<option value="{{.}}" {{if eq . $d.State}}selected{{end}}>{{t (print "bp.tstate." (or . "open"))}}</option>{{end}}</select>
+  <input type="search" name="q" value="{{$d.Q}}" placeholder="{{t "bp.tasks_search"}}">
+  {{if .User.Admin}}<div class="bptasksuser">{{template "upick" (upick "user" $d.User nil "submit" "ph" (t "bp.tasks_of"))}}</div>{{end}}</form>
+<div class="card flush">{{range $d.Tasks}}{{$open := not .Decision}}<div class="bpapproval{{if not $open}} done{{end}}">
+  <div class="row">{{if and $open (ne .Kind "request") (or $d.Own (ne .Delegate "none"))}}<input type="checkbox" name="task" value="{{.ID}}" form="bpbulk" class="bpbulkpick">{{end}}
+    <div style="flex:1"><a href="/bp/i/{{.InstanceID}}"><b>{{.Name}}</b></a> <span class="muted small">· {{t (print "bp.kind." .Kind)}} · {{.StartedBy}} · {{datetime .CreatedAt}}</span><div>{{.Text}}</div>
+    {{if not $open}}<div class="small"><span class="pill bp-{{if eq .Decision "reject"}}rejected{{else}}done{{end}}">{{t (print "bp.decision." .Decision)}}</span>{{with .DecidedAt}} <span class="muted">{{datetime .}}</span>{{end}}{{with .Comment}} · «{{.}}»{{end}}</div>{{end}}</div></div>
+  {{if $open}}{{if $d.Own}}{{template "bpanswer" (dict "A" . "Back" $d.Back)}}{{else if ne .Delegate "none"}}{{template "bpdelegate" (dict "A" . "Back" $d.Back)}}{{end}}{{end}}
 </div>{{else}}<div class="empty">{{t "bp.no_approvals"}}</div>{{end}}</div>
+{{if ne $d.State "done"}}{{if $d.Tasks}}<form method="post" action="/bp/approvals/bulk" id="bpbulk" class="card row bpbulk"><input type="hidden" name="back" value="{{$d.Back}}">
+  <label class="small"><input type="checkbox" onchange="document.querySelectorAll('.bpbulkpick').forEach(c => c.checked = this.checked)"> {{t "bulk.all"}}</label>
+  <select name="op" onchange="this.form.querySelector('.bpbulkto').hidden = this.value !== 'delegate'">{{if $d.Own}}<option value="approve">{{t "bp.approve"}}</option><option value="reject">{{t "bp.reject"}}</option><option value="seen">{{t "bp.seen"}}</option>{{end}}<option value="delegate">{{t "bp.delegate"}}</option></select>
+  {{if $d.Own}}<input type="text" name="comment" maxlength="5000" placeholder="{{t "bp.comment"}}" style="flex:1">{{end}}
+  <div class="bpbulkto" {{if $d.Own}}hidden{{end}} style="flex:1">{{template "upick" (upick "to" "" nil "noself" "ph" (t "bp.delegate_ph.all"))}}</div>
+  <button class="primary">{{t "bulk.apply"}}</button></form>{{end}}{{end}}
+{{if or $d.Page $d.Next}}<div class="row">{{if $d.Page}}<a class="button ghost" href="/bp?tab=approvals&state={{$d.State}}&q={{$d.Q}}&user={{$d.User}}&page={{add $d.Page -1}}">{{icon "chevron-left"}}</a>{{end}}
+  {{with $d.Next}}<a class="button ghost" href="/bp?tab=approvals&state={{$d.State}}&q={{$d.Q}}&user={{$d.User}}&page={{.}}">{{icon "chevron-right"}}</a>{{end}}</div>{{end}}
 {{else if eq $d.Tab "all"}}<form method="get" action="/bp" class="row filters"><input type="hidden" name="tab" value="all">
   <select name="status" onchange="this.form.submit()"><option value="">{{t "bp.any_status"}}</option>{{range $d.Statuses}}<option value="{{.}}" {{if eq . $d.Status}}selected{{end}}>{{t (print "bp.status." .)}}</option>{{end}}</select>
   <select name="template" onchange="this.form.submit()"><option value="">{{t "bp.any_template"}}</option>{{range $d.AllTemplates}}<option value="{{.ID}}" {{if eq .ID $d.Template}}selected{{end}}>{{.Name}}</option>{{end}}</select></form>
 <div class="card flush">{{if $d.Instances}}<table class="tlist"><thead><tr><th>{{t "bp.process"}}</th><th>{{t "bp.started_by"}}</th><th>{{t "bp.state"}}</th><th>{{t "bp.started_at"}}</th><th></th></tr></thead><tbody>
   {{$back := print "/bp?tab=all&status=" $d.Status "&template=" $d.Template "&page=" $d.Page}}
   {{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a>{{if eq .Entity "file"}} <span class="muted small">· {{t "bp.entity_file"}}</span>{{else if eq .Entity "list"}} <span class="muted small">· {{t "bp.entity_list"}}</span>{{else if ne .Entity "none"}} <span class="muted small">· {{t (print "crm." .Entity)}}</span>{{end}}</td>
-  <td class="small">{{.StartedBy.Name}}</td><td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span></td><td class="small">{{datetime .CreatedAt}}</td>
+  <td class="small">{{.StartedBy.Name}}</td><td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>{{with .Label}}<span class="pill bplabel">{{.}}</span>{{end}}</td><td class="small">{{datetime .CreatedAt}}</td>
   <td class="row">{{if eq .Status "running"}}<form method="post" action="/bp/i/{{.ID}}/stop" data-confirm="{{t "bp.stop_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "bp.stop"}}">{{icon "player-stop"}}</button></form>{{end}}
     <form method="post" action="/bp/i/{{.ID}}/delete" data-confirm="{{t "bp.delete_instance_confirm"}}"><input type="hidden" name="back" value="{{$back}}"><button class="ghost small" title="{{t "common.delete"}}">{{icon "trash"}}</button></form></td></tr>{{end}}</tbody></table>
   {{else}}<div class="empty">{{t "bp.no_all"}}</div>{{end}}</div>
 {{if or $d.Page $d.Next}}<div class="row">{{if $d.Page}}<a class="button ghost" href="/bp?tab=all&status={{$d.Status}}&template={{$d.Template}}&page={{add $d.Page -1}}">{{icon "chevron-left"}}</a>{{end}}
   {{with $d.Next}}<a class="button ghost" href="/bp?tab=all&status={{$d.Status}}&template={{$d.Template}}&page={{.}}">{{icon "chevron-right"}}</a>{{end}}</div>{{end}}
 {{else}}<div class="card flush">{{if $d.Instances}}<table class="tlist"><tbody>{{range $d.Instances}}<tr><td><a href="/bp/i/{{.ID}}" class="ttitle">{{.Name}}</a></td>
-  <td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span></td><td class="small">{{datetime .CreatedAt}}</td></tr>{{end}}</tbody></table>
+  <td><span class="pill bp-{{.Status}}">{{t (print "bp.status." .Status)}}</span>{{with .Label}}<span class="pill bplabel">{{.}}</span>{{end}}</td><td class="small">{{datetime .CreatedAt}}</td></tr>{{end}}</tbody></table>
   {{else}}<div class="empty">{{t "bp.no_instances"}}</div>{{end}}</div>{{end}}
 {{end}}

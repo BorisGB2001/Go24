@@ -361,7 +361,12 @@ func TestCheck(t *testing.T) {
 		ok          bool
 	}{{"10", "gt", "9", true}, {"10", "gt", "9a", false}, {"1,5", "lt", "2", true}, {"Да", "eq", "да", true},
 		{"2026-11-02", "gt", "2026-10-31", true}, {"Москва", "contains", "моск", true}, {" ", "empty", "", true},
-		{"x", "filled", "", true}, {"a", "ne", "b", true}, {"a", "nope", "a", false}} {
+		{"x", "filled", "", true}, {"a", "ne", "b", true}, {"a", "nope", "a", false},
+		{"10", "ge", "10", true}, {"9", "ge", "10", false}, {"10", "le", "10", true}, {"11", "le", "10", false},
+		{"5", "between", "1; 10", true}, {"10", "between", "1;10", true}, {"11", "between", "1; 10", false}, {"", "between", "; 10", false},
+		{"2026-10-15", "between", "2026-10-01; 2026-10-31", true}, {"5", "between", "1", false},
+		{"Казань", "in", "Москва, казань", true}, {"Сочи", "in", "Москва, Казань", false}, {"1,5", "in", "1,5; 2", true},
+		{"Москва", "notcontains", "моск", false}, {"Казань", "notcontains", "моск", true}} {
 		if check(c.v, c.op, c.want) != c.ok {
 			t.Errorf("check(%q %s %q) != %t", c.v, c.op, c.want, c.ok)
 		}

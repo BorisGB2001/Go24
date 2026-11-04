@@ -225,7 +225,9 @@ func TestFileImport(t *testing.T) {
 
 	// the old mailbox as Outlook's file, as «Экспорт» makes it
 	out := tempPST(t)
-	tr := func(key string, _ ...any) string { return map[string]string{"mail.folder.inbox": "Входящие"}[key] }
+	tr := func(key string, _ ...any) string {
+		return map[string]string{"mail.folder.inbox": "Входящие"}[key]
+	}
 	_, err = s.WriteExport(ctx, Export{UserID: ira, MailboxID: from, Email: fromAddr, Format: "pst", Tr: tr}, out, nil)
 	must(err)
 

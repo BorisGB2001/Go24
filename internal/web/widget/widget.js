@@ -2,7 +2,8 @@
 // It lives in a shadow root, so the site's styles do not reach it. The visitor's token stays in this site's storage.
 // Files both ways (pictures are shown), the operator's name and photo, «печатает…» and «прочитано», a sound on an
 // operator's message; on a phone the chat takes the whole screen. «Правила показа»: the button's corner, the pages
-// it shows on, a delay, «Автоприглашение» and no button out of the line's working hours.
+// it shows on, a delay, «Автоприглашение» and no button out of the line's working hours. On the line's public page
+// (/online/{id}, cfg.page) the chat itself takes the page: no button, no rules of showing.
 (() => {
   const cfg = /*CONFIG*/{};
   if (window.__go24widget) return;
@@ -11,14 +12,14 @@
   let token = '';
   try { token = localStorage.getItem(key) || ''; } catch (e) { /* no storage: a new dialogue each time */ }
   // a visitor with a started dialogue sees the button anywhere and at any time
-  if (!token && (cfg.offline || !showsOn(location.href))) return;
+  if (!cfg.page && !token && (cfg.offline || !showsOn(location.href))) return;
   window.__go24widget = true;
   let last = 0, timer = null, loaded = false, typed = 0;
 
   const pos = cfg.position || 'bottom-right', top = pos.startsWith('top'), left = pos.endsWith('left');
   const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;' + (left ? 'left' : 'right') + ':20px;' + (top ? 'top' : 'bottom') + ':20px;z-index:2147483000';
-  if (cfg.show_delay > 0 && !token) { host.style.display = 'none'; setTimeout(() => { host.style.display = ''; }, cfg.show_delay * 1000); }
+  host.style.cssText = cfg.page ? 'position:fixed;inset:0' : 'position:fixed;' + (left ? 'left' : 'right') + ':20px;' + (top ? 'top' : 'bottom') + ':20px;z-index:2147483000';
+  if (cfg.show_delay > 0 && !token && !cfg.page) { host.style.display = 'none'; setTimeout(() => { host.style.display = ''; }, cfg.show_delay * 1000); }
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>
     :host{all:initial;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -44,7 +45,7 @@
     .rate form{padding:0;border:0}.hist{flex-direction:column;padding:14px;gap:8px;border:0}.hist .send{padding:9px}
     .op{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #e3e5e8;font-size:13px}
     .op img{width:28px;height:28px;border-radius:50%;object-fit:cover}
-    .m img{max-width:100%;max-height:180px;border-radius:6px;display:block;margin-top:4px}.m a{color:inherit}
+    .m img{max-width:100%;max-height:180px;border-radius:6px;display:block;margin-top:4px}.m a{color:inherit}.m audio{display:block;max-width:100%;height:36px;margin-top:4px}
     .read{align-self:flex-end;font-size:11px;color:#888;margin-top:-4px}.typing{font-size:12px;color:#888;padding:0 12px 4px;font-style:italic}
     .att{background:none!important;color:#666!important;font-size:18px;padding:0 4px!important;position:relative;overflow:hidden}
     .att input{position:absolute;inset:0;opacity:0;cursor:pointer}
@@ -60,11 +61,13 @@
     .hello img{width:36px;height:36px;border-radius:50%;object-fit:cover;flex:none}.hello b{display:block;font-size:12px;opacity:.7}
     .hello .x{position:absolute;top:4px;right:4px;background:none;border:0;cursor:pointer;color:#888;font-size:14px}
     @media (max-width:480px){.box{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border-radius:0}}
+    .box.page{position:absolute;inset:16px;margin:auto;width:auto;max-width:720px;height:auto;max-height:none}
+    @media (max-width:480px){.box.page{inset:0;border-radius:0}}
   </style>
-  <button class="btn" title="${esc(T.open)}">💬<span class="dot" hidden></span></button>
+  <button class="btn" title="${esc(T.open)}"${cfg.page ? ' hidden' : ''}>💬<span class="dot" hidden></span></button>
   <div class="hello${top ? ' top' : ''}${left ? ' left' : ''}" hidden>${cfg.hello_photo ? `<img alt="" src="${esc(cfg.hello_photo)}">` : ''}<div><b>${esc(cfg.name)}</b>${esc(cfg.hello)}</div><button type="button" class="x" title="${esc(T.close)}">✕</button></div>
-  <div class="box${top ? ' top' : ''}${left ? ' left' : ''}" hidden>
-    <div class="head"><button data-tab="chat" class="on">${esc(T.chat)}</button><button data-tab="contact">${esc(T.contact)}</button><span style="flex:1"></span>${cfg.telegram ? `<a class="tg" href="https://t.me/${encodeURIComponent(cfg.telegram)}" target="_blank" rel="noopener" title="${esc(T.telegram)}">✈</a>` : ''}<button data-history title="${esc(T.history)}" hidden>✉</button><button data-close>✕</button></div>
+  <div class="box${cfg.page ? ' page' : (top ? ' top' : '') + (left ? ' left' : '')}"${cfg.page ? '' : ' hidden'}>
+    <div class="head"><button data-tab="chat" class="on">${esc(T.chat)}</button><button data-tab="contact">${esc(T.contact)}</button>${cfg.callback ? `<button data-tab="callback">${esc(T.callback)}</button>` : ''}<span style="flex:1"></span>${cfg.telegram ? `<a class="tg" href="https://t.me/${encodeURIComponent(cfg.telegram)}" target="_blank" rel="noopener" title="${esc(T.telegram)}">✈</a>` : ''}${cfg.max ? `<a class="tg" href="https://max.ru/${encodeURIComponent(cfg.max)}" target="_blank" rel="noopener" title="${esc(T.max)}">M</a>` : ''}${cfg.vk ? `<a class="tg" href="https://vk.me/${encodeURIComponent(cfg.vk)}" target="_blank" rel="noopener" title="${esc(T.vk)}">VK</a>` : ''}${cfg.viber ? `<a class="tg" href="viber://pa?chatURI=${encodeURIComponent(cfg.viber)}" title="${esc(T.viber)}">V</a>` : ''}${cfg.ok ? `<a class="tg" href="${esc(cfg.ok)}" target="_blank" rel="noopener" title="${esc(T.ok)}">OK</a>` : ''}${cfg.avito ? `<a class="tg" href="${esc(cfg.avito)}" target="_blank" rel="noopener" title="${esc(T.avito)}">A</a>` : ''}${cfg.whatsapp ? `<a class="tg" href="https://wa.me/${encodeURIComponent(cfg.whatsapp)}" target="_blank" rel="noopener" title="${esc(T.whatsapp)}">W</a>` : ''}<button data-history title="${esc(T.history)}" hidden>✉</button><button data-close${cfg.page ? ' hidden' : ''}>✕</button></div>
     <div class="op" hidden><img alt="" hidden><b></b></div>
     <div class="msgs"></div>
     <div class="typing" hidden></div>
@@ -89,6 +92,14 @@
       <div class="err" hidden></div>
       <button class="send">${esc(T.send)}</button>
     </form>
+    <form class="contact cb" hidden>
+      <div class="note">${cfg.callback ? (cfg.callback.title ? '<b>' + esc(cfg.callback.title) + '</b><br>' : '') + esc(cfg.callback.text || T.callback_note) : ''}</div>
+      <input name="phone" type="tel" placeholder="${esc(T.phone)}" maxlength="30" required>
+      <input name="name" placeholder="${esc(T.name)}" maxlength="100">
+      <input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
+      <div class="err" hidden></div>
+      <button class="send">${esc(cfg.callback && cfg.callback.button || T.callback_send)}</button>
+    </form>
   </div>`;
   // the «Правила показа» pages: «*» — any characters, the case is ignored; a mask without «*» — also with a «/» at the end
   // (as openlines.Widget.ShowsOn)
@@ -105,6 +116,8 @@
   function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   document.body.appendChild(host);
   const $ = s => root.querySelector(s);
+  const cb = $('.cb'); // «Обратный звонок»: since when the form is shown (a robot posts at once)
+  let cbShown = 0;
   const box = $('.box'), msgs = $('.msgs'), dot = $('.dot'), rate = $('.rate'), hist = $('.hist'), fw = $('.fw');
   fw.querySelector('.x').addEventListener('click', () => { fw.hidden = true; fw.querySelector('iframe').src = 'about:blank'; });
   let state = {};
@@ -142,6 +155,7 @@
         if (m.file.image) { const i = document.createElement('img'); i.src = m.file.url; i.alt = m.file.name; a.appendChild(i); }
         else a.textContent = '📎 ' + m.file.name;
         if (m.body) el.appendChild(document.createElement('br'));
+        if (m.file.audio) { const p = document.createElement('audio'); p.controls = true; p.preload = 'metadata'; p.src = m.file.url; el.appendChild(p); }
         el.appendChild(a);
       }
       if (m.form) { // a CRM form the operator sent: filled inside the chat
@@ -218,7 +232,7 @@
   // the dialogue's state: rating the answer (once an operator has answered), the conversation by e-mail
   const apply = st => {
     state = st;
-    rate.hidden = !st.can_vote || !$('.contact').hidden;
+    rate.hidden = !st.can_vote || msgs.hidden;
     rate.querySelector('.q span').textContent = st.vote_text;
     rate.querySelectorAll('[data-vote]').forEach(b => b.classList.toggle('on', +b.dataset.vote === st.vote));
     $('[data-history]').hidden = !st.history;
@@ -235,7 +249,7 @@
   const hello = $('.hello'), helloKey = key + '.hello';
   let invited = false;
   try { invited = !!sessionStorage.getItem(helloKey); } catch (e) { /* shown again */ }
-  if (cfg.hello && !token && !invited) setTimeout(() => {
+  if (cfg.hello && !token && !invited && !cfg.page) setTimeout(() => {
     if (token || !box.hidden) return;
     hello.hidden = false;
     try { sessionStorage.setItem(helloKey, '1'); } catch (e) { /* not kept */ }
@@ -245,8 +259,9 @@
   $('.btn').addEventListener('click', () => { hello.hidden = true; box.hidden = !box.hidden; dot.hidden = true; schedule(); if (!box.hidden) poll(); });
   $('[data-close]').addEventListener('click', () => { box.hidden = true; schedule(); });
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
-    const chat = b.dataset.tab === 'chat';
-    msgs.hidden = !chat; $('.say').hidden = !chat; $('.contact').hidden = chat; hist.hidden = true;
+    const tab = b.dataset.tab, chat = tab === 'chat';
+    msgs.hidden = !chat; $('.say').hidden = !chat; $('.contact').hidden = tab !== 'contact'; cb.hidden = tab !== 'callback'; hist.hidden = true;
+    if (tab === 'callback' && !cbShown) cbShown = Date.now();
     rate.hidden = !chat || !state.can_vote;
     root.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === b));
   }));
@@ -264,7 +279,7 @@
   });
   $('[data-history]').addEventListener('click', () => {
     const open = hist.hidden;
-    hist.hidden = !open; msgs.hidden = open; $('.say').hidden = open; $('.contact').hidden = true;
+    hist.hidden = !open; msgs.hidden = open; $('.say').hidden = open; $('.contact').hidden = true; cb.hidden = true;
     rate.hidden = open || !state.can_vote;
     root.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', !open && x.dataset.tab === 'chat'));
   });
@@ -319,6 +334,18 @@
       const v = n => f.querySelector('[name="' + n + '"]').value; // form.name is the form's own name, not the field
       await call('contact', { name: v('name'), phone: v('phone'), email: v('email'), text: v('text') });
       f.innerHTML = '<div class="note">' + esc(T.thanks) + '</div>';
+    } catch (x) { err.textContent = x.message; err.hidden = false; }
+  });
+  cb.addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = cb.querySelector('.err'), v = n => cb.querySelector('[name="' + n + '"]').value;
+    err.hidden = true;
+    try {
+      await consent();
+      if (!token) await visit();
+      await call('callback', { phone: v('phone'), name: v('name'), website: v('website'), page: location.href,
+        elapsed: Math.round((Date.now() - cbShown) / 1000) });
+      cb.innerHTML = '<div class="note">' + esc(T.callback_sent) + '</div>';
     } catch (x) { err.textContent = x.message; err.hidden = false; }
   });
 })();

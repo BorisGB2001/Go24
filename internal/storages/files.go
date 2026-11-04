@@ -3,6 +3,7 @@ package storages
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -45,6 +46,7 @@ type NewFile struct {
 	SiteID                 string // a picture of a site's page («Сайты»): open to everyone
 	EventID                string // a file of a meeting of the calendar
 	EventCommentID         string // of a comment of that meeting
+	ChecklistItemID        string // of a checklist item of the task (TaskID)
 	UploadedBy             string
 	LegacyID               int // 0 = not imported
 }
@@ -72,9 +74,9 @@ func (s *Store) AddFile(ctx context.Context, f NewFile) (string, error) {
 	}
 	var id string
 	err := s.db.QueryRow(ctx, `
-		INSERT INTO files (object_key, name, size, content_type, uploaded_by, storage_id, task_id, legacy_id, post_id, drive, drive_owner, folder_id, mail_id, content_id, kb_space_id, site_id, feed_comment_id, event_id, event_comment_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
-		f.Key, f.Name, f.Size, f.ContentType, f.UploadedBy, storageID, taskID, legacyID, postID, opt(f.Drive), opt(f.DriveOwner), opt(f.FolderID), opt(f.MailID), f.ContentID, opt(f.KBSpaceID), opt(f.SiteID), opt(f.CommentID), opt(f.EventID), opt(f.EventCommentID)).Scan(&id)
+		INSERT INTO files (object_key, name, size, content_type, uploaded_by, storage_id, task_id, legacy_id, post_id, drive, drive_owner, folder_id, mail_id, content_id, kb_space_id, site_id, feed_comment_id, event_id, event_comment_id, checklist_item_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
+		f.Key, f.Name, f.Size, f.ContentType, f.UploadedBy, storageID, taskID, legacyID, postID, opt(f.Drive), opt(f.DriveOwner), opt(f.FolderID), opt(f.MailID), f.ContentID, opt(f.KBSpaceID), opt(f.SiteID), opt(f.CommentID), opt(f.EventID), opt(f.EventCommentID), opt(f.ChecklistItemID)).Scan(&id)
 	return id, err
 }
 
@@ -87,13 +89,44 @@ func (s *Store) ListFiles(ctx context.Context, userID string, admin bool) ([]Fil
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[File])
 }
 
-// TaskFiles lists a task's attachments; the caller has already checked that the task is visible.
+// TaskFiles lists a task's attachments (not the files of its checklist items); the caller has already checked that
+// the task is visible.
 func (s *Store) TaskFiles(ctx context.Context, taskID string) ([]File, error) {
-	rows, err := s.db.Query(ctx, fileSelect+` WHERE f.task_id = $1 ORDER BY f.created_at`, taskID)
+	rows, err := s.db.Query(ctx, fileSelect+` WHERE f.task_id = $1 AND f.checklist_item_id IS NULL ORDER BY f.created_at`, taskID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[File])
+}
+
+// ChecklistFiles are the files of a task's checklist items by the item; the caller has already checked that the task
+// is visible.
+func (s *Store) ChecklistFiles(ctx context.Context, taskID string) (map[string][]File, error) {
+	rows, err := s.db.Query(ctx, strings.Replace(fileSelect, "SELECT ", "SELECT f.checklist_item_id::text, ", 1)+`
+		WHERE f.task_id = $1 AND f.checklist_item_id IS NOT NULL ORDER BY f.created_at`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]File{}
+	var item string
+	var f File
+	_, err = pgx.ForEachRow(rows, []any{&item, &f.ID, &f.Name, &f.Size, &f.ContentType, &f.CreatedAt, &f.StorageName, &f.TaskKey, &f.Uploader}, func() error {
+		out[item] = append(out[item], f)
+		return nil
+	})
+	return out, err
+}
+
+// DetachChecklistFile takes a file out of a checklist item: it leaves the task too and stays only in its uploader's
+// «Файлы». It is the file's name.
+func (s *Store) DetachChecklistFile(ctx context.Context, itemID, fileID string) (string, error) {
+	var name string
+	err := s.db.QueryRow(ctx, `UPDATE files SET checklist_item_id = NULL, task_id = NULL
+		WHERE id::text = $1 AND checklist_item_id::text = $2 RETURNING name`, fileID, itemID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return name, err
 }
 
 // FileMeta is what a download needs to decide access and find the bytes.
