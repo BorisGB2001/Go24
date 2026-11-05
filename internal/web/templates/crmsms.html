@@ -8,7 +8,7 @@
 {{with $d.Senders}}<div class="card flush"><table class="tlist">
   <thead><tr><th>{{t "crm.sms.name"}}</th><th>{{t "crm.sms.provider"}}</th><th>{{t "crm.sms.sender"}}</th>{{if $admin}}<th></th>{{end}}</tr></thead>
   <tbody>{{range .}}<tr>
-    <td><b>{{.Name}}</b>{{if .Default}} <span class="pill">{{t "crm.sms.default"}}</span>{{end}}{{if not .Active}} <span class="muted small">{{t "crm.sms.off"}}</span>{{end}}</td>
+    <td><b>{{.Name}}</b>{{if .Default}} <span class="pill">{{t "crm.sms.default"}}</span>{{end}}{{if not .Active}} <span class="muted small">{{t "crm.sms.off"}}</span>{{end}}{{with .Description}}<div class="muted small">{{.}}</div>{{end}}</td>
     <td>{{t (print "crm.sms.kind." .Kind)}}</td>
     <td>{{.From}}</td>
     {{if $admin}}<td class="nowrap"><details class="tsettings"><summary class="button ghost" title="{{t "crm.sms.test"}}">{{icon "send"}}</summary>
@@ -16,7 +16,7 @@
         <label>{{t "crm.sms.test_phone"}}</label><input type="tel" name="phone" required maxlength="50">
         <p><button class="primary">{{t "crm.sms.test"}}</button></p></form></div></details>
       <details class="tsettings"><summary class="button ghost" title="{{t "crm.sms.edit"}}">{{icon "edit"}}</summary>
-      <div class="pop">{{template "crmsmsform" (dict "S" . "D" $d)}}
+      <div class="pop">{{if ne .Kind "app"}}{{template "crmsmsform" (dict "S" . "D" $d)}}{{end}}
         {{if not .Default}}<form method="post" action="/crm/sms"><input type="hidden" name="op" value="default"><input type="hidden" name="id" value="{{.ID}}">
           <button class="ghost">{{t "crm.sms.make_default"}}</button></form>{{end}}
         <form method="post" action="/crm/sms" data-confirm="{{t "crm.sms.delete_confirm"}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="{{.ID}}">

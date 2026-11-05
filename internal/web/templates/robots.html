@@ -78,11 +78,12 @@
         <input type="hidden" name="stage" value="{{$st.ID}}"><input type="hidden" name="back" value="{{$d.Back}}">
         <select name="kind">{{range $d.Kinds}}<option value="{{.}}">{{t (print "robots.kind." .)}}</option>{{end}}</select>
         <div data-for="activity"><label>{{t "robots.act"}}</label><select name="act">{{range $d.Acts}}<option value="{{.}}">{{t (print "crm.act." .)}}</option>{{end}}</select></div>
-        <div data-for="task activity notify mail booking sms comment"><input type="text" name="text" required maxlength="500" placeholder="{{t "robots.text"}}"></div>
+        <div data-for="task activity notify mail booking sms chat comment"><input type="text" name="text" required maxlength="500" placeholder="{{t "robots.text"}}"></div>
         <div data-for="task activity mail booking"><textarea name="details" rows="3" placeholder="{{t "robots.details"}}"></textarea></div>
         <div data-for="booking"><label>{{t "robots.booking_link"}}</label><select name="link">{{range $d.BookingLinks}}{{if .Active}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}</select>
           <p class="small muted">{{t "robots.booking_hint"}}</p></div>
         <div data-for="sms"><p class="small muted">{{if $d.SMSReady}}{{t "robots.sms_hint"}}{{else}}{{t "robots.sms_nosender"}} <a href="/crm/sms">{{t "crm.sms.title"}}</a>{{end}}</p></div>
+        <div data-for="chat"><p class="small muted">{{t "robots.chat_hint"}}</p></div>
         <div data-for="infocall">{{if $d.Lines}}<label>{{t "robots.infocall_line"}}</label><select name="line" required>{{range $d.Lines}}<option value="{{.ID}}">{{.Name}} · {{.Number}}</option>{{end}}</select>
           <label>{{t "robots.infocall_sound"}}</label><input type="file" name="sound" accept=".wav,audio/wav,audio/x-wav" required data-tts>
           <p class="small muted">{{t "robots.infocall_hint"}}</p>{{else}}<p class="small muted">{{t "robots.infocall_nolines"}}</p>{{end}}</div>
@@ -95,7 +96,7 @@
           <p class="small muted">{{t "robots.based_hint"}}</p></div>
         <div data-for="convert"><label>{{t "robots.convert_pipeline"}}</label><select name="deal_pipeline">{{range $d.Based}}{{if and (not .Lead) (not .Type)}}<option value="{{.Pipeline.ID}}">{{template "crmpipe" .Pipeline}}</option>{{end}}{{end}}</select>
           <p class="small muted">{{t "robots.convert_hint"}}</p></div>
-        <div data-for="task activity notify request create"><label>{{t "robots.to"}}</label>{{template "upick" (upick "to" "responsible" $d.Users "required" "+responsible" (t "robots.to.responsible") "+creator" (t "robots.to.creator"))}}</div>
+        <div data-for="task activity notify request create chat"><label><span data-for="task activity notify request create">{{t "robots.to"}}</span><span data-for="chat">{{t "robots.chat_from"}}</span></label>{{template "upick" (upick "to" "responsible" $d.Users "required" "+responsible" (t "robots.to.responsible") "+creator" (t "robots.to.creator"))}}</div>
         <div data-for="responsible"><label>{{t "robots.new_responsible"}}</label>{{template "upick" (upick "new_responsible" "" $d.Users "multi")}}
           <label>{{t "robots.share"}}</label><select name="share">{{range $d.ShareModes}}<option value="{{.}}">{{t (print "robots.share." .)}}</option>{{end}}</select>
           <label class="check"><input type="checkbox" name="skip" checked> {{t "robots.share_skip"}}</label>

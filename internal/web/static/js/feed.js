@@ -153,6 +153,13 @@
     feed.querySelector('[data-items]').prepend(node(html));
   };
 
+  // a comment appears once too, whichever comes first: the answer to our own comment or the live event
+  const putComment = (card, html) => {
+    const n = node(html);
+    const old = n && feed.querySelector(`[data-comment-id="${n.dataset.commentId}"]`);
+    if (old) old.replaceWith(n); else if (n) card.querySelector('[data-comments]')?.append(n);
+  };
+
   // drafts: what is typed in the new post's form and in a post's comment field is kept in this
   // browser (for the person, a month at most) and comes back after a reload; sending it clears the draft
   const drafts = (() => {
@@ -324,7 +331,7 @@
     const { ok, data } = await post('/feed/' + card.dataset.postId + '/comments', new FormData(f));
     if (!ok || !data.html) { alert(data.error || failed); return; }
     drafts.clear(f);
-    card.querySelector('[data-comments]').append(node(data.html));
+    putComment(card, data.html);
     f.reset();
     f.elements.body.style.height = '';
     fileNames(f);
@@ -639,14 +646,30 @@
     addEventListener('pagehide', flush);
   }
 
-  // live: posts from colleagues and from the messenger appear at the top of the unfiltered feed
-  if (window.EventSource && !location.search) {
-    const es = new EventSource('/feed/live');
-    es.addEventListener('post', e => {
-      try {
-        const d = JSON.parse(e.data);
-        if (!feed.querySelector(`[data-post-id="${d.id}"]`)) put(d.id, d.html);
-      } catch { /* ignore a broken event */ }
+  // live: posts from colleagues and from the messenger appear at the top of the unfiltered feed; the
+  // comments of the posts on the page come under them (marked new), change and go away as they do — a comment being
+  // edited here is left alone
+  if (window.EventSource) {
+    const es = new EventSource('/feed/live' + (location.search ? '?only=comments' : ''));
+    const on = (name, fn) => es.addEventListener(name, e => {
+      try { fn(JSON.parse(e.data)); } catch { /* ignore a broken event */ }
+    });
+    on('post', d => { if (!feed.querySelector(`[data-post-id="${d.id}"]`)) put(d.id, d.html); });
+    on('comment', d => {
+      const card = feed.querySelector(`[data-post-id="${d.post}"]`);
+      if (card && !card.querySelector(`[data-comment-id="${d.id}"]`)) putComment(card, d.html);
+    });
+    const editing = c => c.querySelector('[data-cedit-form]:not([hidden])');
+    on('cedit', d => {
+      const c = feed.querySelector(`[data-comment-id="${d.id}"]`);
+      if (!c || editing(c)) return;
+      const n = node(d.html);
+      n.hidden = c.hidden; // one of the «Предыдущие комментарии» stays folded
+      c.replaceWith(n);
+    });
+    on('cdel', d => {
+      const c = feed.querySelector(`[data-comment-id="${d.id}"]`);
+      if (c && !editing(c)) c.remove();
     });
   }
 })();

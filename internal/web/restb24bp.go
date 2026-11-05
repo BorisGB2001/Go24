@@ -1,8 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"go24/internal/auth"
 	"go24/internal/bp"
 	"go24/internal/crm"
 )
@@ -71,7 +75,7 @@ func portalDocType(entity, typeID, listID string) []string {
 
 // portalFieldTypes: a kind of a form's field → the type of a parameter.
 var portalFieldTypes = map[string]string{"string": "string", "text": "text", "number": "double", "date": "date", "datetime": "datetime",
-	"bool": "bool", "select": "select", "user": "user"}
+	"bool": "bool", "select": "select", "user": "user", "file": "file"}
 
 // portalNums: go24 ids of the rows of a table (bp_templates, bp_approvals) → their numbers.
 func (s *Server) portalNums(ctx context.Context, table string, ids []string) (map[string]int64, error) {
@@ -324,15 +328,29 @@ func (s *Server) portalBPStart(c portalCall) (portalOut, error) {
 	if err != nil {
 		return portalOut{}, err
 	}
-	entityID, err := s.portalDocument(c, portalParam(c.in, "document_id"), t.Entity)
+	want := t.Entity
+	if want == "none" { // a process of its own («Процессы в ленте»): no document, or ["bizproc", …]
+		want = ""
+	}
+	entityID, err := s.portalDocument(c, portalParam(c.in, "document_id"), want)
 	if err != nil {
 		return portalOut{}, err
 	}
 	values := map[string]string{}
+	var files []string
 	params := portalMap(portalParam(c.in, "parameters"))
 	for _, f := range t.Fields {
 		v, ok := portalParamOK(params, f.Key)
 		if !ok {
+			continue
+		}
+		if f.Kind == "file" { // [name, base64] (of a multiple field — a list of them), or {fileData: …}
+			ids, err := s.portalBPFiles(c, f.Key, v)
+			if err != nil {
+				return portalOut{}, err
+			}
+			files = append(files, ids...)
+			values[f.Key] = strings.Join(ids, bp.Multi)
 			continue
 		}
 		vals := portalList(v)
@@ -357,7 +375,41 @@ func (s *Server) portalBPStart(c portalCall) (portalOut, error) {
 	if err != nil {
 		return portalOut{}, err
 	}
+	s.bpKeepUploads(c.r, auth.Session{UserID: c.p.UserID}, files)
 	return portalOut{Result: id}, nil
+}
+
+// portalBPFiles stores the files of a «Файл» parameter sends them — [name, base64], a list of such pairs, or
+// {fileData: [name, base64]} — and says their ids.
+func (s *Server) portalBPFiles(c portalCall, key string, v any) ([]string, error) {
+	bad := s.portalErr(c.r, http.StatusBadRequest, "ERROR_ARGUMENT", "err.portal_field", key)
+	if m := portalMap(v); m != nil {
+		if fd, ok := portalParamOK(m, "fileData"); ok {
+			v = fd
+		}
+	}
+	if v == nil || portalStr(v) == "" {
+		if _, isList := v.([]any); !isList {
+			return nil, nil
+		}
+	}
+	pairs, ok := portalFilePairs(v)
+	if !ok {
+		return nil, bad
+	}
+	var ids []string
+	for _, p := range pairs {
+		data, err := base64.StdEncoding.DecodeString(p[1])
+		if err != nil || len(data) > maxUploadSize {
+			return nil, bad
+		}
+		id, err := s.bpStoreFile(c.r.Context(), c.p.UserID, p[0], http.DetectContentType(data), bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // portalUserID is the go24 id of an employee by number or uuid.
@@ -576,11 +628,34 @@ func (s *Server) portalBPComplete(c portalCall) (portalOut, error) {
 	comment := portalStr(portalParam(c.in, "comment"))
 	switch {
 	case kind == "request" && status == "ok":
+		var fields []bp.Field // of the request: its «Файл» fields get files as [name, base64]
+		var raw []byte
+		if err := s.DB.QueryRow(c.r.Context(), `SELECT coalesce(i.steps -> a.step -> 'fields', '[]') FROM bp_approvals a
+			JOIN bp_instances i ON i.id = a.instance_id WHERE a.id::text = $1`, id).Scan(&raw); err != nil {
+			return portalOut{}, err
+		}
+		_ = json.Unmarshal(raw, &fields)
+		file := map[string]bool{}
+		for _, f := range fields {
+			file[f.Key] = f.Kind == "file"
+		}
 		values := map[string]string{}
+		var files []string
 		for k, v := range portalMap(portalParam(c.in, "fields")) {
+			if file[k] {
+				ids, err := s.portalBPFiles(c, k, v)
+				if err != nil {
+					return portalOut{}, err
+				}
+				files = append(files, ids...)
+				values[k] = strings.Join(ids, bp.Multi)
+				continue
+			}
 			values[k] = strings.Join(portalList(v), ",")
 		}
-		err = s.BP.Answer(c.r.Context(), c.p.UserID, id, values, comment)
+		if err = s.BP.Answer(c.r.Context(), c.p.UserID, id, values, comment); err == nil {
+			s.bpKeepUploads(c.r, auth.Session{UserID: c.p.UserID}, files)
+		}
 	case kind == "request" && (status == "no" || status == "cancel"), kind == "approve" && status == "no":
 		err = s.BP.Decide(c.r.Context(), c.p.UserID, id, "reject", comment)
 	case kind == "approve" && status == "yes":

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -133,8 +134,11 @@ var PickModes = []string{"random", "queue"}
 var Ops = []string{"eq", "ne", "gt", "ge", "lt", "le", "between", "in", "contains", "notcontains", "empty", "filled"}
 
 // FieldKinds of a template's form, as the parameters' types: a bool is "Y" or "N", a select — one of
-// the field's options, a user — an employee's id, a datetime — YYYY-MM-DDTHH:MM.
-var FieldKinds = []string{"string", "text", "number", "date", "datetime", "bool", "select", "user"}
+// the field's options, a user — an employee's id, a datetime — YYYY-MM-DDTHH:MM, a file — a file's id (see bp_files).
+var FieldKinds = []string{"string", "text", "number", "date", "datetime", "bool", "select", "user", "file"}
+
+// ListFieldKinds are FieldKinds a list's (a global's) field may be of: not a file.
+var ListFieldKinds = FieldKinds[:len(FieldKinds)-1]
 
 // Field of the form a process is started with.
 type Field struct {
@@ -243,6 +247,7 @@ type Step struct {
 	Control  bool      `json:"control,omitempty"`  // task: «Принять работу после завершения»
 	Wait     bool      `json:"wait,omitempty"`     // task: «Ожидать завершения задачи» — the process stays on the step till then
 	Items    []string  `json:"items,omitempty"`    // task: its checklist
+	Attach   bool      `json:"attach,omitempty"`   // task, mail: the files of the process's «Файл» fields go with it
 	List     string    `json:"list,omitempty"`     // listadd, listupdate, listread, listdelete: the list (Value — the element, "" — of the process or the one added last)
 	Commands []Command `json:"commands,omitempty"` // commands: the buttons the people (To and Users) choose from
 	Into     []string  `json:"into,omitempty"`     // crmconvert: of ConvertInto
@@ -266,6 +271,7 @@ type Step struct {
 	Quantity string    `json:"quantity,omitempty"` // crmproduct: … quantity ("" — 1)
 	Discount string    `json:"discount,omitempty"` // crmproduct: … discount, % ("" — none)
 	App      string    `json:"app,omitempty"`      // app: the action of an application (Sets — its properties, Fields — the values it returns, Timeout — minutes to wait for them, 0 — no limit)
+	Off      bool      `json:"off,omitempty"`      // «Выключить», as a deactivated action of the designer: the process skips the step (a condition, a parallel step, an iterator — with their blocks)
 }
 
 // Command is a button of a «Команды» step (commands), as a command of a status of the state-machine processes:
@@ -431,6 +437,10 @@ type Store struct {
 	// the employee whose tokens go (but the action's own), the process, the token of the answer ("" — none waited)
 	Apps    *apps.Store
 	AppCall func(ctx context.Context, act apps.Activity, userID string, x Instance, token string, props map[string]any) error
+	// OpenFile reads a stored file's bytes (the files of «Файл» fields a letter carries; nil — the letter fails), MailFiles
+	// sends a letter with them from the user's mailbox (nil — the files' links in the text only)
+	OpenFile  func(ctx context.Context, storageID *string, key string) (io.ReadCloser, error)
+	MailFiles func(ctx context.Context, userID, to, subject, text string, files []ProcessFile) error
 	// Tr translates in the portal's language: «Да»/«Нет» of a bool field in texts (nil — "Y"/"N")
 	Tr func(key string, args ...any) string
 }
@@ -732,8 +742,8 @@ func checkCommandGoto(steps []Step, i, to int) error {
 func checkField(f Field) error {
 	if f.Key == "" || strings.ContainsAny(f.Key, " {}:") || f.Label == "" || !contains(FieldKinds, f.Kind) ||
 		f.Kind == "select" && (len(f.Options) == 0 || len(f.Options) > 100) || f.Kind != "select" && len(f.Options) > 0 ||
-		f.Multiple && (f.Kind == "text" || f.Kind == "bool") {
-		return i18n.E("err.bp_field")
+		f.Multiple && (f.Kind == "text" || f.Kind == "bool") || f.Kind == "file" && (f.Default != "" || f.Scope == "const") {
+		return i18n.E("err.bp_field") // a file is attached, not a default
 	}
 	for _, o := range f.Options {
 		if o == "" || len([]rune(o)) > 200 {
@@ -1047,7 +1057,11 @@ type Approval struct {
 	Delegate                                            string     // whom the person may hand it to: one of Delegations
 	Due                                                 *time.Time // «Время на выполнение»: decided by then, or the step goes on without the person
 	Remark, Yes, No                                     string     // of the step: the comment required (one of Remarks), the buttons' texts
+	Files                                               []FileRef  // of the process's «Файл» fields task shows them
 }
+
+// FileRef is a file of a process: its id and name.
+type FileRef struct{ ID, Name string }
 
 // NeedsComment says whether the person's decision ("approve", "reject", "seen" or "answer") must have a comment.
 func NeedsComment(remark, decision string) bool {
@@ -1223,15 +1237,23 @@ func (s *Store) Log(ctx context.Context, id string) ([]Line, error) {
 const currentSQL = `(a.step = i.step OR a.step IN (SELECT b.step FROM bp_branches b WHERE b.instance_id = i.id AND b.waiting))`
 
 const approvalSQL = `SELECT a.id, a.instance_id::text, i.name, a.kind, a.text, coalesce(a.decision, ''), a.comment, a.step, u.id, u.name, s.name, a.created_at,
-		i.steps -> a.step, a.due_at, a.decided_at
+		i.steps -> a.step, a.due_at, a.decided_at, coalesce((SELECT json_agg(json_build_array(f.id::text, f.name) ORDER BY f.name)
+		FROM bp_files b JOIN files f ON f.id = b.file_id WHERE b.instance_id = a.instance_id), '[]')
 	FROM bp_approvals a JOIN bp_instances i ON i.id = a.instance_id JOIN users u ON u.id = a.user_id JOIN users s ON s.id = i.started_by`
 
 func scanApproval(r pgx.CollectableRow) (Approval, error) {
 	var a Approval
-	var step []byte
+	var step, files []byte
 	if err := r.Scan(&a.ID, &a.InstanceID, &a.Name, &a.Kind, &a.Text, &a.Decision, &a.Comment, &a.Step, &a.User.ID, &a.User.Name, &a.StartedBy,
-		&a.CreatedAt, &step, &a.Due, &a.DecidedAt); err != nil {
+		&a.CreatedAt, &step, &a.Due, &a.DecidedAt, &files); err != nil {
 		return a, err
+	}
+	var refs [][2]string
+	if err := json.Unmarshal(files, &refs); err != nil {
+		return a, err
+	}
+	for _, f := range refs {
+		a.Files = append(a.Files, FileRef{ID: f[0], Name: f[1]})
 	}
 	if step != nil {
 		var st Step
@@ -1345,12 +1367,19 @@ func (s *Store) start(ctx context.Context, userID string, t Template, entityID s
 		}
 		eid = &entityID
 	}
+	files := FileIDs(t.Fields, clean)
+	if err := s.checkFiles(ctx, userID, parent, files); err != nil {
+		return "", err
+	}
 	steps, _ := json.Marshal(t.Steps)
 	fields, _ := json.Marshal(append([]Field{}, t.Fields...))
 	vals, _ := json.Marshal(clean)
 	var id string
 	if err := s.db.QueryRow(ctx, `INSERT INTO bp_instances (template_id, name, steps, fields, entity, entity_id, values, started_by, parent_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`, t.ID, t.Name, steps, fields, t.Entity, eid, vals, userID, optional(parent)).Scan(&id); err != nil {
+		return "", err
+	}
+	if err := s.claimFiles(ctx, id, userID, parent, files); err != nil {
 		return "", err
 	}
 	kind := "started"
@@ -1446,7 +1475,7 @@ func cleanValue(f Field, v string) (string, error) {
 		bad = v != "" && err != nil
 	case "select":
 		bad = v != "" && !contains(f.Options, v)
-	case "user":
+	case "user", "file":
 		bad = v != "" && !isUUID(v)
 	}
 	if bad {
@@ -1817,6 +1846,10 @@ func (s *Store) Answer(ctx context.Context, userID, approvalID string, values ma
 	if err != nil {
 		return err
 	}
+	files := FileIDs(x.Steps[step].Fields, clean)
+	if err := s.checkFiles(ctx, userID, instance, files); err != nil {
+		return err
+	}
 	if NeedsComment(x.Steps[step].Remark, "answer") && comment == "" {
 		return i18n.E("err.bp_comment_required")
 	}
@@ -1845,6 +1878,9 @@ func (s *Store) Answer(ctx context.Context, userID, approvalID string, values ma
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if err := s.claimFiles(ctx, instance, userID, instance, files); err != nil {
 		return err
 	}
 	return s.run(ctx, instance)

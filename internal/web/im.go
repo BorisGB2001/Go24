@@ -92,6 +92,13 @@ func (s *Server) imPage(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 						data["Group"] = g
 						data["ReadOnly"] = g != nil && !g.Writer // a channel one only reads — and comments on its posts
 						data["Comments"] = g != nil && g.Channel && !g.Writer
+						if g != nil && g.CanEdit && s.NotifyOut != nil { // «Группа Telegram»: the chat linked to a group there
+							if l, ok, err := s.NotifyOut.GroupLinkOf(r.Context(), rm.ID); err == nil && ok {
+								data["TgGroup"] = l
+							} else if err != nil {
+								s.Log.Warn("im group link", "err", err)
+							}
+						}
 					} else {
 						s.Log.Warn("im group", "err", err)
 					}
@@ -475,6 +482,9 @@ func (s *Server) imFilePreview(w http.ResponseWriter, r *http.Request, sess auth
 // imPreview is the kind of a file for the viewer and, for a document up to 20 MB, its HTML (mail.Preview).
 func imPreview(name, mime string, body io.Reader) map[string]any {
 	out := map[string]any{"name": name, "kind": fileKind(name, mime)}
+	if out["kind"] == "archive" {
+		out["kind"] = mail.PreviewNone // the list of an archive is «Диск»'s, a chat's file is downloaded
+	}
 	if out["kind"] == mail.PreviewHTML {
 		out["kind"] = mail.PreviewNone
 		if data, err := io.ReadAll(io.LimitReader(body, 20<<20+1)); err == nil && len(data) <= 20<<20 {

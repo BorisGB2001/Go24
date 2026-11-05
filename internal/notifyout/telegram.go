@@ -82,23 +82,29 @@ func (t *Telegram) Check(ctx context.Context, b Bot) (string, error) {
 	return me.Username, nil
 }
 
+func (t *Telegram) Groups() {}
+
 func (t *Telegram) Updates(ctx context.Context, b Bot, next int64) ([]Update, int64, error) {
 	var list []struct {
 		UpdateID int64 `json:"update_id"`
 		Message  *struct {
 			Text    string `json:"text"`
+			Caption string `json:"caption"`
 			ReplyTo *struct {
 				ID int64 `json:"message_id"`
 			} `json:"reply_to_message"`
 			Chat struct {
-				ID   int64  `json:"id"`
-				Type string `json:"type"`
+				ID    int64  `json:"id"`
+				Type  string `json:"type"`
+				Title string `json:"title"`
 			} `json:"chat"`
 			From struct {
+				ID        int64  `json:"id"`
 				Username  string `json:"username"`
 				FirstName string `json:"first_name"`
 				LastName  string `json:"last_name"`
 			} `json:"from"`
+			MigrateTo int64 `json:"migrate_to_chat_id"`
 		} `json:"message"`
 	}
 	if err := t.call(ctx, b, "getUpdates", map[string]any{"offset": next, "timeout": 0, "allowed_updates": []string{"message"}}, &list); err != nil {
@@ -108,19 +114,29 @@ func (t *Telegram) Updates(ctx context.Context, b Bot, next int64) ([]Update, in
 	for _, u := range list {
 		next = max(next, u.UpdateID+1)
 		m := u.Message
-		if m == nil || m.Chat.Type != "private" { // a group: notifications are personal
+		if m == nil || m.Chat.Type == "channel" {
 			continue
 		}
-		who := m.From.FirstName
+		name := m.From.FirstName
 		if m.From.LastName != "" {
-			who += " " + m.From.LastName
+			name += " " + m.From.LastName
 		}
+		who := name
 		if m.From.Username != "" {
 			who = "@" + m.From.Username
 		}
 		up := Update{Chat: strconv.FormatInt(m.Chat.ID, 10), Account: who, Text: m.Text}
 		if m.ReplyTo != nil {
 			up.ReplyTo = strconv.FormatInt(m.ReplyTo.ID, 10)
+		}
+		if m.Chat.Type != "private" { // a group or a supergroup: linked to a group chat of go24, maybe
+			up.Group, up.Title, up.From, up.Name = true, m.Chat.Title, strconv.FormatInt(m.From.ID, 10), name
+			if up.Text == "" {
+				up.Text = m.Caption
+			}
+			if m.MigrateTo != 0 {
+				up.MovedTo = strconv.FormatInt(m.MigrateTo, 10)
+			}
 		}
 		out = append(out, up)
 	}

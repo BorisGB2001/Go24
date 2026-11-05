@@ -20,7 +20,10 @@ FROM alpine:3.22
 # boris.gb 2026-10-25 23:55 - postgresql17-client: pg_dump для «Резервного копирования» (GO24DEV-569), версия — как у сервера postgres:17
 # boris.gb 2026-10-27 21:22 - ffmpeg: go24-worker вырезает звук из видеозаписи звонка для расшифровки Whisper (GO24DEV-798)
 # boris.gb 2026-10-28 13:38 - qpdf: «Подпись» накладывает блоки (подписи, печать, ФИО, дату) на страницы подписанного PDF (GO24DEV-837)
-RUN apk add --no-cache ca-certificates tzdata poppler-utils qpdf postgresql17-client ffmpeg && adduser -D -H -u 10001 go24
+# boris.gb 2026-11-04 21:22 - docker-cli, compose, buildx: тот же образ — go24-updater, обновление по кнопке (GO24DEV-1016);
+#   /updates — общий том обновлений, пустой том берёт владельца go24 с образа
+RUN apk add --no-cache ca-certificates tzdata poppler-utils qpdf postgresql17-client ffmpeg docker-cli docker-cli-compose docker-cli-buildx && \
+    adduser -D -H -u 10001 go24 && mkdir /updates && chown go24:go24 /updates
 # boris.gb 2026-10-13 01:30 - часовой пояс не зашит в образ: задаётся при запуске (TZ из GO24_TZ в compose)
 COPY --from=build /out/go24 /usr/local/bin/go24
 USER go24

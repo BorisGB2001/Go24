@@ -13,7 +13,7 @@
   <b>{{if eq .Kind "request"}}{{t "bp.your_answer"}}{{else}}{{t "bp.your_decision"}}{{end}}</b><p>{{.Text}}</p>
   {{template "bpanswer" (dict "A" . "Back" (print "/bp/i/" $x.ID))}}</div>{{end}}
 <div class="layout2"><div>
-  {{if $d.Fields}}<div class="card"><div class="props">{{range $d.Fields}}<span class="k">{{.Label}}</span><span>{{template "bpvalue" (dict "F" . "V" (index $x.Values .Key) "Users" $d.Users)}}</span>{{end}}</div></div>{{end}}
+  {{if $d.Fields}}<div class="card"><div class="props">{{range $d.Fields}}<span class="k">{{.Label}}</span><span>{{template "bpvalue" (dict "F" . "V" (index $x.Values .Key) "Users" $d.Users "Files" $d.FileNames)}}</span>{{end}}</div></div>{{end}}
   <div class="card"><h2>{{t "bp.steps"}}</h2><ol class="bpsteps">{{range $i, $s := $x.Steps}}<li class="{{$x.State $i}}">
     {{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $d.Fields)}}{{if and (eq $s.Kind "wait") (eq $i $x.Step) (eq $x.Status "running")}}{{with $x.WakeAt}} <span class="small muted">({{t "bp.wait_till" (datetime .)}})</span>{{end}}{{end}}</li>{{end}}</ol></div>
 </div><div>

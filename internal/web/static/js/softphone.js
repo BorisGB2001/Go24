@@ -1,7 +1,9 @@
 // The softphone of go24 (/phone, a window of its own): JsSIP registers the employee's account "w<number>" on go24's
 // Asterisk over /telephony/ws; calls in and out, mute, hold, the keypad (DTMF while talking), «Перехватить» (*8: a
 // colleague's ringing call), transfer — at once (REFER)
-// or after talking to the colleague first (a second call, then REFER with Replaces). Pages of go24 send it
+// or after talking to the colleague first (a second call, then REFER with Replaces), or a conference of the three, as
+// «Пригласить в звонок»: the window itself mixes the sound of the two calls (WebAudio), so the client hears
+// the colleague and the employee, the colleague — the client and the employee; leaving it transfers the call. Pages of go24 send it
 // their «Позвонить», «Ответить», «Отклонить» (/telephony/live), and it tells them what the line does
 // (/telephony/state) — they show an incoming call too. The call card (/telephony/card): the client of
 // CRM with their open deals, or «Создать лид / контакт», the calls before, «Скрипт продаж» of the call's direction
@@ -18,11 +20,13 @@
   const muteBtn = $('[data-sp-mute]'), holdBtn = $('[data-sp-hold]'), pickBtn = $('[data-sp-pick]');
   const xferBtn = $('[data-sp-xfer]'), xfer = $('[data-sp-xfer-panel]'), xferAsk = $('[data-sp-xfer-ask]'), xferTalk = $('[data-sp-xfer-talk]');
   const xferTo = $('[data-sp-xfer-to]'), xferWho = $('[data-sp-xfer-who]'), completeBtn = $('[data-sp-complete]'), audio2 = $('[data-sp-audio2]');
+  const confBtn = $('[data-sp-conf]'), returnBtn = $('[data-sp-return]');
   const host = t.host || location.hostname;
   const pc = { iceServers: [] }; // Asterisk is in the office network: no STUN, no TURN
   const title = document.title;
   let ua = null, session = null, state = 'idle', registered = false, since = 0, tick = null;
   let consult = null, transferred = ''; // the call to the colleague before a transfer; the number the call went to
+  let conf = null; // the conference: {ctx, mic (its gain), back: [[sender, its own track]]}
 
   const say = (text, cls) => { status.textContent = text; dot.className = 'sp-dot' + (cls ? ' ' + cls : ''); };
   const post = (url, data) => fetch(url, { method: 'POST', body: new URLSearchParams(data), headers: { Accept: 'application/json' } })
@@ -140,7 +144,8 @@
     callText.textContent = ringingIn ? callText.dataset.answer : callText.dataset.call;
     hangBtn.hidden = !session;
     hangText.textContent = ringingIn ? hangText.dataset.decline : hangText.dataset.hangup;
-    muteBtn.hidden = holdBtn.hidden = state !== 'talking';
+    muteBtn.hidden = state !== 'talking';
+    holdBtn.hidden = state !== 'talking' || !!conf;
     xferBtn.hidden = state !== 'talking' || !!consult;
     if (state !== 'talking') xfer.hidden = true;
     if (pickBtn) pickBtn.hidden = !!session;
@@ -201,6 +206,7 @@
       else if (e && [c.BUSY, c.REJECTED, c.UNAVAILABLE, c.NOT_FOUND, c.NO_ANSWER].includes(e.cause)) text = t.busy;
       else if (e && e.originator !== 'local' && ![c.BYE, c.CANCELED, c.ANSWERED_ELSEWHERE].includes(e.cause) && e.cause) text = t.failed.replace('%s', e.cause);
       say(text, registered ? 'ok' : '');
+      unmix();
       session = null; audio.srcObject = null;
       if (consult) try { consult.terminate(); } catch { /* gone already */ }
       muteBtn.classList.remove('on'); holdBtn.classList.remove('on');
@@ -253,10 +259,17 @@
     if (session && state === 'talking') try { session.sendDTMF(k); } catch { /* no DTMF now */ }
     input.value += k;
   });
+  let confMuted = false;
   muteBtn.addEventListener('click', () => {
     if (!session) return;
-    const on = !session.isMuted().audio;
-    on ? session.mute({ audio: true }) : session.unmute({ audio: true });
+    let on;
+    if (conf) { // the sent tracks are the mixes: the microphone is turned down in them
+      on = confMuted = !confMuted;
+      conf.mic.gain.value = on ? 0 : 1;
+    } else {
+      on = !session.isMuted().audio;
+      on ? session.mute({ audio: true }) : session.unmute({ audio: true });
+    }
     muteBtn.classList.toggle('on', on);
     muteBtn.title = on ? t.unmute : t.mute;
     muteBtn.innerHTML = on ? '<i class="i i-microphone-off" aria-hidden="true"></i>' : '<i class="i i-microphone" aria-hidden="true"></i>';
@@ -308,7 +321,7 @@
     setHold(true);
     xferMode(true);
     xferWho.textContent = t.xferCalling.replace('%s', n);
-    completeBtn.disabled = true;
+    completeBtn.disabled = confBtn.disabled = true;
     try {
       consult = ua.call(`sip:${n}@${host}`, { mediaConstraints: { audio: true, video: false }, pcConfig: pc,
         rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false } });
@@ -317,22 +330,77 @@
     c.on('peerconnection', e => remoteAudio(e.peerconnection, audio2));
     if (c.connection) remoteAudio(c.connection, audio2);
     c.on('icecandidate', e => { if (e.candidate.type === 'host') e.ready(); });
-    c.on('confirmed', () => { xferWho.textContent = t.xferTalking.replace('%s', n); completeBtn.disabled = false; });
+    c.on('confirmed', () => { xferWho.textContent = t.xferTalking.replace('%s', n); completeBtn.disabled = confBtn.disabled = false; });
     const gone = () => {
       if (consult !== c) return;
+      const was = !!conf;
+      unmix();
       consult = null; audio2.srcObject = null;
-      if (session && !transferred) { xferMode(false); say(t.xferEnded, 'busy'); }
+      if (session && !transferred) {
+        xferMode(false);
+        if (was) { xfer.hidden = true; say(t.confLeft, 'talk'); } else say(t.xferEnded, 'busy');
+      }
       buttons();
     };
     c.on('ended', gone);
     c.on('failed', gone);
     buttons();
   });
+  // ---- the conference: each call is sent the microphone and the other call's sound ----
+  const label = on => [completeBtn, returnBtn].forEach(b => { const v = on ? b.dataset.conf : b.dataset.xfer; if (v) b.textContent = v; });
+  const sender = s => s?.connection?.getSenders?.().find(x => x.track && x.track.kind === 'audio');
+  const mix = () => {
+    const a = sender(session), b = sender(consult), AC = window.AudioContext || window.webkitAudioContext;
+    if (!a || !b || !AC || !window.MediaStream || !audio.srcObject || !audio2.srcObject) return false;
+    try {
+      const ctx = new AC(), mic = ctx.createGain();
+      ctx.createMediaStreamSource(new MediaStream([a.track])).connect(mic);
+      const back = [[a, a.track], [b, b.track]];
+      const send = (to, other) => {
+        const d = ctx.createMediaStreamDestination();
+        mic.connect(d);
+        ctx.createMediaStreamSource(other).connect(d);
+        to.replaceTrack(d.stream.getAudioTracks()[0])?.catch?.(() => {});
+      };
+      send(a, audio2.srcObject); // the client hears the employee and the colleague
+      send(b, audio.srcObject); // the colleague hears the employee and the client
+      ctx.resume?.()?.catch?.(() => {});
+      conf = { ctx, mic, back };
+      return true;
+    } catch { return false; }
+  };
+  // unmix: the calls get the microphone back
+  function unmix() {
+    if (!conf) return;
+    const c = conf;
+    conf = null;
+    if (confMuted && session) { // the microphone stays off: JsSIP's own mute takes it over
+      try { session.mute({ audio: true }); } catch { /* the call is gone */ }
+      c.back[0][1].enabled = false;
+    }
+    confMuted = false;
+    c.back.forEach(([s, track]) => { try { s.replaceTrack(track)?.catch?.(() => {}); } catch { /* the call is gone */ } });
+    try { c.ctx.close(); } catch { /* closed */ }
+    label(false);
+    confBtn.hidden = false;
+  }
+  confBtn.addEventListener('click', () => {
+    if (!session || !consult || conf || confBtn.disabled) return;
+    setHold(false);
+    const muted = session.isMuted().audio; // JsSIP's mute turns the microphone track off: on for the mix, off in it
+    if (muted) session.unmute({ audio: true });
+    if (!mix()) { if (muted) session.mute({ audio: true }); setHold(true); say(t.confFailed, 'err'); return; }
+    if (muted) { confMuted = true; conf.mic.gain.value = 0; }
+    xferWho.textContent = t.confTalking.replace('%s', consult.remote_identity.uri.user);
+    confBtn.hidden = true;
+    label(true);
+    buttons();
+  });
   completeBtn.addEventListener('click', () => {
     if (!session || !consult) return;
     refer(consult.remote_identity.uri, { replaces: consult });
   });
-  $('[data-sp-return]').addEventListener('click', () => {
+  returnBtn.addEventListener('click', () => {
     if (consult) try { consult.terminate(); } catch { /* gone already */ }
     setHold(false);
     xfer.hidden = true;

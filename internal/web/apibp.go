@@ -1,13 +1,16 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go24/internal/apikeys"
+	"go24/internal/auth"
 	"go24/internal/bp"
 	"go24/internal/tasks"
 )
@@ -334,20 +337,43 @@ func (s *Server) apiBPWriteInstance(w http.ResponseWriter, r *http.Request, p ap
 	return nil
 }
 
-// apiBPStart starts a process as the key's owner: {"entity_id": … (a template of a CRM card), "values": {…}}.
+// apiBPStart starts a process as the key's owner: {"entity_id": … (a template of a CRM card), "values": {…}, "files":
+// {"key": [{"name": "a.pdf", "data": "<base64>"}, …]} — the files of «Файл» fields}.
 func (s *Server) apiBPStart(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize*2)
 	var in struct {
 		EntityID string            `json:"entity_id"`
 		Values   map[string]string `json:"values"`
+		Files    map[string][]struct {
+			Name string `json:"name"`
+			Data []byte `json:"data"` // base64
+		} `json:"files"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
+	}
+	if in.Values == nil {
+		in.Values = map[string]string{}
+	}
+	var files []string
+	for key, list := range in.Files {
+		var ids []string
+		for _, f := range list {
+			id, err := s.bpStoreFile(r.Context(), p.UserID, f.Name, http.DetectContentType(f.Data), bytes.NewReader(f.Data), int64(len(f.Data)))
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		files = append(files, ids...)
+		in.Values[key] = strings.Join(ids, bp.Multi)
 	}
 	ctx, _ := s.apiBPCtx(r, p)
 	id, err := s.BP.Start(ctx, p.UserID, r.PathValue("template"), in.EntityID, in.Values)
 	if err != nil {
 		return err
 	}
+	s.bpKeepUploads(r, auth.Session{UserID: p.UserID}, files)
 	return s.apiBPWriteInstance(w, r, p, id, http.StatusCreated)
 }
 

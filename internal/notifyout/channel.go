@@ -55,6 +55,10 @@ type Challenged interface {
 	Challenge(b Bot, q url.Values) (string, bool)
 }
 
+// Grouped is a messenger whose bot may be added to a group chat there (Telegram), which a group chat of go24 is linked
+// to (groups.go): its Updates give the group's messages too (Update.Group).
+type Grouped interface{ Groups() }
+
 // Direct is a channel the person needs no chat with a bot for (e-mail): «Подключить» links their work address at
 // once, without a code.
 type Direct interface{ Direct() }
@@ -93,6 +97,11 @@ type Update struct {
 	Text    string
 	Opened  bool   // the person has only opened the chat (Hooked): it cannot be written yet, the answer goes in the call's answer
 	ReplyTo string // the id of the bot's message it answers (Replied)
+	// a message in a group chat (Grouped): the group's name, who wrote (their own id and name there); the group
+	// became another (Telegram: a group upgraded to a supergroup gets a new id)
+	Group             bool
+	Title, From, Name string
+	MovedTo           string
 }
 
 // Message is a notification: its line and where it leads ("" — a plain answer of the bot).

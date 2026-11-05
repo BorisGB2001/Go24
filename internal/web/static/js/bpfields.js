@@ -11,6 +11,11 @@ document.querySelectorAll('[data-bpfields]').forEach(box => {
       multi.hidden = kind.value === 'text' || kind.value === 'bool'
       if (multi.hidden) multi.value = ''
     }
+    const def = row.querySelector('input[name$=_def]') // a file is attached, it has no default
+    if (def) {
+      def.hidden = kind.value === 'file'
+      if (def.hidden) def.value = ''
+    }
     const scope = row.querySelector('select[name$=_scope]') // a variable and a constant are not asked: not required
     if (scope) row.querySelector('select[name$=_req]').hidden = scope.value !== 'param'
   }

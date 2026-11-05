@@ -96,6 +96,42 @@ func TestLoopStart(t *testing.T) {
 	if x, _ := s.Instance(ctx, ann, id); x.Status != "done" || x.Values["n"] != "3" {
 		t.Fatalf("the counter: %s %+v", x.Status, x.Values)
 	}
+	// «Выключить»: an approval, a condition with its block and a parallel step with its branches are skipped
+	vars := []Field{{Key: "n", Label: "N", Kind: "number", Default: "0", Scope: "var"}}
+	tpl, err = s.SaveTemplate(ctx, boss, Template{Name: "Выключено", Active: true, Fields: vars, Steps: []Step{
+		{Kind: "approve", To: boss, Text: "Утвердите", Off: true},
+		{Kind: "if", Field: "n", Op: "eq", Value: "0", Goto: 4, Off: true},
+		{Kind: "set", Field: "n", Value: "= {n} + 1"},
+		{Kind: "parallel", Branches: []int{6}, Goto: 7, Off: true},
+		{Kind: "set", Field: "n", Value: "= {n} + 10"},
+		{Kind: "set", Field: "n", Value: "= {n} + 100"},
+		{Kind: "set", Field: "n", Value: "= {n} + 1000"}}})
+	must(err)
+	id, err = s.Start(ctx, ann, tpl, "", nil)
+	must(err)
+	if x, _ := s.Instance(ctx, ann, id); x.Status != "done" || x.Values["n"] != "1000" {
+		t.Fatalf("switched off steps: %s %+v", x.Status, x.Values)
+	}
+	if a, _ := s.MyApprovals(ctx, boss); len(a) != 0 {
+		t.Fatalf("a switched off approval asks: %d", len(a))
+	}
+	// switched on again — done
+	t2, err := s.Template(ctx, tpl)
+	must(err)
+	for i := range t2.Steps {
+		t2.Steps[i].Off = false
+	}
+	t2.Steps = t2.Steps[1:]
+	for i := range t2.Steps {
+		Renumber(&t2.Steps[i], func(m int) int { return m - 1 })
+	}
+	_, err = s.SaveTemplate(ctx, boss, t2)
+	must(err)
+	id, err = s.Start(ctx, ann, tpl, "", nil)
+	must(err)
+	if x, _ := s.Instance(ctx, ann, id); x.Status != "done" || x.Values["n"] != "1111" {
+		t.Fatalf("switched on steps: %s %+v", x.Status, x.Values)
+	}
 	// «Пауза» till the date of a field: a past one does not stop the process
 	_, err = s.SaveTemplate(ctx, boss, Template{Name: "Плохой", Fields: []Field{{Key: "x", Label: "X", Kind: "string"}},
 		Steps: []Step{{Kind: "wait", Field: "x"}}})

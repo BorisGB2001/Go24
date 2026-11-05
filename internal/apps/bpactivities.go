@@ -219,3 +219,36 @@ func (s *Store) CallActivity(ctx context.Context, act Activity, userID, base str
 	}
 	return nil
 }
+
+// CallSMS posts a message of the application's SMS provider (messageservice.sender.add) to its handler
+// does: a form of PHP arrays (type, code, message_id, message_to, message_body…) with «auth» — the tokens of the
+// employee who sends, of none when a robot does.
+func (s *Store) CallSMS(ctx context.Context, appID, handler, userID, base string, data map[string]any) error {
+	a, err := s.Get(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !a.Installed() {
+		return i18n.E("err.sms_app_off")
+	}
+	auth := bareAuth(a, base)
+	var num int64
+	if userID != "" && s.db.QueryRow(ctx, `SELECT num FROM users WHERE id::text = $1 AND active`, userID).Scan(&num) == nil {
+		t, err := s.issue(ctx, a.ID, userID, AccessTTL)
+		if err != nil {
+			return err
+		}
+		auth = Auth(a, t, base)
+		auth["user_id"] = num
+	}
+	auth["client_endpoint"] = strings.TrimRight(base, "/") + "/rest/"
+	body := map[string]any{"ts": time.Now().Unix(), "auth": auth}
+	for k, v := range data {
+		body[k] = v
+	}
+	status, err := s.postAs(ctx, handler, a.ClientSecret, "ONMESSAGESERVICE", "application/x-www-form-urlencoded", []byte(PHPForm(body).Encode()))
+	if err == nil && status >= 300 {
+		err = fmt.Errorf("HTTP %d", status)
+	}
+	return err
+}

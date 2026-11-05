@@ -179,25 +179,33 @@ func canPlan(p Project) bool { return p.CanWork() }
 
 // CreateSprint adds a planned sprint after the last one: it starts when the previous one ends and lasts two weeks.
 func (s *Store) CreateSprint(ctx context.Context, p Project, name string) error {
+	_, err := s.NewSprint(ctx, "", p, name)
+	return err
+}
+
+// NewSprint is CreateSprint by the actor ("" — unknown), giving the id of the sprint.
+func (s *Store) NewSprint(ctx context.Context, actorID string, p Project, name string) (string, error) {
 	if !p.Scrum() || !canPlan(p) {
-		return ErrForbidden
+		return "", ErrForbidden
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return invalid("err.sprint_name")
+		return "", invalid("err.sprint_name")
 	}
 	var last *time.Time
 	if err := s.db.QueryRow(ctx, `SELECT max(date_end) FROM sprints WHERE project_id = $1 AND status <> 'completed'`, p.ID).Scan(&last); err != nil {
-		return err
+		return "", err
 	}
 	start := time.Now().Truncate(24 * time.Hour)
 	if last != nil && last.After(start) {
 		start = last.AddDate(0, 0, 1)
 	}
 	end := start.Add(SprintLength - 24*time.Hour)
-	_, err := s.db.Exec(ctx, `INSERT INTO sprints (project_id, name, date_start, date_end, sort)
-		VALUES ($1, $2, $3, $4, (SELECT coalesce(max(sort), 0) + 10 FROM sprints WHERE project_id = $1))`, p.ID, name, start, end)
-	return err
+	var id string
+	err := s.db.QueryRow(ctx, `INSERT INTO sprints (project_id, name, date_start, date_end, sort, created_by)
+		VALUES ($1, $2, $3, $4, (SELECT coalesce(max(sort), 0) + 10 FROM sprints WHERE project_id = $1), nullif($5, '')::uuid)
+		RETURNING id`, p.ID, name, start, end, actorID).Scan(&id)
+	return id, err
 }
 
 // UpdateSprint renames a sprint, sets its goal and dates (not for completed sprints).
@@ -358,6 +366,21 @@ func (s *Store) MoveToSprint(ctx context.Context, userID, taskID, sprintID strin
 	})
 }
 
+// SetScrumSort places a task among the tasks of its backlog or sprint (a smaller sort — higher), as moving it there.
+func (s *Store) SetScrumSort(ctx context.Context, userID, taskID string, sort int) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		a, err := loadAccess(ctx, tx, userID, taskID, true)
+		if err != nil {
+			return err
+		}
+		if !(a.Roles.Worker() || a.Roles.Manager || a.MemberRole == "member") {
+			return ErrForbidden
+		}
+		_, err = tx.Exec(ctx, `UPDATE tasks SET backlog_sort = $2, updated_at = now() WHERE id = $1`, taskID, sort)
+		return err
+	})
+}
+
 func sprintName(ctx context.Context, q querier, id string) string {
 	if id == "" {
 		return "sprint.backlog"
@@ -460,16 +483,23 @@ func cleanEpic(name, color string) (string, string, error) {
 }
 
 func (s *Store) CreateEpic(ctx context.Context, actorID string, p Project, name, color, description string) error {
+	_, err := s.NewEpic(ctx, actorID, p, name, color, description)
+	return err
+}
+
+// NewEpic is CreateEpic giving the id of the epic.
+func (s *Store) NewEpic(ctx context.Context, actorID string, p Project, name, color, description string) (string, error) {
 	if !p.Scrum() || !canPlan(p) {
-		return ErrForbidden
+		return "", ErrForbidden
 	}
 	name, color, err := cleanEpic(name, color)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO epics (project_id, name, color, description, created_by) VALUES ($1, $2, $3, $4, $5)`,
-		p.ID, name, color, strings.TrimSpace(description), actorID)
-	return err
+	var id string
+	err = s.db.QueryRow(ctx, `INSERT INTO epics (project_id, name, color, description, created_by) VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`, p.ID, name, color, strings.TrimSpace(description), actorID).Scan(&id)
+	return id, err
 }
 
 func (s *Store) UpdateEpic(ctx context.Context, p Project, id, name, color, description string) error {

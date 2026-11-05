@@ -107,6 +107,32 @@ func scheme(steps []Step, a, b int) []Node {
 	return out
 }
 
+// Skip is the index of the step a process goes to past the switched off step i («Выключить»): a condition, a parallel
+// step and an iterator go with the steps of their blocks, any other step (a loop too: its steps are done once) alone.
+func Skip(steps []Step, i int) int {
+	if k := steps[i].Kind; k == "if" || k == "parallel" || k == "foreach" {
+		if n, ok := nodeAt(Scheme(steps), i); ok && n.B > i+1 {
+			return n.B
+		}
+	}
+	return i + 1
+}
+
+// nodeAt is the block of the step of the index i, in the blocks or inside them.
+func nodeAt(nodes []Node, i int) (Node, bool) {
+	for _, n := range nodes {
+		if n.N == i+1 {
+			return n, true
+		}
+		for _, c := range n.Cols {
+			if m, ok := nodeAt(c.Nodes, i); ok {
+				return m, true
+			}
+		}
+	}
+	return Node{}, false
+}
+
 // Renumber changes the step's jumps to the steps by f (the number from 1 → the new one); 0 — the end — stays.
 func Renumber(st *Step, f func(int) int) {
 	if st.Goto != 0 {

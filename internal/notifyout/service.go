@@ -32,7 +32,8 @@ type Service struct {
 	Text     func(notify.Item) string             // one line of a notification, in the installation's language
 	Tr       func(key string, args ...any) string // the bots' answers, in the installation's language
 	AppURL   string
-	Chats    ChatSource // the people's chat messages for the messengers (nil — none)
+	Chats    ChatSource  // the people's chat messages for the messengers (nil — none)
+	Groups   GroupSource // group chats linked to groups of the messengers (nil — none)
 	Log      *slog.Logger
 	key      []byte
 }
@@ -495,6 +496,9 @@ func (s *Service) Pass(ctx context.Context) {
 	if err := s.DeliverChats(ctx, readyOf(bots)); err != nil && ctx.Err() == nil {
 		s.Log.Warn("notify bots: chat messages", "err", err)
 	}
+	if err := s.DeliverGroups(ctx, readyOf(bots)); err != nil && ctx.Err() == nil {
+		s.Log.Warn("notify bots: group chats", "err", err)
+	}
 }
 
 // readyOf: the ready bots by their messenger.
@@ -542,6 +546,9 @@ func (s *Service) take(ctx context.Context, b Bot, u Update) error {
 // A person who has only opened the chat with a code is asked to send it (a button), as the chat cannot be written
 // before they do (Viber).
 func (s *Service) answer(ctx context.Context, b Bot, u Update) (Message, error) {
+	if u.Group && u.Chat != "" {
+		return s.groupAnswer(ctx, b, u)
+	}
 	text := strings.TrimSpace(u.Text)
 	cmd, arg, _ := strings.Cut(text, " ")
 	switch {

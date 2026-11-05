@@ -40,6 +40,7 @@ func (s *Server) apiDiskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/disk/files/{id}", s.api("disk:read", s.apiDiskDownload))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}/versions", s.api("disk:read", s.apiDiskVersions))
 	mux.HandleFunc("GET /api/v1/disk/files/{id}/thumb", s.api("disk:read", s.apiDiskThumb)) // as PREVIEW_URL
+	mux.HandleFunc("GET /api/v1/disk/files/{id}/archive", s.api("disk:read", s.apiDiskArchive))
 	mux.HandleFunc("POST /api/v1/disk/files/{id}/send", s.api("disk:read", s.apiDiskSend))
 	mux.HandleFunc("GET /api/v1/disk/docs", s.api("disk:read", s.apiDiskDocs))
 	s.apiDiskLinkRoutes(mux)

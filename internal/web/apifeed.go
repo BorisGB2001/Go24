@@ -115,24 +115,26 @@ type apiFeedPost struct {
 	Title     string             `json:"title,omitempty"`
 	Body      string             `json:"body"`
 	CreatedAt time.Time          `json:"created_at"`
-	Edited    bool               `json:"edited"`
-	Important bool               `json:"important"`
-	Until     *time.Time         `json:"important_until,omitempty"`
-	Read      bool               `json:"read"`    // the key owner confirmed the important post
-	Readers   int                `json:"readers"` // who confirmed it
-	Views     int                `json:"views"`
-	Files     []apiFeedFile      `json:"files"`
-	Poll      *apiFeedPoll       `json:"poll,omitempty"`
-	Gratitude *apiGratitude      `json:"gratitude,omitempty"`
-	Reactions apiReactions       `json:"reactions"`
-	Comments  []apiFeedComment   `json:"comments"`
-	Fav       bool               `json:"fav"`
-	Pinned    bool               `json:"pinned"`
-	Following bool               `json:"following"`
-	Hidden    bool               `json:"hidden"`
-	Tags      []string           `json:"tags"`              // «Теги»
-	Process   string             `json:"process,omitempty"` // the business process the post is of
-	URL       string             `json:"url"`               // the post on the feed's page
+	// the last activity: the time of the post or of its newest comment (the order of sort=activity)
+	ActivityAt time.Time        `json:"activity_at"`
+	Edited     bool             `json:"edited"`
+	Important  bool             `json:"important"`
+	Until      *time.Time       `json:"important_until,omitempty"`
+	Read       bool             `json:"read"`    // the key owner confirmed the important post
+	Readers    int              `json:"readers"` // who confirmed it
+	Views      int              `json:"views"`
+	Files      []apiFeedFile    `json:"files"`
+	Poll       *apiFeedPoll     `json:"poll,omitempty"`
+	Gratitude  *apiGratitude    `json:"gratitude,omitempty"`
+	Reactions  apiReactions     `json:"reactions"`
+	Comments   []apiFeedComment `json:"comments"`
+	Fav        bool             `json:"fav"`
+	Pinned     bool             `json:"pinned"`
+	Following  bool             `json:"following"`
+	Hidden     bool             `json:"hidden"`
+	Tags       []string         `json:"tags"`              // «Теги»
+	Process    string           `json:"process,omitempty"` // the business process the post is of
+	URL        string           `json:"url"`               // the post on the feed's page
 }
 
 func apiFeedFiles(list []feed.File) []apiFeedFile {
@@ -158,7 +160,7 @@ func apiFeedCommentOf(c feed.Comment) apiFeedComment {
 
 func (s *Server) apiFeedPostOf(p *feed.Post) apiFeedPost {
 	out := apiFeedPost{ID: p.ID, Author: apiUser{p.AuthorID, p.AuthorName}, Project: p.ProjectKey, Title: p.Title, Body: p.Body,
-		CreatedAt: p.CreatedAt, Edited: p.Edited, Important: p.Important, Read: p.Read, Readers: p.Readers, Views: p.Views,
+		CreatedAt: p.CreatedAt, ActivityAt: p.ActivityAt, Edited: p.Edited, Important: p.Important, Read: p.Read, Readers: p.Readers, Views: p.Views,
 		Files: apiFeedFiles(p.Files), Reactions: apiReactionsOf(p.Reactions), Comments: []apiFeedComment{},
 		Fav: p.Fav, Pinned: p.Pinned, Following: p.Following, Hidden: p.Hidden, Tags: append([]string{}, p.Tags...), Process: p.Process,
 		URL: strings.TrimRight(s.BaseURL, "/") + "/feed?post=" + p.ID}
@@ -193,7 +195,9 @@ func (s *Server) apiFeedPostOf(p *feed.Post) apiFeedPost {
 
 // apiFeedList: the posts the key's owner sees, the newest first, a page at a time (next — "before" of the next
 // page). The filter is the feed's: view=important|mine|fav|pinned|hidden|mentions, project (key), q, author, dest (addressees: user IDs
-// or dept:ID, repeated), kind=poll|gratitude, period=today|yesterday|week|month|quarter, from and till (YYYY-MM-DD), tag.
+// or dept:ID, repeated), kind=poll|gratitude, period=today|yesterday|week|month|quarter, from and till (YYYY-MM-DD), tag;
+// sort=activity — by the last activity (a new comment lifts a post; before and next are then of activity_at), by
+// default — by the time of the post.
 func (s *Server) apiFeedList(w http.ResponseWriter, r *http.Request, p apikeys.Principal) error {
 	q := r.URL.Query()
 	view := q.Get("view")
@@ -228,6 +232,13 @@ func (s *Server) apiFeedList(w http.ResponseWriter, r *http.Request, p apikeys.P
 		}
 	}
 	f.From, f.Till = feed.Period(period, q.Get("from"), q.Get("till"), time.Now())
+	switch q.Get("sort") {
+	case "activity":
+		f.ByActivity = true
+	case "", "date":
+	default:
+		return i18n.E("err.bad_form")
+	}
 	if b := q.Get("before"); b != "" {
 		t, err := time.Parse(time.RFC3339Nano, b)
 		if err != nil {

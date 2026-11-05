@@ -30,7 +30,7 @@ import (
 // {responsible}, {client}, {link}.
 
 // RobotKinds in the order the settings offer them.
-var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "infocall", "sms", "comment", "fields", "webhook", "responsible",
+var RobotKinds = []string{"task", "activity", "notify", "mail", "booking", "infocall", "sms", "chat", "comment", "fields", "webhook", "responsible",
 	"observers", "document", "sign", "bp", "close", "request", "create", "convert", "stage", "copy", "move"}
 
 // TunnelKinds are the robots that lead into another pipeline (of deals and smart processes only).
@@ -170,6 +170,10 @@ func (s *Store) AddRobot(ctx context.Context, userID, stageID, kind string, p Ro
 	case "sms":
 		if s.SendSMS == nil {
 			return i18n.E("err.sms_no_sender")
+		}
+	case "chat":
+		if s.ClientChat == nil {
+			return i18n.E("err.robot_chat")
 		}
 	case "infocall":
 		if s.InfoCall == nil || p.Line == "" || p.Sound == "" {
@@ -314,6 +318,8 @@ func (s *Store) runRobotHeld(ctx context.Context, actorID string, r Robot, c car
 		err = s.robotInfoCall(ctx, actorID, c, p)
 	case "sms":
 		err = s.robotSMS(ctx, actorID, c, text)
+	case "chat":
+		err = s.robotChat(ctx, actorID, to, c, text)
 	case "fields":
 		err = s.robotFields(ctx, actorID, c, p.Set, respName)
 	case "webhook":
@@ -532,6 +538,18 @@ func (s *Store) robotInfoCall(ctx context.Context, actorID string, c card, p Rob
 		return err
 	}
 	return s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "infocall:"+to)
+}
+
+// robotChat writes into the client's latest dialogue of the open lines from the user (the card's responsible by
+// default) «Сообщение в открытую линию».
+func (s *Store) robotChat(ctx context.Context, actorID, from string, c card, text string) error {
+	if s.ClientChat == nil {
+		return i18n.E("err.robot_chat")
+	}
+	if _, err := s.ClientChat(ctx, from, c.entity, c.id, text); err != nil {
+		return err
+	}
+	return s.event(ctx, s.db, c.entity, c.id, actorID, "robot", "chat:"+text)
 }
 
 // RunRobotsDue runs the robots whose wait is over, for the cards still in the stage they waited in.

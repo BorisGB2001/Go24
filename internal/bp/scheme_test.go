@@ -164,3 +164,19 @@ func TestCopy(t *testing.T) {
 		t.Errorf("copy of the end: %s", texts(got))
 	}
 }
+
+// TestSkip: a switched off condition, parallel step and iterator go with their blocks, a loop and other steps alone.
+func TestSkip(t *testing.T) {
+	n := Step{Kind: "notify"}
+	steps := []Step{
+		{Kind: "if", Goto: 4}, n, {Kind: "goto", Goto: 5}, n, // 1–4: a condition with «иначе»
+		{Kind: "parallel", Branches: []int{7}, Goto: 8}, n, n, // 5–7
+		{Kind: "foreach"}, n, {Kind: "goto", Goto: 8}, // 8–10
+		n, {Kind: "loop", Goto: 11}, // 11–12
+	}
+	for i, want := range map[int]int{0: 4, 1: 2, 4: 7, 7: 10, 11: 12, 10: 11} {
+		if got := Skip(steps, i); got != want {
+			t.Errorf("Skip(%d) = %d, want %d", i, got, want)
+		}
+	}
+}

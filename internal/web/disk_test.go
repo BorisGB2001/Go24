@@ -22,6 +22,7 @@ import (
 	"go24/internal/auth"
 	"go24/internal/db"
 	"go24/internal/drive"
+	"go24/internal/storage"
 	"go24/internal/storages"
 	"go24/internal/tasks"
 )
@@ -258,6 +259,49 @@ func TestDiskHTTP(t *testing.T) {
 	do(anna, "POST", "/disk/my/delete", url.Values{"file": {pic}}, 200)
 	do(anna, "POST", "/disk/my/purge", url.Values{"file": {pic}}, 200)
 
+	// an archive is seen without downloading it: its folders and files, and one file of it (with S3 — real bytes)
+	arc := addFile("", "отчёт.zip")
+	if page := do(anna, "GET", "/disk/my", nil, 200); !strings.Contains(page, `data-kind="archive"`) {
+		t.Error("the archive has no viewer kind")
+	}
+	do(eve, "GET", "/files/"+arc+"/archive", nil, 403)
+	do(anna, "GET", "/files/"+arc+"/archive", nil, 422) // empty: not a ZIP
+	if s3ep := os.Getenv("GO24_TEST_S3"); s3ep != "" {
+		s3, err := storage.New(ctx, s3ep, "go24testkey", "go24testsecret", "go24test", false)
+		must(err)
+		srv.Storages = storages.NewStore(pool, nil, s3)
+		var zb bytes.Buffer
+		zw := zip.NewWriter(&zb)
+		fw, _ := zw.Create("Папка/итог.txt")
+		fw.Write([]byte("сорок два"))
+		must(zw.Close())
+		key := "k/" + randomHex(8)
+		must(s3.Put(ctx, key, bytes.NewReader(zb.Bytes()), int64(zb.Len()), "application/zip"))
+		id, err := srv.Storages.AddFile(ctx, storages.NewFile{Key: key, Name: "итоги.zip", Size: int64(zb.Len()),
+			UploadedBy: anna, Drive: "user", DriveOwner: anna})
+		must(err)
+		var list struct {
+			Files   int `json:"files"`
+			Entries []struct {
+				Path string `json:"path"`
+				Dir  bool   `json:"dir"`
+			} `json:"entries"`
+		}
+		must(json.Unmarshal([]byte(do(anna, "GET", "/files/"+id+"/archive", nil, 200)), &list))
+		if list.Files != 1 || len(list.Entries) != 2 || !list.Entries[0].Dir || list.Entries[1].Path != "Папка/итог.txt" {
+			t.Errorf("archive list: %+v", list)
+		}
+		if got := do(anna, "GET", "/files/"+id+"/archive?path="+url.QueryEscape("Папка/итог.txt"), nil, 200); got != "сорок два" {
+			t.Errorf("archive file: %q", got)
+		}
+		do(anna, "GET", "/files/"+id+"/archive?path=nope.txt", nil, 404)
+		do(anna, "POST", "/disk/my/delete", url.Values{"file": {id}}, 200)
+		do(anna, "POST", "/disk/my/purge", url.Values{"file": {id}}, 200)
+		srv.Storages = storages.NewStore(pool, nil, nil)
+	}
+	do(anna, "POST", "/disk/my/delete", url.Values{"file": {arc}}, 200)
+	do(anna, "POST", "/disk/my/purge", url.Values{"file": {arc}}, 200)
+
 	// a public link of the folder, with a password: anyone with the address, after typing it, sees the folder and
 	// downloads its files — nothing outside it; switched off or expired, the link is gone
 	do(anna, "POST", "/disk/my/link", url.Values{"folder_id": {docs}, "password": {"секрет"}}, 200)
@@ -356,6 +400,7 @@ func TestDiskHTTP(t *testing.T) {
 
 func TestFileKind(t *testing.T) {
 	for name, want := range map[string]string{"a.png": "image", "a.PDF": "pdf", "a.docx": "html", "clip.mp4": "video", "song.mp3": "audio",
+		"a.ZIP": "archive", "b.tar.gz": "archive", "c.rar": "",
 		"a.exe": "", "a.svg": ""} {
 		if got := fileKind(name, ""); got != want {
 			t.Errorf("fileKind(%q) = %q, want %q", name, got, want)

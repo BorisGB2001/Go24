@@ -193,6 +193,13 @@
         <label class="small">{{t "im.rights_edit"}} <select name="edit">{{template "imright" $g.Rights.Edit}}</select></label>
         <label class="small">{{t "im.rights_write"}} <select name="write">{{template "imright" $g.Rights.Write}}</select></label>
         <span class="small muted">{{t "im.rights_hint"}}</span><button>{{t "common.save"}}</button></form></details>{{end}}
+    {{with .D.TgGroup}}<details class="im-rights"{{if .Code}} open{{end}}><summary class="small">{{icon "send"}} {{t "im.tg_group"}}{{if .Linked}}: {{.Title}}{{end}}</summary>
+      {{if .Code}}<p class="small">{{t "im.tg_group_steps" .Bot}}</p>
+      <div class="row"><input type="text" readonly value="/link@{{.Bot}} {{.Code}}" style="flex:1" aria-label="{{t "im.tg_group"}}"><button type="button" class="ghost" data-copy="/link@{{.Bot}} {{.Code}}" title="{{t "disk.link_copy"}}">{{icon "copy"}}</button></div>{{end}}
+      {{if .Linked}}<p class="small muted">{{t "im.tg_group_linked_hint"}}</p>{{else if not .Code}}<p class="small muted">{{t "im.tg_group_hint"}}</p>{{end}}
+      <form method="post" action="/im/group/telegram"><input type="hidden" name="room" value="{{$room}}"><button class="ghost small">{{if .Linked}}{{t "im.tg_group_relink"}}{{else if .Code}}{{t "im.tg_group_new_code"}}{{else}}{{t "im.tg_group_link"}}{{end}}</button></form>
+      {{if or .Linked .Code}}<form method="post" action="/im/group/telegram" data-confirm="{{t "im.tg_group_unlink_confirm"}}"><input type="hidden" name="room" value="{{$room}}"><input type="hidden" name="on" value="0"><button class="ghost small danger">{{icon "unlink"}} {{t "im.tg_group_unlink"}}</button></form>{{end}}
+    </details>{{end}}
     {{if and $g.Topic (not $g.CanEdit)}}<p class="small im-topic-full">{{$g.Topic}}</p>{{end}}
     <b class="small">{{t "im.group_members"}}</b>
     <ul class="im-members">{{range $g.Members}}

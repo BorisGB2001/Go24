@@ -295,6 +295,40 @@ assert.equal(del2[1], 'folder=d1&folder_id=f1');
   assert.deepEqual(up, []);
   assert.match(d4.querySelector('[data-disk-progress]').textContent, /Пропущен/);
 }
+// an archive opens as the list of what is in it: a folder folds what is under it, a file downloads alone
+{
+  const da = new JSDOM(`<!doctype html><body><div data-disk="/disk/my" data-folder="" data-l-arc-get="Скачать этот файл" data-l-arc-locked="С паролем"><table><tbody>
+    <tr data-item="file" data-id="a1"><td><a href="/files/a1" data-view="a1" data-kind="archive" data-name="отчёт.zip">отчёт.zip</a></td></tr>
+    </tbody></table><div data-disk-bulk hidden><b data-disk-count></b></div><div data-disk-drop hidden></div><div data-disk-progress hidden></div></div></body>`,
+    { runScripts: 'outside-only', url: 'http://go24.test/disk/my' });
+  const wa = da.window;
+  let asked = '';
+  wa.fetch = async u => { asked = String(u); return { ok: true, json: async () => ({ summary: 'Файлов: 2', entries: [
+    { path: 'a', name: 'a', depth: 0, dir: true }, { path: 'a/b', name: 'b', depth: 1, dir: true },
+    { path: 'a/b/c.txt', name: 'c.txt', depth: 2, size_text: '5 Б' }, { path: 'z.txt', name: 'z.txt', depth: 0, locked: true, size_text: '1 Б' }] }) }; };
+  wa.eval(js);
+  const d = wa.document;
+  d.querySelector('a[data-view]').dispatchEvent(new wa.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  await tick();
+  assert.equal(asked, '/files/a1/archive');
+  const lis = [...d.querySelectorAll('.arc-list li')];
+  assert.equal(lis.length, 4);
+  assert.equal(d.querySelector('.mviewer-arc p').textContent, 'Файлов: 2');
+  assert.equal(lis[2].querySelector('a').getAttribute('href'), '/files/a1/archive?path=a%2Fb%2Fc.txt');
+  assert.equal(lis[3].querySelector('a'), null, 'a file under a password is not a link');
+  lis[1].querySelector('.arc-fold').click(); // «b» folded
+  assert.equal(lis[2].hidden, true);
+  lis[0].querySelector('.arc-fold').click(); // «a» folded, then unfolded: «b» stays folded
+  assert.ok(lis[1].hidden && lis[2].hidden);
+  lis[0].querySelector('.arc-fold').click();
+  assert.equal(lis[1].hidden, false);
+  assert.equal(lis[2].hidden, true, 'a folded inner folder opened with its parent');
+  // an archive the server cannot read says why
+  wa.fetch = async () => ({ ok: false, json: async () => ({ error: 'Архив не читается' }) });
+  d.querySelector('a[data-view]').dispatchEvent(new wa.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  await tick();
+  assert.equal(d.querySelector('.mviewer-none').textContent, 'Архив не читается');
+}
 // a thumbnail the server has none of (404): the icon next to it is shown instead
 {
   const d5 = new JSDOM(`<!doctype html><body><table class="disk-list"><tr><td class="thumb"><a>

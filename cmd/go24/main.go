@@ -65,11 +65,19 @@ import (
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 	"go24/internal/theme"
+	"go24/internal/update"
 	"go24/internal/web"
 )
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if len(os.Args) > 1 && os.Args[1] == "updater" { // go24-updater: installs the releases (internal/update)
+		if err := runUpdater(log); err != nil {
+			log.Error("fatal", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
@@ -77,6 +85,7 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	os.Remove(readyFile) // a container restarted keeps its files: it is not ready until this run says so
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -218,6 +227,7 @@ func run(log *slog.Logger) error {
 	srv.CRM.StartBP = srv.BP.StartRobot
 	srv.CRM.SendSign = srv.SignRobot
 	srv.CRM.HasChat = srv.SignChatReady
+	srv.CRM.ClientChat = srv.CRMClientChat // «Сообщение в открытую линию» robots
 	srv.Hooks = hooks.NewStore(pool)
 	srv.Apps = apps.NewStore(pool)
 	srv.BP.Apps, srv.BP.AppCall = srv.Apps, srv.BPAppCall // the actions of applications in the designer
@@ -268,6 +278,7 @@ func run(log *slog.Logger) error {
 	}
 	// SMS to clients: from a CRM card and by the robot «Отправить SMS клиенту», through the default provider
 	srv.SMS = sms.NewStore(pool, cfg.SessionSecret)
+	srv.SMS.App = srv.SMSAppCall                       // the providers of applications (messageservice.*)
 	srv.Pay = paysys.NewStore(pool, cfg.SessionSecret) // «Платёжные системы»: the client pays an invoice online
 	srv.CRM.SendSMS = func(ctx context.Context, userID, entity, entityID, phone, text string) error {
 		_, err := srv.SMS.Send(ctx, sms.Out{Phone: phone, Text: text, AuthorID: userID, Entity: entity, EntityID: entityID})
@@ -275,6 +286,23 @@ func run(log *slog.Logger) error {
 	}
 	// «Отправка SMS» of business processes
 	srv.BP.SMS = srv.SMS
+	// the files of the «Файл» fields of business processes: a letter of a process carries them (the first mailbox, as
+	// the mail robots)
+	srv.BP.OpenFile = srv.Storages.Open
+	srv.BP.MailFiles = func(ctx context.Context, userID, to, subject, text string, files []bp.ProcessFile) error {
+		boxes, err := srv.Mail.Mailboxes(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if len(boxes) == 0 {
+			return i18n.E("err.robot_mailbox")
+		}
+		var att []mail.Attachment
+		for _, f := range files {
+			att = append(att, mail.Attachment{Name: f.Name, ContentType: f.ContentType, Data: f.Data})
+		}
+		return srv.Mail.Send(ctx, userID, boxes[0].ID, to, subject, text, att...)
+	}
 	srv.CRM.BookingURL = func(ctx context.Context, linkID string) (string, error) { // booking robots: a link that is on
 		l, err := srv.Booking.Link(ctx, linkID)
 		if err == nil && !l.Active {
@@ -355,6 +383,14 @@ func run(log *slog.Logger) error {
 	go sysinfo.NewStore(pool).Beat(ctx, role, func(err error) { log.Warn("system heartbeat", "err", err) })
 	if serve {
 		go srv.RefreshMentionNames(ctx)
+	}
+	// «Обновление»: the latest release on GitHub, the jobs for go24-updater in the shared folder /updates
+	if dir := envOr("GO24_UPDATES_DIR", ""); dir != "" {
+		srv.Update = &update.Client{Dir: dir, Current: sysinfo.Version, Off: os.Getenv("GO24_UPDATE") == "off", Key: update.PublicKey}
+		if serve {
+			go srv.Update.Loop(ctx, func(err error) { log.Warn("update check", "err", err) })
+			go srv.AnnounceUpdates(ctx)
+		}
 	}
 	if background {
 		startBackground(ctx, srv, log)
@@ -445,6 +481,7 @@ func run(log *slog.Logger) error {
 		}
 		log.Info("matrix messenger enabled", "server", cfg.MatrixServerName)
 		srv.NotifyOut.Chats = chatSource{srv.Matrix} // chat messages in the messengers, replies from there
+		srv.NotifyOut.Groups = groupSource{srv.Matrix} // group chats linked to groups of the messengers
 	}
 	if background {
 		go srv.NotifyOut.Run(ctx)
@@ -457,6 +494,7 @@ func run(log *slog.Logger) error {
 
 	if !serve { // go24 worker: no pages, only the background until it is stopped
 		log.Info("worker running")
+		_ = os.WriteFile(readyFile, []byte("ok\n"), 0o644)
 		<-ctx.Done()
 		return nil
 	}
@@ -479,6 +517,9 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
+// readyFile says to the healthcheck of go24-worker that it has started (go24 is checked by /healthz).
+const readyFile = "/tmp/go24.ready"
+
 // publicOrigin is scheme://host of a URL ("" when there is none): the OIDC issuer gives Authentik's public address.
 // chatSource is the messenger as notifyout sees it.
 type chatSource struct{ m *matrixsync.Service }
@@ -495,6 +536,18 @@ func (c chatSource) ChatNews(ctx context.Context, userID, since string) ([]notif
 func (c chatSource) ChatReply(ctx context.Context, userID, room, root, text string) error {
 	_, err := c.m.Send(ctx, userID, room, text, root)
 	return err
+}
+
+// groupSource is the bridge of group chats as notifyout sees it.
+type groupSource struct{ *matrixsync.Service }
+
+func (g groupSource) BridgeNews(ctx context.Context, since string) ([]notifyout.ChatMessage, string, error) {
+	news, next, err := g.Service.BridgeNews(ctx, since)
+	out := make([]notifyout.ChatMessage, len(news))
+	for i, n := range news {
+		out[i] = notifyout.ChatMessage(n)
+	}
+	return out, next, err
 }
 
 func publicOrigin(raw string) string {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -130,7 +131,12 @@ func TestCalendarSettingsHTTP(t *testing.T) {
 	has(week, `data-date="2026-11-01"`, `data-date="2026-11-07"`, `data-hour0="5"`, "Ранний созвон", "--work0:144px;--work1:576px")
 	hasnt(week, `data-date="2026-11-08"`, "Не пойду", "Сдать отчёт")
 	month, _ := do("GET", "/calendar?month=2026-11", nil, http.StatusOK)
-	has(month, `<div class="calday off" data-date="2026-11-06"`, `<div class="calday off" data-date="2026-11-04"`) // Friday off, a holiday
+	// Friday off, a holiday; either may be today too («calday today off»)
+	for _, d := range []string{"2026-11-06", "2026-11-04"} {
+		if !regexp.MustCompile(`<div class="calday( today)? off" data-date="` + d + `"`).MatchString(month) {
+			t.Fatalf("the month has no day off %s", d)
+		}
+	}
 	if i, j := strings.Index(month, `data-date="2026-11-01"`), strings.Index(month, `data-date="2026-11-02"`); i < 0 || i > j {
 		t.Fatal("the month does not begin on Sunday 1 November")
 	}

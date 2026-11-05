@@ -1326,6 +1326,11 @@
       ed?.keep();
       document.dispatchEvent(new CustomEvent('go24:pollpick', { detail: { form, fields } }));
     });
+    // «Вставить свободное время» (mailavail.js): the free time of the user's calendar comes back as a block of the text
+    form.querySelector('[data-avail]')?.addEventListener('click', () => {
+      ed?.keep();
+      document.dispatchEvent(new CustomEvent('go24:availpick', { detail: { form } }));
+    });
     // «Слияние»: a letter of its own to each of «Кому»; a field goes where the caret was (the subject or the text),
     // «Просмотр» shows the letter of each recipient in turn
     const mergeBar = form.querySelector('[data-merge-bar]');

@@ -484,7 +484,8 @@ func (s *Store) Install(ctx context.Context, a App, userID, base, lang string) e
 }
 
 // Uninstall takes the application off: its tokens stop working, employees no longer see it, its places are taken
-// off the cards, ONAPPUNINSTALL goes to its handlers and its subscriptions to events are dropped.
+// off the cards, its SMS providers are gone, ONAPPUNINSTALL goes to its handlers and its subscriptions to events are
+// dropped.
 func (s *Store) Uninstall(ctx context.Context, id, base, lang string) error {
 	if a, err := s.Get(ctx, id); err == nil && a.Installed() {
 		s.uninstalled(ctx, a, base, lang)
@@ -496,6 +497,13 @@ func (s *Store) Uninstall(ctx context.Context, id, base, lang string) error {
 		return err
 	}
 	if _, err := s.db.Exec(ctx, `DELETE FROM app_placements WHERE app_id::text = $1`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `DELETE FROM sms_senders WHERE app_id::text = $1`, id); err != nil { // its SMS providers
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE sms_senders SET is_default = true WHERE id = (SELECT id FROM sms_senders ORDER BY created_at LIMIT 1)
+		AND NOT EXISTS (SELECT 1 FROM sms_senders WHERE is_default)`); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(ctx, `UPDATE apps SET installed_at = NULL, install_status = NULL, install_error = '' WHERE id::text = $1`, id)

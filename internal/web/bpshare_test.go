@@ -139,6 +139,22 @@ func TestBPShareHTTP(t *testing.T) {
 			{Kind: "notify", To: oleg, Text: "Отпуск {from}"}, {Kind: "notify", To: "starter", Text: "Готово"}}})
 	must(err)
 
+	// «Выключить» a step: grey and marked in the list and the scheme, kept by «Изменить», «Включить» again
+	if p, _ := post(boss, "/bp/templates/"+vacation, url.Values{"op": {"off"}, "n": {"1"}}); p != "/bp/templates/"+vacation {
+		t.Fatalf("off: %s", p)
+	}
+	if page := get(boss, "/bp/templates/"+vacation); strings.Count(page, "выключено") != 2 || !strings.Contains(page, "bpblock k-notify off") {
+		t.Fatal("a switched off step is not marked")
+	}
+	post(boss, "/bp/templates/"+vacation, url.Values{"op": {"edit"}, "n": {"1"}, "kind": {"notify"}, "to": {oleg}, "text": {"Отпуск с {from}"}})
+	if x, _ := srv.BP.Template(ctx, vacation); !x.Steps[1].Off || x.Steps[1].Text != "Отпуск с {from}" {
+		t.Fatalf("edit of a switched off step: %+v", x.Steps[1])
+	}
+	post(boss, "/bp/templates/"+vacation, url.Values{"op": {"off"}, "n": {"1"}})
+	if x, _ := srv.BP.Template(ctx, vacation); x.Steps[1].Off || x.Steps[0].Off {
+		t.Fatalf("switched on: %+v", x.Steps)
+	}
+
 	// everybody starts it while nobody is chosen
 	if !strings.Contains(get(anna, "/bp"), "Отпуск") {
 		t.Fatal("anna does not see the template")

@@ -19,6 +19,12 @@
     if (x0 !== null && x0 - e.changedTouches[0].clientX > 60) open(false);
     x0 = null;
   });
+  // the tabs of a section scroll sideways on a phone (app.css): the current one is brought into sight
+  const phone = matchMedia('(max-width: 760px)');
+  if (phone.matches) document.querySelectorAll('.tabs').forEach(t => {
+    const on = t.querySelector(':scope > a.on');
+    if (on && t.scrollWidth > t.clientWidth && on.offsetLeft + on.offsetWidth > t.clientWidth) t.scrollLeft = on.offsetLeft - 16;
+  });
   // back to a wide screen: no drawer
-  matchMedia('(max-width: 760px)').addEventListener('change', m => { if (!m.matches) open(false); });
+  phone.addEventListener('change', m => { if (!m.matches) open(false); });
 })();

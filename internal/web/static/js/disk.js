@@ -423,6 +423,55 @@
           printBtn(() => printed(doc.outerHTML));
         } else body.append(el('p', 'muted', l('none')));
       } catch { body.textContent = l('none'); }
+    } else if (kind === 'archive') {
+      // an archive viewer shows it: its folders (folded by a click) and files, each file downloaded alone
+      body.append(el('p', 'muted', l('loading')));
+      const src = '/files/' + encodeURIComponent(id) + '/archive';
+      try {
+        const r = await fetch(src, { headers: { Accept: 'application/json' } });
+        const d = await r.json();
+        body.textContent = '';
+        if (!r.ok) { body.append(el('p', 'mviewer-none', d.error || l('none'))); return; }
+        const box = el('div', 'mviewer-arc');
+        box.append(el('p', 'muted small', d.summary));
+        if (d.more_text) box.append(el('p', 'muted small', d.more_text));
+        const list = el('ul', 'arc-list');
+        for (const e of d.entries || []) {
+          const li = el('li', e.dir ? 'arc-dir' : 'arc-file');
+          li.dataset.path = e.path;
+          li.style.paddingLeft = (e.depth * 18 + 6) + 'px';
+          if (e.dir) {
+            const b = el('button', 'ghost small arc-fold', '📂 ' + e.name);
+            b.type = 'button';
+            b.setAttribute('aria-expanded', 'true');
+            b.addEventListener('click', () => {
+              const open = b.getAttribute('aria-expanded') !== 'true';
+              b.setAttribute('aria-expanded', String(open));
+              b.textContent = (open ? '📂 ' : '📁 ') + e.name;
+              const pre = e.path + '/';
+              // a folded folder hides all under it; unfolded, what is under a still folded inner folder stays hidden
+              const folded = [...list.querySelectorAll('.arc-dir')].filter(x => x !== li && x.dataset.path.startsWith(pre) && x.querySelector('.arc-fold').getAttribute('aria-expanded') !== 'true').map(x => x.dataset.path + '/');
+              list.querySelectorAll('li').forEach(x => {
+                if (!x.dataset.path.startsWith(pre)) return;
+                x.hidden = !open || folded.some(f => x.dataset.path.startsWith(f));
+              });
+            });
+            li.append(b);
+          } else if (e.locked) {
+            li.append(el('span', '', '🔒 ' + e.name), el('span', 'muted small', l('arc-locked')));
+          } else {
+            const f = el('a', '', '📄 ' + e.name);
+            f.href = src + '?path=' + encodeURIComponent(e.path);
+            f.title = l('arc-get');
+            f.download = e.name;
+            li.append(f);
+          }
+          if (!e.dir) li.append(el('span', 'grow'), el('span', 'muted small', e.size_text || ''));
+          list.append(li);
+        }
+        box.append(list);
+        body.append(box);
+      } catch { body.textContent = ''; body.append(el('p', 'mviewer-none', l('none'))); }
     } else body.append(el('p', 'mviewer-none', l('none')));
   };
   root.addEventListener('click', e => {

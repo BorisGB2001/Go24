@@ -458,7 +458,7 @@ func (s *Store) clientEmail(ctx context.Context, x Instance) (string, error) {
 
 // mail sends the step's letter from the mailbox of From: to To (the card's client or an employee) and the addresses.
 func (s *Store) mail(ctx context.Context, x Instance, st Step, text string) (string, error) {
-	if s.CRM.SendMail == nil {
+	if s.CRM.SendMail == nil && (!st.Attach || s.MailFiles == nil) {
 		return "", i18n.E("err.robot_mailbox")
 	}
 	from, err := s.who(ctx, x, st.From)
@@ -498,6 +498,18 @@ func (s *Store) mail(ctx context.Context, x Instance, st Step, text string) (str
 		text = s.fill(ctx, x, st.Subject)
 	}
 	addr := strings.Join(to, ", ")
+	if st.Attach && s.MailFiles != nil { // with the files of the process's «Файл» fields
+		files, err := s.processFiles(ctx, x)
+		if err != nil {
+			return "", err
+		}
+		if len(files) > 0 {
+			return addr, s.MailFiles(ctx, from, addr, s.fill(ctx, x, st.Subject), text, files)
+		}
+	}
+	if s.CRM.SendMail == nil {
+		return "", i18n.E("err.robot_mailbox")
+	}
 	return addr, s.CRM.SendMail(ctx, from, addr, s.fill(ctx, x, st.Subject), text)
 }
 

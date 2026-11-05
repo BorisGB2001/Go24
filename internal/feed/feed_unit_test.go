@@ -330,3 +330,21 @@ func TestSeeValidation(t *testing.T) {
 		t.Errorf("See([]) err = %v, want nil", err)
 	}
 }
+
+// TestViewApply: «Вид ленты» — by activity unless «по дате», «Экспертный режим» without the events of tasks except
+// when only they are asked for.
+func TestViewApply(t *testing.T) {
+	var f Filter
+	View{}.Apply(&f)
+	if !f.ByActivity || f.NoEvents || !f.events() {
+		t.Fatalf("default view: %+v", f)
+	}
+	View{ByDate: true, Expert: true}.Apply(&f)
+	if f.ByActivity || !f.NoEvents || f.events() {
+		t.Fatalf("by date, expert: %+v", f)
+	}
+	f.Kind = "tasks"
+	if !f.events() {
+		t.Fatal("«Тип: задачи» in the expert mode")
+	}
+}

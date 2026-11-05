@@ -19,6 +19,10 @@ func TestHTML(t *testing.T) {
 		{"[url=https://portal.ru]корпоративного портала[/url]", `<a href="https://portal.ru" target="_blank" rel="noopener">корпоративного портала</a>`},
 		{"[url]http://x.ru[/url]", `<a href="http://x.ru" target="_blank" rel="noopener">http://x.ru</a>`},
 		{"[url=javascript:alert(1)]x[/url]", "[url=javascript:alert(1)]x[/url]"},
+		// a page of go24 itself, in the same tab; «//host» and «/\host» are other sites
+		{"[url=/company/gallery/1]Открыть альбом[/url]", `<a href="/company/gallery/1">Открыть альбом</a>`},
+		{"[url=//evil.ru]x[/url]", "[url=//evil.ru]x[/url]"},
+		{`[url=/\evil.ru]x[/url]`, `[url=/\evil.ru]x[/url]`},
 		{"до\n```go\nfunc *a*() {}\n```\nпосле", "до<pre><code>func *a*() {}</code></pre>после"},
 		{"[code]<b>[/code]", "<pre><code>&lt;b&gt;</code></pre>"},
 		{"> цитата\n> *вторая*\nответ", "<blockquote>цитата<br><b>вторая</b></blockquote>ответ"},

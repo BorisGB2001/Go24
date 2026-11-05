@@ -4,6 +4,54 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (the `VERSION` file). While go24 is in development, MAJOR = 0: major changes (a new section, a significant feature set, installation changes) are MINOR, bug fixes are PATCH. Each version is tagged on GitHub as `vX.Y.Z`.
 
+- Workflows: «File» fields, as the parameters of that type — a parameter, a variable or a request's field (one or several files) is attached at the start (the form, the feed, a CRM card, REST: `files` of `/api/v1/bp`, `[name, base64]` in `bizproc.workflow.start` and `bizproc.task.complete`) or in the answer; the file is the process's — its people and the readers of its post download it, others do not; a copy goes to «Uploaded files» of the uploader's drive; links on the process's page and in the tasks, `{field}` is the name and the address; «Task» and «Mail» steps «attach the process's files»; `bizproc.workflow.start` starts a template without a document (GO24DEV-1025)
+- REST compatible with the portal: SMS providers of applications, as `messageservice.*` — `messageservice.sender.add`/`delete`/`list`: the application's provider is one of «SMS» of the CRM (kind «Application»), the cards, robots and business processes send through it; each message goes to the handler posts it (`type`, `code`, `message_id`, `message_to`, `message_body`, `auth`), the application tells its status with `messageservice.message.status.update` (delivered, undelivered, failed); an uninstalled application's providers are gone (migration 1027) (GO24DEV-1027)
+- Feed: comments come live — a colleague's new comment (from go24 or the messenger) appears under its post in an open feed without a reload, marked new and with its files; an edited one changes in place, a deleted one goes away; a filtered feed and a post's page get them too (GO24DEV-1028)
+- Mail: «Insert availability», as Outlook's «Share availability» — a button of the editor shows the free time of one's go24 calendar on the nearest working days (the working hours and days off of the calendar's settings, less meetings, absences and bookings), spans not shorter than the length chosen; the ones not to offer are unticked, «Insert into the message» puts the block «I'm available at these times» with the spans by day and the time zone into the text; REST `GET /api/v1/mail/availability` (GO24DEV-1029)
+- Feed and messenger: a link to a page of go24 in a message's text (`[url=/company/gallery/…]`, as a gallery's post has it) is a link in the same tab, not raw text (GO24DEV-1026)
+- Feed: «Feed view» — sorted by activity (a new comment lifts the post to the top; the default) or by the date of the post, and «Expert mode» without the events of tasks; the choice is kept for the employee; REST `sort=activity` and `activity_at` in `/api/v1/feed/posts` (GO24DEV-1023)
+- Messenger: a chat's call is one call for go24 and Element (web, Element X) — go24 is the room's MatrixRTC focus and gives Element Call its LiveKit token, people in go24's call page are seen in Element and those in Element in go24 with their names; rooms let their members call from Element
+- Phone: every section fits the screen's width — the head of a section moves its buttons to the next lines, tabs are one line scrolled sideways with the current tab in sight and a list's search kept at the right, a menu dropping from a button takes the screen's width under it; the feed's task events, the employee's card and CRM products no longer widen the page (GO24DEV-744)
+- Messenger: a group chat linked to a Telegram group, as a bridge — a member who may rename the chat gets a code in «Telegram group» of the chat's members panel, adds the company's bot to the group and sends /link there; the chat's new messages go to the group as «Sender: text», the group's messages come into the chat as the employee's own when their Telegram is connected in the notification settings, as the «Telegram» bot's with the name otherwise; a reply in Telegram to a thread's message goes into the thread; /unlink in the group or «Unlink» in go24 ends it (GO24DEV-1009)
+- Telephony: «Conference» in the softphone, as «Invite to the call» — at «Talk first» the client, the employee and the colleague hear each other (the softphone itself mixes the sound of the two calls), «Leave them talking» transfers the call, «Drop the colleague» goes back to the client (GO24DEV-1021)
+
+## 0.5.8 — 2026-11-04
+
+- TestHRRights: the test vacation goes to next year, so it never covers today and «Absent» stays exact whatever the date
+- internal/company: unit tests
+- internal/kb: unit tests
+- internal/matrix: unit tests
+- internal/notify: unit tests
+- internal/openlines: unit tests
+- internal/tasks: unit tests
+- internal/telephony: unit tests
+- internal/twofactor: unit tests
+- internal/bp: unit tests
+- docs: English messenger and calls, Russian originals in docs/ru
+- Drive: archive viewer without downloading
+- Drive: an archive's folders before its files, sizes on the right
+- Drive: an archive's folder is not red under the pointer
+- CRM: the robot «Send a message to the open line»
+- Messenger: a group chat linked to a Telegram group, as a bridge
+- Tests: the fake Synapse gives m.room.history_visibility
+- Tasks: REST compatible with the portal, step 4
+- Calendar: TestCalendarSettingsHTTP no longer depends on the date
+- Update by the button from GitHub: «Settings → Update» and go24-updater
+- Telephony: «Conference» in the softphone, as «Invite to the call»
+- Phone: every section fits the screen's width
+- Workflows: «Turn off» a step of a template, as deactivating an action in the designer
+- Feed: «Feed view»
+- Feed and messenger: a link to a page of go24 in a message's text ([url=/company/gallery/…], as a gallery's post has it) is a link in the same tab, not raw text
+- Mail: «Contact card», as Outlook's profile card
+- Messenger: go24 gives Element Call its LiveKit token (POST /matrixrtc/sfu/get, the room's MatrixRTC focus)
+- Messenger: a chat's call is one call for go24 and Element (web, Element X)
+- REST compatible with the portal: SMS providers of applications, as messageservice.*
+- Feed: comments come live
+- Workflows: «File» fields, as the parameters of that type
+- Mail: «Insert availability», as Outlook's «Share availability»
+- Mail: «Insert availability» fits a phone
+- Mail: the letter's editor fits a phone's width
+
 ## 0.5.7 — 2026-11-04
 
 - Phone: the top bar keeps only the workday icon, so the search has room

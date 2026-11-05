@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go24/internal/apps"
 	"go24/internal/auth"
@@ -19,6 +21,7 @@ import (
 	"go24/internal/feed"
 	"go24/internal/i18n"
 	"go24/internal/sms"
+	"go24/internal/storages"
 	"go24/internal/tasks"
 )
 
@@ -218,6 +221,7 @@ func (s *Server) bpStartPage(w http.ResponseWriter, r *http.Request, sess auth.S
 }
 
 func (s *Server) bpStart(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	t, err := s.BP.Template(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.taskErr(w, r, err, "/bp")
@@ -227,7 +231,14 @@ func (s *Server) bpStart(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	for _, f := range t.Fields {
 		values[f.Key] = bpFormValue(r, f)
 	}
-	id, err := s.BP.Start(bpAdmin(r, sess), sess.UserID, t.ID, r.FormValue("entity_id"), values)
+	files, err := s.bpUploads(r, sess, values)
+	var id string
+	if err == nil {
+		id, err = s.BP.Start(bpAdmin(r, sess), sess.UserID, t.ID, r.FormValue("entity_id"), values)
+	}
+	if err == nil {
+		s.bpKeepUploads(r, sess, files)
+	}
 	if err != nil {
 		back := "/bp/start/" + t.ID
 		if eid := r.FormValue("entity_id"); eid != "" {
@@ -237,6 +248,66 @@ func (s *Server) bpStart(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 		return
 	}
 	http.Redirect(w, r, "/bp/i/"+id, http.StatusSeeOther)
+}
+
+// bpUploads stores the files of the «Файл» fields of a form sent with them (file_<key>, several of a multiple field):
+// the value of the field becomes their ids. It is the ids, for bpKeepUploads once the process has them.
+func (s *Server) bpUploads(r *http.Request, sess auth.Session, values map[string]string) ([]string, error) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil || r.MultipartForm == nil {
+		return nil, nil // a form without files
+	}
+	var all []string
+	for name, hdrs := range r.MultipartForm.File {
+		key, ok := strings.CutPrefix(name, "file_")
+		if !ok {
+			continue
+		}
+		var ids []string
+		for _, h := range hdrs {
+			if h.Size == 0 && h.Filename == "" {
+				continue // the empty input of a field left without a file
+			}
+			f, err := h.Open()
+			if err != nil {
+				return nil, err
+			}
+			id, err := s.bpStoreFile(r.Context(), sess.UserID, h.Filename, h.Header.Get("Content-Type"), f, h.Size)
+			f.Close()
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		if len(ids) > 0 {
+			values[key] = strings.Join(ids, bp.Multi)
+			all = append(all, ids...)
+		}
+	}
+	return all, nil
+}
+
+// bpStoreFile stores a file for a «Файл» field of a process (in the built-in storage), the user's upload: its id.
+func (s *Server) bpStoreFile(ctx context.Context, userID, name, ct string, body io.Reader, size int64) (string, error) {
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	if name == "." || name == "/" {
+		name = "file"
+	}
+	key := path.Join("go24", time.Now().Format("2006/01"), randomHex(16), name)
+	if err := s.Storages.Put(ctx, userID, false, "", key, body, size, ct); err != nil {
+		return "", err
+	}
+	return s.Storages.AddFile(ctx, storages.NewFile{Key: key, Name: name, ContentType: ct, Size: size, UploadedBy: userID})
+}
+
+// bpKeepUploads puts copies of a process's files just attached into «Загруженные файлы» of the person's drive, as the
+// files of tasks and posts.
+func (s *Server) bpKeepUploads(r *http.Request, sess auth.Session, ids []string) {
+	for _, id := range ids {
+		s.keepUploaded(r, sess, id)
+	}
 }
 
 // bpFormValue is the value of a field of the form «bpfield»: f_<key>, or each of m_<key> of a multiple field.
@@ -282,11 +353,13 @@ func (s *Server) bpInstance(w http.ResponseWriter, r *http.Request, sess auth.Se
 	}
 	s.render(w, r, "bpinstance", page{Title: x.Name, Nav: "bp", Data: map[string]any{"X": x, "Approvals": approvals, "Log": lines,
 		"Mine": mine, "Fields": s.bpLabels(r, x.Form(t.Fields)), "Card": card, "Users": users, "CanStop": s.BP.CanStop(bpAdmin(r, sess), sess.UserID, x),
-		"Commands": s.BP.Commands(bpAdmin(r, sess), sess.UserID, x)}})
+		"Commands": s.BP.Commands(bpAdmin(r, sess), sess.UserID, x), "FileNames": s.BP.FileNames(r.Context(), bp.FileIDs(bp.AllFields(x.Fields, x.Steps), x.Values))}})
 }
 
 // bpDecide: a decision on an approval or a review, or (decision=answer) the answer to a request with its fields f_<key>.
 func (s *Server) bpDecide(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	_ = r.ParseMultipartForm(32 << 20) // a request's files
 	var err error
 	if r.FormValue("decision") == "answer" {
 		values := map[string]string{}
@@ -298,7 +371,13 @@ func (s *Server) bpDecide(w http.ResponseWriter, r *http.Request, sess auth.Sess
 				values[key] = strings.Join(v, bp.Multi)
 			}
 		}
-		err = s.BP.Answer(r.Context(), sess.UserID, r.PathValue("id"), values, r.FormValue("comment"))
+		var files []string
+		if files, err = s.bpUploads(r, sess, values); err == nil {
+			err = s.BP.Answer(r.Context(), sess.UserID, r.PathValue("id"), values, r.FormValue("comment"))
+		}
+		if err == nil {
+			s.bpKeepUploads(r, sess, files)
+		}
 	} else {
 		err = s.BP.Decide(r.Context(), sess.UserID, r.PathValue("id"), r.FormValue("decision"), r.FormValue("comment"))
 	}
@@ -437,7 +516,7 @@ func (s *Server) bpGlobals(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	s.render(w, r, "bpglobals", page{TitleKey: "bp.globals", Nav: "bp", Data: map[string]any{"Globals": list,
-		"Rows": bpFieldRows(list, users), "FieldKinds": bp.FieldKinds, "Scopes": []string{"const", "var"}}})
+		"Rows": bpFieldRows(list, users), "FieldKinds": bp.ListFieldKinds, "Scopes": []string{"const", "var"}}})
 }
 
 // bpTemplatePage is the constructor of one template («new» — an empty one).
@@ -770,6 +849,7 @@ func (s *Server) bpStepFromForm(r *http.Request, sess auth.Session, users []task
 	case "mail":
 		st.From, st.To, st.Email, st.Subject = r.FormValue("from"), r.FormValue("mail_to"), strings.TrimSpace(r.FormValue("email")),
 			strings.TrimSpace(r.FormValue("subject"))
+		st.Attach = r.FormValue("attach") == "on"
 	case "comment":
 		st.To, st.From = "", r.FormValue("from")
 	case "log":
@@ -847,6 +927,7 @@ func (s *Server) bpStepFromForm(r *http.Request, sess auth.Session, users []task
 	case "task":
 		st.Users, st.Watchers, st.Note = r.Form["users"], r.Form["watchers"], strings.TrimSpace(r.FormValue("note"))
 		st.High, st.Control, st.Wait = r.FormValue("high") == "on", r.FormValue("control") == "on", r.FormValue("wait") == "on"
+		st.Attach = r.FormValue("attach") == "on"
 		for _, line := range strings.Split(r.FormValue("items"), "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				st.Items = append(st.Items, line)
@@ -1001,6 +1082,7 @@ func bpStepValues(st bp.Step) url.Values {
 	on("high", st.High)
 	on("control", st.Control)
 	on("wait", st.Wait)
+	on("attach", st.Attach)
 	on("worktime", st.WorkTime)
 	set("items", strings.Join(st.Items, "\n"))
 	set("sender", st.Sender)
@@ -1101,6 +1183,7 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 	case "edit": // «Изменить»: the step's properties anew, of its own kind; its number and the jumps to it stay
 		if n >= 0 && n < len(t.Steps) {
 			if st := s.bpStepFromForm(r, sess, users); st.Kind == t.Steps[n].Kind && st.App == t.Steps[n].App {
+				st.Off = t.Steps[n].Off
 				t.Steps[n] = st
 			}
 		}
@@ -1123,6 +1206,10 @@ func (s *Server) bpTemplateSave(w http.ResponseWriter, r *http.Request, sess aut
 					})
 				}
 			}
+		}
+	case "off": // «Выключить» / «Включить»: the process skips the step (its block) or does it again
+		if n >= 0 && n < len(t.Steps) {
+			t.Steps[n].Off = !t.Steps[n].Off
 		}
 	case "move": // a block of the scheme (or a step of the list) dragged to a gap
 		a, _ := strconv.Atoi(r.FormValue("a"))

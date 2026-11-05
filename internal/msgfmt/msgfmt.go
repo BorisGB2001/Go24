@@ -181,11 +181,21 @@ func href(u string) string {
 		return u
 	case strings.HasPrefix(l, "www."):
 		return "https://" + u
+	case local(u): // a page of go24 itself, as the posts of other sections link to it
+		return u
 	}
 	return ""
 }
 
+// local: a path on this site («/company/gallery/…»), not «//host» nor «/\host».
+func local(u string) bool {
+	return len(u) > 1 && u[0] == '/' && u[1] != '/' && u[1] != '\\'
+}
+
 func link(href, text string) string {
+	if local(href) { // the same tab, as any link of go24
+		return `<a href="` + html.EscapeString(href) + `">` + text + `</a>`
+	}
 	return `<a href="` + html.EscapeString(href) + `" target="_blank" rel="noopener">` + text + `</a>`
 }
 

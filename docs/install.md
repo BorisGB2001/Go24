@@ -104,6 +104,12 @@ make ps
 
 All services should be in `running` or `healthy` state. Authentik takes an additional 2–3 minutes after start.
 
+**Updates.** The stack includes the `go24-updater` service, which installs new versions from **Settings → Update**
+(see [update.md](update.md)). It sees the Docker socket `/var/run/docker.sock` — this gives it root rights on the
+server, as `make up` itself has — and the installation folder, mounted at the same path as on the server. It publishes
+no ports and only acts on jobs go24 leaves in the shared volume `updates`. If go24 is installed somewhere other than
+`/srv/go24`, set `GO24_INSTALL_DIR=<that folder>` in `deploy/.env`.
+
 ## 6. Admin account and messenger
 
 1. **Admin password.** Open `http://<IP>:9000/if/flow/initial-setup/` in a browser and set the password for the

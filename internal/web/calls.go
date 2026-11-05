@@ -122,7 +122,7 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	link := joinLink(s, join)
 	chat := r.URL.Query().Get("room")
 	if chat != "" && s.CallLines != nil && s.Matrix != nil { // the call's line in the chat stands for the announcement
-		s.callJoined(r, sess, chat, room, r.URL.Query().Get("video") != "0")
+		s.callJoined(r.Context(), sess.UserID, sess.Name, chat, room, r.URL.Query().Get("video") != "0")
 		if r.URL.Query().Get("announce") == "1" {
 			http.Redirect(w, r, "/call?"+join.Encode(), http.StatusSeeOther)
 			return
@@ -145,7 +145,11 @@ func (s *Server) callPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 			}
 		}
 	}
-	token, err := s.Calls.TokenAs(sess.UserID, sess.Name, room, host, speaks, time.Now())
+	identity := sess.UserID
+	if chat != "" && s.Matrix != nil { // a chat's call: one with Element Call's — the person is in it for Element too
+		identity = s.elementCallJoin(r.Context(), sess.UserID, chat, room, r.URL.Query().Get("video") != "0")
+	}
+	token, err := s.Calls.TokenAs(identity, sess.Name, room, host, speaks, time.Now())
 	if err != nil {
 		s.fail(w, "call token", err)
 		return
@@ -386,17 +390,16 @@ func (s *Server) callRing(w http.ResponseWriter, r *http.Request, sess auth.Sess
 }
 
 // callJoined counts the person into the chat's call; the first one starts it — its line goes into the chat.
-func (s *Server) callJoined(r *http.Request, sess auth.Session, chat, room string, video bool) {
-	ctx := r.Context()
-	cs, isNew, err := s.CallLines.Join(ctx, room, chat, sess.UserID, video)
+func (s *Server) callJoined(ctx context.Context, userID, name, chat, room string, video bool) {
+	cs, isNew, err := s.CallLines.Join(ctx, room, chat, userID, video)
 	if err != nil || !isNew {
 		if err != nil {
 			s.Log.Warn("call line", "err", err)
 		}
 		return
 	}
-	line := matrixsync.CallLine{State: "started", Video: video, People: []string{sess.Name}}
-	id, err := s.Matrix.SendCall(ctx, sess.UserID, chat, s.callText(line), line)
+	line := matrixsync.CallLine{State: "started", Video: video, People: []string{name}}
+	id, err := s.Matrix.SendCall(ctx, userID, chat, s.callText(line), line)
 	if err == nil {
 		err = s.CallLines.SetLine(ctx, cs.ID, id)
 	}
@@ -447,10 +450,12 @@ func (s *Server) endCalls(ctx context.Context) {
 			continue
 		}
 		in, err := s.Calls.Participants(ctx, cs.Room)
-		if err != nil || len(in) > 0 {
-			if err != nil {
-				s.Log.Warn("call participants", "room", cs.Room, "err", err)
-			}
+		if err != nil {
+			s.Log.Warn("call participants", "room", cs.Room, "err", err)
+			continue
+		}
+		s.leftElementCall(ctx, cs.Chat, in)
+		if len(in) > 0 {
 			continue
 		}
 		done, ok, err := s.CallLines.Finish(ctx, cs.ID)
@@ -489,7 +494,7 @@ func (s *Server) callRingMore(w http.ResponseWriter, r *http.Request, sess auth.
 	if r.FormValue("video") == "0" {
 		q.Set("video", "0")
 	}
-	if _, err := s.startRing(r, sess, chat, q.Get("video") == "1", joinLink(s, q), in...); err != nil {
+	if _, err := s.startRing(r, sess, chat, q.Get("video") == "1", joinLink(s, q), s.callUsers(r.Context(), in)...); err != nil {
 		s.jsonErr(w, r, err)
 		return
 	}

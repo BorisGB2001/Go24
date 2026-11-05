@@ -349,6 +349,23 @@ workPosition}`) and `group` (`{id, name}`).
 - The old methods (`task.commentitem.*`, `task.checklistitem.*`) take their parameters by name or by place: a JSON list
   `[12, {"POST_MESSAGE": "…"}]` or `0=12&1[POST_MESSAGE]=…`.
 
+### Scrum
+
+`tasks.api.scrum.*` (scope `task`) — GO24DEV-1014. A scrum is a go24 scrum by its group's number; members plan
+(sprints, epics, the backlog), the owner, the moderators and the scrum team start and complete sprints. The backlog and
+the sprints of all scrums are numbered in one row (a task's `entityId` is either), epics in their own (migration 1014).
+Answers are in camelCase gives them.
+
+| Method | What |
+|---|---|
+| `tasks.api.scrum.backlog.get`, `backlog.add` | `id` (the group) / `fields {groupId}` → `{id, groupId, entityType: backlog, createdBy…}`; a go24 scrum always has its backlog |
+| `tasks.api.scrum.epic.add`, `get`, `list`, `update`, `delete`, `getFields` | `fields {groupId, name, description, color}`, `id` → `{id, groupId, name, description, createdBy, modifiedBy, color}`; `list` — `filter`, `order`, `select`, `start` over the scrums the caller sees; deleting an epic takes it off its tasks |
+| `tasks.api.scrum.sprint.add`, `get`, `list`, `update`, `delete`, `getFields` | `fields {groupId, name, goal, dateStart, dateEnd, status}`, `id` → `{id, groupId, entityType: sprint, name, goal, sort, createdBy, modifiedBy, dateStart, dateEnd, status}`; without dates a sprint follows the last one for two weeks; `status` `active` / `completed` starts or completes it; a planned sprint is deleted, its tasks go back to the backlog |
+| `tasks.api.scrum.sprint.start`, `complete` | `id` → the sprint; completing sends the unfinished tasks to the backlog |
+| `tasks.api.scrum.kanban.getStages`, `addStage`, `updateStage`, `deleteStage`, `getFields` | `sprintId`, `stageId`, `fields {sprintId, name, color}` → `[{id, name, sort, type (NEW, WORK, FINISH), sprintId, color}]`; the stages are the group's, the same for each sprint |
+| `tasks.api.scrum.kanban.addTask`, `deleteTask` | `sprintId`, `taskId`, `stageId` — the task goes into the sprint (in the active one — onto the stage), out of it — to the backlog |
+| `tasks.api.scrum.task.get`, `update`, `getFields` | `id`, `fields {entityId, storyPoints ("" — none), epicId (0 — none), sort}` → `{entityId, storyPoints, epicId, sort, createdBy, modifiedBy}` |
+
 ## Workgroups
 
 `sonet_group.*`, `socialnetwork.api.workgroup.*` (scope `sonet_group`; reading — `projects:read`, changes —
@@ -691,7 +708,7 @@ administrator's key administers.
 |---|---|
 | `bizproc.workflow.template.list` | the templates the caller may start (an administrator — all, the inactive ones too): `ID`, `XML_ID` (go24 uuid), `MODULE_ID`, `ENTITY`, `DOCUMENT_TYPE`, `AUTO_EXECUTE` (0, 1 — on adding, 2 — on changing, 3), `NAME`, `DESCRIPTION`, `PARAMETERS`, `VARIABLES`, `CONSTANTS` (`{key: {Name, Type, Required, Multiple, Default, Options}}`), `MODIFIED`, `ACTIVE` |
 | `bizproc.workflow.template.delete` | `ID` → `true`; the template goes with its processes (administrators) |
-| `bizproc.workflow.start` | `TEMPLATE_ID`, `DOCUMENT_ID`, `PARAMETERS` → the process id |
+| `bizproc.workflow.start` | `TEMPLATE_ID`, `DOCUMENT_ID` (none for a process of its own), `PARAMETERS` (a «File» one — `[name, base64]` or a list of them) → the process id |
 | `bizproc.workflow.terminate` | `ID`, `STATUS` (the reason) → `true`, as «Stop» |
 | `bizproc.workflow.kill` | `ID` → `true`; the process goes with its history (administrators) |
 | `bizproc.workflow.instances`, `bizproc.workflow.instance.list` | the running processes (an administrator — everybody's, else the caller's): `ID`, `MODIFIED`, `OWNED_UNTIL`, `MODULE_ID`, `ENTITY`, `DOCUMENT_ID`, `STARTED`, `STARTED_BY`, `TEMPLATE_ID`, `WORKFLOW_STATE` (the status «Set status» set) |
@@ -904,3 +921,27 @@ one opens again).
   the channel off in the line's settings («Каналы приложений»). The events are retried as the others of applications.
 - Not there: `ONIMCONNECTORMESSAGEUPDATE`/`DELETE` (go24's operators do not edit sent answers), the channel's settings
   page in the line (`PLACEMENT_HANDLER` is kept), its icon in the lists.
+
+## SMS providers of applications
+
+`messageservice.*` (GO24DEV-1027): an application adds its own SMS provider; it is one of «SMS» of the CRM
+(`/crm/sms`, kind «Application») — the cards, the robot «Send SMS to the client», business processes and the default
+provider send through it. Adding and deleting — with an administrator's application token (an incoming webhook gets
+`WRONG_AUTH_TYPE`); the scopes are go24's `crm:read`/`crm:write`.
+
+| Method | What |
+|---|---|
+| `messageservice.sender.add` | `CODE` (Latin letters, digits, `_ . -`), `TYPE` (`SMS`), `HANDLER` (on the application's host), `NAME`, `DESCRIPTION` (a text or `{ru, en}`) → `true`; the first provider of go24 becomes the default one |
+| `messageservice.sender.delete` | `CODE` → `true` |
+| `messageservice.sender.list` | the codes of the application's providers |
+| `messageservice.message.status.update` | `CODE`, `MESSAGE_ID`, `STATUS` (`queued`, `sent`, `delivered`, `undelivered`, `failed`) → `true` |
+
+- Each message goes to `HANDLER` posts it, a form of PHP arrays: `type` (`SMS`), `code`, `message_id`,
+  `message_to` (`+` and digits), `message_body`, `message_from` (the provider's sender name, when set), `ts`, `auth[…]`
+  — the tokens of the employee who sends (`auth[user_id]` — their number), only `application_token` and the portal's
+  address when a robot sends. An answer other than 2xx — the message is not sent, the card's timeline shows the error.
+- go24 keeps `queued`/`sent` as sent, `failed` as an error. Errors: `ERROR_SENDER_ALREADY_INSTALLED`,
+  `ERROR_SENDER_NOT_FOUND`, `ERROR_SENDER_VALIDATION_FAILURE`, `ERROR_HANDLER_URL_MATCH`, `ERROR_MESSAGE_NOT_FOUND`,
+  `ERROR_MESSAGE_STATUS_INCORRECT`.
+- An uninstalled application's providers are gone. Not there: `messageservice.message.*` other than the status, the
+  types other than SMS.

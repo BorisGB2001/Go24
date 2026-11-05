@@ -34,6 +34,7 @@ var settingsSections = []struct {
 		{"/settings/two-factor", "twofa.title", "shield-lock", true},
 		{"/settings/backup", "backup.title", "database", true},
 		{"/settings/system", "sys.title", "server-2", true},
+		{"/settings/update", "update.title", "refresh", true},
 		{"/settings/notifications", "notify.settings", "bell", false},
 		{"/settings/notify-bots", "notifyout.bots", "send", true},
 	}},

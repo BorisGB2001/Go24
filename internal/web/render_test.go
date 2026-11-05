@@ -49,6 +49,7 @@ import (
 	"go24/internal/storages"
 	"go24/internal/sysinfo"
 	"go24/internal/tasks"
+	"go24/internal/update"
 	"go24/internal/telephony"
 	"go24/internal/twofactor"
 	"go24/internal/worktime"
@@ -763,6 +764,11 @@ func TestPagesRender(t *testing.T) {
 				{ID: -1, Status: "done", CreatedAt: now, Name: "go24-20261020-030000", Removed: &now},
 				{ID: 4, Kind: "restore", Status: "done", CreatedAt: now, FinishedAt: &now, Name: "go24-x", Parts: []string{"go24", "config"}, Target: "restore/go24-x-1"},
 				{ID: 5, Kind: "restore", Status: "failed", CreatedAt: now, Name: "go24-x", Parts: []string{"config"}, Error: "backup.err_wrong_password"}}}},
+		"update": {Data: map[string]any{"Msg": "", "Err": "", "States": map[string]string{"ok": "готово"}, "Steps": map[string]string{"backup": "копия"},
+			"S": updateState{Version: "0.5.7", Enabled: true, Newer: true, Busy: true,
+				Latest:   &update.Release{Version: "0.5.8", Notes: "- новое", URL: "https://github.com/x", PublishedAt: now, CheckedAt: now},
+				Status:   &update.Status{ID: "j", State: "installing", Step: "backup", From: "0.5.7", To: "0.5.8", Log: []update.LogLine{{At: now, Text: "step"}}},
+				Rollback: &update.RollbackMeta{Version: "0.5.6"}}}},
 		"backup_restore": {Data: map[string]any{"Copy": backup.Run{ID: 1, Status: "done", CreatedAt: now, Name: "ночные/go24-20261026-010000",
 			Parts: []string{"go24", "media", "config", "secrets"}}, "Base": "go24-20261026-010000", "Parts": []string{"go24", "config"}, "Secrets": true,
 			"Media": true, "Host": "/srv/go24-backups"}},
@@ -1676,6 +1682,10 @@ func TestPagesRender(t *testing.T) {
 				}
 				if name == "phone" && (strings.Contains(out, `class="side"`) || strings.Contains(out, "menu.js") || !strings.Contains(out, "jssip")) {
 					t.Fatal("the softphone window has the menu or no JsSIP")
+				}
+				if name == "phone" && l.Code == "ru-RU" && (!strings.Contains(out, "data-sp-conf") || !strings.Contains(out, `data-conf="Выйти — оставить их вдвоём"`) ||
+					!strings.Contains(out, `data-conf-talking="Конференция: клиент, вы и %s"`)) {
+					t.Fatal("the softphone has no «Конференция»")
 				}
 				if p.Phone != "" && !strings.Contains(out, "data-phone-open") {
 					t.Fatal("no softphone button in the top bar")

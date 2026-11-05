@@ -168,6 +168,9 @@ func (s *Store) SaveList(ctx context.Context, userID string, l List) (string, er
 		if seen[f.Key] || f.Key == "name" {
 			return "", i18n.E("err.bp_field")
 		}
+		if f.Kind == "file" { // a file — of a process only
+			return "", i18n.E("err.bp_field")
+		}
 		if err := checkField(f); err != nil {
 			return "", err
 		}

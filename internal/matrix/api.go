@@ -70,7 +70,7 @@ func (c *Client) CreateRoom(ctx context.Context, name, topic string, space bool)
 			{"type": "m.room.guest_access", "state_key": "", "content": map[string]string{"guest_access": "forbidden"}},
 		},
 		"power_level_content_override": map[string]any{"invite": 100, "kick": 100, "ban": 100, "state_default": 100,
-			"events": map[string]int{"m.room.name": 100, "m.room.topic": 100, "m.room.power_levels": 100}},
+			"events": map[string]int{"m.room.name": 100, "m.room.topic": 100, "m.room.power_levels": 100, CallType: 0, CallMemberType: 0}},
 	}
 	if space {
 		body["creation_content"] = map[string]string{"type": "m.space"}
@@ -80,6 +80,42 @@ func (c *Client) CreateRoom(ctx context.Context, name, topic string, space bool)
 	}
 	err := c.Do(ctx, http.MethodPost, "/_matrix/client/v3/createRoom", body, &out)
 	return out.RoomID, err
+}
+
+// Element Call's state events: the call of the room and the people in it (MatrixRTC). Element's «Включить звонки»
+// lets the room's members send them.
+const (
+	CallType       = "org.matrix.msc3401.call"
+	CallMemberType = "org.matrix.msc3401.call.member"
+)
+
+// AllowCalls lets whoever may write in the room take part in its calls, from Element as well: the levels of the call
+// events are those of messages. It tells whether it changed them.
+func AllowCalls(pl PowerLevels) bool {
+	events, _ := pl["events"].(map[string]any)
+	if events == nil {
+		events = map[string]any{}
+		pl["events"] = events
+	}
+	level, _ := num(pl["events_default"])
+	changed := false
+	for _, t := range []string{CallType, CallMemberType} {
+		if v, ok := num(events[t]); !ok || v != level {
+			events[t], changed = level, true
+		}
+	}
+	return changed
+}
+
+// num is a level as JSON gives it (float64) or as go24 puts it (int).
+func num(v any) (float64, bool) {
+	switch v := v.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	}
+	return 0, false
 }
 
 func (c *Client) SetState(ctx context.Context, roomID, eventType, stateKey string, content any) error {

@@ -159,8 +159,8 @@ func TestTelegramUpdates(t *testing.T) {
 					"update_id": 13,
 					"message": {
 						"text": "group message",
-						"chat": {"id": 200, "type": "group"},
-						"from": {"first_name": "Dave"}
+						"chat": {"id": 200, "type": "group", "title": "Team"},
+						"from": {"id": 7, "first_name": "Dave"}
 					}
 				},
 				{
@@ -182,8 +182,8 @@ func TestTelegramUpdates(t *testing.T) {
 	if next != 15 {
 		t.Errorf("Updates() next = %d, want 15 (max update_id + 1)", next)
 	}
-	if len(ups) != 3 {
-		t.Fatalf("len(ups) = %d, want 3 (group and nil message skipped)", len(ups))
+	if len(ups) != 4 {
+		t.Fatalf("len(ups) = %d, want 4 (nil message skipped)", len(ups))
 	}
 
 	// Update 1: username prioritized with @
@@ -197,6 +197,10 @@ func TestTelegramUpdates(t *testing.T) {
 	// Update 3: first name only
 	if ups[2].Chat != "103" || ups[2].Account != "Charlie" || ups[2].Text != "only first name" {
 		t.Errorf("ups[2] = %+v, want Chat=103, Account=Charlie, Text=only first name", ups[2])
+	}
+	// Update 4: a group's message, with the group's name and who wrote
+	if u := ups[3]; !u.Group || u.Chat != "200" || u.Title != "Team" || u.From != "7" || u.Name != "Dave" || u.Text != "group message" {
+		t.Errorf("ups[3] = %+v, want a group message of Dave in Team", u)
 	}
 }
 

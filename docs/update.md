@@ -8,7 +8,48 @@ New versions are published on GitHub: https://github.com/BorisGB2001/Go24/releas
 - **last digit** (0.5.**3**) — bug fixes and minor improvements; safe to update at any time;
 - **middle digit** (0.**6**.0) — new sections and major changes; read the changelog before updating.
 
-## Overview
+## Updating by the button (main way)
+
+**Settings → Update** (administrators) shows the installed version, the latest release on GitHub with its changes,
+and the buttons **Check**, **Update to X.Y.Z** and **Roll back to X.Y.Z**. go24 checks GitHub by itself every 6 hours;
+a new version is shown on this page, it is not pushed as a notification.
+
+**Update** does everything the manual steps below do:
+
+1. go24 downloads `go24-X.Y.Z.tar.gz` and its signature `go24-X.Y.Z.tar.gz.sig` from the release and checks the
+   signature (ed25519; the public key is built into go24, the private one is kept only by the publisher). An archive
+   with a foreign or damaged signature, or one not newer than the installed version, is not installed.
+2. The service `go24-updater` takes over and writes every step to the page, live:
+   - checks the signature again (it does not trust go24);
+   - dumps all databases to `deploy/backups/before-<old version>-<date>.sql.gz` and keeps the current files, `deploy/.env`
+     and the go24 images for a rollback;
+   - lays the new files over the installation; `deploy/.env`, the theme, your locales, the messenger's generated
+     configuration and the backups are never touched;
+   - appends the parameters that appeared in the new `deploy/.env.example` to `deploy/.env` (empty passwords and
+     secrets are generated) and lists them in the log;
+   - rebuilds the messenger configuration if its templates changed (as `make matrix-config`);
+   - `docker compose pull` and `up -d --build`: new versions of the components come with the pinned image tags of the
+     release;
+   - waits up to 10 minutes for `go24` and `go24-worker` to become healthy and for `/healthz` to answer.
+3. If go24 did not come up, the previous version is put back by itself: its files, settings and images, and the
+   database from the dump; the status says **rolled back** with the reason.
+4. The administrators get a notification (and a message in the messenger, by their settings): «updated to X.Y.Z» or
+   «rolled back: reason».
+
+Updating from any older version straight to the latest one works: the migrations of all versions in between are
+applied in order.
+
+**Roll back** puts back the version kept before the last update, together with its database. Everything changed in
+go24 since that update is lost, so it is a last resort.
+
+A development build (version with a suffix such as `0.6.0-dev`, or `GO24_UPDATE=off` in `deploy/.env`) has no
+update button: its code is not from GitHub releases and is updated with git.
+
+## Updating manually (fallback)
+
+Use this when the button is unavailable (no access to GitHub from the server, `go24-updater` is not running).
+
+### Overview
 
 ```
   1. backup  ──►  2. new code    ──►  3. new settings?  ──►  4. restart  ──►  5. verify
@@ -18,7 +59,7 @@ New versions are published on GitHub: https://github.com/BorisGB2001/Go24/releas
 The database is updated automatically: on startup go24 applies any new migrations. Data, files, and settings are
 preserved.
 
-## Steps
+### Steps
 
 All commands are run on the server as the `go24` user in `/srv/go24`.
 
@@ -73,6 +114,9 @@ make logs s=go24         # no errors at startup (Ctrl+C to exit)
 Open go24 in a browser and sign in.
 
 ## If something breaks after the update
+
+After an update by the button: **Settings → Update → Roll back** puts back the previous version with its database
+(the log of the update is on the same page, and `make logs s=go24-updater`). After a manual update:
 
 1. Check the error: `make logs s=go24` and `make logs s=go24-worker`.
 2. Roll back the code to the previous version: `git checkout v<previous version>` and `make up`.

@@ -50,3 +50,19 @@ func (s *Server) SignChatReady(ctx context.Context, entity, entityID string) boo
 	chat, err := s.signChatOf(ctx, sign.Doc{Entity: entity, EntityID: entityID}, sign.Party{Chat: "chat"})
 	return err == nil && chat != ""
 }
+
+// CRMClientChat writes the text from the user into the card's client's latest dialogue of the open lines and says the
+// dialogue (crm.Store.ClientChat: «Сообщение в открытую линию» robots).
+func (s *Server) CRMClientChat(ctx context.Context, userID, entity, entityID, text string) (string, error) {
+	if s.OpenLines == nil {
+		return "", i18n.E("err.robot_chat")
+	}
+	chat, err := s.OpenLines.ChatOf(ctx, entity, entityID)
+	if err == nil && chat == "" {
+		err = i18n.E("err.robot_chat")
+	}
+	if err != nil {
+		return "", err
+	}
+	return chat, s.OpenLines.Reply(ctx, userID, chat, text)
+}

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -118,7 +119,9 @@ func TestHRRights(t *testing.T) {
 	}
 
 	// absences: with «invite» only — not anyone's; with «absences» — anyone's, and all three are told
-	oct := url.Values{"user": {plain}, "kind": {"vacation"}, "from": {"2026-11-02"}, "to": {"2026-11-06"}}
+	// next year, so that the vacation never covers today («Отсутствуют» below must not list Простов)
+	y := strconv.Itoa(time.Now().Year() + 1)
+	oct := url.Values{"user": {plain}, "kind": {"vacation"}, "from": {y + "-11-02"}, "to": {y + "-11-06"}}
 	if st, _ := do(hr, "POST", "/company/absences", oct); st == http.StatusSeeOther {
 		t.Fatal("the HR officer without «absences» entered another's absence")
 	}
@@ -131,7 +134,7 @@ func TestHRRights(t *testing.T) {
 	if notes != 2 {
 		t.Fatalf("notifications = %d", notes)
 	}
-	if _, body := do(plain, "GET", "/notifications", nil); !strings.Contains(body, "Кадрова") || !strings.Contains(body, "02.11.2026 — 06.11.2026") {
+	if _, body := do(plain, "GET", "/notifications", nil); !strings.Contains(body, "Кадрова") || !strings.Contains(body, "02.11."+y+" — 06.11."+y) {
 		t.Error("the employee's notification does not tell of the absence")
 	}
 
@@ -139,12 +142,12 @@ func TestHRRights(t *testing.T) {
 	if st, _ := do(plain, "GET", "/company/absences/report", nil); st != http.StatusForbidden {
 		t.Errorf("an employee opens the report: %d", st)
 	}
-	st, body := do(hr, "GET", "/company/absences/report?year=2026", nil)
-	if st != http.StatusOK || !strings.Contains(body, "Простов") || !strings.Contains(body, "02.11.2026") {
+	st, body := do(hr, "GET", "/company/absences/report?year="+y, nil)
+	if st != http.StatusOK || !strings.Contains(body, "Простов") || !strings.Contains(body, "02.11."+y) {
 		t.Errorf("the report: %d", st)
 	}
-	if st, body = do(hr, "GET", "/company/absences/report?year=2026&format=csv", nil); st != http.StatusOK ||
-		!strings.HasPrefix(body, "\uFEFF") || !strings.Contains(body, "Простов;;02.11.2026 — 06.11.2026;5") {
+	if st, body = do(hr, "GET", "/company/absences/report?year="+y+"&format=csv", nil); st != http.StatusOK ||
+		!strings.HasPrefix(body, "\uFEFF") || !strings.Contains(body, "Простов;;02.11."+y+" — 06.11."+y+";5") {
 		t.Errorf("the CSV: %d %q", st, body)
 	}
 

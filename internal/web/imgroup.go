@@ -70,6 +70,15 @@ func (s *Server) imGroupAction(w http.ResponseWriter, r *http.Request, sess auth
 		err = s.Matrix.SetHistory(r.Context(), sess.UserID, room, r.FormValue("on") == "1")
 	case "join":
 		err = s.Matrix.JoinOpen(r.Context(), sess.UserID, room)
+	case "telegram": // the chat linked to a group of Telegram: a code for /link there, or the link ended
+		switch {
+		case s.NotifyOut == nil || !s.Matrix.CanBridge(r.Context(), sess.UserID, room):
+			err = i18n.E("err.forbidden")
+		case r.FormValue("on") == "0":
+			err = s.NotifyOut.UnlinkGroup(r.Context(), room)
+		default:
+			_, err = s.NotifyOut.StartGroupLink(r.Context(), sess.UserID, room)
+		}
 	case "photo":
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 		f, hdr, ferr := r.FormFile("file")

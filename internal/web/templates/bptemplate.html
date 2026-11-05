@@ -37,8 +37,8 @@
 </div><div>
 {{if $t.ID}}<div class="card">
   <div class="row bphead"><h2>{{t "bp.steps"}}</h2><span class="bpviews"><button type="button" class="ghost small" data-bpview="list">{{icon "list"}} {{t "bp.scheme.list"}}</button><button type="button" class="ghost small" data-bpview="scheme">{{icon "hierarchy-2"}} {{t "bp.scheme.title"}}</button></span></div>
-  <ol class="bpsteps">{{range $i, $s := $t.Steps}}<li{{if eq (add $i 1) $d.Edit}} class="on"{{end}} data-bpedit="?step={{add $i 1}}#stepform">{{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $t.Fields)}}
-    <span class="row" style="display:inline-flex"><a class="button ghost small" href="?step={{add $i 1}}#stepform" title="{{t "bp.edit_step" (add $i 1)}}">{{icon "edit"}}</a>{{if $i}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="up"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "bp.up"}}">↑</button></form>{{end}}
+  <ol class="bpsteps">{{range $i, $s := $t.Steps}}<li class="{{if eq (add $i 1) $d.Edit}}on{{end}}{{if $s.Off}} off{{end}}" data-bpedit="?step={{add $i 1}}#stepform">{{template "bpstep" (dict "S" $s "Users" $d.Users "Fields" $t.Fields)}}
+    <span class="row" style="display:inline-flex"><a class="button ghost small" href="?step={{add $i 1}}#stepform" title="{{t "bp.edit_step" (add $i 1)}}">{{icon "edit"}}</a>{{if $i}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="up"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "bp.up"}}">↑</button></form>{{end}}<form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="off"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{if $s.Off}}{{t "bp.turn_on"}}{{else}}{{t "bp.turn_off"}}{{end}}">{{if $s.Off}}{{icon "eye"}}{{else}}{{icon "eye-off"}}{{end}}</button></form>
     <form method="post" action="/bp/templates/{{$id}}"><input type="hidden" name="op" value="delete"><input type="hidden" name="n" value="{{$i}}"><button class="ghost small" title="{{t "common.remove"}}">{{icon "x"}}</button></form></span></li>{{end}}</ol>
   {{template "bpscheme" (dict "Nodes" $d.Scheme "ID" $id "Users" $d.Users "Fields" $t.Fields)}}
   {{$v := $d.V}}{{$kind := $v.Get "kind"}}
@@ -103,7 +103,8 @@
       <div data-for="mail"><label>{{t "bp.step_mail_to"}}</label>{{template "upick" (upick "mail_to" (index $v "mail_to") $d.Users "+client" (t "bp.to.client") "+starter" (t "bp.to.starter") "+manager" (t "bp.to.manager") "+responsible" (t "bp.to.responsible") "extra" $d.UserFields)}}
         <label>{{t "bp.step_email"}}</label><input type="text" name="email" maxlength="1000" placeholder="buh@example.com, {email}" value="{{$v.Get "email"}}">
         <label>{{t "bp.step_subject"}}</label><input type="text" name="subject" maxlength="300" value="{{$v.Get "subject"}}">
-        <label>{{t "bp.step_body"}}</label><textarea name="text" rows="5" maxlength="1000">{{$v.Get "text"}}</textarea></div>
+        <label>{{t "bp.step_body"}}</label><textarea name="text" rows="5" maxlength="1000">{{$v.Get "text"}}</textarea>
+        <label class="check"><input type="checkbox" name="attach" {{if $v.Has "attach"}}checked{{end}}> {{t "bp.step_attach_mail"}}</label></div>
       <div data-for="approve review request"><label>{{t "bp.step_delegate"}}</label><select name="delegate">{{range $d.Delegations}}<option value="{{.}}" {{if eq . ($v.Get "delegate")}}selected{{end}}>{{t (print "bp.delegation." .)}}</option>{{end}}</select></div>
       <div data-for="approve"><label>{{t "bp.step_mode"}}</label><select name="mode">{{range $d.Modes}}<option value="{{.}}" {{if eq . ($v.Get "mode")}}selected{{end}}>{{t (print "bp.mode." .)}}</option>{{end}}</select>
         <div class="row" data-bpvote><label>{{t "bp.step_percent"}}</label><input type="number" name="percent" min="1" max="100" style="width:6em" value="{{$v.Get "percent"}}">
@@ -148,6 +149,7 @@
         <label class="check"><input type="checkbox" name="high" {{if $v.Has "high"}}checked{{end}}> {{t "bp.step_high"}}</label>
         <label class="check"><input type="checkbox" name="control" {{if $v.Has "control"}}checked{{end}}> {{t "bp.step_control"}}</label>
         <label class="check"><input type="checkbox" name="wait" {{if $v.Has "wait"}}checked{{end}}> {{t "bp.step_wait"}}</label>
+        <label class="check"><input type="checkbox" name="attach" {{if $v.Has "attach"}}checked{{end}}> {{t "bp.step_attach_task"}}</label>
         <p class="small muted">{{t "bp.step_task_hint"}}</p></div>
       <div data-for="task"><label>{{t "bp.step_project"}}</label><select name="project"><option value=""></option>{{range $d.Projects}}<option value="{{.Key}}" {{if eq .Key ($v.Get "project")}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
       <div data-for="wait"><label>{{t "bp.step_pause"}}</label><div class="row"><input type="number" name="timeout" min="0" max="525600" style="width:7em" value="{{$v.Get "timeout"}}">

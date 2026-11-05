@@ -680,8 +680,8 @@ func (s *Server) diskZip(w http.ResponseWriter, r *http.Request, sess auth.Sessi
 	s.writeZip(r.Context(), w, name, entries)
 }
 
-// fileKind is how the viewer of «Диск» shows a file: as mail's viewer does (image, pdf, html of a document), and
-// video and audio in the browser's player; "" — downloaded.
+// fileKind is how the viewer of «Диск» shows a file: as mail's viewer does (image, pdf, html of a document), video
+// and audio in the browser's player, an archive (ZIP, TAR) as the list of what is in it; "" — downloaded.
 func fileKind(name, contentType string) string {
 	ct, ext := strings.ToLower(contentType), strings.ToLower(path.Ext(name))
 	switch {
@@ -689,6 +689,8 @@ func fileKind(name, contentType string) string {
 		return "video"
 	case strings.HasPrefix(ct, "audio/") || slices.Contains([]string{".mp3", ".wav", ".m4a", ".ogg", ".oga", ".flac", ".opus"}, ext):
 		return "audio"
+	case drive.ArchiveKind(name) != "":
+		return "archive"
 	}
 	return mail.PreviewKind(name, contentType)
 }

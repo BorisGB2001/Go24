@@ -2,7 +2,15 @@
 {{$d := .Data}}
 <div class="feedwrap">
 <div class="feed" data-feed data-me="{{$d.Me}}" data-failed="{{t "common.save_failed"}}" data-cmore="{{t "feed.comments_earlier"}}" data-expand="{{t "feed.expand"}}" data-collapse="{{t "feed.collapse"}}"{{if $d.General}} data-general{{end}}>
-<div class="pagehead"><h1>{{t "title.feed"}}</h1>{{if $d.Admin}}<a class="btn" href="/feed/settings" title="{{t "feed.settings"}}">{{icon "settings"}} {{t "feed.settings"}}</a>{{end}}</div>
+<div class="pagehead"><h1>{{t "title.feed"}}</h1><details class="tsettings dmore fviewmenu"><summary class="button ghost" title="{{t "feed.view_menu"}}">{{icon "adjustments"}} {{t "feed.view_menu"}}</summary><div class="pop">
+  <form method="post" action="/feed/view" data-feedview>{{with $d.FeedView}}<input type="hidden" name="back" value="{{$d.Back}}">
+    <b class="small">{{t "feed.sort"}}</b>
+    <label><input type="radio" name="sort" value="activity"{{if not .ByDate}} checked{{end}}> {{t "feed.sort_activity"}}</label>
+    <label><input type="radio" name="sort" value="date"{{if .ByDate}} checked{{end}}> {{t "feed.sort_date"}}</label>
+    <label title="{{t "feed.expert_hint"}}"><input type="checkbox" name="expert" value="1"{{if .Expert}} checked{{end}}> {{t "feed.expert"}}</label>
+    <span class="muted small">{{t "feed.expert_hint"}}</span>
+    <button type="submit">{{t "common.save"}}</button>{{end}}
+  </form></div></details>{{if $d.Admin}}<a class="btn" href="/feed/settings" title="{{t "feed.settings"}}">{{icon "settings"}} {{t "feed.settings"}}</a>{{end}}</div>
 <div class="card composer">
   <form method="post" action="/feed" data-post enctype="multipart/form-data">
     <div class="form-error" data-error hidden></div>

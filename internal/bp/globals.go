@@ -65,6 +65,9 @@ func (s *Store) SaveGlobals(ctx context.Context, userID string, list []Field) er
 			return i18n.E("err.bp_field")
 		}
 		seen[strings.ToLower(f.Key)] = true
+		if f.Kind == "file" { // a file — of a process only
+			return i18n.E("err.bp_field")
+		}
 		if err := checkField(f); err != nil {
 			return err
 		}

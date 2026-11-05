@@ -62,6 +62,7 @@ import (
 	"go24/internal/tasks"
 	"go24/internal/telephony"
 	"go24/internal/theme"
+	"go24/internal/update"
 	"go24/internal/twofactor"
 )
 
@@ -93,6 +94,7 @@ type Server struct {
 	Audit    *audit.Store    // «Журнал событий»; nil — not kept
 	IPAccess *ipaccess.Store // «Ограничение доступа по IP»; nil — none
 	Backup   *backup.Store   // «Резервное копирование»; nil — no backups' folder
+	Update   *update.Client  // «Обновление»; nil — no updates' folder
 	// BackupHostDir is the backups' folder as the server names it (GO24_BACKUP_HOST_DIR); BackupRC — rclone-rcd for
 	// the outside places of the copies (nil — none)
 	BackupHostDir string
@@ -196,6 +198,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /call/conferences", s.requireUser(s.callConferences))
 	mux.HandleFunc("POST /call/conferences", s.requireUser(s.callConferenceCreate))
 	mux.HandleFunc("POST /call/conferences/{id}", s.requireUser(s.callConferenceUpdate))
+	mux.HandleFunc("POST /matrixrtc/sfu/get", s.rtcSFUGet) // Element Call: the person signs in with a Matrix OpenID token
+	mux.HandleFunc("POST /matrixrtc/get_token", s.rtcGetToken)
+	mux.HandleFunc("OPTIONS /matrixrtc/{path...}", s.rtcOptions)
 	mux.HandleFunc("GET /call/g/{token}", s.guestPage) // guest links of calls: no sign-in
 	mux.HandleFunc("POST /call/g/{token}", s.guestArrive)
 	mux.HandleFunc("GET /call/g/{token}/state", s.guestState)
@@ -452,6 +457,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /mail/categories/{id}/delete", s.requireUser(s.mailCategoryDelete))
 	mux.HandleFunc("GET /mail/suggest", s.requireUser(s.mailSuggest))
 	mux.HandleFunc("POST /mail/favorites", s.requireUser(s.mailFavSet))
+	mux.HandleFunc("GET /mail/person", s.requireUser(s.mailPersonCard))
+	mux.HandleFunc("POST /mail/person/contact", s.requireUser(s.mailPersonContact))
 	mux.HandleFunc("POST /mail/favorites/move", s.requireUser(s.mailFavMove))
 	mux.HandleFunc("POST /mail/searches", s.requireUser(s.mailSearchSave))
 	mux.HandleFunc("POST /mail/searches/{id}/save", s.requireUser(s.mailSearchSave))
@@ -523,6 +530,7 @@ func (s *Server) Routes() http.Handler {
 	s.mailExportRoutes(mux)
 	s.mailRecoverRoutes(mux) // «Восстановить удалённые элементы» (mailrecover.go)
 	s.mailPollRoutes(mux)    // «Опрос о времени встречи» (mailpoll.go)
+	s.mailAvailRoutes(mux)   // «Вставить свободное время» (mailavail.go)
 	s.mailTranslateRoutes(mux)
 	s.mailRepliesRoutes(mux)
 	s.mailReactRoutes(mux)
@@ -796,6 +804,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /feed/{id}/poll/resume", s.requireUser(s.feedPollClose))
 	mux.HandleFunc("POST /feed/{id}/read", s.requireUser(s.feedRead))
 	mux.HandleFunc("POST /feed/seen", s.requireUser(s.feedSeen))
+	mux.HandleFunc("POST /feed/view", s.requireUser(s.feedViewSave))
 	mux.HandleFunc("POST /feed/filters", s.requireUser(s.feedFilterSave))
 	mux.HandleFunc("POST /feed/filters/delete", s.requireUser(s.feedFilterDelete))
 	mux.HandleFunc("GET /feed/settings", s.requireUser(s.feedSettings))
@@ -998,6 +1007,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /settings/admins/{id}/remove", s.requireUser(s.adminsRemove))
 	mux.HandleFunc("GET /settings/ip", s.requireUser(s.ipAccessPage))
 	mux.HandleFunc("GET /settings/system", s.requireUser(s.systemPage))
+	mux.HandleFunc("GET /settings/update", s.requireUser(s.updatePage))
+	mux.HandleFunc("GET /settings/update/status", s.requireUser(s.updateStatus))
+	mux.HandleFunc("POST /settings/update/{action}", s.requireUser(s.updateAction))
 	mux.HandleFunc("GET /settings/two-factor", s.requireUser(s.twoFactorPage))
 	mux.HandleFunc("POST /settings/two-factor", s.requireUser(s.twoFactorSave))
 	mux.HandleFunc("GET /security/two-factor", s.requireUser(s.twoFactorRemind))
@@ -1381,6 +1393,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /s/{token}/zip", s.shareZip)
 	mux.HandleFunc("GET /s/{token}/doc/{id}", s.shareDoc) // a document in ONLYOFFICE: viewed or, if the link lets, edited
 	mux.HandleFunc("GET /files/{id}/raw", s.requireUser(s.fileRaw))
+	mux.HandleFunc("GET /files/{id}/archive", s.requireUser(s.fileArchive)) // what is in a ZIP or TAR, and a file of it
 	mux.HandleFunc("GET /files/{id}/thumb", s.requireUser(s.fileThumb)) // the tiles of «Диск»: a picture, the first page of a PDF or a document
 	mux.HandleFunc("GET /files/{id}/versions", s.requireUser(s.fileVersions))
 	mux.HandleFunc("GET /files/{id}/versions/{v}", s.requireUser(s.fileVersion))

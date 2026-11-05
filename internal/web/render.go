@@ -242,6 +242,8 @@ var baseFuncs = template.FuncMap{
 	"join":      strings.Join,
 	"mailGroup": func(t time.Time, pinned bool) string { return mailGroup(t, pinned, time.Now()) },
 	"mailPerson": mailPersonRef,
+	"mailAddrs":  mailAddrs,
+	"mailCard":   mailCard,
 	// indent shifts a department name in a <select> by its depth in the structure.
 	"indent": func(depth int) string { return strings.Repeat("\u00a0\u00a0\u00a0", depth) },
 	// preview: the start of a text on one line (a letter in the list)
@@ -571,7 +573,7 @@ func langFuncs(b *i18n.Bundle, lang string) template.FuncMap {
 				return tr("robots.did."+what) + " «" + rest + "»"
 			case "close":
 				return tr("robots.did.close", rest)
-			case "request", "request_done":
+			case "request", "request_done", "chat":
 				return tr("robots.did."+what) + " «" + rest + "»"
 			}
 			return v

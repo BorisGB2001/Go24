@@ -41,4 +41,14 @@ touch('touchstart', 250); touch('touchend', 230);
 assert.ok(opened(), 'a short move keeps it');
 touch('touchstart', 250); touch('touchend', 120);
 assert.ok(!opened(), 'a swipe to the left closes it');
+
+// a phone: the current tab of a section's tabs, past the right edge of the scrolled row, is brought into sight
+const d2 = new JSDOM(`<!doctype html><body>${html}<div class="tabs" id="tabs"><a href="/a">A</a><a id="on" class="on" href="/b">B</a></div></body>`,
+  { runScripts: 'outside-only', url: 'http://go24.test/crm' });
+d2.window.matchMedia = () => ({ matches: true, addEventListener() {} });
+const tabs = d2.window.document.getElementById('tabs'), on = d2.window.document.getElementById('on');
+const def = (el, k, v) => Object.defineProperty(el, k, { configurable: true, get: () => v });
+def(tabs, 'scrollWidth', 900); def(tabs, 'clientWidth', 370); def(on, 'offsetLeft', 600); def(on, 'offsetWidth', 90);
+d2.window.eval(script);
+assert.equal(tabs.scrollLeft, 584, 'the current tab is scrolled into sight');
 console.log('drawer.test.mjs: ok');

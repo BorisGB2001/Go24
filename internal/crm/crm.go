@@ -48,6 +48,9 @@ type Store struct {
 	// HasChat: the card's client has a dialogue of the open lines — the sign robot sends the link into it when the
 	// client has neither an e-mail nor a phone (nil: not)
 	HasChat func(ctx context.Context, entity, entityID string) bool
+	// ClientChat writes the text from the user into the card's client's latest dialogue of the open lines and says the
+	// dialogue (chat robots; nil or no dialogue: they fail)
+	ClientChat func(ctx context.Context, userID, entity, entityID, text string) (string, error)
 	// StartBP starts a business process of the template on the card as an autostart does, and says its id (process
 	// robots; nil: they fail)
 	StartBP func(ctx context.Context, userID, templateID, entityID string) (string, error)

@@ -342,6 +342,22 @@ GO24DEV-980; scope `documentgenerator` (`documents:read`, изменения —
 - Старые методы (`task.commentitem.*`, `task.checklistitem.*`) принимают параметры по имени или по месту: JSON-списком
   `[12, {"POST_MESSAGE": "…"}]` или `0=12&1[POST_MESSAGE]=…`.
 
+### Скрам
+
+`tasks.api.scrum.*` (scope `task`) — GO24DEV-1014. Скрам — скрам go24 по номеру группы; участники планируют (спринты,
+эпики, бэклог), владелец, модераторы и скрам-команда начинают и завершают спринты. Бэклог и спринты всех скрамов
+нумеруются в одном ряду (`entityId` задачи — то или другое), эпики — в своём (миграция 1014). Ответы — в camelCase.
+
+| Метод | Что |
+|---|---|
+| `tasks.api.scrum.backlog.get`, `backlog.add` | `id` (группа) / `fields {groupId}` → `{id, groupId, entityType: backlog, createdBy…}`; у скрама go24 бэклог есть всегда |
+| `tasks.api.scrum.epic.add`, `get`, `list`, `update`, `delete`, `getFields` | `fields {groupId, name, description, color}`, `id` → `{id, groupId, name, description, createdBy, modifiedBy, color}`; `list` — `filter`, `order`, `select`, `start` по скрамам, которые видит вызывающий; удалённый эпик снимается с задач |
+| `tasks.api.scrum.sprint.add`, `get`, `list`, `update`, `delete`, `getFields` | `fields {groupId, name, goal, dateStart, dateEnd, status}`, `id` → `{id, groupId, entityType: sprint, name, goal, sort, createdBy, modifiedBy, dateStart, dateEnd, status}`; без дат спринт идёт за последним на две недели; `status` `active` / `completed` начинает или завершает его; удаляется запланированный спринт, его задачи возвращаются в бэклог |
+| `tasks.api.scrum.sprint.start`, `complete` | `id` → спринт; при завершении незавершённые задачи уходят в бэклог |
+| `tasks.api.scrum.kanban.getStages`, `addStage`, `updateStage`, `deleteStage`, `getFields` | `sprintId`, `stageId`, `fields {sprintId, name, color}` → `[{id, name, sort, type (NEW, WORK, FINISH), sprintId, color}]`; стадии — группы, одни для всех спринтов |
+| `tasks.api.scrum.kanban.addTask`, `deleteTask` | `sprintId`, `taskId`, `stageId` — задача в спринт (в активном — на стадию), из него — в бэклог |
+| `tasks.api.scrum.task.get`, `update`, `getFields` | `id`, `fields {entityId, storyPoints ("" — нет), epicId (0 — нет), sort}` → `{entityId, storyPoints, epicId, sort, createdBy, modifiedBy}` |
+
 ## Рабочие группы
 
 `sonet_group.*`, `socialnetwork.api.workgroup.*` (scope `sonet_group`; чтение — `projects:read`, изменения —
@@ -681,7 +697,7 @@ GO24DEV-961, область `im`; вызывающий действует от �
 |---|---|
 | `bizproc.workflow.template.list` | шаблоны, которые вызывающий может запускать (администратор — все, и неактивные): `ID`, `XML_ID` (uuid go24), `MODULE_ID`, `ENTITY`, `DOCUMENT_TYPE`, `AUTO_EXECUTE` (0, 1 — при добавлении, 2 — при изменении, 3), `NAME`, `DESCRIPTION`, `PARAMETERS`, `VARIABLES`, `CONSTANTS` (`{ключ: {Name, Type, Required, Multiple, Default, Options}}`), `MODIFIED`, `ACTIVE` |
 | `bizproc.workflow.template.delete` | `ID` → `true`; шаблон удаляется вместе с процессами (администраторы) |
-| `bizproc.workflow.start` | `TEMPLATE_ID`, `DOCUMENT_ID`, `PARAMETERS` → id процесса |
+| `bizproc.workflow.start` | `TEMPLATE_ID`, `DOCUMENT_ID` (у процесса без документа — не нужен), `PARAMETERS` (параметр «Файл» — `[имя, base64]` или список таких) → id процесса |
 | `bizproc.workflow.terminate` | `ID`, `STATUS` (причина) → `true`, как «Остановить» |
 | `bizproc.workflow.kill` | `ID` → `true`; процесс удаляется с историей (администраторы) |
 | `bizproc.workflow.instances`, `bizproc.workflow.instance.list` | выполняющиеся процессы (администратор — все, иначе свои): `ID`, `MODIFIED`, `OWNED_UNTIL`, `MODULE_ID`, `ENTITY`, `DOCUMENT_ID`, `STARTED`, `STARTED_BY`, `TEMPLATE_ID`, `WORKFLOW_STATE` (статус шага «Установить статус») |
@@ -891,3 +907,26 @@ GO24DEV-989; только токеном приложения (`openlines:write`
   отключил канал в настройках линии («Каналы приложений»). Повторы — как у остальных событий приложений.
 - Нет: `ONIMCONNECTORMESSAGEUPDATE`/`DELETE` (операторы go24 не правят отправленные ответы), страницы настройки канала в
   линии (`PLACEMENT_HANDLER` сохраняется), значка канала в списках.
+
+## SMS-провайдеры приложений
+
+`messageservice.*` (GO24DEV-1027): приложение добавляет своего SMS-провайдера; он — один из «SMS» CRM (`/crm/sms`, вид
+«Приложение»): через него отправляют карточки, робот «Отправить SMS клиенту», бизнес-процессы и провайдер по умолчанию.
+Добавить и удалить — токеном приложения администратора (входящий вебхук получает `WRONG_AUTH_TYPE`); права go24 —
+`crm:read`/`crm:write`.
+
+| Метод | Что |
+|---|---|
+| `messageservice.sender.add` | `CODE` (латинские буквы, цифры, `_ . -`), `TYPE` (`SMS`), `HANDLER` (на домене приложения), `NAME`, `DESCRIPTION` (текст или `{ru, en}`) → `true`; первый провайдер go24 становится провайдером по умолчанию |
+| `messageservice.sender.delete` | `CODE` → `true` |
+| `messageservice.sender.list` | коды провайдеров приложения |
+| `messageservice.message.status.update` | `CODE`, `MESSAGE_ID`, `STATUS` (`queued`, `sent`, `delivered`, `undelivered`, `failed`) → `true` |
+
+- Каждое сообщение уходит на `HANDLER`, как его шлёт корпоративного портала, — формой массивов PHP: `type` (`SMS`), `code`, `message_id`,
+  `message_to` (`+` и цифры), `message_body`, `message_from` (имя отправителя провайдера, если задано), `ts`, `auth[…]` —
+  токены сотрудника, который отправляет (`auth[user_id]` — его номер); когда отправляет робот — только
+  `application_token` и адрес портала. Ответ не 2xx — сообщение не отправлено, в ленте карточки — ошибка.
+- `queued`/`sent` go24 хранит как «отправлено», `failed` — как ошибку. Ошибки: `ERROR_SENDER_ALREADY_INSTALLED`,
+  `ERROR_SENDER_NOT_FOUND`, `ERROR_SENDER_VALIDATION_FAILURE`, `ERROR_HANDLER_URL_MATCH`, `ERROR_MESSAGE_NOT_FOUND`,
+  `ERROR_MESSAGE_STATUS_INCORRECT`.
+- Провайдеры удалённого приложения исчезают. Нет: остальных `messageservice.message.*`, типов кроме SMS.

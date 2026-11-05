@@ -16,30 +16,32 @@
   });
 })();
 
-// Person pop-up: a click on [data-user] (the name in the top bar, people in lists) shows the person's card.
+// Person pop-up: a click on [data-user] (the name in the top bar, people in lists) shows the person's card; on
+// [data-card] — the card at that address (the mail's contact card of a sender or a recipient: /mail/person).
 // Ctrl/Cmd-click still opens the full profile page.
 (() => {
   let pop = null;
   const close = () => { pop?.remove(); pop = null; };
   document.addEventListener('click', async e => {
-    const el = e.target.closest('[data-user]');
+    const el = e.target.closest('[data-user],[data-card]');
     if (!el) {
       if (pop && !pop.contains(e.target)) close();
       return;
     }
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     e.preventDefault();
-    if (pop && pop.dataset.for === el.dataset.user) { close(); return; }
+    const key = el.dataset.card || el.dataset.user;
+    if (pop && pop.dataset.for === key) { close(); return; }
     close();
     let html = '';
     try {
-      const res = await fetch('/u/' + encodeURIComponent(el.dataset.user) + '/card');
+      const res = await fetch(el.dataset.card || '/u/' + encodeURIComponent(el.dataset.user) + '/card');
       if (!res.ok) { if (el.href) location.href = el.href; return; }
       html = await res.text();
     } catch { return; }
     pop = document.createElement('div');
     pop.className = 'pcard-pop';
-    pop.dataset.for = el.dataset.user;
+    pop.dataset.for = key;
     pop.innerHTML = html;
     document.body.append(pop);
     window.go24Presence?.(); // «В сети» / «Был(а) в сети …» of the person

@@ -188,7 +188,7 @@ func (s *Server) sprintsAction(w http.ResponseWriter, r *http.Request, sess auth
 	var err error
 	switch r.FormValue("op") {
 	case "create":
-		err = s.Tasks.CreateSprint(r.Context(), p, r.FormValue("name"))
+		_, err = s.Tasks.NewSprint(r.Context(), sess.UserID, p, r.FormValue("name"))
 	case "update":
 		var start, end *time.Time
 		if start, err = parseDate(r.FormValue("date_start")); err == nil {

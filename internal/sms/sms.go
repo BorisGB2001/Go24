@@ -39,6 +39,9 @@ type Store struct {
 	key []byte
 	// Post is how the providers are called (nil — over HTTP); tests replace it
 	Post func(ctx context.Context, req Request) (Response, error)
+	// App posts a message to an application's provider (apps.CallSMS): its handler gets data with the tokens of
+	// userID ("" — of none)
+	App func(ctx context.Context, x Sender, userID string, data map[string]any) error
 }
 
 // NewStore: secret is go24's own secret (the session secret); the key of the providers' keys is derived from it.
@@ -58,6 +61,10 @@ type Sender struct {
 	Active  bool      `json:"active"`
 	HasKey  bool      `json:"has_key"`
 	Created time.Time `json:"created_at"`
+	// an application's provider (kind «app», messageservice.sender.add): Login is its handler
+	AppID       string `json:"app_id,omitempty"`
+	Code        string `json:"code,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // Message is one SMS sent (or not) through a provider.
@@ -66,13 +73,14 @@ type Message struct {
 	SenderID string    `json:"sender_id,omitempty"`
 	Phone    string    `json:"phone"`
 	Text     string    `json:"text"`
-	Status   string    `json:"status"` // sent | error
+	Status   string    `json:"status"` // sent | error | delivered | undelivered (an application's provider tells)
 	Error    string    `json:"error,omitempty"`
 	ExtID    string    `json:"external_id,omitempty"`
 	Created  time.Time `json:"created_at"`
 }
 
-const senderCols = `id::text, kind, name, login, sender, is_default, active, secret IS NOT NULL, created_at`
+const senderCols = `id::text, kind, name, login, sender, is_default, active, secret IS NOT NULL, created_at, coalesce(app_id::text, ''), code,
+	description`
 
 // Senders are the providers, the default one first.
 func (s *Store) Senders(ctx context.Context) ([]Sender, error) {
@@ -117,7 +125,7 @@ func (s *Store) SaveSender(ctx context.Context, x Sender, secret string) (string
 		return x.ID, err
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE sms_senders SET kind = $2, name = $3, login = $4, secret = coalesce($5, secret), sender = $6,
-		active = $7 WHERE id::text = $1`, x.ID, x.Kind, x.Name, x.Login, sealed, x.From, x.Active)
+		active = $7 WHERE id::text = $1 AND app_id IS NULL`, x.ID, x.Kind, x.Name, x.Login, sealed, x.From, x.Active)
 	if err == nil && tag.RowsAffected() == 0 {
 		err = errSender
 	}
@@ -186,7 +194,8 @@ func (s *Store) Send(ctx context.Context, o Out) (Message, error) {
 	if o.SenderID != "" {
 		q, arg = `SELECT `+senderCols+`, secret FROM sms_senders WHERE active AND id::text = $1`, []any{o.SenderID}
 	}
-	err := s.db.QueryRow(ctx, q, arg...).Scan(&x.ID, &x.Kind, &x.Name, &x.Login, &x.From, &x.Default, &x.Active, &x.HasKey, &x.Created, &sealed)
+	err := s.db.QueryRow(ctx, q, arg...).Scan(&x.ID, &x.Kind, &x.Name, &x.Login, &x.From, &x.Default, &x.Active, &x.HasKey, &x.Created,
+		&x.AppID, &x.Code, &x.Description, &sealed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNoSender
 	}
@@ -200,7 +209,16 @@ func (s *Store) Send(ctx context.Context, o Out) (Message, error) {
 		}
 	}
 	m.SenderID = x.ID
-	ext, sendErr := s.deliver(ctx, x, secret, m.Phone, m.Text)
+	if err := s.db.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&m.ID); err != nil {
+		return m, err
+	}
+	var ext string
+	var sendErr error
+	if x.Kind == "app" {
+		sendErr = s.callApp(ctx, x, m, o.AuthorID)
+	} else {
+		ext, sendErr = s.deliver(ctx, x, secret, m.Phone, m.Text)
+	}
 	m.Status, m.ExtID = "sent", ext
 	if sendErr != nil {
 		m.Status, m.Error = "error", sendErr.Error()
@@ -216,9 +234,9 @@ func (s *Store) Send(ctx context.Context, o Out) (Message, error) {
 	if o.AuthorID != "" {
 		author = o.AuthorID
 	}
-	if err := s.db.QueryRow(ctx, `INSERT INTO sms_messages (sender_id, phone, body, status, error, external_id, author_id, entity, entity_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, coalesce($8, ''), $9) RETURNING id::text, created_at`,
-		x.ID, m.Phone, m.Text, m.Status, m.Error, m.ExtID, author, ent, eid).Scan(&m.ID, &m.Created); err != nil {
+	if err := s.db.QueryRow(ctx, `INSERT INTO sms_messages (id, sender_id, phone, body, status, error, external_id, author_id, entity, entity_id)
+		VALUES ($10, $1, $2, $3, $4, $5, $6, $7, coalesce($8, ''), $9) RETURNING id::text, created_at`,
+		x.ID, m.Phone, m.Text, m.Status, m.Error, m.ExtID, author, ent, eid, m.ID).Scan(&m.ID, &m.Created); err != nil {
 		return m, err
 	}
 	return m, sendErr

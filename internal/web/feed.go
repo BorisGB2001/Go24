@@ -35,6 +35,12 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		Query: q.Get("q"), Author: q.Get("author"), Favorites: q.Get("view") == "fav", Hidden: q.Get("view") == "hidden", Tag: feed.NormTag(q.Get("tag")),
 		Mentions: q.Get("view") == "mentions", To: slices.DeleteFunc(q["dest"], func(v string) bool { return v == "" })}
 	f.Post = q.Get("post")
+	view, err := s.Feed.View(r.Context(), sess.UserID)
+	if err != nil {
+		s.taskErr(w, r, err, "/my")
+		return
+	}
+	view.Apply(&f)
 	if slices.Contains(feed.Kinds, q.Get("kind")) {
 		f.Kind = q.Get("kind")
 	}
@@ -146,7 +152,7 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	data := map[string]any{
 		"Saved": saved, "Current": cur.Encode(), "Dest": memberChips(f.To, depts), "Periods": feed.Periods, "Period": period, "TillText": q.Get("till"),
 		"Side": side, "MayAll": mayAll, "MayImportant": mayImportant, // the rights of «Настройки ленты»
-		"Items": items, "View": q.Get("view"), "Projects": mine, "More": more, "Me": sess.UserID, "Admin": sess.AdminActive(),
+		"Items": items, "View": q.Get("view"), "FeedView": view, "Back": r.URL.RequestURI(), "Projects": mine, "More": more, "Me": sess.UserID, "Admin": sess.AdminActive(),
 		"Users": users, "Badges": feed.Badges, "BadgeEmoji": feed.BadgeEmoji,
 		"Pinned": pinned, "General": general, "F": f, "FromText": q.Get("from"), "Keep": keep.Encode(), "Kinds": feed.Kinds, "Untils": []string{"always", "day", "week", "month", "date"}, "Reactions": reactionList(), "Filtered": len(keep) > 0,
 		// «Бизнес-процессы» of the composer: the standalone templates
@@ -157,6 +163,28 @@ func (s *Server) feedPage(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		s.postFromMessage(r, sess, room, ev, data) // «Создать пост в ленте» of a chat message
 	}
 	s.render(w, r, "feed", page{TitleKey: "title.feed", Nav: "feed", Data: data})
+}
+
+// feedViewSave keeps how the person sees the feed (POST /feed/view, the settings menu of the feed): sort — activity
+// or date, expert — «Экспертный режим»; then back to the feed.
+func (s *Server) feedViewSave(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	v := feed.View{ByDate: r.FormValue("sort") == "date", Expert: r.FormValue("expert") == "1"}
+	if err := s.Feed.SetView(r.Context(), sess.UserID, v); err != nil {
+		s.taskErr(w, r, err, "/feed")
+		return
+	}
+	back := r.FormValue("back")
+	if !strings.HasPrefix(back, "/feed") || strings.HasPrefix(back, "//") {
+		back = "/feed"
+	}
+	// the page of «Показать ещё» is of the order it was in
+	if u, err := url.Parse(back); err == nil {
+		q := u.Query()
+		q.Del("before")
+		u.RawQuery = q.Encode()
+		back = u.RequestURI()
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 func (s *Server) feedFragment(r *http.Request, name string, data any) (string, error) {
@@ -913,7 +941,9 @@ func (s *Server) feedShare(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	writeJSON(w, http.StatusOK, map[string]string{"html": html, "msg": s.tr(r, "feed.shared", n)})
 }
 
-// feedLive streams new posts (from go24 or the messenger) to an open feed.
+// feedLive streams to an open feed: new posts (from go24 or the messenger; not with "?only=comments",
+// for a filtered feed) and the comments of the posts on the page — new ones after a moment (their files are
+// attached after the comment itself), edited and deleted ones at once.
 func (s *Server) feedLive(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	if s.Live == nil {
 		http.NotFound(w, r)
@@ -924,8 +954,17 @@ func (s *Server) feedLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	events, stop := s.Live.Subscribe("feed")
-	defer stop()
+	var posts <-chan string
+	if r.URL.Query().Get("only") != "comments" {
+		ch, stop := s.Live.Subscribe("feed")
+		defer stop()
+		posts = ch
+	}
+	comments, stopComments := s.Live.Subscribe("feedc")
+	defer stopComments()
+	changes, stopChanges := s.Live.Subscribe("feedce")
+	defer stopChanges()
+	ready := make(chan string, 16) // new comments after liveCommentDelay
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -933,6 +972,22 @@ func (s *Server) feedLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	flusher.Flush()
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
+	send := func(event string, v any) {
+		data, _ := json.Marshal(v)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+	comment := func(event, id string) {
+		c, err := s.Feed.Comment(r.Context(), sess.UserID, id)
+		if err != nil {
+			return // deleted meanwhile (the messenger did not take it) or not for this viewer
+		}
+		c.New = c.AuthorID != sess.UserID
+		html, err := s.feedFragment(r, "fcomment", c)
+		if err == nil {
+			send(event, map[string]string{"post": c.PostID, "id": c.ID, "html": html})
+		}
+	}
 	for {
 		select {
 		case <-r.Context().Done():
@@ -940,17 +995,37 @@ func (s *Server) feedLive(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
-		case id := <-events:
+		case id := <-posts:
 			html, err := s.feedItem(r, sess, id, true)
 			if err != nil {
 				continue // not for this viewer
 			}
-			data, _ := json.Marshal(map[string]string{"id": id, "html": html})
-			fmt.Fprintf(w, "event: post\ndata: %s\n\n", data)
-			flusher.Flush()
+			send("post", map[string]string{"id": id, "html": html})
+		case v := <-comments:
+			if _, id, ok := strings.Cut(v, "/"); ok {
+				time.AfterFunc(liveCommentDelay, func() {
+					select {
+					case ready <- id:
+					case <-r.Context().Done():
+					}
+				})
+			}
+		case id := <-ready:
+			comment("comment", id)
+		case v := <-changes:
+			switch op, id, _ := strings.Cut(v, "/"); op {
+			case "edit":
+				comment("cedit", id)
+			case "del":
+				send("cdel", map[string]string{"id": id})
+			}
 		}
 	}
 }
+
+// liveCommentDelay is how long an open feed waits to show a new comment: its files are attached after it, and a
+// comment the messenger did not take is deleted again.
+var liveCommentDelay = 1500 * time.Millisecond
 
 // markHashtags makes the #tags of an already escaped text links to the feed of the tag.
 func markHashtags(escaped string) string {

@@ -489,6 +489,14 @@ func (f *fakeSynapse) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				w.WriteHeader(404)
 				out(map[string]string{"errcode": "M_NOT_FOUND"})
+			case typ == "m.room.history_visibility": // the last one put; shared — as Synapse makes a private_chat room
+				for i := len(f.state) - 1; i >= 0; i-- {
+					if strings.HasPrefix(f.state[i].Path, room+"/state/"+typ+"/") {
+						out(f.state[i].Content)
+						return
+					}
+				}
+				out(map[string]any{"history_visibility": "shared"})
 			default: // as before: the other rooms' states read empty
 				out(map[string]any{})
 			}

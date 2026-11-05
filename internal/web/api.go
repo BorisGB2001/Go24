@@ -172,6 +172,7 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/sections", s.api("settings:read", s.apiSections))
 	mux.HandleFunc("PUT /api/v1/settings/sections", s.api("settings:write", s.apiSections))
 	mux.HandleFunc("GET /api/v1/settings/system", s.api("settings:read", s.apiSystem))
+	mux.HandleFunc("GET /api/v1/settings/update", s.api("settings:read", s.apiUpdate))
 	mux.HandleFunc("GET /api/v1/settings/backup", s.api("settings:read", s.apiBackup))
 	mux.HandleFunc("POST /api/v1/settings/backup/run", s.api("settings:write", s.apiBackup))
 	mux.HandleFunc("PUT /api/v1/settings/ip-access", s.api("settings:write", s.apiIPAccess))

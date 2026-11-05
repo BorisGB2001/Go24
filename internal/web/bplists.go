@@ -131,7 +131,7 @@ func (s *Server) bpListSettings(w http.ResponseWriter, r *http.Request, sess aut
 		s.taskErr(w, r, err, "/bp/lists")
 		return
 	}
-	data := map[string]any{"L": l, "FieldRows": bpFieldRows(l.Fields, users), "FieldKinds": bp.FieldKinds}
+	data := map[string]any{"L": l, "FieldRows": bpFieldRows(l.Fields, users), "FieldKinds": bp.ListFieldKinds}
 	if l.ID != "" {
 		for _, op := range []string{"read", "write"} {
 			refs, err := s.BP.ListRights(r.Context(), l.ID, op)

@@ -220,6 +220,7 @@ func (c *Client) CreateGroup(ctx context.Context, token, owner, name string, inv
 	for k, v := range levels {
 		pl[k] = v
 	}
+	AllowCalls(pl)
 	if invite == nil { // an open chat may start with no one else; Synapse fails on a null list
 		invite = []string{}
 	}
@@ -519,4 +520,58 @@ var syncs atomic.Int64
 // moment ago would come back as it was; a timeout never asked before makes the request new.
 func freshSync() string {
 	return strconv.FormatInt(syncs.Add(1)%1000000+time.Now().UnixMilli()%1000*1000000, 10)
+}
+
+// OpenIDUser is whose OpenID token it is (a client of the server gave it to a third party, as Element Call does to
+// get into a call): Synapse's openid listener answers with the Matrix ID, or M_UNKNOWN_TOKEN.
+func (c *Client) OpenIDUser(ctx context.Context, accessToken string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.Base+"/_matrix/federation/v1/openid/userinfo?access_token="+url.QueryEscape(accessToken), nil)
+	if err != nil {
+		return "", err
+	}
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	var out struct {
+		Sub string `json:"sub"`
+	}
+	if res.StatusCode != http.StatusOK {
+		e := &Error{Status: res.StatusCode}
+		_ = json.NewDecoder(res.Body).Decode(e)
+		return "", e
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Sub, nil
+}
+
+// AdminRooms are all the rooms of the server (the admin API), a page at a time: next "" — the last page.
+func (c *Client) AdminRooms(ctx context.Context, from string) (rooms []string, next string, err error) {
+	var out struct {
+		Rooms []struct {
+			RoomID string `json:"room_id"`
+		} `json:"rooms"`
+		NextBatch any `json:"next_batch"` // a number in Synapse
+	}
+	q := url.Values{"limit": {"500"}}
+	if from != "" {
+		q.Set("from", from)
+	}
+	if err := c.Do(ctx, http.MethodGet, "/_synapse/admin/v1/rooms?"+q.Encode(), nil, &out); err != nil {
+		return nil, "", err
+	}
+	for _, r := range out.Rooms {
+		rooms = append(rooms, r.RoomID)
+	}
+	switch v := out.NextBatch.(type) {
+	case float64:
+		next = strconv.FormatInt(int64(v), 10)
+	case string:
+		next = v
+	}
+	return rooms, next, nil
 }

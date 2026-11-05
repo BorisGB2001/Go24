@@ -217,6 +217,7 @@
 <script src="{{asset "js/mailvoice.js"}}"></script>
 <script src="{{asset "js/mailread.js"}}"></script>
 <script src="{{asset "js/mailpoll.js"}}"></script>
+<script src="{{asset "js/mailavail.js"}}"></script>
 {{if $d.CoPilot}}<script src="{{asset "js/mailai.js"}}"></script>{{end}}
 {{end}}{{end}}
 
@@ -358,10 +359,10 @@ open letter and the inbox; the actions that change the mail wait for «Подт�
     {{if .Flagged}}<span class="mflag">{{icon "flag"}} {{t "mail.flag"}}{{with .FlagDue}} · {{t "mail.flag_due" (date .)}}{{end}}</span>{{else if .FlagDone}}<span class="mdone">{{icon "check"}} {{t "mail.flag_done"}}</span>{{end}}
     {{with .FlagRemind}}<span class="mremind">{{icon "bell"}} {{t "mail.remind_at" (datetime .)}}</span>{{end}}
     {{if .Snoozed}}<span>{{icon "clock"}} {{t "mail.snoozed_till" (datetime (deref .SnoozeUntil))}}</span>{{end}}</div>{{end}}
-  {{$last := len $d.Thread}}{{range $i, $m := $d.Thread}}<details class="mmsg{{if $m.Locked}} mnocopy{{end}}"{{if or (eq $m.ID $d.Letter.ID) (eq (add $i 1) $last)}} open{{end}} data-msg="{{$m.ID}}">
-    <summary class="row mread-head">{{template "mava" $m}}<div class="mmsg-who"><b>{{$m.From}}</b> <span class="muted small">&lt;{{$m.FromAddr}}&gt;</span>{{with $m.SenderVia}} <span class="small muted msa-via" title="{{t "mail.sa.via_hint" .}}">{{t "mail.sa.via" .}}</span>{{end}} <span class="small muted">{{datetime $m.SentAt}}{{if ne $m.FolderID $d.Letter.FolderID}} · {{template "mfname" (dict "Role" $m.FolderRole "Title" $m.FolderName)}}{{end}}</span>{{with $m.Vote}} <span class="small mvote-tag">{{t "mail.vote.reply" .}}</span>{{end}}
+  {{$back := print "/mail?folder=" $d.FolderID "&letter=" $d.Letter.ID}}{{$last := len $d.Thread}}{{range $i, $m := $d.Thread}}<details class="mmsg{{if $m.Locked}} mnocopy{{end}}"{{if or (eq $m.ID $d.Letter.ID) (eq (add $i 1) $last)}} open{{end}} data-msg="{{$m.ID}}">
+    <summary class="row mread-head">{{template "mava" $m}}<div class="mmsg-who">{{if $m.FromAddr}}<b class="mperson" data-card="{{mailCard $m.FromAddr $back}}" title="{{t "mail.pc.title"}}">{{$m.From}}</b>{{else}}<b>{{$m.From}}</b>{{end}} <span class="muted small">&lt;{{$m.FromAddr}}&gt;</span>{{with $m.SenderVia}} <span class="small muted msa-via" title="{{t "mail.sa.via_hint" .}}">{{t "mail.sa.via" .}}</span>{{end}} <span class="small muted">{{datetime $m.SentAt}}{{if ne $m.FolderID $d.Letter.FolderID}} · {{template "mfname" (dict "Role" $m.FolderRole "Title" $m.FolderName)}}{{end}}</span>{{with $m.Vote}} <span class="small mvote-tag">{{t "mail.vote.reply" .}}</span>{{end}}
       <div class="small muted mmsg-prev">{{if and $d.Tr $d.Tr.Shown (eq $m.ID $d.Letter.ID)}}{{preview $d.Tr.Shown.Text}}{{else}}{{preview $m.Body}}{{end}}</div></div></summary>
-    <div class="small muted mmsg-to">{{t "mail.to"}}: {{$m.To}}{{with $m.CC}} · {{t "mail.cc"}}: {{.}}{{end}}{{with $m.BCC}} · {{t "mail.bcc"}}: {{.}}{{end}}{{with $m.RepliesTo}} · <span title="{{t "mail.replies_to_hint"}}">{{t "mail.replies_to"}}: {{.}}</span>{{end}} · {{$m.MailboxEmail}}</div>
+    <div class="small muted mmsg-to">{{t "mail.to"}}: {{template "maddrs" (dict "H" $m.To "Back" $back)}}{{with $m.CC}} · {{t "mail.cc"}}: {{template "maddrs" (dict "H" . "Back" $back)}}{{end}}{{with $m.BCC}} · {{t "mail.bcc"}}: {{template "maddrs" (dict "H" . "Back" $back)}}{{end}}{{with $m.RepliesTo}} · <span title="{{t "mail.replies_to_hint"}}">{{t "mail.replies_to"}}: {{.}}</span>{{end}} · {{$m.MailboxEmail}}</div>
     {{with index $d.Files $m.ID}}{{template "mfiles" (dict "L" $m "F" .)}}{{end}}
     {{if and $d.Tr $d.Tr.Shown (eq $m.ID $d.Letter.ID)}}<div class="mailbody mtr-body" lang="{{$d.Tr.Shown.Lang}}">{{nl2br $d.Tr.Shown.Text}}</div>
     {{else}}{{with index $d.Docs $m.ID}}<iframe class="mailhtml" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="{{.}}" title="{{$m.Subject}}"></iframe>
@@ -497,6 +498,7 @@ open letter and the inbox; the actions that change the mail wait for «Подт�
     <button type="button" class="ghost{{if eq $d.Importance -1}} on{{end}}" data-imp="-1" title="{{t "mail.imp.low"}}" aria-pressed="{{eq $d.Importance -1}}">{{icon "arrow-down"}}</button>
     <button type="button" class="ghost" data-a11y-check title="{{t "mail.a11y.hint"}}" aria-pressed="false">{{icon "accessible"}}</button>
     <button type="button" class="ghost" data-poll title="{{t "mail.poll.hint"}}">{{icon "calendar-event"}}<span class="mlabel"> {{t "mail.poll.short"}}</span></button>
+    <button type="button" class="ghost" data-avail title="{{t "mail.avail.hint"}}">{{icon "clock"}}<span class="mlabel"> {{t "mail.avail.short"}}</span></button>
     <details class="mbox-menu mc-menu"><summary class="button ghost" title="{{t "mail.options"}}">{{icon "adjustments"}}</summary><div class="card mbox-pop">
       <label class="mc-sens">{{icon "shield-lock"}} {{t "mail.sensitivity"}}<select name="sensitivity" title="{{t "mail.sens_hint"}}"><option value="">{{t "mail.sens.normal"}}</option>{{range .Sensitivities}}<option value="{{.}}"{{if eq . $d.Sensitivity}} selected{{end}}>{{t (print "mail.sens." .)}}</option>{{end}}</select></label>
       <label class="check" title="{{t "mail.nofwd_hint"}}"><input type="checkbox" name="no_forward" value="1" data-nofwd{{if $d.NoForward}} checked{{end}}> {{icon "lock"}} {{t "mail.nofwd"}}</label>
@@ -550,6 +552,7 @@ open letter and the inbox; the actions that change the mail wait for «Подт�
     style="{{with .Prefs.Font}}font-family: {{.}};{{end}}{{with .Prefs.FontSize}} font-size: {{.}};{{end}}"{{if and $d.To (ne $d.Mode "fwd") (ne $d.Mode "fwdatt")}} data-focus{{end}}></div>
   <textarea name="html" hidden data-html>{{.HTML}}</textarea>
   {{template "mpolldlg"}}
+  {{template "mavaildlg"}}
   <template data-compose-labels><span data-l="saved">{{t "mail.draft_saved" "{t}"}}</span><span data-l="saving">{{t "mail.draft_saving"}}</span><span data-l="no_rcpt">{{t "err.mail_to"}}</span><span data-l="no_subject">{{t "mail.no_subject_ask"}}</span><span data-l="forgot">{{t "mail.forgot_attach"}}</span><span data-l="words">{{t "mail.attach_words"}}</span><span data-l="discard">{{t "mail.discard_ask"}}</span><span data-l="link">{{t "mail.ed.link_url"}}</span><span data-l="tpl_name">{{t "mail.tpl_name"}}</span><span data-l="uploading">{{t "mail.uploading"}}</span><span data-l="scheduled">{{t "mail.scheduled"}}</span><span data-l="rows">{{t "mail.ed.rows"}}</span><span data-l="cols">{{t "mail.ed.cols"}}</span><span data-l="delete">{{t "common.delete"}}</span><span data-l="employee">{{t "mail.k.employee"}}</span><span data-l="crm">{{t "mail.k.crm"}}</span><span data-l="history">{{t "mail.k.history"}}</span><span data-l="failed">{{t "mail.save_failed"}}</span><span data-l="list">{{t "mail.k.list"}}</span><span data-l="dept">{{t "mail.k.dept"}}</span><span data-l="list_name">{{t "mail.cl_name"}}</span><span data-l="list_saved">{{t "mail.cl_saved" "%s"}}</span><span data-l="mention">{{t "mail.mention_added" "%s"}}</span><span data-l="tip_auto">{{t "mail.tip.auto" "%s"}}</span><span data-l="tip_until">{{t "mail.tip.until" "%s"}}</span><span data-l="tip_ext">{{t "mail.tip.ext" "%s"}}</span><span data-l="tip_nofwd">{{t "mail.tip.nofwd"}}</span><span data-l="tip_ext_one">{{t "mail.tip.ext_one"}}</span><span data-l="tip_large">{{t "mail.tip.large" "%s"}}</span><span data-l="tip_invalid">{{t "mail.tip.invalid"}}</span><span data-l="contact">{{t "mail.k.contact"}}</span><span data-l="crm_contact">{{t "mail.k.crm_contact"}}</span><span data-l="crm_company">{{t "mail.k.crm_company"}}</span><span data-l="crm_lead">{{t "mail.k.crm_lead"}}</span>{{range list "title" "all" "employee" "contact" "crm" "history" "list" "search" "empty" "new" "name" "email" "company" "phone" "edit" "delete_ask" "keep" "kept" "done" "add_hint" "import" "import_hint" "imported" "export" "phone" "phone_hint" "phone_none" "keys" "copy" "no_email"}}<span data-l="book_{{.}}">{{t (print "mail.book." .)}}</span>{{end}}<span data-l="to">{{t "mail.to"}}</span><span data-l="cc">{{t "mail.cc"}}</span><span data-l="bcc">{{t "mail.bcc"}}</span><span data-l="save">{{t "common.save"}}</span><span data-l="cancel">{{t "common.cancel"}}</span>
     <span data-i="employee">{{icon "user"}}</span><span data-i="contact">{{icon "notebook"}}</span><span data-i="crm_contact">{{icon "star"}}</span><span data-i="crm_company">{{icon "building-warehouse"}}</span><span data-i="crm_lead">{{icon "flag"}}</span><span data-i="history">{{icon "history"}}</span><span data-i="list">{{icon "users"}}</span><span data-i="dept">{{icon "users-group"}}</span><span data-i="plus">{{icon "plus"}}</span><span data-i="edit">{{icon "edit"}}</span><span data-i="trash">{{icon "trash"}}</span><span data-i="x">{{icon "x"}}</span><span data-i="cloud-upload">{{icon "cloud-upload"}}</span><span data-i="download">{{icon "download"}}</span><span data-i="phone">{{icon "phone"}}</span><span data-i="link">{{icon "link"}}</span><span data-i="search">{{icon "search"}}</span></template>
 </form>{{end}}
@@ -960,6 +963,38 @@ open letter and the inbox; the actions that change the mail wait for «Подт�
 
 {{/* the sender's picture: Outlook's «?» when the server could not check the sender (mail.SenderAuth) */}}
 {{define "mava"}}{{if eq .SenderAuth "fail"}}<span class="msa-ava" title="{{t "mail.sa.q"}}">{{ava .From}}<b aria-label="{{t "mail.sa.q"}}">?</b></span>{{else}}{{ava .From}}{{end}}{{end}}
+{{/* the contact card of a sender or a recipient, as Outlook's profile card (web.mailPersonCard; shown by static/js/menu.js
+   for [data-card]): an employee's card of the portal, else the name, the user's contact and the CRM's; the mail's
+   actions and the latest letters with the address */}}
+{{define "mperson"}}{{$p := .P}}{{$back := .Back}}<div class="mperson-card" data-copied="{{t "mail.pc.copied"}}">
+  {{with .Emp}}{{template "pcard" .}}{{else}}<div class="pcard">
+  <div class="pc-head">{{ava (or $p.Name $p.Email)}}
+    <div><b>{{or $p.Name $p.Email}}</b>{{with .CRM}}<div class="muted small">{{.Position}}</div>{{end}}</div></div>
+  <div class="props small">
+    <span class="k">E-mail</span><span>{{$p.Email}}</span>
+    {{with $p.Contact}}{{with .Company}}<span class="k">{{t "mail.book.company"}}</span><span>{{.}}</span>{{end}}{{with .Phone}}<span class="k">{{t "mail.pc.phone"}}</span><span><a href="tel:{{.}}">{{.}}</a></span>{{end}}{{end}}
+    {{with .CRM}}{{if not (and $p.Contact $p.Contact.Company)}}{{with .Company.Name}}<span class="k">{{t "mail.book.company"}}</span><span>{{.}}</span>{{end}}{{end}}
+    {{if not (and $p.Contact $p.Contact.Phone)}}{{with .Phone}}<span class="k">{{t "mail.pc.phone"}}</span><span><a href="tel:{{.}}">{{.}}</a></span>{{end}}{{end}}
+    <span class="k">CRM</span><span><a href="/crm/contacts/{{.ID}}">{{icon "address-book"}} {{.Name}}</a></span>{{end}}
+  </div></div>{{end}}
+  <div class="row pc-actions mperson-acts">
+    <a href="/mail?new=1&amp;to={{$p.Email | urlquery}}" class="button">{{icon "mail"}} {{t "mail.pc.write"}}</a>
+    <button type="button" class="ghost" data-copy="{{$p.Email}}" title="{{t "mail.pc.copy"}}">{{icon "copy"}}</button>
+    <a href="/mail?folder={{.Ref | urlquery}}" class="button ghost" title="{{t "mail.pc.all_hint"}}">{{icon "inbox"}} {{t "mail.pc.all"}}</a>
+  </div>
+  <div class="row mperson-more">{{template "mfav" (dict "Ref" .Ref "On" .Fav "Back" $back "Person" true)}}
+    <details class="mperson-contact"><summary class="ghost small">{{icon "user-plus"}} {{if $p.Contact}}{{t "mail.pc.edit_contact"}}{{else}}{{t "mail.pc.add_contact"}}{{end}}</summary>
+      <form method="post" action="/mail/person/contact" class="mperson-form"><input type="hidden" name="back" value="{{$back}}"><input type="hidden" name="email" value="{{$p.Email}}">
+        {{$c := $p.Contact}}<label>{{t "mail.book.name"}}<input type="text" name="name" maxlength="300" value="{{if $c}}{{$c.Name}}{{else}}{{$p.Name}}{{end}}"></label>
+        <label>{{t "mail.book.company"}}<input type="text" name="company" maxlength="300" value="{{if $c}}{{$c.Company}}{{else}}{{with .CRM}}{{.Company.Name}}{{end}}{{end}}"></label>
+        <label>{{t "mail.pc.phone"}}<input type="tel" name="phone" maxlength="100" value="{{if $c}}{{$c.Phone}}{{else}}{{with .CRM}}{{.Phone}}{{end}}{{end}}"></label>
+        <button>{{t "common.save"}}</button></form></details></div>
+  <div class="mperson-recent"><b class="small">{{t "mail.pc.recent"}}</b>
+    {{range $p.Letters}}<a class="row small mperson-letter{{if not .Seen}} unread{{end}}" href="/mail?folder={{.FolderID}}&amp;letter={{.ID}}">{{if .Outgoing}}{{icon "send"}}{{else}}{{icon "mail"}}{{end}} <span class="mperson-subj">{{or .Subject (t "mail.no_subject")}}</span> <span class="muted">{{day .SentAt}}</span></a>
+    {{else}}<p class="small muted">{{t "mail.pc.none"}}</p>{{end}}</div>
+</div>{{end}}
+{{/* a header's addresses, each name opening its contact card */}}
+{{define "maddrs"}}{{$b := .Back}}{{range $i, $a := mailAddrs .H}}{{if $i}}, {{end}}{{if $a.Email}}<span class="mperson" data-card="{{mailCard $a.Email $b}}" title="{{$a.Email}}">{{or $a.Name $a.Email}}</span>{{else}}{{$a.Name}}{{end}}{{end}}{{end}}
 
 {{/* «Сообщить о фишинге» / «о нежелательной почте» of the letters open (Kind) */}}
 {{define "mreport"}}{{$d := .D}}<form method="post" action="/mail/report" data-confirm="{{t (print "mail.report.confirm." .Kind)}}"><input type="hidden" name="letter" value="{{join $d.ActIDs ","}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="back" value="/mail?folder={{$d.FolderID}}">
@@ -1130,6 +1165,23 @@ open letter and the inbox; the actions that change the mail wait for «Подт�
 <div class="pb">{{with index $.HTML .ID}}{{.}}{{else}}<pre class="pt">{{.Body}}</pre>{{end}}</div></div>{{end}}
 <script src="{{asset "js/mailx.js"}}"></script>
 </body></html>{{end}}
+
+{{/* «Вставить свободное время» of the editor (static/js/mailavail.js moves it out of the letter's form when opened):
+   the days and the shortest span asked, the free spans of each day to untick; the fields have no names */}}
+{{define "mavaildlg"}}<dialog class="disk-dlg mpoll-dlg mavail-dlg" data-avail-dlg>
+  <h3>{{icon "clock"}} {{t "mail.avail.title"}}</h3>
+  <p class="small muted">{{t "mail.avail.dlg_hint"}}</p>
+  <div class="row mpoll-row"><label class="mpoll-f">{{t "mail.avail.f_from"}}<input type="date" data-a="from"></label>
+    <label class="mpoll-f">{{t "mail.avail.f_days"}}<select data-a="days">{{range list "3" "5" "10" "15"}}<option value="{{.}}"{{if eq . "5"}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label class="mpoll-f">{{t "mail.avail.f_length"}}<select data-a="length">{{range list "15" "30" "60" "90" "120"}}<option value="{{.}}"{{if eq . "30"}} selected{{end}}>{{t "mail.poll.length_n" .}}</option>{{end}}</select></label></div>
+  <div class="mavail-days" data-avail-days aria-live="polite"></div>
+  <p class="small muted" data-avail-tz></p>
+  <div class="form-error" data-avail-error hidden></div>
+  <div class="row"><button type="button" class="primary" data-avail-insert>{{icon "check"}} {{t "mail.avail.insert"}}</button>
+    <button type="button" class="ghost" data-avail-close>{{t "common.cancel"}}</button>
+    <a class="button ghost small" href="/calendar/settings" target="_blank">{{icon "settings"}} {{t "mail.avail.settings"}}</a></div>
+  <template data-avail-labels><span data-l="none">{{t "mail.avail.none"}}</span><span data-l="no_spans">{{t "err.mail_avail_none"}}</span><span data-l="tz">{{t "mail.avail.block_tz" "%s"}}</span></template>
+</dialog>{{end}}
 
 {{/* «Опрос о времени встречи» of the editor (static/js/mailpoll.js moves it out of the letter's form when opened):
    the times, the length, the place, the video meeting, «Назначать автоматически»; the fields have no names, so they

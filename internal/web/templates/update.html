@@ -1,0 +1,88 @@
+{{define "content"}}
+{{$s := .Data.S}}
+<h1>{{icon "refresh"}} {{t "update.title"}}</h1>
+<div class="sub">{{t "update.subtitle"}}</div>
+{{with .Data.Msg}}<div class="flash">{{.}}</div>{{end}}
+{{with .Data.Err}}<div class="flash error" data-update-err>{{.}}</div>{{end}}
+
+<div class="card stack">
+  <p>{{t "update.current"}}: <b data-update-version>{{$s.Version}}</b></p>
+  {{if not $s.Enabled}}
+  <p class="muted" data-update-dev>{{t "update.dev"}}</p>
+  {{else}}
+  {{with $s.Latest}}
+    <p>{{t "update.latest"}}: {{if .Version}}<b>{{.Version}}</b>{{if not .PublishedAt.IsZero}} · {{datetime .PublishedAt}}{{end}}
+      {{if .URL}} · <a href="{{.URL}}" target="_blank" rel="noopener">GitHub</a>{{end}}{{else}}—{{end}}
+      <span class="muted small">· {{t "update.checked_at" (datetime .CheckedAt)}}</span></p>
+    {{if .Error}}<p class="muted small">{{t "update.check_failed"}}: {{.Error}}</p>{{end}}
+  {{else}}<p class="muted">{{t "update.never_checked"}}</p>{{end}}
+  {{if $s.Newer}}<p><span class="badge">{{t "update.available"}}</span></p>
+  {{else if $s.Latest}}{{if $s.Latest.Version}}<p><span class="badge">✓ {{t "update.up_to_date"}}</span></p>{{end}}{{end}}
+  <div class="row">
+    <form method="post" action="/settings/update/check"><button class="ghost">{{t "update.check"}}</button></form>
+    {{if $s.Newer}}<form method="post" action="/settings/update/install" data-confirm="{{t "update.install_confirm" $s.Latest.Version}}">
+      <button class="primary" {{if $s.Busy}}disabled{{end}} data-update-install>{{icon "download"}} {{t "update.install" $s.Latest.Version}}</button></form>{{end}}
+    {{with $s.Rollback}}<form method="post" action="/settings/update/rollback" data-confirm="{{t "update.rollback_confirm" .Version}}">
+      <button class="danger" {{if $s.Busy}}disabled{{end}} data-update-rollback>{{t "update.rollback" .Version}}</button></form>{{end}}
+  </div>
+  <p class="muted small">{{t "update.hint"}}</p>
+  {{end}}
+</div>
+
+{{if and $s.Enabled $s.Newer $s.Latest.Notes}}
+<div class="card stack">
+  <h3>{{t "update.notes" $s.Latest.Version}}</h3>
+  <div style="white-space: pre-wrap" data-update-notes>{{$s.Latest.Notes}}</div>
+</div>
+{{end}}
+
+<div class="card stack" data-update-job {{if not $s.Status}}hidden{{end}}>
+  <h3>{{t "update.job"}}</h3>
+  <p><span data-job-title>{{with $s.Status}}{{.From}} → {{.To}}{{end}}</span> · <span class="badge" data-job-state>{{with $s.Status}}{{t (print "update.state." .State)}}{{end}}</span>
+    <span class="muted small" data-job-step>{{with $s.Status}}{{if eq .State "installing"}}{{t (print "update.step." .Step)}}{{end}}{{end}}</span></p>
+  <p class="muted small" data-job-error>{{with $s.Status}}{{.Error}}{{end}}</p>
+  <pre class="small" style="max-height: 360px; overflow: auto; white-space: pre-wrap" data-job-log>{{with $s.Status}}{{range .Log}}{{datetime .At}}  {{.Text}}
+{{end}}{{end}}</pre>
+  <p class="muted small" data-job-offline hidden>{{t "update.restarting"}}</p>
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll('form[data-confirm]').forEach(f => f.addEventListener('submit', e => {
+    if (!confirm(f.dataset.confirm)) e.preventDefault();
+  }));
+  const box = document.querySelector('[data-update-job]');
+  const states = {{.Data.States}}, steps = {{.Data.Steps}};
+  let busy = {{$s.Busy}};
+  const fmt = t => new Date(t).toLocaleString();
+  const show = st => {
+    const j = st.status;
+    if (!j) return;
+    box.hidden = false;
+    box.querySelector('[data-job-title]').textContent = j.from + ' → ' + j.to;
+    box.querySelector('[data-job-state]').textContent = states[j.state] || j.state;
+    box.querySelector('[data-job-step]').textContent = j.state === 'installing' ? (steps[j.step] || j.step) : '';
+    box.querySelector('[data-job-error]').textContent = j.error || '';
+    const log = box.querySelector('[data-job-log]');
+    log.textContent = (j.log || []).map(l => fmt(l.at) + '  ' + l.text).join('\n');
+    log.scrollTop = log.scrollHeight;
+  };
+  const poll = async () => {
+    try {
+      const r = await fetch('/settings/update/status', {headers: {Accept: 'application/json'}});
+      if (!r.ok) throw new Error(r.status);
+      const st = await r.json();
+      box.querySelector('[data-job-offline]').hidden = true;
+      show(st);
+      // the job is over: the page anew shows the version and the buttons as they are now
+      if (busy && !st.busy) { location.replace('/settings/update'); return; }
+      busy = st.busy;
+    } catch (e) {
+      if (busy) box.querySelector('[data-job-offline]').hidden = false; // go24 restarts during an update
+    }
+    setTimeout(poll, busy ? 2000 : 15000);
+  };
+  setTimeout(poll, busy ? 2000 : 15000);
+})();
+</script>
+{{end}}

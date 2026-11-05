@@ -144,3 +144,44 @@ func (s *Store) DeptNames(ctx context.Context, refs []string) (map[string]string
 	}
 	return out, rows.Err()
 }
+
+// View is how the person sees the feed, as the settings menu of the portal feed: the order — by the last activity
+// (a new comment lifts a post; the default or by the time of the post; «Экспертный режим» — without
+// the events of tasks.
+type View struct {
+	ByDate bool `json:"by_date"`
+	Expert bool `json:"expert"`
+}
+
+const prefView = "feed.view" // user_prefs
+
+// View returns the person's view of the feed (the default one if they never changed it).
+func (s *Store) View(ctx context.Context, userID string) (View, error) {
+	var v View
+	var raw []byte
+	err := s.db.QueryRow(ctx, `SELECT value FROM user_prefs WHERE user_id = $1 AND key = $2`, userID, prefView).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return v, nil
+	}
+	if err != nil {
+		return v, err
+	}
+	return v, json.Unmarshal(raw, &v)
+}
+
+// SetView keeps the person's view of the feed.
+func (s *Store) SetView(ctx context.Context, userID string, v View) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `INSERT INTO user_prefs (user_id, key, value) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, userID, prefView, raw)
+	return err
+}
+
+// Apply sets the filter's order and events by the view.
+func (v View) Apply(f *Filter) {
+	f.ByActivity = !v.ByDate
+	f.NoEvents = v.Expert
+}

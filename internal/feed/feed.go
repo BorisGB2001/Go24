@@ -53,6 +53,7 @@ type Post struct {
 	Important   bool      // important now: not past ImportantUntil
 	Until       time.Time // «Важное до»: zero — important always
 	CreatedAt   time.Time
+	ActivityAt  time.Time // the last activity: its own time or of its newest comment
 	Edited      bool
 	Reactions   Summary
 	Read        bool // the viewer confirmed an important post
@@ -126,6 +127,10 @@ type Filter struct {
 	Mentions            bool      // only the posts where the viewer was mentioned, in the text or a comment
 	// only the posts to these addressees (any of them): people or «dept:ID» (a department, as the picker gives it)
 	To []string
+	// by the last activity: a new comment lifts a post (Before is then of the activity, not of the
+	// post's time); otherwise by the time of the post
+	ByActivity bool
+	NoEvents   bool // «Экспертный режим»: without the events of tasks
 }
 
 // Kinds are the values of Filter.Kind.
@@ -133,7 +138,7 @@ var Kinds = []string{"poll", "gratitude", "bp", "tasks", SourceWelcome, SourceMe
 
 // posts: the filter leaves posts out (only task events).
 func (f Filter) events() bool {
-	return !f.Posts && !f.Important && !f.Hidden && !f.Mine && !f.Favorites && !f.Pinned && !f.Mentions && len(f.To) == 0 && f.Project == "" && f.Query == "" && f.Author == "" && f.Post == "" && f.Tag == "" &&
+	return !f.Posts && (!f.NoEvents || f.Kind == "tasks") && !f.Important && !f.Hidden && !f.Mine && !f.Favorites && !f.Pinned && !f.Mentions && len(f.To) == 0 && f.Project == "" && f.Query == "" && f.Author == "" && f.Post == "" && f.Tag == "" &&
 		(f.Kind == "" || f.Kind == "tasks")
 }
 
@@ -162,14 +167,18 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 	if f.Before.IsZero() {
 		f.Before = time.Now().Add(time.Minute)
 	}
-	if !f.Till.IsZero() && f.Till.Before(f.Before) {
+	at := "p.created_at"
+	if f.ByActivity {
+		at = "p.activity_at"
+	}
+	if !f.Till.IsZero() && f.Till.Before(f.Before) && !f.ByActivity {
 		f.Before = f.Till
 	}
 	if f.Post != "" {
 		only = f.Post
 	}
 	admin := tasks.IsAdmin(ctx)
-	where := []string{visible, "p.created_at < $3"}
+	where := []string{visible, at + " < $3"}
 	args := []any{userID, admin, f.Before}
 	if f.Important {
 		where = append(where, important)
@@ -207,6 +216,10 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 	if !f.From.IsZero() {
 		args = append(args, f.From)
 		where = append(where, "p.created_at >= $"+strconv.Itoa(len(args)))
+	}
+	if !f.Till.IsZero() && f.ByActivity { // the period is of the posts' time still
+		args = append(args, f.Till)
+		where = append(where, "p.created_at < $"+strconv.Itoa(len(args)))
 	}
 	if f.Mentions {
 		where = append(where, "EXISTS (SELECT 1 FROM feed_mentions x WHERE x.post_id = p.id AND x.user_id = $1)")
@@ -256,9 +269,9 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 			EXISTS (SELECT 1 FROM feed_pins x WHERE x.post_id = p.id AND x.user_id = $1),
 			`+following+`, `+hidden+`,
 			(SELECT count(*) FROM feed_views v WHERE v.post_id = p.id)::int, coalesce(p.bp_instance::text, ''),
-			p.source, p.source_id, p.source_data
+			p.source, p.source_id, p.source_data, p.activity_at
 		FROM feed_posts p JOIN users u ON u.id = p.author_id LEFT JOIN projects pr ON pr.id = p.project_id
-		WHERE `+strings.Join(where, " AND ")+` ORDER BY p.created_at DESC LIMIT `+strconv.Itoa(PageSize), args...)
+		WHERE `+strings.Join(where, " AND ")+` ORDER BY `+at+` DESC LIMIT `+strconv.Itoa(PageSize), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +279,7 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 		p := &Post{}
 		return p, r.Scan(&p.ID, &p.AuthorID, &p.AuthorName, &p.AuthorPhoto, &p.ProjectKey, &p.ProjectName, &p.Title, &p.Body,
 			&p.Important, &p.Until, &p.CreatedAt, &p.Edited, &p.Read, &p.Readers, &p.Fav, &p.Pinned, &p.Following, &p.Hidden, &p.Views, &p.Process,
-			&p.Source, &p.SourceID, &p.SourceData)
+			&p.Source, &p.SourceID, &p.SourceData, &p.ActivityAt)
 	})
 	if err != nil {
 		return nil, err
@@ -288,7 +301,11 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 		if p.Until.Unix() <= 0 {
 			p.Until = time.Time{}
 		}
-		items = append(items, Item{Post: p, At: p.CreatedAt})
+		at := p.CreatedAt
+		if f.ByActivity {
+			at = p.ActivityAt
+		}
+		items = append(items, Item{Post: p, At: at})
 	}
 	// task events only in the general view (not for «important», «mine», a project's posts or a search)
 	if f.events() && only == "" {
@@ -297,7 +314,7 @@ func (s *Store) list(ctx context.Context, userID string, f Filter, only string) 
 			return nil, err
 		}
 		for i := range evs {
-			if evs[i].At.Before(f.From) {
+			if evs[i].At.Before(f.From) || !f.Till.IsZero() && !evs[i].At.Before(f.Till) {
 				continue
 			}
 			items = append(items, Item{Event: &evs[i], At: evs[i].At})

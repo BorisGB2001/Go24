@@ -326,6 +326,8 @@ func Text(i Item, tr func(key string, args ...any) string, when func(time.Time) 
 		return "⚙ " + i.Body
 	case "backup_failed", "backup_restored", "backup_restore_failed":
 		return "💾 " + tr("notify.kind."+i.Kind) + ": " + tr(i.Body)
+	case "update_done", "update_rolled_back", "update_failed", "update_reverted":
+		return "⬆ " + tr("notify.kind."+i.Kind) + ": " + i.Body
 	case "workday_change":
 		t += " " + i.Body
 	case "workday_decided": // "approved|25.10.2026"
@@ -444,7 +446,7 @@ var Kinds = []struct {
 	{"kb", []string{"kb_page_changed", "kb_page_new", "kb_page_trashed", "kb_comment", "kb_reply", "kb_mention", "kb_like"}},
 	{"sign", []string{"sign_request", "sign_review", "sign_done", "sign_refused", "sign_cancelled", "sign_expired"}},
 	{"booking", []string{"booking_new", "booking_late", "booking_unconfirmed", "booking_confirmed", "booking_cancelled", "booking_moved", "booking_rated"}},
-	{"company", []string{"workday_change", "workday_decided", "workday_violation", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "payslip", "gallery_comment", "enps", "learn_assign", "learn_due", "learn_overdue", "meeting", "backup_failed", "backup_restored", "backup_restore_failed", "join_request"}},
+	{"company", []string{"workday_change", "workday_decided", "workday_violation", "work_report", "work_report_mark", "work_report_comment", "absence_hr", "honor", "payslip", "gallery_comment", "enps", "learn_assign", "learn_due", "learn_overdue", "meeting", "backup_failed", "backup_restored", "backup_restore_failed", "update_done", "update_rolled_back", "update_failed", "update_reverted", "join_request"}},
 }
 
 // Settings of a person: kinds turned off, copies in the messenger.

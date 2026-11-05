@@ -272,7 +272,9 @@ func (s *Store) fillRaw(ctx context.Context, x Instance, text string) string {
 func (s *Store) fillAs(ctx context.Context, x Instance, text string, shown bool) string {
 	pairs := []string{"{starter}", x.StartedBy.Name, "{process}", x.Name, "{link}", "/bp/i/" + x.ID}
 	for k, v := range x.Values {
-		if f, ok := x.Field(k); ok && shown {
+		if f, ok := x.Field(k); ok && shown && f.Kind == "file" { // the names and addresses of the files
+			v = s.fileText(ctx, f, v)
+		} else if ok && shown {
 			v = s.show(ctx, f, v)
 		}
 		pairs = append(pairs, "{"+k+"}", v)
@@ -309,6 +311,10 @@ func (s *Store) show(ctx context.Context, f Field, v string) string {
 		}
 	case f.Kind == "datetime":
 		return strings.Replace(v, "T", " ", 1)
+	case f.Kind == "file":
+		if name := s.FileNames(ctx, []string{v})[v]; name != "" {
+			return name
+		}
 	}
 	return v
 }
@@ -416,6 +422,10 @@ func (s *Store) who(ctx context.Context, x Instance, to string) (string, error) 
 // step does one step and says the next one (a jump of a condition or a «go to»; len(steps) — the end); wait says
 // the process stops here until a decision or a pause's end.
 func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait bool, err error) {
+	if st.Off { // «Выключить»: the step (its block) is not done
+		s.log(ctx, x.ID, x.Step, "", "off", "")
+		return Skip(x.Steps, x.Step), false, nil
+	}
 	next = x.Step + 1
 	text := s.fill(ctx, x, st.Text)
 	switch st.Kind {
@@ -650,6 +660,15 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 				}
 			}
 			x.Values[st.Field] = strings.Join(ids, Multi)
+		} else if f.Kind == "file" { // a file of the process (another field's) only
+			v, err := cleanValue(Field{Kind: f.Kind, Multiple: f.Multiple}, x.Values[st.Field])
+			if err == nil {
+				err = s.claimFiles(ctx, x.ID, "", "", f.List(v))
+			}
+			if err != nil {
+				return next, false, err
+			}
+			x.Values[st.Field] = v
 		} else if f.Kind != "" {
 			if v, err := cleanValue(Field{Kind: f.Kind, Options: f.Options, Multiple: f.Multiple}, x.Values[st.Field]); err == nil {
 				x.Values[st.Field] = v
@@ -742,6 +761,11 @@ func (s *Store) step(ctx context.Context, x Instance, st Step) (next int, wait b
 		}
 		if crm.Entities[x.Entity] {
 			_ = s.Tasks.AddCRMLink(actx, x.StartedBy.ID, id, CardPath(x.Entity, x.EntityID))
+		}
+		if st.Attach {
+			if err := s.attachToTask(ctx, x, id); err != nil {
+				return next, false, err
+			}
 		}
 		if x.Values == nil {
 			x.Values = map[string]string{}

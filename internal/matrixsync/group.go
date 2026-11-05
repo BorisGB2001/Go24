@@ -144,6 +144,7 @@ func writeRules(pl matrix.PowerLevels, level int) {
 	if _, ok := events["m.room.power_levels"]; !ok { // the levels themselves: the owner only (admins name no admins)
 		events["m.room.power_levels"] = ownerLevel
 	}
+	matrix.AllowCalls(pl) // calls from Element: who writes
 }
 
 func isChannel(pl matrix.PowerLevels) bool { return plLevel(pl, "events_default", 0) >= adminLevel }

@@ -69,6 +69,7 @@ type Service struct {
 	CoPilotName        string
 	CoPilotHello       string
 	CoPilotCollabHello string
+	BridgeName         string // the bridge bot of chats linked to outside groups (bridge.go), «Telegram» when none
 
 	// Remote: this process serves pages only; reconciling and bridging run in go24 worker (Wake notifies it)
 	Remote bool
@@ -123,6 +124,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.Log.Error("matrix: copilot", "err", err)
 	}
 	go s.botLoop(ctx)
+	go s.allowCalls(ctx) // calls from Element (Element Call) in the rooms made before
 	go s.imV2Loop(ctx)
 	go func() { // go24 web asks for a reconcile (new project, members, employees)
 		w := s.listen(ctx, "go24_matrix_wake")
@@ -355,6 +357,7 @@ func (s *Service) collabRoomRules(ctx context.Context, room string, history, rea
 	if readOnly {
 		pl["events_default"] = 100
 	}
+	matrix.AllowCalls(pl) // calls from Element: who writes
 	if err := s.M.SetState(ctx, room, "m.room.power_levels", "", pl); err != nil {
 		return err
 	}

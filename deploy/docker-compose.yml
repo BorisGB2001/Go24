@@ -77,7 +77,8 @@ services:
         condition: service_healthy
 
   rclone:
-    image: rclone/rclone:${RCLONE_TAG:-latest}
+    # boris.gb 2026-11-04 21:22 - версия закреплена (обновление по кнопке, GO24DEV-1016): новые версии компонентов приходят выпусками go24
+    image: rclone/rclone:${RCLONE_TAG:-1.75.2}
     restart: unless-stopped
     # boris.gb 2026-10-11 13:32 - rclone отдаёт S3 API поверх любого хранилища из rclone.conf; бакет = папка в корне ${RCLONE_REMOTE}
     # boris.gb 2026-10-11 13:41 - self-hosted: по умолчанию локальный диск; вместо него можно свой файловый сервер (sftp), Garage/SeaweedFS (s3), Nextcloud (webdav)
@@ -94,7 +95,7 @@ services:
       - files-local:/data   # используется только при RCLONE_REMOTE=local:/data (разработка)
 
   rclone-rcd:
-    image: rclone/rclone:${RCLONE_TAG:-latest}
+    image: rclone/rclone:${RCLONE_TAG:-1.75.2}
     restart: unless-stopped
     # boris.gb 2026-10-11 16:30 - API управления rclone для раздела «Хранилища»: пользователи сами подключают Nextcloud/SFTP/S3/FTP.
     # Доступ к этому API равен доступу к shell, поэтому: пароль, порт наружу не публикуется, отдельная сеть только с go24
@@ -207,13 +208,25 @@ services:
       GO24_BACKUP_HOST_DIR: ${GO24_BACKUP_DIR:-deploy/backups}
       # boris.gb 2026-10-26 00:12 - медиа Matrix для резервного копирования (GO24DEV-572): том synapse у go24-worker только для чтения
       GO24_BACKUP_MATRIX_DIR: /synapse
+      # boris.gb 2026-11-04 21:22 - «Настройки → Обновление» (GO24DEV-1016): go24 проверяет выпуски на GitHub, кладёт подписанный архив
+      # в общий с go24-updater том /updates и просит его поставить; GO24_UPDATE=off — сервер разработки, кнопки нет
+      GO24_UPDATES_DIR: /updates
+      GO24_UPDATE: ${GO24_UPDATE:-}
     volumes:
       - ./theme:/theme:ro
       - ./locales:/locales:ro
       - telephony-conf:/telephony
       - telephony-records:/phone-records
+      - updates:/updates
     ports:
       - "${BIND_IP:-127.0.0.1}:8080:8080"
+    # boris.gb 2026-11-04 21:22 - go24-updater ждёт healthy после обновления и откатывает, если go24 не поднялся
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
@@ -239,12 +252,41 @@ services:
       - backup-config:/backup-config:ro
       # boris.gb 2026-10-26 00:12 - медиа мессенджера (media_store Synapse) для копии (GO24DEV-572)
       - synapse:/synapse:ro
+    # boris.gb 2026-11-04 21:22 - go24-worker готов, когда запустил фоновые работы (пишет /tmp/go24.ready)
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/go24.ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 120s
     depends_on:
       go24:
         condition: service_started
       backup-init:
         condition: service_completed_successfully
     networks: [default, storages]
+
+  # boris.gb 2026-11-04 21:22 - обновление по кнопке (GO24DEV-1016): ставит выпуски, которые просит go24 через том /updates — проверка
+  # подписи, копия базы, файлы, новые параметры .env, docker compose pull/up, при неудаче — откат с базой. Тот же образ.
+  # Видит docker.sock (это права root на сервере), портов не публикует. Каталог установки смонтирован по тому же пути,
+  # что и на сервере (GO24_INSTALL_DIR, по умолчанию /srv/go24): иначе относительные пути compose указывали бы не туда
+  go24-updater:
+    image: go24:dev
+    command: ["updater"]
+    user: "0:0"
+    restart: unless-stopped
+    environment:
+      TZ: ${GO24_TZ:-Europe/Amsterdam}
+      GO24_INSTALL_DIR: ${GO24_INSTALL_DIR:-/srv/go24}
+      GO24_UPDATES_DIR: /updates
+      GO24_UPDATE: ${GO24_UPDATE:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:${GO24_INSTALL_DIR:-/srv/go24}
+      - updates:/updates
+    depends_on:
+      go24:
+        condition: service_started
 
 
 # boris.gb 2026-10-11 16:30 - отдельная сеть для rclone-rcd: в ней только go24
@@ -466,6 +508,8 @@ networks:
   storages:
 
 volumes:
+  # boris.gb 2026-11-04 21:22 - обновления: архивы выпусков, запросы go24 и статус go24-updater, прежняя версия для отката
+  updates:
   # boris.gb 2026-10-25 13:23 - записи звонков между LiveKit Egress и go24-worker (файл удаляется, когда он на Диске)
   # boris.gb 2026-10-25 23:55 - снимок конфигурации для резервного копирования (GO24DEV-569)
   backup-config:

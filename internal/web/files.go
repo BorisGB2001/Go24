@@ -122,6 +122,9 @@ func (s *Server) fileAccess(r *http.Request, sess auth.Session, id string) (stor
 		_, err := s.Calendar.Seen(r.Context(), sess.UserID, m.EventID)
 		allowed = err == nil
 	}
+	if !allowed && s.BP != nil { // a file of a «Файл» field: of a process the user sees
+		allowed = s.BP.FileSeen(r.Context(), sess.UserID, id)
+	}
 	if !allowed && m.PostID != nil && s.Feed != nil {
 		allowed = s.Feed.CanSee(r.Context(), sess.UserID, *m.PostID) == nil
 	}

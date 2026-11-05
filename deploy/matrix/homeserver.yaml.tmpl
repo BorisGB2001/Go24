@@ -14,7 +14,8 @@ listeners:
     tls: false
     x_forwarded: true
     resources:
-      - names: [client]
+      # boris.gb 2026-11-04 22:53 - openid: go24 проверяет OpenID-токен Element Call, прежде чем пустить в звонок (GO24DEV-1024)
+      - names: [client, openid]
         compress: false
 
 database:
@@ -38,6 +39,15 @@ suppress_key_server_warning: true
 allow_public_rooms_over_federation: false
 allow_public_rooms_without_auth: false
 enable_registration: false
+# boris.gb 2026-11-04 22:53 - звонки Element Call на LiveKit go24 (GO24DEV-1024): go24 — «фокус» MatrixRTC (MSC4143), токены
+# LiveKit для Element выдаёт он сам; отложенные события (MSC4140) — Element Call уходит из звонка, даже если вкладку закрыли
+experimental_features:
+  msc4143_enabled: true
+matrix_rtc:
+  transports:
+    - type: livekit
+      livekit_service_url: "https://${BIND_IP}:8444/matrixrtc"
+max_event_delay_duration: 24h
 registration_shared_secret: "${SYNAPSE_REGISTRATION_SECRET}"
 macaroon_secret_key: "${SYNAPSE_MACAROON_SECRET}"
 form_secret: "${SYNAPSE_FORM_SECRET}"

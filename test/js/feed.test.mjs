@@ -378,3 +378,47 @@ console.log('feed.js: no duplicate post passed');
   assert.equal(more.textContent, 'Свернуть');
   console.log('feed.js: editor buttons and folding passed');
 }
+
+// live comments: a colleague's comment comes under its post once (also when our own answer and the
+// live event both bring it), an edited one changes in place (folded stays folded, one being edited here is left
+// alone), a deleted one goes; a filtered feed asks for comments only
+{
+  const page = (url) => {
+    const dom = new JSDOM(`<!doctype html><body><main class="content"><div data-feed data-failed="x" data-cmore="Ещё">
+      <div data-items><article data-post-id="p1"><div data-comments>
+        <div class="fc" data-comment-id="c1"><div data-cview>старый</div></div>
+        <div class="fc" data-comment-id="c2"><div data-cview>второй</div><form data-cedit-form><textarea name="body"></textarea></form></div>
+      </div><form data-comment><textarea name="body">мой</textarea></form></article></div></div></main></body>`, { runScripts: 'outside-only', url });
+    const w = dom.window;
+    let es;
+    w.EventSource = class { constructor(u) { this.u = u; this.h = {}; es = this; } addEventListener(t, f) { this.h[t] = f; } };
+    w.fetch = async () => ({ ok: true, json: async () => ({ html: '<div class="fc" data-comment-id="c9"><div data-cview>мой</div></div>' }) });
+    w.alert = () => {};
+    w.eval(script);
+    return { w, es, ev: (t, d) => es.h[t]({ data: JSON.stringify(d) }) };
+  };
+  const { w, es, ev } = page('http://go24.test/feed');
+  const d = w.document;
+  assert.equal(es.u, '/feed/live');
+  ev('comment', { post: 'p1', id: 'c3', html: '<div class="fc fnew" data-comment-id="c3"><div data-cview>новый</div></div>' });
+  ev('comment', { post: 'p1', id: 'c3', html: '<div class="fc fnew" data-comment-id="c3"><div data-cview>новый</div></div>' });
+  ev('comment', { post: 'p7', id: 'c4', html: '<div class="fc" data-comment-id="c4"></div>' }); // a post not on the page
+  assert.equal(d.querySelectorAll('[data-comment-id="c3"]').length, 1, 'a live comment once');
+  assert.ok(d.querySelector('[data-comments] > .fc:last-child').classList.contains('fnew'), 'at the end, marked new');
+  assert.equal(d.querySelector('[data-comment-id="c4"]'), null);
+  d.querySelector('[data-comment-id="c1"]').hidden = true;
+  ev('cedit', { id: 'c1', html: '<div class="fc" data-comment-id="c1"><div data-cview>правка</div></div>' });
+  ev('cedit', { id: 'c2', html: '<div class="fc" data-comment-id="c2"><div data-cview>чужая правка</div></div>' });
+  assert.equal(d.querySelector('[data-comment-id="c1"]').textContent, 'правка');
+  assert.ok(d.querySelector('[data-comment-id="c1"]').hidden, 'a folded comment stays folded');
+  assert.equal(d.querySelector('[data-comment-id="c2"] [data-cview]').textContent, 'второй', 'being edited: left alone');
+  ev('cdel', { id: 'c1' });
+  assert.equal(d.querySelector('[data-comment-id="c1"]'), null, 'a deleted comment goes');
+  // our own comment: the live event first, then the answer — once
+  ev('comment', { post: 'p1', id: 'c9', html: '<div class="fc" data-comment-id="c9"><div data-cview>мой</div></div>' });
+  d.querySelector('form[data-comment]').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(d.querySelectorAll('[data-comment-id="c9"]').length, 1, 'own comment once');
+  assert.equal(page('http://go24.test/feed?view=fav').es.u, '/feed/live?only=comments', 'a filtered feed: comments only');
+  console.log('feed.js: live comments passed');
+}
